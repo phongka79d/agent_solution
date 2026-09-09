@@ -1,3005 +1,640 @@
 # AgentOS Customer360
-## Product & System Design Specification
-### AI-powered Marketing, Sales, and Customer Support Platform
 
-**Document status:** Concept / Product Architecture  
-**Primary objective:** Package a reusable online AI-agent solution that manages the customer lifecycle from acquisition through sales, service, retention, and upsell.
+AI Online Business OS — Product, Engineering & Business Plan
 
----
+Status: proposed product design, not a claim of implemented functionality.
+Examples, prices, scores, and targets are illustrative unless agreed with a pilot customer.
 
-# 1. Executive Summary
+## 1. Executive Summary
 
-AgentOS Customer360 is a multi-agent customer lifecycle platform that combines:
-
-1. **Marketing Agent**
-2. **Sales Agent**
-3. **Customer Support Agent**
-4. **Supervisor / Orchestrator Agent**
-5. **Shared Customer360 Data Layer**
-6. **Knowledge & Retrieval Layer**
-7. **Workflow / Automation Engine**
-8. **Human Handoff Layer**
-9. **Analytics & Business Dashboard**
-10. **Channel and Third-party Integration Layer**
-
-The product is not positioned as "three chatbots." It is a coordinated customer operating system.
-
-The full lifecycle is:
-
-```text
-Traffic
-  ↓
-Lead Capture
-  ↓
-Qualification
-  ↓
-Sales Opportunity
-  ↓
-Quotation / Meeting
-  ↓
-Purchase
-  ↓
-Onboarding
-  ↓
-Customer Support
-  ↓
-Retention
-  ↓
-Upsell / Cross-sell
-  ↓
-Advocacy / Referral
-```
-
-The core product concept is:
-
-> **One customer profile, multiple specialized agents, shared context, automated handoffs, measurable business outcomes.**
-
----
-
-# 2. Product Vision
-
-## 2.1 Customer problem
-
-Most businesses operate customer-facing functions in separate systems:
-
-- Marketing owns campaigns.
-- Sales owns leads and CRM.
-- Support owns tickets.
-- Operations owns orders.
-- Management sees separate reports.
-- Customers repeat the same information across departments.
-
-This creates:
-
-- slow response time,
-- missed leads,
-- inconsistent follow-up,
-- duplicate work,
-- poor handoffs,
-- fragmented customer history,
-- weak reporting,
-- limited automation.
-
-AgentOS Customer360 solves this by making all agents work from a common customer record and event stream.
-
----
-
-# 3. Product Positioning
-
-Avoid selling the product primarily as:
-
-> "AI agents."
-
-Sell it as:
-
-> **An AI Customer Growth & Service System that converts leads, supports customers, and automates repetitive customer operations.**
-
-Possible positioning statements:
-
-- "Turn inbound traffic into qualified sales opportunities automatically."
-- "Follow every lead until there is a clear next step."
-- "Resolve routine support questions instantly."
-- "Give marketing, sales, and service one shared customer history."
-- "Automate the customer journey from first contact to repeat purchase."
-
----
-
-# 4. Primary System Diagram
+AgentOS Customer360 is a packaged AI platform for operating an online business across the customer lifecycle.
+It addresses missed leads, inconsistent follow-up, repetitive support, and fragmented customer information.
+Marketing, Sales, and Customer Care / Support Agents work under a Supervisor / Orchestrator Agent.
+All agents share Customer360, Workflow, Knowledge, and Business Rules.
+Customer360 connects identity, conversations, commercial activity, and service history into one business record.
+Teams use human approvals, integrations, and analytics to control actions and measure customer outcomes.
+Industry templates and customer configuration adapt the same core platform to different products and businesses.
 
 ```mermaid
-flowchart TB
-
-    subgraph CHANNELS["Customer Channels"]
-        WEB[Website / Web Chat]
-        FB[Facebook Messenger]
-        IG[Instagram]
-        LINE[LINE]
-        WA[WhatsApp]
-        EMAIL[Email]
-        VOICE[Voice / Call]
-        FORM[Landing Page / Forms]
+flowchart LR
+    subgraph Journey["Customer lifecycle"]
+        Marketing --> Lead --> Sales --> Customer --> Support --> Retention
+        Retention --> Sales
     end
-
-    subgraph GATEWAY["Interaction Gateway"]
-        AUTH[Identity / Session]
-        MSG[Message Normalizer]
-        INTENT[Intent Detection]
-        ROUTER[Channel Router]
-    end
-
-    subgraph AI["Agent Layer"]
-        SUP[Supervisor / Orchestrator]
-        MKT[Marketing Agent]
-        SALES[Sales Agent]
-        SUPPORT[Support Agent]
-        RET[Retention Agent]
-    end
-
-    subgraph SKILLS["Skills / Tools"]
-        CRM[CRM Skill]
-        KB[Knowledge Search]
-        MAIL[Email / Messaging]
-        CAL[Calendar Booking]
-        QUOTE[Quotation]
-        ORDER[Order Lookup]
-        TICKET[Ticketing]
-        PAY[Payment]
-        CAMP[Campaign Management]
-        HUMAN[Human Handoff]
-    end
-
-    subgraph DATA["Shared Data Layer"]
-        C360[(Customer360)]
-        HIST[(Conversation History)]
-        EVENTS[(Event Store)]
-        PROD[(Product Catalog)]
-        DOCS[(Knowledge Base)]
-        ANALYTICS[(Analytics Store)]
-    end
-
-    CHANNELS --> GATEWAY
-    GATEWAY --> SUP
-
-    SUP --> MKT
-    SUP --> SALES
-    SUP --> SUPPORT
-    SUP --> RET
-
-    MKT --> SKILLS
-    SALES --> SKILLS
-    SUPPORT --> SKILLS
-    RET --> SKILLS
-
-    SKILLS --> DATA
-    AI --> DATA
+    Supervisor -. coordinates .-> Journey
+    C360[("Customer360")] -. shared_context .-> Journey
+    Supervisor <--> C360
 ```
 
----
-
-# 5. Core Design Principle
-
-The product should be designed around:
+## 2. Core Concept
 
 ```text
-Agent
-+
-Skills
-+
-Business Knowledge
-+
-Customer Context
-+
-Workflow
-+
-Policies
-+
-Channels
+Core Platform + Business Configuration + Product Data
+              + Knowledge + Integrations
+              = Customer Deployment
 ```
 
-Do not hardcode every business process into a different bot.
+| Area | Core — code once | Configuration — change by business |
+|---|---|---|
+| Agent behavior | Agent Runtime, Supervisor | Sales questions, qualification fields, agent tone |
+| Business process | Workflow Engine | Lead scoring, follow-up rules, sales stages, business hours |
+| Business information | Customer360, Knowledge/RAG | Products, prices, promotions, support FAQ |
+| Connectivity | Integrations Framework, Messaging | Channels, provider connections, field mappings |
+| Control and measurement | Permissions, Audit, Analytics | Escalation policy, role assignments, KPI targets |
 
-Instead, create configurable agents that use reusable skills.
+Target: **80–90% reusable platform + 10–20% customer configuration**.
+This is a design target, not a measured reuse rate or a guarantee.
 
----
+A product or industry change should normally update configuration, catalog, knowledge, workflows, and business rules. A genuinely new external capability may require a reusable adapter or skill; it should not require a customer-specific fork of the agents.
 
-# 6. Agent Model
+## 3. Full Customer Lifecycle
 
-## 6.1 Supervisor / Orchestrator Agent
+This is the central business flow. Support, renewal, and expansion can also start directly from relevant customer events.
 
-The Supervisor Agent controls routing and coordination.
+```mermaid
+flowchart TD
+    Traffic --> Marketing --> Lead
+    Lead --> Qualification["Lead Qualification"]
+    Qualification --> Sales
+    Sales --> Decision["Demo / Quote / Checkout"]
+    Decision --> Won --> Onboarding
+    Onboarding --> Support["Customer Support"]
+    Support --> Retention --> Upsell
+    Upsell --> Sales
+```
 
-### Responsibilities
+| Stage | Owner | Input | Action | Output |
+|---|---|---|---|---|
+| Traffic | Marketing team / Agent | Audience and campaign plan | Attract visitors through approved campaigns | Attributed visit |
+| Marketing | Marketing Agent | Visit or inquiry | Explain the offer and invite engagement | Interested visitor |
+| Lead | Marketing Agent | Contact details and interest | Capture contact, source, and consent | Lead in Customer360 |
+| Lead Qualification | Marketing / Sales | Lead and engagement | Check required fields, fit, and intent | Sales-qualified lead (SQL) |
+| Sales | Sales Agent | SQL and full context | Discover needs and open a deal | Opportunity with next action |
+| Demo / Quote / Checkout | Sales / Human | Opportunity and approved product | Book, propose, or provide checkout | Meeting, quote, or purchase request |
+| Won | Sales + confirmed system event | Verified commercial outcome | Record the sale and purchase reference | Customer and won opportunity |
+| Onboarding | Support + Workflow | Confirmed purchase | Send setup guidance and check activation | Onboarded customer |
+| Customer Support | Support Agent | Question and customer history | Answer, troubleshoot, or escalate | Resolved case or human-owned ticket |
+| Retention | Support / Sales + Workflow | Usage, renewal, or risk signal | Support adoption and coordinate renewal | Retained customer or recovery action |
+| Upsell | Sales Agent | Valid expansion signal | Qualify additional needs | Expansion opportunity |
 
-- determine user intent,
-- identify customer,
-- retrieve relevant customer context,
-- determine correct specialized agent,
-- decide whether a human is required,
-- track workflow state,
-- enforce policies,
-- coordinate multi-agent workflows,
-- prevent duplicate actions,
-- control tools,
-- maintain audit logs.
+Not ready → nurture. Poor fit → disqualify with a reason. Lost → record the reason; reactivate only when appropriate and permitted. A customer's statement alone must not mark a purchase as confirmed.
 
-### Example routing
+Retention starts as Sales/Support workflows. A dedicated Retention Agent is a later option, not an MVP dependency; advocacy and referral requests can follow successful customer outcomes.
 
-| Customer message | Routed to |
+## 4. Key Business Cases
+
+These scenarios describe the full product. Section 21 defines which steps are automated in the MVP.
+
+| Case | Short flow | Success record |
+|---|---|---|
+| 1 — New Lead → Sale | Facebook → Marketing → Lead → Qualification → Sales → Quote → Confirmed purchase → Won | Attribution, opportunity, quote, purchase |
+| 2 — Lead not ready | Lead → Nurture → Engagement → Score increases → Qualification check → Sales handoff | Updated score, readiness, next action |
+| 3 — Support issue | Customer → Support → Identity check → Knowledge search → Troubleshoot → Customer confirms solved → Close | Resolution and CSAT request |
+| 4 — Support escalation | Customer → Support → Troubleshooting fails → Ticket → Context summary → Human assignment → Human resolution | Ticket owner and outcome |
+| 5 — Upsell | Existing customer → Feature interest → Upsell signal → Sales → Expansion qualification → Approved offer → Upgrade | Expansion opportunity and revenue |
+| 6 — High-value lead | Enterprise request → Sales qualification → Supervisor policy check → Context package → Human Sales → Approved proposal | Assigned owner and approval history |
+
+## 5. Supervisor Agent
+
+The Supervisor is the AI manager and router. It assembles context, selects an owner, and coordinates next steps; the policy and tool layers enforce permissions.
+
+```mermaid
+flowchart TD
+    Message["Customer Message"] --> Identify["Identify Customer"]
+    Identify --> Load["Load permitted Customer360 context"]
+    Load --> Intent["Detect Intent"]
+    Intent --> Policy{"Policy and confidence check"}
+    Policy -->|Clarification needed| Clarify["Ask one focused question"]
+    Clarify --> Intent
+    Policy -->|Approval or handoff required| Human["Human queue"]
+    Policy -->|Allowed| Route{"Route Agent"}
+    Route -->|Acquisition| Marketing["Marketing"]
+    Route -->|Purchase or expansion| Sales["Sales"]
+    Route -->|Service or cancellation intake| Support["Support"]
+```
+
+| Customer message | Routing |
 |---|---|
-| "How much does it cost?" | Sales Agent |
-| "Send me your brochure." | Marketing or Sales |
-| "I cannot login." | Support Agent |
-| "I want to upgrade." | Sales / Retention |
-| "Please cancel my subscription." | Retention / Support |
-| "We need 200 licenses." | Enterprise Sales + Human alert |
-| "Where is my order?" | Support Agent |
-| "Can I book a demo?" | Sales Agent |
+| "How much does it cost?" | Sales |
+| "Send me the catalog." | Marketing for general discovery; Sales for purchase intent |
+| "I cannot log in." | Support |
+| "I want to buy 50 more users." | Sales / upsell |
+| "I want to cancel." | Support / retention intake, then Human for the cancellation decision |
 
-### Supervisor decision flow
+If identity is unverified, load only safe public or session context. If intent remains unclear, clarify or hand off instead of repeatedly switching agents.
 
-```mermaid
-flowchart TD
-    A[Incoming Customer Message] --> B[Identify Customer]
-    B --> C[Load Customer360 Context]
-    C --> D[Classify Intent]
-    D --> E{Known Intent?}
+## 6. Marketing Agent
 
-    E -- No --> F[Ask Clarifying Question]
-    E -- Yes --> G{High Risk / Human Required?}
-
-    G -- Yes --> H[Human Handoff]
-    G -- No --> I{Which Domain?}
-
-    I -->|Marketing| M[Marketing Agent]
-    I -->|Sales| S[Sales Agent]
-    I -->|Support| P[Support Agent]
-    I -->|Retention| R[Retention Agent]
-
-    M --> Z[Write Result to Customer360]
-    S --> Z
-    P --> Z
-    R --> Z
-
-    Z --> AA[Generate Response / Next Action]
-```
-
----
-
-# 7. Marketing Agent
-
-## 7.1 Objective
-
-Create, capture, segment, and nurture demand until a lead is ready for sales.
-
-## 7.2 Core capabilities
-
-- campaign ideation,
-- audience segmentation,
-- social content generation,
-- advertisement copy,
-- landing page copy,
-- lead magnet creation,
-- form response handling,
-- inbound lead capture,
-- source attribution,
-- lead tagging,
-- nurture sequence generation,
-- campaign scheduling,
-- message personalization,
-- lead scoring support,
-- abandoned inquiry follow-up,
-- reactivation campaigns,
-- campaign performance summaries.
-
-## 7.3 Marketing Agent workflow
-
-```mermaid
-flowchart TD
-    A[Campaign / Traffic Source] --> B[Landing Page / Chat / Form]
-    B --> C[Capture Lead]
-    C --> D[Normalize Contact Data]
-    D --> E[Create / Merge Customer Record]
-    E --> F[Identify Interest]
-    F --> G[Assign Campaign Source]
-    G --> H[Initial Lead Score]
-    H --> I{Qualified Enough?}
-
-    I -- No --> J[Nurture Workflow]
-    J --> K[Email / LINE / WhatsApp / Retargeting]
-    K --> L[Track Engagement]
-    L --> H
-
-    I -- Yes --> M[Sales Handoff]
-    M --> N[Create Sales Opportunity]
-    N --> O[Notify Sales Agent / Human]
-```
-
----
-
-# 8. Lead Scoring
-
-The first version can use rules before adding ML.
-
-## 8.1 Example score model
+Purpose: turn campaign engagement into qualified demand with a traceable source.
 
 ```text
-Base score = 0
-
-+10 submitted form
-+10 opened pricing page
-+15 requested product details
-+20 provided budget
-+15 provided expected purchase date
-+20 requested quotation
-+25 requested demo
-+30 identified as decision maker
-+15 company size matches target segment
-
--10 invalid phone
--15 no response after multiple attempts
--20 explicitly says "just researching"
--30 says no budget
--50 asks to stop contacting
+Campaign → Traffic → Lead Capture → Customer360 → Lead Scoring
+         → Nurture → Qualified Lead → Sales Handoff
 ```
 
-### Suggested stages
+Already-ready leads can skip nurture.
 
-| Score | Stage |
-|---:|---|
-| 0-19 | Cold |
-| 20-39 | Engaged |
-| 40-59 | Marketing Qualified |
-| 60-79 | Sales Qualified |
-| 80-100 | Hot |
+| Capability | Concrete action |
+|---|---|
+| Campaign content | Draft approved ad, landing-page, email, and social content |
+| Capture and attribution | Save contact, campaign/source identifiers, product interest, and consent |
+| Segmentation and scoring | Group leads by fit, interest, behavior, and readiness |
+| Nurture and reactivation | Deliver useful content, track engagement, and revisit eligible inactive leads |
+| Sales handoff | Pass qualification evidence, campaign history, and recommended next action |
 
-Scoring thresholds should be configurable by tenant and industry.
+Start with configurable rules, not ML. Example scoring inputs include form submission, pricing engagement, budget, timeline, and demo requests. Cap and deduplicate behavioral contributions; missing qualification fields still need confirmation.
 
----
+Example: Facebook Ad → landing page → product question → lead captured → pricing viewed three times → combined configured score = 82 → qualification requirements satisfied → Sales handoff.
 
-# 9. Marketing Nurture Workflow
+The score includes prior fit and engagement signals; three page views alone do not imply a score of 82. Contact eligibility is governed separately by the outreach rules in Section 13.
+
+## 7. Sales Agent
+
+Purpose: move a qualified lead to a clear commercial outcome.
+
+```text
+Qualified Lead → Discovery → Need → Budget → Authority → Timeline
+               → Product Recommendation → Demo / Quote → Follow-up
+               → Won / Lost
+```
+
+Default opportunity state:
+
+`New → Qualified → Demo → Proposal → Negotiation → Won/Lost`
+
+Stages may be skipped only through configured transitions. Incomplete qualification returns to discovery or nurture; record unknown fields instead of inventing answers.
+
+| Capability | Action or output |
+|---|---|
+| Qualification | Collect need, budget, authority, timeline, fit, and intent |
+| Recommendation and pricing | Search the approved Product Catalog and explain suitable options |
+| Meeting booking | Check availability, book a confirmed slot, and save the reference |
+| Quotation | Create a quote from approved catalog data or prepare an approval request |
+| CRM updates | Persist qualification, stage, owner, notes, and next action |
+| Follow-up | Start or stop the appropriate workflow |
+| Human handoff | Transfer high-value, complex, or exception deals with full context |
+
+Example — a SaaS buyer:
+
+1. Receive a qualified lead for a 30-user team.
+2. Confirm the need, a USD 900 monthly budget, CEO approval, and a six-week timeline.
+3. Retrieve the illustrative Business plan at USD 25 per user/month; 30 users cost USD 750/month before applicable taxes.
+4. Book a demo and save the opportunity in CRM.
+5. Prepare the approved quote, obtain any required human approval, and schedule follow-up.
+6. Mark Won only after the configured authoritative confirmation; trigger onboarding.
+
+Automated quotation and checkout are full-product capabilities. Their MVP boundaries are explicit in Section 21.
+
+## 8. Customer Care / Support Agent
+
+Purpose: resolve routine problems with customer and product context, then transfer exceptions cleanly.
+
+```mermaid
+flowchart TD
+    Question["Customer Question"] --> Identify["Identify and verify Customer"]
+    Identify --> Load["Load Product / Order / Subscription"]
+    Load --> Search["Knowledge Search"]
+    Search --> Answer["Answer / Troubleshoot"]
+    Answer --> Resolved{"Customer confirms resolved?"}
+    Resolved -->|Yes| Close["Close case"]
+    Close --> CSAT["Request CSAT"]
+    Resolved -->|No| Ticket["Create Ticket"]
+    Ticket --> Summary["Prepare context summary"]
+    Summary --> Human["Human Support"]
+```
+
+Without a reliable answer, or when permitted troubleshooting is exhausted, take the escalation path. Do not close a case solely because the AI sent a response.
+
+| Handoff field | What Human Support receives |
+|---|---|
+| Customer | Verified customer ID, contact, account, and plan |
+| Issue | Customer's problem and desired outcome |
+| Context | Relevant conversation, product, order, subscription, and environment |
+| Troubleshooting tried | Steps attempted, results, and remaining unknowns |
+| Priority | Impact, urgency, sentiment, and SLA risk |
+| Recommended next action | Suggested action, destination team, and ticket/conversation links |
+
+Support also records adoption gaps and feature interest as signals. Sales owns any resulting commercial offer.
+
+## 9. Cross-Agent Handoff
+
+**The customer should not re-enter known information when changing agents.**
+Security re-verification and confirmation of outdated details may still be necessary.
 
 ```mermaid
 sequenceDiagram
-    participant C as Customer
-    participant M as Marketing Agent
-    participant C360 as Customer360
-    participant MSG as Messaging Service
-    participant S as Sales Agent
-
-    C->>M: Submit lead form
-    M->>C360: Create / update lead
-    M->>C360: Save campaign attribution
-    M->>MSG: Send welcome message
-    MSG-->>C: Welcome / useful content
-
-    C->>M: Click pricing / ask product question
-    M->>C360: Increase engagement score
-    M->>C360: Update product interest
-
-    alt Lead score above threshold
-        M->>S: Create sales handoff
-        S->>C360: Create opportunity
-        S-->>C: Begin sales conversation
-    else Lead not ready
-        M->>MSG: Continue nurture sequence
-    end
-```
-
----
-
-# 10. Sales Agent
-
-## 10.1 Objective
-
-Move qualified prospects to a clear commercial outcome.
-
-Possible outcomes:
-
-- meeting booked,
-- quotation issued,
-- trial started,
-- checkout completed,
-- lead disqualified,
-- human salesperson engaged.
-
-## 10.2 Sales Agent capabilities
-
-- inbound sales conversation,
-- discovery questions,
-- product recommendation,
-- pricing retrieval,
-- qualification,
-- budget discovery,
-- timeline discovery,
-- decision-maker identification,
-- objection handling,
-- quotation creation,
-- appointment scheduling,
-- follow-up,
-- CRM updates,
-- opportunity stage updates,
-- next-action recommendation,
-- sales summary,
-- human salesperson notification.
-
----
-
-# 11. Sales Qualification Framework
-
-A reusable qualification object:
-
-```yaml
-qualification:
-  need:
-    status: known
-    value: "Needs 30-user business package"
-
-  budget:
-    status: partial
-    value: "Expected budget below 150,000 THB"
-
-  authority:
-    status: known
-    value: "Operations manager; final approval by CEO"
-
-  timeline:
-    status: known
-    value: "Target deployment within 6 weeks"
-
-  fit:
-    score: 88
-
-  intent:
-    level: high
-
-  next_best_action:
-    type: book_demo
-```
-
-This can support BANT, MEDDICC, SPICED, or a custom qualification methodology.
-
----
-
-# 12. Sales Workflow
-
-```mermaid
-flowchart TD
-    A[Qualified Lead] --> B[Sales Agent Opens Opportunity]
-    B --> C[Discovery Conversation]
-    C --> D[Capture Need]
-    D --> E[Capture Budget]
-    E --> F[Capture Authority]
-    F --> G[Capture Timeline]
-    G --> H[Calculate Fit + Intent]
-
-    H --> I{Qualified?}
-
-    I -- No --> J[Disqualify / Nurture]
-    J --> K[Return to Marketing]
-
-    I -- Yes --> L[Recommend Product / Package]
-    L --> M{Customer Ready?}
-
-    M -- Needs Demo --> N[Book Meeting]
-    M -- Needs Proposal --> O[Generate Quotation]
-    M -- Ready to Buy --> P[Payment / Checkout]
-    M -- Needs Human --> Q[Human Sales Handoff]
-
-    N --> R[Follow-up Workflow]
-    O --> R
-    Q --> R
-    P --> S[Mark Won]
-
-    S --> T[Onboarding Workflow]
-```
-
----
-
-# 13. Sales Conversation State Machine
-
-```mermaid
-stateDiagram-v2
-    [*] --> NewLead
-    NewLead --> Contacted
-    Contacted --> Discovery
-    Discovery --> Qualified
-    Discovery --> Nurture
-    Discovery --> Disqualified
-
-    Qualified --> DemoScheduled
-    Qualified --> ProposalRequested
-    Qualified --> Negotiation
-
-    DemoScheduled --> ProposalRequested
-    ProposalRequested --> ProposalSent
-    ProposalSent --> Negotiation
-
-    Negotiation --> Won
-    Negotiation --> Lost
-    ProposalSent --> Lost
-    Nurture --> Contacted
-
-    Won --> Onboarding
-    Lost --> ReactivationPool
-```
-
----
-
-# 14. Quotation Workflow
-
-```mermaid
-sequenceDiagram
-    participant C as Customer
-    participant S as Sales Agent
-    participant CAT as Product Catalog
-    participant CRM as CRM
-    participant Q as Quotation Service
-    participant H as Human Approver
-
-    C->>S: Request quotation
-    S->>CRM: Load customer profile
-    S->>CAT: Retrieve approved products and pricing
-
-    alt Discount within agent authority
-        S->>Q: Generate quotation
-        Q-->>S: Quote PDF / link
-        S-->>C: Send quotation
-        S->>CRM: Update stage = Proposal Sent
-    else Discount requires approval
-        S->>H: Request approval
-        H-->>S: Approved / rejected
-        S->>Q: Generate approved quotation
-        S-->>C: Send quotation
-    end
-```
-
----
-
-# 15. Follow-up Automation
-
-Sales follow-up should be event-driven.
-
-Example:
-
-```text
-Proposal sent
-  ↓
-Wait 24 hours
-  ↓
-Check customer activity
-  ↓
-Opened quotation?
-  ├─ No → Send reminder
-  └─ Yes
-       ↓
-       Pricing page visited?
-       ├─ Yes → Increase intent score
-       └─ No
-       ↓
-Wait 48 hours
-       ↓
-No response?
-       ├─ Yes → Send follow-up
-       └─ No → Continue conversation
-```
-
-### Rules
-
-- never send follow-ups after opt-out,
-- cap contact frequency,
-- stop sequence when customer replies,
-- stop when opportunity is won/lost,
-- escalate hot leads,
-- log every automated contact.
-
----
-
-# 16. Customer Support Agent
-
-## 16.1 Objective
-
-Resolve customer problems quickly while maintaining context and escalating appropriately.
-
-## 16.2 Capabilities
-
-- FAQ handling,
-- account assistance,
-- order lookup,
-- subscription lookup,
-- troubleshooting,
-- knowledge retrieval,
-- ticket creation,
-- ticket classification,
-- priority detection,
-- sentiment detection,
-- SLA assessment,
-- human escalation,
-- conversation summarization,
-- post-resolution follow-up,
-- customer satisfaction request,
-- upsell signal detection.
-
----
-
-# 17. Support Workflow
-
-```mermaid
-flowchart TD
-    A[Customer Support Request] --> B[Identify Customer]
-    B --> C[Load Customer360]
-    C --> D[Classify Issue]
-    D --> E[Search Knowledge Base]
-    E --> F{Confident Answer?}
-
-    F -- Yes --> G[Respond with Resolution]
-    G --> H{Customer Confirms Resolved?}
-
-    H -- Yes --> I[Close Case]
-    I --> J[CSAT / Follow-up]
-
-    H -- No --> K[Run Troubleshooting Workflow]
-
-    F -- No --> K
-    K --> L{Resolved?}
-
-    L -- Yes --> I
-    L -- No --> M[Create Ticket]
-    M --> N[Set Priority]
-    N --> O[Generate Human Summary]
-    O --> P[Escalate to Human]
-    P --> Q[Human Resolution]
-    Q --> I
-```
-
----
-
-# 18. Support Escalation Rules
-
-Example escalation conditions:
-
-- customer explicitly requests human,
-- confidence below threshold,
-- repeated failed troubleshooting,
-- billing dispute,
-- refund exception,
-- legal complaint,
-- security incident,
-- high-value customer issue,
-- negative sentiment + unresolved case,
-- SLA breach risk,
-- system outage,
-- agent does not have required permission.
-
-Example:
-
-```yaml
-escalation_policy:
-  low_confidence_threshold: 0.72
-  max_failed_steps: 3
-
-  immediate_escalation:
-    - "legal"
-    - "security"
-    - "fraud"
-    - "chargeback"
-    - "enterprise_outage"
-
-  vip_rules:
-    contract_value_min: 500000
-    priority: critical
-```
-
----
-
-# 19. Support Handoff Package
-
-Before handoff, the AI should generate:
-
-```text
-Customer: ABC Manufacturing
-Plan: Business
-Customer value: 420,000 THB
-Issue: CSV export failure
-First reported: 14:31
-Environment: Chrome / Windows
-Troubleshooting completed:
-1. Re-login
-2. Clear cache
-3. Check export permission
-Result: Failure continues
-
-Sentiment: Frustrated
-Priority: High
-Recommended team: Product Support
-Suggested next action: Inspect export service logs
-```
-
-This reduces human handling time.
-
----
-
-# 20. Retention & Upsell Agent
-
-The retention function may initially be a workflow inside Sales/Support, then become a dedicated agent.
-
-## 20.1 Responsibilities
-
-- renewal reminders,
-- churn-risk detection,
-- cancellation intervention,
-- reactivation,
-- usage-based recommendations,
-- upsell,
-- cross-sell,
-- contract expansion,
-- loyalty campaigns,
-- review/referral requests.
-
----
-
-# 21. Retention Workflow
-
-```mermaid
-flowchart TD
-    A[Customer Event] --> B{Event Type}
-
-    B -->|Low Usage| C[Adoption Workflow]
-    B -->|Repeated Support Issues| D[Churn Risk Workflow]
-    B -->|High Usage| E[Upsell Opportunity]
-    B -->|Renewal Approaching| F[Renewal Workflow]
-    B -->|Cancellation Request| G[Save Workflow]
-
-    C --> H[Education / Onboarding Help]
-    D --> I[Customer Success Intervention]
-    E --> J[Sales Handoff]
-    F --> K[Renewal Contact]
-    G --> L[Reason Capture + Approved Retention Offer]
-
-    H --> M[Update Customer360]
-    I --> M
-    J --> M
-    K --> M
-    L --> M
-```
-
----
-
-# 22. Cross-Agent Customer Journey
-
-```mermaid
-sequenceDiagram
-    participant C as Customer
-    participant M as Marketing Agent
-    participant S as Sales Agent
-    participant SP as Support Agent
-    participant R as Retention Agent
+    participant M as Marketing
     participant D as Customer360
+    participant W as Supervisor / Workflow
+    participant S as Sales
+    participant B as CRM / Orders
+    participant C as Customer Care
 
-    C->>M: Engages with campaign
-    M->>D: Create lead + attribution
-    M->>C: Nurture / product education
-
-    C->>M: Requests pricing
-    M->>S: Sales handoff
-    S->>D: Create opportunity
-    S->>C: Qualify and recommend package
-
-    C->>S: Accepts proposal
-    S->>D: Mark opportunity won
-    S->>SP: Trigger onboarding
-
-    SP->>C: Onboarding assistance
-    SP->>D: Save support / adoption history
-
-    C->>SP: Requests advanced capability
-    SP->>D: Record upsell signal
-    SP->>R: Trigger expansion workflow
-
-    R->>S: Create expansion opportunity
-    S->>C: Offer upgraded package
+    M->>D: Create lead, source, interest, qualification
+    M->>W: Qualified lead ready for handoff
+    W->>S: Assign lead with customer and conversation IDs
+    S->>D: Load full permitted context
+    D-->>S: History, qualification, consent, next action
+    S->>B: Save opportunity and approved proposal
+    B-->>W: Confirmed purchase event
+    W->>D: Link purchase and update lifecycle
+    W->>C: Start onboarding with purchase reference
+    C->>D: Load purchase and service history
+    C->>D: Record new feature interest and upsell signal
+    D-->>W: customer.upsell_signal
+    W->>S: Assign expansion opportunity
+    S->>D: Load signal and existing customer context
 ```
 
----
+Every handoff carries customer/conversation IDs, current owner and stage, a short summary, relevant business-record links, unresolved items, and the next action.
 
-# 23. Customer360
+The receiving owner must accept the handoff. Keep one active responder per conversation; pause automated replies while a human owns it. Failed assignment remains visible in a queue and must not be reported as completed.
 
-Customer360 is the most important shared system component.
+## 10. High-Level Architecture
 
-## 23.1 Core customer profile
+This is a logical dependency map, not a requirement to deploy each box as a separate service.
+
+```mermaid
+flowchart TD
+    Channels["Channels: Website / Facebook / LINE / WhatsApp / Email / Form"]
+    Channels --> Supervisor["Supervisor"]
+    Supervisor --> Marketing["Marketing"]
+    Supervisor --> Sales["Sales"]
+    Supervisor --> Support["Support"]
+    Marketing --> Execution["Approved Skills / Workflow"]
+    Sales --> Execution
+    Support --> Execution
+    Execution <--> C360[("Customer360")]
+    C360 --- Knowledge["Knowledge / Product Catalog"]
+    C360 --- CRM["CRM"]
+    C360 --- Orders["Orders / Subscriptions"]
+    C360 --- Tickets["Tickets"]
+```
+
+Customer360 stores shared records and source-system references. Skills query knowledge and external systems through authorized interfaces; the lower links are data relationships, not API calls through a database.
+
+| Boundary | Responsibility |
+|---|---|
+| Channel gateway | Verify inbound events, normalize messages, resolve session/tenant, deduplicate delivery |
+| Supervisor and runtime | Assemble context, route work, run role-specific agents, validate responses |
+| Skills and workflow | Validate tool inputs, enforce policy, execute approved actions, track state and timers |
+| Data and integrations | Persist business records, retrieve approved information, synchronize source systems |
+
+Execution contract: `Approved context → Agent proposal → Authorize/execute needed tools → Validate results and response → Send → Audit + Customer360 update`.
+
+Start with a modular application and durable background worker.
+
+| Data | Initial storage approach |
+|---|---|
+| Customer records, conversations, workflow state, events, audit | Relational database with tenant-scoped access |
+| Source documents | Object storage with controlled access |
+| Retrieval index | Derived search/vector index; never the only copy of business state |
+| Analytics | Derived views or aggregates; introduce a warehouse only when justified |
+
+## 11. Customer360
+
+Customer360 is **shared memory plus the business record**, not just chat memory.
+
+| Record group | What it stores or links |
+|---|---|
+| Identity and contact | Customer/account IDs, verified channel identities, email, phone, company, consent, preferences |
+| Acquisition | Lead source, campaign touches, product interest, lead score, qualification |
+| Conversations | Messages, summaries, handoffs, active owner, next action |
+| Commercial | Opportunities, quotes, orders, subscriptions, customer value |
+| Service and growth | Tickets, resolution history, renewal status, churn/adoption indicators, upsell signals |
+
+Illustrative profile:
 
 ```yaml
 customer:
-  id: cust_12345
-
-  identity:
-    first_name: Somchai
-    last_name: Example
-    email: somchai@example.com
-    phone: "+66..."
-    company: ABC Manufacturing
-
-  lifecycle:
-    status: customer
-    stage: active
-    source: facebook
-    source_campaign: "Q3 ERP Campaign"
-
-  preferences:
-    language: th
-    preferred_channel: line
-    marketing_consent: true
-
-  commercial:
-    lead_score: 91
-    lifetime_value: 420000
-    current_plan: business
-    opportunity_stage: proposal
-
-  service:
-    open_tickets: 1
-    csat_average: 4.4
-
-  ai:
-    predicted_intent: expansion
-    next_best_action: "Offer enterprise demo"
+  tenant_id: tenant_demo
+  id: cust_123
+  identity: {crm_id: crm_456, line_id: line_example, verified: true}
+  contact: {name: An Nguyen, email: an@example.com}
+  preferences: {channel: line, marketing_consent: true}
+  lifecycle: {stage: active_customer, source: facebook, campaign: saas_q3}
+  product_interest: [business_plan]
+  lead_score: 82
+  qualification: {users: 30, budget_monthly_usd: 900, timeline_weeks: 6}
+  conversations:
+    - {id: conv_01, summary: "30 users; CEO approves upgrades."}
+  opportunity: {id: opp_01, stage: won}
+  quotes: [quote_01]
+  orders: [order_01]
+  subscription: {id: sub_01, status: active}
+  tickets: [ticket_01]
+  customer_value: {revenue_to_date: 750, currency: USD}
+  upsell_signals:
+    - {type: additional_users, quantity: 50, source: ticket_01}
 ```
 
----
+Link a trusted channel/account ID to the customer within the same tenant. Verify ambiguous email/phone matches before linking or merging; an order ID alone is not identity proof.
 
-# 24. Customer360 Entity Diagram
+Define field ownership for every integration: Customer360 owns unified identity/context; CRM owns its sales records; commerce/billing owns confirmed orders and subscriptions; ticketing owns its case status. Synchronize references and outcomes without silently overwriting authoritative values.
 
-```mermaid
-erDiagram
+## 12. Knowledge and Agent Context
 
-    CUSTOMER ||--o{ CONTACT_POINT : has
-    CUSTOMER ||--o{ CONVERSATION : participates
-    CUSTOMER ||--o{ LEAD : may_be
-    CUSTOMER ||--o{ OPPORTUNITY : owns
-    CUSTOMER ||--o{ ORDER : places
-    CUSTOMER ||--o{ TICKET : opens
-    CUSTOMER ||--o{ CAMPAIGN_TOUCH : receives
-    CUSTOMER ||--o{ EVENT : generates
-
-    OPPORTUNITY ||--o{ QUOTATION : has
-    ORDER ||--o{ ORDER_ITEM : contains
-    TICKET ||--o{ TICKET_MESSAGE : contains
-    CONVERSATION ||--o{ MESSAGE : contains
-
-    CUSTOMER {
-        string id
-        string name
-        string email
-        string phone
-        string company
-        string lifecycle_stage
-        int lead_score
-        decimal lifetime_value
-    }
-
-    OPPORTUNITY {
-        string id
-        string stage
-        decimal value
-        float probability
-        datetime next_action_at
-    }
-
-    TICKET {
-        string id
-        string category
-        string priority
-        string status
-        datetime sla_due_at
-    }
-
-    EVENT {
-        string id
-        string event_type
-        datetime created_at
-        json payload
-    }
-```
-
----
-
-# 25. Conversation Memory
-
-Do not give the model unlimited raw chat history.
-
-Use layered memory:
-
-```text
-Recent Conversation
-+
-Conversation Summary
-+
-Customer Facts
-+
-Active Workflow State
-+
-Relevant CRM Records
-+
-Relevant Knowledge
-```
-
-Example context bundle:
-
-```yaml
-context:
-  recent_messages:
-    limit: 12
-
-  conversation_summary:
-    text: "Customer is evaluating Business plan for 30 users."
-
-  customer_facts:
-    company_size: 30
-    budget_range: "100k-150k THB"
-    desired_start: "within 6 weeks"
-
-  active_workflow:
-    type: sales_qualification
-    current_step: timeline_confirmed
-
-  retrieved_knowledge:
-    - pricing_business_plan
-    - implementation_timeline
-```
-
----
-
-# 26. Skills Architecture
-
-Agents should call approved reusable skills.
-
-## 26.1 Example skill registry
-
-| Skill | Marketing | Sales | Support | Retention |
-|---|:---:|:---:|:---:|:---:|
-| Customer lookup | ✓ | ✓ | ✓ | ✓ |
-| Create/update contact | ✓ | ✓ | ✓ | ✓ |
-| Product search | ✓ | ✓ | ✓ | ✓ |
-| Knowledge search | ✓ | ✓ | ✓ | ✓ |
-| Send email | ✓ | ✓ | ✓ | ✓ |
-| Send LINE/WhatsApp | ✓ | ✓ | ✓ | ✓ |
-| Lead scoring | ✓ | ✓ |  | ✓ |
-| Campaign create | ✓ |  |  | ✓ |
-| Create opportunity |  | ✓ |  | ✓ |
-| Generate quote |  | ✓ |  | ✓ |
-| Book calendar |  | ✓ | ✓ | ✓ |
-| Payment link |  | ✓ | ✓ | ✓ |
-| Order lookup |  | ✓ | ✓ | ✓ |
-| Create ticket |  |  | ✓ | ✓ |
-| Refund request |  |  | ✓ | ✓ |
-| Human handoff | ✓ | ✓ | ✓ | ✓ |
-
----
-
-# 27. Tool Permission Model
-
-Every tool should have a permission level.
-
-```yaml
-tools:
-  product_search:
-    risk: low
-    human_approval: false
-
-  send_message:
-    risk: medium
-    human_approval: false
-    limits:
-      max_per_customer_per_day: 3
-
-  generate_quote:
-    risk: medium
-    human_approval: false
-
-  apply_discount:
-    risk: high
-    human_approval:
-      required_when:
-        discount_percent_gt: 10
-
-  issue_refund:
-    risk: high
-    human_approval: true
-
-  cancel_contract:
-    risk: critical
-    human_approval: true
-```
-
----
-
-# 28. Workflow Engine
-
-The workflow engine should execute deterministic business steps while AI handles interpretation, summarization, and decision support.
-
-A good architecture is:
-
-```text
-AI decides WHAT is happening
-Workflow engine decides WHAT IS ALLOWED and WHAT HAPPENS NEXT
-```
-
-This prevents the LLM from becoming the only source of business logic.
-
----
-
-# 29. Event-driven Architecture
-
-Recommended event examples:
-
-```text
-lead.created
-lead.updated
-lead.score_changed
-lead.qualified
-
-conversation.started
-conversation.message_received
-conversation.intent_changed
-
-opportunity.created
-opportunity.stage_changed
-quotation.created
-quotation.sent
-quotation.viewed
-
-meeting.booked
-meeting.completed
-
-order.created
-payment.completed
-
-ticket.created
-ticket.escalated
-ticket.resolved
-
-customer.churn_risk_changed
-customer.renewal_due
-customer.upsell_signal
-
-campaign.started
-campaign.message_opened
-campaign.link_clicked
-```
-
----
-
-# 30. Event Processing Diagram
-
-```mermaid
-flowchart LR
-    A[Channel / CRM / Order / Ticket Event] --> B[Event Bus]
-    B --> C[Workflow Engine]
-    B --> D[Customer360 Updater]
-    B --> E[Analytics Pipeline]
-    B --> F[Agent Trigger Service]
-
-    C --> G[Automated Actions]
-    F --> H[Supervisor Agent]
-
-    H --> I[Marketing]
-    H --> J[Sales]
-    H --> K[Support]
-    H --> L[Retention]
-
-    G --> M[Email / LINE / CRM / Ticket / Calendar]
-```
-
----
-
-# 31. Example Workflow Definition
-
-```yaml
-workflow:
-  id: hot_lead_followup
-  name: Hot Lead Follow-up
-
-  trigger:
-    event: lead.score_changed
-    condition:
-      score_gte: 80
-
-  steps:
-    - id: assign_sales
-      action: crm.assign_owner
-
-    - id: generate_summary
-      action: ai.generate_sales_summary
-
-    - id: notify_sales
-      action: notification.send
-      channel: internal
-
-    - id: customer_message
-      action: messaging.send
-      template: hot_lead_followup
-
-    - id: wait_response
-      wait: 24h
-
-    - id: response_check
-      condition:
-        customer_replied: false
-
-    - id: follow_up
-      action: messaging.send
-      template: followup_1
-```
-
----
-
-# 32. Knowledge Layer / RAG
-
-Agents need a controlled business knowledge source.
-
-## 32.1 Knowledge sources
-
-- product catalog,
-- pricing tables,
-- FAQs,
-- policies,
-- troubleshooting guides,
-- onboarding guides,
-- contracts,
-- approved sales collateral,
-- promotion rules,
-- service SLAs,
-- refund policy,
-- delivery information,
-- internal playbooks.
-
-## 32.2 Retrieval flow
-
-```mermaid
-flowchart TD
-    A[Customer Question] --> B[Intent + Entity Extraction]
-    B --> C[Generate Retrieval Query]
-    C --> D[Search Knowledge Index]
-    D --> E[Retrieve Candidate Sources]
-    E --> F[Permission Filter]
-    F --> G[Re-rank]
-    G --> H{Confidence Sufficient?}
-    H -- Yes --> I[Generate Grounded Answer]
-    H -- No --> J[Clarify or Escalate]
-```
-
----
-
-# 33. Knowledge Governance
-
-Every knowledge object should include:
-
-```yaml
-knowledge_item:
-  id: kb_001
-  title: Business Plan Pricing
-  category: pricing
-  version: 4
-  status: approved
-  effective_from: 2026-07-01
-  expires_at: null
-  visibility:
-    - customer
-    - sales
-    - support
-  owner: commercial_team
-```
-
-Never allow obsolete pricing or internal-only content to leak into customer answers.
-
----
-
-# 34. Human-in-the-loop
-
-Human intervention should be a first-class product feature.
-
-## 34.1 Handoff modes
-
-### Mode A — Silent assistance
-
-AI helps the employee but does not talk directly to the customer.
-
-### Mode B — AI first, human escalation
-
-AI handles routine requests and escalates exceptions.
-
-### Mode C — Human first, AI copilot
-
-Human owns the conversation; AI suggests replies and actions.
-
-### Mode D — Fully automated workflow
-
-Used only for approved low-risk tasks.
-
----
-
-# 35. Human Handoff Diagram
-
-```mermaid
-sequenceDiagram
-    participant C as Customer
-    participant A as AI Agent
-    participant CRM as Customer360
-    participant H as Human Agent
-
-    C->>A: Complex / sensitive request
-    A->>A: Evaluate policy + confidence
-
-    alt Escalation required
-        A->>CRM: Save conversation summary
-        A->>CRM: Save recommended next action
-        A->>H: Assign conversation
-        H->>CRM: Open full context
-        H-->>C: Continue conversation
-    else Agent authorized
-        A-->>C: Resolve request
-        A->>CRM: Record outcome
-    end
-```
-
----
-
-# 36. Channels
-
-Recommended supported channels:
-
-## Customer-facing
-
-- website chat,
-- web forms,
-- email,
-- LINE,
-- WhatsApp,
-- Facebook Messenger,
-- Instagram messaging,
-- SMS,
-- mobile app chat,
-- voice.
-
-## Internal
-
-- CRM,
-- Slack / Microsoft Teams,
-- internal dashboard,
-- ticketing system,
-- email notification.
-
----
-
-# 37. Integration Layer
-
-Common integration categories:
-
-### CRM
-- HubSpot
-- Salesforce
-- Zoho
-- custom CRM
-
-### Messaging
-- LINE Messaging API
-- WhatsApp Business
-- Messenger
-- SMS
-- email
-
-### Commerce
-- Shopify
-- WooCommerce
-- custom order system
-
-### Payments
-- Stripe
-- local payment gateway
-- payment link system
-
-### Support
-- Zendesk
-- Freshdesk
-- Jira Service Management
-- custom ticketing
-
-### Calendar
-- Google Calendar
-- Microsoft 365
-
-### Marketing
-- Meta Ads
-- Google Ads
-- email marketing platforms
-- marketing automation platforms
-
----
-
-# 38. Integration Design
-
-Use adapters rather than putting provider logic directly inside agents.
-
-```mermaid
-flowchart TD
-    A[Agent Skill Call] --> B[Integration Service]
-
-    B --> C[CRM Adapter]
-    B --> D[Messaging Adapter]
-    B --> E[Calendar Adapter]
-    B --> F[Ticket Adapter]
-    B --> G[Commerce Adapter]
-
-    C --> C1[HubSpot]
-    C --> C2[Salesforce]
-    C --> C3[Custom CRM]
-
-    D --> D1[LINE]
-    D --> D2[WhatsApp]
-    D --> D3[Email]
-
-    E --> E1[Google Calendar]
-    E --> E2[Microsoft Calendar]
-```
-
----
-
-# 39. Multi-tenant Product Architecture
-
-If this is sold as a package/SaaS, design for multi-tenancy from the beginning.
-
-```text
-Tenant
-  ├── Brand settings
-  ├── Agents
-  ├── Prompts
-  ├── Skills
-  ├── Workflows
-  ├── Knowledge
-  ├── CRM connection
-  ├── Channel connection
-  ├── Product catalog
-  ├── Policies
-  ├── Users
-  └── Analytics
-```
-
----
-
-# 40. Tenant Configuration Example
-
-```yaml
-tenant:
-  id: tenant_abc
-  name: ABC Manufacturing
-
-  brand:
-    language_default: th
-    tone: professional
-
-  agents:
-    marketing: enabled
-    sales: enabled
-    support: enabled
-    retention: enabled
-
-  channels:
-    website: enabled
-    line: enabled
-    whatsapp: false
-    email: enabled
-
-  crm:
-    provider: hubspot
-
-  policies:
-    max_auto_discount: 10
-    refund_requires_human: true
-    cancellation_requires_human: true
-
-  business_hours:
-    timezone: Asia/Bangkok
-    mon_fri: "08:30-17:30"
-```
-
----
-
-# 41. AI Guardrails
-
-Guardrails should exist outside the prompt.
-
-## 41.1 Required controls
-
-- tool permission checks,
-- role-based access,
-- approval workflows,
-- per-customer frequency limits,
-- identity verification,
-- PII handling rules,
-- retrieval permissions,
-- response confidence threshold,
-- policy validation,
-- rate limiting,
-- audit logging,
-- prompt-injection filtering,
-- content moderation,
-- tenant isolation.
-
----
-
-# 42. Decision Policy
-
-Example decision structure:
-
-```yaml
-decision:
-  intent: refund_request
-  confidence: 0.94
-
-  customer:
-    verified: true
-
-  policy:
-    auto_refund_allowed: false
-
-  next_action:
-    type: human_handoff
-    team: billing
-
-  agent_message:
-    allowed: true
-    purpose: acknowledge_and_collect_details
-```
-
----
-
-# 43. Customer Identity Resolution
-
-A single customer may contact the company from multiple channels.
-
-Identity resolution should support:
-
-```text
-Phone
-Email
-LINE user ID
-WhatsApp ID
-Facebook ID
-CRM ID
-Account ID
-Order ID
-```
-
-## Identity flow
-
-```mermaid
-flowchart TD
-    A[Incoming Contact] --> B[Channel Identifier]
-    B --> C{Exact Customer Match?}
-
-    C -- Yes --> D[Load Customer360]
-
-    C -- No --> E{Possible Match?}
-    E -- Yes --> F[Verify Identity]
-    F --> G[Merge / Link Identity]
-
-    E -- No --> H[Create New Prospect]
-
-    G --> D
-    H --> I[New Customer360 Record]
-```
-
----
-
-# 44. Analytics
-
-The dashboard should focus on business outcomes.
-
-## 44.1 Executive KPIs
-
-```text
-Revenue influenced by AI
-Pipeline created
-Qualified leads
-Appointments booked
-Opportunities won
-Average sales cycle
-AI-assisted conversion rate
-AI-resolved support rate
-Average first response time
-Escalation rate
-CSAT
-Retention rate
-Expansion revenue
-Cost per conversation
-Cost per qualified lead
-```
-
----
-
-# 45. Marketing Dashboard
-
-Suggested metrics:
-
-- leads by source,
-- cost per lead,
-- campaign conversion,
-- MQL count,
-- MQL-to-SQL rate,
-- engagement rate,
-- nurture conversion,
-- reactivation rate,
-- channel performance.
-
----
-
-# 46. Sales Dashboard
-
-Suggested metrics:
-
-- new opportunities,
-- qualified opportunities,
-- pipeline value,
-- meetings booked,
-- quotation value,
-- win rate,
-- average deal size,
-- average response time,
-- follow-up completion,
-- sales cycle length,
-- AI-generated revenue influence.
-
----
-
-# 47. Support Dashboard
-
-Suggested metrics:
-
-- ticket volume,
-- AI resolution rate,
-- human escalation rate,
-- first response time,
-- resolution time,
-- reopen rate,
-- CSAT,
-- SLA compliance,
-- top support topics,
-- knowledge gaps.
-
----
-
-# 48. Agent Performance Dashboard
-
-```text
-Agent                    Marketing     Sales     Support
----------------------------------------------------------
-Conversations                 1,240       860       2,980
-Completed workflows             430       240       2,310
-Human escalations                22        46         410
-Success rate                   78%        67%         81%
-Avg latency                   3.1s       3.8s        2.9s
-Avg AI cost                 $0.08      $0.14       $0.06
-```
-
----
-
-# 49. Full Customer Lifecycle Diagram
-
-```mermaid
-flowchart LR
-
-    AWARE[Awareness] --> ENGAGE[Engagement]
-    ENGAGE --> LEAD[Lead]
-    LEAD --> MQL[MQL]
-    MQL --> SQL[SQL]
-    SQL --> OPP[Opportunity]
-    OPP --> PROPOSAL[Proposal]
-    PROPOSAL --> WON[Won]
-    WON --> ONBOARD[Onboarding]
-    ONBOARD --> ACTIVE[Active Customer]
-    ACTIVE --> SUPPORT[Support]
-    SUPPORT --> RENEW[Renewal]
-    ACTIVE --> EXPAND[Upsell / Cross-sell]
-    RENEW --> ACTIVE
-    EXPAND --> ACTIVE
-    ACTIVE --> ADVOCATE[Referral / Advocacy]
-
-    OPP --> LOST[Lost]
-    PROPOSAL --> LOST
-    LOST --> REACT[Reactivation]
-    REACT --> MQL
-```
-
----
-
-# 50. Recommended Product Modules
-
-```text
-AgentOS Customer360
-│
-├── 1. Customer360
-│   ├── Contacts
-│   ├── Companies
-│   ├── Conversation history
-│   ├── Orders
-│   ├── Opportunities
-│   └── Support history
-│
-├── 2. AI Agents
-│   ├── Supervisor
-│   ├── Marketing
-│   ├── Sales
-│   ├── Support
-│   └── Retention
-│
-├── 3. Workflow Engine
-│   ├── Triggers
-│   ├── Conditions
-│   ├── Actions
-│   ├── Timers
-│   └── Human approvals
-│
-├── 4. Knowledge Hub
-│   ├── Documents
-│   ├── Product catalog
-│   ├── Pricing
-│   ├── FAQ
-│   └── Policies
-│
-├── 5. Communication Hub
-│   ├── Web Chat
-│   ├── LINE
-│   ├── WhatsApp
-│   ├── Facebook
-│   └── Email
-│
-├── 6. Integrations
-│   ├── CRM
-│   ├── Calendar
-│   ├── Ticketing
-│   ├── Commerce
-│   └── Payment
-│
-└── 7. Analytics
-    ├── Marketing
-    ├── Sales
-    ├── Support
-    ├── Agent performance
-    └── Revenue attribution
-```
-
----
-
-# 51. Recommended MVP
-
-Do not build the entire vision initially.
-
-The recommended MVP is:
-
-```text
-Inbound Chat / Lead Form
-        ↓
-Customer360
-        ↓
-Supervisor Agent
-        ↓
-Sales Qualification
-        ↓
-Product Recommendation
-        ↓
-Meeting Booking / Human Handoff
-        ↓
-CRM Update
-        ↓
-Follow-up Automation
-        ↓
-Basic Support Agent
-```
-
-## MVP Features
-
-### Required
-
-- web chat,
-- LINE or primary messaging channel,
-- customer identification,
-- Customer360,
-- product/FAQ knowledge base,
-- supervisor routing,
-- sales qualification,
-- lead score,
-- meeting booking,
-- CRM sync,
-- follow-up workflow,
-- support FAQ,
-- human handoff,
-- analytics dashboard,
-- conversation audit logs.
-
-### Post-MVP
-
-- campaign generation,
-- ad integrations,
-- voice agent,
-- advanced lead scoring,
-- churn prediction,
-- automated quotation,
-- payment automation,
-- advanced ticketing,
-- predictive next-best-action.
-
----
-
-# 52. MVP Architecture
-
-```mermaid
-flowchart TB
-    WEB[Web Chat] --> API[Conversation API]
-    LINE[LINE] --> API
-
-    API --> SUP[Supervisor Agent]
-
-    SUP --> SALES[Sales Agent]
-    SUP --> SUPPORT[Support Agent]
-
-    SALES --> CRM[CRM Skill]
-    SALES --> CAL[Calendar Skill]
-    SALES --> KB[Knowledge Skill]
-
-    SUPPORT --> KB
-    SUPPORT --> TICKET[Human Handoff / Ticket]
-
-    CRM --> C360[(Customer360)]
-    KB --> VECTOR[(Knowledge Index)]
-
-    SUP --> EVENTS[(Event Store)]
-    EVENTS --> WF[Workflow Engine]
-    WF --> MSG[Messaging Service]
-
-    MSG --> WEB
-    MSG --> LINE
-```
-
----
-
-# 53. Product Packaging
-
-## Package A — Lead Agent
-
-Target:
-
-- small businesses,
-- service businesses,
-- companies needing lead capture.
-
-Includes:
-
-- website chat,
-- lead capture,
-- FAQ,
-- product recommendation,
-- qualification,
-- CRM integration,
-- human handoff.
-
-Primary KPI:
-
-> Qualified leads generated.
-
----
-
-# 54. Package B — Sales Automation
-
-Includes Package A plus:
-
-- automated follow-up,
-- appointment booking,
-- opportunity pipeline,
-- quotations,
-- lead scoring,
-- sales notifications,
-- sales summaries,
-- next-best-action.
-
-Primary KPI:
-
-> Pipeline and sales conversion.
-
----
-
-# 55. Package C — Customer Support AI
-
-Includes:
-
-- support agent,
-- knowledge base,
-- customer lookup,
-- ticket creation,
-- issue classification,
-- troubleshooting workflows,
-- human escalation,
-- SLA monitoring,
-- support analytics.
-
-Primary KPI:
-
-> Automated resolution rate and support cost.
-
----
-
-# 56. Package D — Customer Lifecycle Platform
-
-Includes:
-
-- Marketing Agent,
-- Sales Agent,
-- Support Agent,
-- Retention Agent,
-- Customer360,
-- CRM,
-- automation,
-- knowledge hub,
-- analytics,
-- multi-channel communication.
-
-Primary KPI:
-
-> Revenue growth + operational efficiency.
-
----
-
-# 57. Suggested Commercial Model
-
-Possible pricing structure:
-
-```text
-Platform Fee
-+
-Agent Modules
-+
-Channel Connectors
-+
-AI Usage
-+
-Automation Volume
-+
-Premium Integrations
-+
-Implementation / Customization
-```
-
-Example:
-
-```text
-Base Platform
-├── Customer360
-├── Workflow Engine
-└── Analytics
-
-Add-ons
-├── Marketing Agent
-├── Sales Agent
-├── Support Agent
-├── Retention Agent
-├── LINE connector
-├── WhatsApp connector
-├── CRM connector
-└── Advanced analytics
-```
-
-For early deployments, implementation revenue can be significant.
-
----
-
-# 58. Vertical Product Strategy
-
-A vertical product is easier to sell than a generic "AI agent platform."
-
----
-
-# 59. Property / Real Estate
-
-```text
-Campaign
-  ↓
-Buyer Lead
-  ↓
-Budget Qualification
-  ↓
-Location / Property Preference
-  ↓
-Property Recommendation
-  ↓
-Viewing Booking
-  ↓
-Sales Agent
-  ↓
-Reservation
-  ↓
-Payment / Documentation Support
-```
-
-Important skills:
-
-- property search,
-- viewing booking,
-- availability,
-- financing calculator,
-- sales handoff,
-- document checklist.
-
----
-
-# 60. Automotive Dealer
-
-```text
-Campaign
-  ↓
-Model Interest
-  ↓
-Budget / Financing
-  ↓
-Vehicle Recommendation
-  ↓
-Test Drive
-  ↓
-Quotation
-  ↓
-Purchase
-  ↓
-Service Booking
-  ↓
-Maintenance Reminder
-```
-
----
-
-# 61. Clinic
-
-```text
-Campaign
-  ↓
-Treatment Inquiry
-  ↓
-Basic Qualification
-  ↓
-Consultation Booking
-  ↓
-Human Medical Professional
-  ↓
-Appointment
-  ↓
-Post-visit Instructions
-  ↓
-Follow-up
-```
-
-Clinical/medical decision-making should remain under appropriate professional controls.
-
----
-
-# 62. B2B Distributor
-
-```text
-Inbound Product Inquiry
-  ↓
-Product Matching
-  ↓
-Quantity / Specification
-  ↓
-Price / Availability
-  ↓
-Quotation
-  ↓
-Sales Approval
-  ↓
-Order
-  ↓
-Delivery Tracking
-  ↓
-Technical Support
-  ↓
-Reorder Reminder
-```
-
----
-
-# 63. Example Sales Agent System Contract
-
-Conceptual structure:
-
-```yaml
-agent:
-  id: sales_agent
-
-  objective:
-    "Convert qualified prospects into clear next commercial actions."
-
-  permissions:
-    - customer.read
-    - customer.write_sales_fields
-    - catalog.read
-    - pricing.read
-    - opportunity.create
-    - opportunity.update
-    - calendar.book
-    - quotation.generate
-    - message.send
-
-  forbidden:
-    - unauthorized_discount
-    - refund_issue
-    - contract_cancellation
-    - policy_override
-
-  escalation:
-    - low_confidence
-    - enterprise_deal
-    - customer_requests_human
-    - exception_pricing
-```
-
----
-
-# 64. Agent Response Pipeline
-
-Every agent response should go through this pipeline:
-
-```mermaid
-flowchart LR
-    A[Input] --> B[Identity]
-    B --> C[Context Assembly]
-    C --> D[Intent]
-    D --> E[Policy Check]
-    E --> F[Retrieve Knowledge]
-    F --> G[Agent Reasoning]
-    G --> H{Tool Needed?}
-    H -- Yes --> I[Tool Authorization]
-    I --> J[Execute Tool]
-    J --> K[Validate Result]
-    H -- No --> L[Draft Response]
-    K --> L
-    L --> M[Response Validation]
-    M --> N[Send]
-    N --> O[Log + Update Customer360]
-```
-
----
-
-# 65. Agent Confidence
-
-A simple confidence model can combine:
-
-```text
-Intent confidence
-+
-Knowledge retrieval confidence
-+
-Customer identity confidence
-+
-Tool result confidence
-+
-Policy certainty
-```
-
-Example:
-
-```yaml
-confidence:
-  intent: 0.96
-  identity: 1.00
-  knowledge: 0.88
-  policy: 1.00
-  overall: 0.91
-```
-
-If overall confidence falls below a configured threshold, ask a clarifying question or escalate.
-
----
-
-# 66. Audit Log
-
-Every material agent action should produce a record:
-
-```yaml
-audit_event:
-  timestamp: "2026-09-09T10:15:00+07:00"
-  tenant_id: tenant_abc
-  customer_id: cust_12345
-  conversation_id: conv_881
-  agent: sales_agent
-
-  action:
-    type: quotation.generate
-
-  inputs:
-    product: business_plan
-    users: 30
-
-  policy:
-    approved: true
-
-  outcome:
-    quotation_id: Q-2026-00981
-
-  human_approval:
-    required: false
-```
-
----
-
-# 67. Observability
-
-Track technical and business metrics.
-
-## Technical
-
-- API latency,
-- LLM latency,
-- tool latency,
-- tool failure rate,
-- token usage,
-- cost per interaction,
-- queue depth,
-- workflow failures,
-- retrieval hit rate,
-- hallucination incidents.
-
-## Business
-
-- lead conversion,
-- qualification accuracy,
-- human escalation,
-- revenue influenced,
-- automated support resolution,
-- CSAT,
-- churn,
-- expansion.
-
----
-
-# 68. Failure Handling
-
-Every external action should support:
-
-- retry,
-- timeout,
-- idempotency,
-- compensation when possible,
-- failure notification,
-- dead-letter queue,
-- audit logging.
-
-Example:
-
-```text
-Generate Quote
-   ↓
-CRM API timeout
-   ↓
-Retry
-   ↓
-Still fails
-   ↓
-Create workflow exception
-   ↓
-Notify internal operator
-   ↓
-Do not tell customer the quote was successfully created
-```
-
----
-
-# 69. Recommended Technical Services
-
-A logical deployment might contain:
-
-```text
-API Gateway
-Identity Service
-Conversation Service
-Agent Orchestrator
-Agent Runtime
-Skill / Tool Service
-Workflow Engine
-Customer360 Service
-CRM Sync Service
-Knowledge Service
-Search / Vector Service
-Messaging Service
-Notification Service
-Analytics Pipeline
-Admin Portal
-Agent Console
-Observability Stack
-```
-
----
-
-# 70. Reference Deployment Diagram
-
-```mermaid
-flowchart TB
-
-    CDN[CDN / Edge] --> API[API Gateway]
-
-    API --> CONV[Conversation Service]
-    API --> ADMIN[Admin API]
-
-    CONV --> ORCH[Agent Orchestrator]
-    ORCH --> LLM[LLM Provider]
-    ORCH --> TOOL[Skill / Tool Service]
-    ORCH --> KNOW[Knowledge Service]
-
-    TOOL --> WF[Workflow Engine]
-    TOOL --> INT[Integration Service]
-
-    INT --> CRMEXT[External CRM]
-    INT --> MSGEXT[Messaging APIs]
-    INT --> CAL_EXT[Calendar]
-    INT --> TICKET_EXT[Ticketing]
-    INT --> PAY_EXT[Payment]
-
-    ORCH --> C360[Customer360 Service]
-    C360 --> DB[(Relational DB)]
-
-    KNOW --> VDB[(Vector / Search Index)]
-    KNOW --> OBJ[(Document Storage)]
-
-    WF --> QUEUE[(Queue / Event Bus)]
-    QUEUE --> WORKER[Workflow Workers]
-
-    CONV --> EVENT[(Event Store)]
-    TOOL --> EVENT
-    WF --> EVENT
-
-    EVENT --> ANALYTICS[Analytics Pipeline]
-    ANALYTICS --> DW[(Analytics DB / Warehouse)]
-    DW --> DASH[Dashboard]
-```
-
----
-
-# 71. Recommended Data Stores
-
-Possible logical split:
-
-| Data | Store |
+| Knowledge source | Use |
 |---|---|
-| customers / CRM entities | relational DB |
-| opportunities | relational DB |
-| tickets | relational DB |
-| workflows | relational DB |
-| conversation messages | relational DB / document store |
-| documents | object storage |
-| embeddings / retrieval | vector or hybrid search index |
-| events | event log |
-| analytics | warehouse / columnar DB |
-| sessions / cache | Redis-like cache |
+| Approved product and sales material | Product explanations, comparisons, onboarding |
+| FAQ and troubleshooting guides | Routine support and resolution steps |
+| Policies and service documentation | Approved customer explanations, delivery terms, SLA information |
+| Internal playbooks | Staff-only guidance, restricted by role |
 
-Avoid storing important business state only inside vector memory.
+Retrieval flow: `Question → Tenant/permission filter → Search → Current approved sources → Grounded answer`.
 
----
+Each knowledge item has an owner, version, approval status, effective/expiry dates, and visibility. Exclude outdated or unauthorized sources. Use live catalog data for prices and eligibility; descriptive documents cannot override executable business rules.
 
-# 72. Admin Portal
+Build a bounded context bundle:
 
-The admin portal should allow a client to manage:
+`Recent messages + Summary + Verified facts + Active workflow + Relevant business records + Retrieved sources`
 
-- company profile,
-- business hours,
-- users,
-- agent activation,
-- channel connections,
-- CRM connections,
-- product catalog,
-- price list,
-- knowledge documents,
-- workflows,
-- escalation rules,
-- messaging templates,
-- permissions,
-- dashboards,
-- audit logs.
+Keep references to supporting sources. If identity, retrieval evidence, tool results, or policy certainty are insufficient, clarify or escalate. Do not treat a model's self-reported confidence as proof of correctness.
 
----
+## 13. Workflow Engine
 
-# 73. Agent Builder
+**AI understands the situation and proposes actions. The Workflow Engine controls the business process.**
+Rules, permissions, transitions, timers, and stop conditions must exist outside prompts.
 
-Future product feature:
-
-```text
-Create Agent
-  ↓
-Choose Role
-  ↓
-Choose Skills
-  ↓
-Choose Knowledge Sources
-  ↓
-Choose Allowed Channels
-  ↓
-Set Escalation Policy
-  ↓
-Set KPIs
-  ↓
-Test
-  ↓
-Publish
-```
-
----
-
-# 74. Workflow Builder
-
-A no-code interface can represent:
-
-```text
-WHEN
-  Lead score > 80
-
-AND
-  Customer has not replied in 24 hours
-
-THEN
-  Send personalized message
-
-WAIT
-  24 hours
-
-IF
-  Customer replies
-    → Route to Sales
-ELSE
-    → Send follow-up #2
-```
-
----
-
-# 75. Customer Journey Builder
-
-A visual journey layer can sit above workflows.
-
-Example:
-
-```text
-NEW LEAD
-   |
-   +-- No product interest
-   |      → Education sequence
-   |
-   +-- Product interest known
-   |      → Qualification
-   |
-   +-- High intent
-          → Sales Agent
-              |
-              +-- Qualified
-              |      → Demo / Quote
-              |
-              +-- Not ready
-                     → Nurture
-```
-
----
-
-# 76. Data Ownership
-
-The platform should make clear:
-
-- customer data belongs to the tenant,
-- tenant data is isolated,
-- customer consent is respected,
-- data retention is configurable,
-- agent activity is auditable,
-- external integrations use minimum required permissions.
-
----
-
-# 77. Security Architecture
-
-Minimum capabilities:
-
-- encryption in transit,
-- encryption at rest,
-- tenant isolation,
-- RBAC,
-- SSO for enterprise,
-- MFA for administrators,
-- secrets vault,
-- API key rotation,
-- webhook verification,
-- rate limiting,
-- audit trails,
-- field-level permissions,
-- data retention controls,
-- access logging.
-
----
-
-# 78. Role Model
-
-Example:
-
-```text
-Owner
-  └── full tenant access
-
-Administrator
-  ├── agents
-  ├── workflows
-  ├── integrations
-  └── users
-
-Marketing Manager
-  ├── campaigns
-  ├── leads
-  └── marketing analytics
-
-Sales Manager
-  ├── opportunities
-  ├── quotations
-  └── sales analytics
-
-Sales Representative
-  └── assigned leads / deals
-
-Support Manager
-  ├── tickets
-  └── support analytics
-
-Support Agent
-  └── assigned customer cases
-
-Analyst
-  └── read-only analytics
-```
-
----
-
-# 79. Testing Strategy
-
-## 79.1 Agent evaluation
-
-Create test cases such as:
-
-```yaml
-test:
-  input: "Can you give me a 30% discount?"
-  customer:
-    tier: standard
-
-  expected:
-    must_not:
-      - promise_discount
-      - modify_price
-
-    must:
-      - explain_approval_requirement
-      - offer_standard_pricing_or_handoff
-```
-
-## 79.2 Evaluation categories
-
-- intent accuracy,
-- correct routing,
-- grounded answer rate,
-- correct tool selection,
-- policy compliance,
-- escalation accuracy,
-- sales qualification completion,
-- support resolution quality,
-- tone,
-- multilingual quality.
-
----
-
-# 80. Golden Conversation Tests
-
-Keep fixed conversations representing important scenarios.
-
-Examples:
-
-- new cold lead,
-- hot enterprise lead,
-- price objection,
-- unsupported discount,
-- quotation request,
-- scheduling conflict,
-- unhappy customer,
-- refund request,
-- technical issue,
-- product outage,
-- cancellation,
-- upsell opportunity,
-- multilingual conversation.
-
-Run these tests whenever prompts, tools, or workflows change.
-
----
-
-# 81. Rollout Strategy
-
-## Phase 1 — Shadow
-
-AI observes conversations and proposes actions.
-
-No customer-facing automation.
-
-## Phase 2 — Copilot
-
-Human sees suggested responses and actions.
-
-Human approves.
-
-## Phase 3 — Controlled automation
-
-AI handles low-risk flows automatically.
-
-## Phase 4 — Expanded autonomy
-
-More workflows are automated when performance is proven.
-
----
-
-# 82. Implementation Roadmap
-
-## Phase 0 — Product Definition
-
-Deliver:
-
-- target vertical,
-- ideal customer profile,
-- top 20 customer intents,
-- CRM strategy,
-- primary channel,
-- pricing model,
-- success metrics.
-
----
-
-## Phase 1 — Customer360 Foundation
-
-Build:
-
-- tenant model,
-- customer identity,
-- contacts,
-- companies,
-- conversations,
-- events,
-- audit logs.
-
----
-
-## Phase 2 — Knowledge Layer
-
-Build:
-
-- document ingestion,
-- product catalog,
-- pricing,
-- FAQ,
-- policy knowledge,
-- retrieval,
-- source/version control.
-
----
-
-## Phase 3 — Supervisor + Sales MVP
-
-Build:
-
-- intent routing,
-- lead qualification,
-- product recommendation,
-- CRM actions,
-- booking,
-- human handoff.
-
----
-
-## Phase 4 — Workflow Automation
-
-Build:
-
-- trigger system,
-- conditions,
-- actions,
-- wait timers,
-- follow-up sequences,
-- workflow logs.
-
----
-
-## Phase 5 — Customer Support
-
-Build:
-
-- troubleshooting,
-- ticketing,
-- support classification,
-- escalation,
-- CSAT.
-
----
-
-## Phase 6 — Marketing
-
-Build:
-
-- campaign content,
-- segmentation,
-- nurture,
-- source attribution,
-- marketing analytics.
-
----
-
-## Phase 7 — Retention
-
-Build:
-
-- renewal,
-- churn signals,
-- reactivation,
-- upsell signals,
-- expansion opportunities.
-
----
-
-# 83. Recommended First Vertical
-
-Select a vertical where:
-
-- there are many inbound inquiries,
-- qualification is repetitive,
-- sales value is meaningful,
-- customer support is repetitive,
-- appointment or quotation workflows exist,
-- businesses already use online channels,
-- conversion can be measured.
-
-Strong examples:
-
-- property,
-- automotive,
-- education,
-- B2B distribution,
-- SaaS,
-- professional services,
-- selected clinic/non-diagnostic administrative workflows.
-
----
-
-# 84. Product Moat
-
-The long-term moat is not the underlying LLM.
-
-It is:
-
-```text
-Vertical Workflows
-+
-Customer360
-+
-Integrations
-+
-Business Knowledge
-+
-Reusable Skills
-+
-Automation History
-+
-Outcome Analytics
-+
-Deployment Experience
-```
-
-A client can access a general AI model easily.
-
-It is much harder to reproduce a production-grade system connected to their actual customer lifecycle.
-
----
-
-# 85. Sample End-to-End Scenario
-
-## Scenario
-
-A customer discovers the company from Facebook, asks about a product, books a demo, purchases, later opens a support ticket, and eventually upgrades.
-
-### Step 1 — Marketing
-
-```text
-Facebook Campaign
-→ Landing Page
-→ Chat opens
-→ Lead captured
-→ Source = Facebook Campaign A
-→ Interest = Business Package
-```
-
-### Step 2 — Qualification
-
-```text
-Sales Agent asks:
-- Company size?
-- Current problem?
-- Budget?
-- Timeline?
-- Decision process?
-
-Lead score = 86
-→ Sales Qualified
-```
-
-### Step 3 — Conversion
-
-```text
-Sales Agent
-→ recommends Business Package
-→ books demo
-→ creates CRM opportunity
-→ generates meeting summary
-→ human salesperson completes demo
-→ quotation issued
-→ customer accepts
-```
-
-### Step 4 — Onboarding
-
-```text
-Purchase event
-→ Support Agent onboarding workflow
-→ setup guide
-→ account activation
-→ adoption check
-```
-
-### Step 5 — Support
-
-```text
-Customer reports issue
-→ Support Agent loads account
-→ retrieves troubleshooting steps
-→ issue unresolved
-→ ticket created
-→ human receives AI summary
-→ issue resolved
-```
-
-### Step 6 — Expansion
-
-```text
-Customer usage increases
-→ expansion signal
-→ Retention Agent detects opportunity
-→ Sales opportunity created
-→ Sales Agent contacts customer
-→ Enterprise upgrade
-```
-
----
-
-# 86. End-to-End Scenario Diagram
-
-```mermaid
-sequenceDiagram
-    participant Ads as Marketing Channel
-    participant M as Marketing Agent
-    participant D as Customer360
-    participant S as Sales Agent
-    participant H as Human Sales
-    participant P as Support Agent
-    participant R as Retention Agent
-
-    Ads->>M: New inbound lead
-    M->>D: Create lead + source
-    M->>M: Nurture + score
-
-    M->>S: Lead score 86
-    S->>D: Create opportunity
-    S->>S: Qualification
-    S->>H: Book demo + handoff
-    H->>D: Update result
-    H->>D: Opportunity won
-
-    D->>P: Purchase event
-    P->>P: Onboarding workflow
-
-    P->>D: Save support activity
-    D->>R: Expansion signal
-
-    R->>S: Create upsell opportunity
-    S->>H: Schedule expansion call
-```
-
----
-
-# 87. Recommended Product Homepage Structure
-
-```text
-Hero
-"Turn every customer conversation into a business outcome."
-
-↓
-Problem
-"Leads are missed. Follow-up is inconsistent.
-Support teams repeat the same answers."
-
-↓
-Solution
-One Customer360 + AI agents for Marketing, Sales and Support.
-
-↓
-How it works
-Capture → Qualify → Sell → Support → Retain
-
-↓
-Modules
-Marketing AI
-Sales AI
-Support AI
-Customer360
-Automation
-Analytics
-
-↓
-Integrations
-
-↓
-Use Cases by Industry
-
-↓
-ROI / Metrics
-
-↓
-Demo / Contact
-```
-
----
-
-# 88. Internal Product KPI Tree
+Example — an eligible hot lead:
 
 ```mermaid
 flowchart TD
-
-    A[Customer Business Value] --> B[Revenue Growth]
-    A --> C[Operational Efficiency]
-    A --> D[Customer Experience]
-
-    B --> B1[More Qualified Leads]
-    B --> B2[Higher Conversion]
-    B --> B3[Upsell / Retention]
-
-    C --> C1[Automation Rate]
-    C --> C2[Lower Handling Time]
-    C --> C3[Fewer Manual Follow-ups]
-
-    D --> D1[Faster Response]
-    D --> D2[Higher Resolution Rate]
-    D --> D3[Higher CSAT]
+    Score["Lead Score > 80 and required qualification complete"] --> Opportunity["Create or reuse Opportunity"]
+    Opportunity --> Notify["Notify Sales"]
+    Notify --> Check["Check outreach eligibility and stop conditions"]
+    Check --> Send["Send Follow-up"]
+    Send --> Wait["Wait 24h"]
+    Wait --> Response{"No response?"}
+    Response -->|Yes| Recheck["Recheck outreach eligibility"]
+    Recheck --> Second["Follow-up 2 if still allowed"]
+    Response -->|No| Resume["Stop sequence and route reply"]
 ```
 
----
+A failed eligibility check ends the outbound path; it does not send a message.
 
-# 89. MVP Success Criteria
+| Workflow element | Contract |
+|---|---|
+| Trigger | A recorded event such as `lead.qualified`, `quotation.sent`, `payment.completed`, `ticket.resolved`, or `customer.upsell_signal` |
+| State | Persist current step, owner, next run time, and terminal outcome |
+| Conditions | Evaluate configured qualification, eligibility, policy, and current customer state |
+| Actions | Call approved skills and save verified results |
+| Timers and approvals | Resume durably after a wait or explicit human decision |
+| Event record | Include event ID, tenant/customer IDs, timestamp, source, and correlation ID |
 
-A first production implementation should define measurable targets.
+Stop the active sales/nurture sequence after opt-out, a customer reply, its opportunity reaching Won/Lost, or human takeover. Other lifecycle workflows need their own eligibility checks; do not implicitly restart a stopped sequence. Every send must respect purpose-specific consent, channel restrictions, business hours/timezone, frequency caps, and active human ownership; recheck immediately before sending and log the outcome.
 
-Example:
+## 14. Human-in-the-loop
 
-```text
-Lead first response:
-< 30 seconds
+Flow: `Agent → Policy → Approval/Handoff → Human → Recorded decision`.
 
-Lead qualification completion:
-> 60%
+| Mandatory human involvement | AI may do before handoff |
+|---|---|
+| High-value deal | Collect qualification and prepare the commercial summary |
+| Custom pricing or discount outside policy | Retrieve standard prices and submit an approval request |
+| Refund or cancellation | Verify identity, collect reasons, explain the process, create the request |
+| Legal or security issue | Acknowledge and route to the responsible team |
+| Low confidence, repeated failure, or SLA risk | Preserve evidence and recommend a next step |
+| Customer requests a human | Transfer without forcing further AI troubleshooting |
 
-Meeting booking conversion:
-> baseline + 20%
+High-value thresholds, discount limits, minimum evidence/confidence thresholds, and maximum failed troubleshooting steps are tenant configuration. No response from an approver is not approval.
 
-Human sales time spent on repetitive qualification:
--30%
+Supported modes: shadow/silent assistance, human-first copilot, AI-first with escalation, and approved low-risk automation. If a human is unavailable, acknowledge the pending request, retain an accountable queue/owner, and apply the configured business-hours response.
 
-Routine support automation:
-> 50%
+## 15. Integrations
 
-Support first response:
-< 30 seconds
+| Category | Purpose |
+|---|---|
+| CRM | Contacts, qualification, opportunities, ownership, sales outcomes |
+| LINE | Customer messages and channel identity |
+| WhatsApp | Customer messages and channel identity |
+| Facebook | Messenger, lead forms, and source attribution |
+| Email | Conversations and permitted follow-up |
+| Calendar | Availability, booking, cancellation/rescheduling |
+| Payment | Approved payment links and confirmed payment/refund status |
+| E-commerce | Catalog/availability, orders, delivery, subscriptions where supported |
+| Ticketing | Cases, assignment, status, resolution |
+| Ads | Campaign/source metadata, spend, and permitted outcome feedback |
 
-Human handoff summary completeness:
-> 95%
+Outbound integration actions use `Agent / Workflow → Approved Skill → Adapter → Provider`. Provider-specific authentication, field mapping, API details, and inbound webhook normalization stay in adapters, not agent prompts.
 
-Agent policy compliance:
-> 99%
+Start with one CRM and one calendar provider. Additional channels, including Instagram, SMS, mobile chat, and voice, are later adapters; internal alerts can use the operator console or connected messaging tools.
 
-Critical unauthorized actions:
-0
+## 16. Security, Reliability, and Operations
+
+| Area | Minimum design requirement |
+|---|---|
+| Tenant and data ownership | Tenant owns its data; enforce isolation in records, retrieval, files, queues, and analytics; configure retention/export/deletion |
+| Access control | Role- and field-level permissions; least-privilege tools; assigned-deal/case access; admin MFA; enterprise SSO when required |
+| Data and credentials | Encrypt in transit/at rest; protect and rotate secrets; verify webhooks; redact sensitive logs |
+| Agent guardrails | Treat messages, documents, and tool output as untrusted input; prevent instructions in content from granting permissions; validate outbound responses |
+| Action authorization | Check identity, tenant, tool schema, policy, approval, and rate limits at execution time |
+| Delivery reliability | Timeouts, bounded retries, idempotency keys, durable events, and dead-letter/manual exception queues |
+| Partial failure | Reconcile uncertain outcomes before retrying; compensate only through an authorized action |
+| Audit | Record actor, tenant/customer/conversation, action, policy/config version, approval, result, timestamp, and correlation ID |
+| Observability | Track latency, tool/workflow failures, queue health, retrieval gaps, incidents, token usage, and cost per interaction |
+
+Use roles such as Owner, Administrator, Marketing/Sales/Support Manager, assigned Sales/Support staff, and read-only Analyst.
+
+Never tell a customer that a booking, quote, payment, or ticket succeeded until the relevant system confirms it. If a provider times out after possibly accepting a write, look up the result before retrying.
+
+## 17. Product and Business Configuration
+
+Use the same Sales Agent with different data and qualification definitions.
+
+```mermaid
+flowchart TD
+    Core["AgentOS Core"] --> Template["Industry Template"]
+    Template --> Client["Client Configuration"]
 ```
 
-Targets should be adjusted per industry and baseline.
+| Industry template | Qualification fields | Typical next action |
+|---|---|---|
+| SaaS | Users, need, budget, authority, timeline | Demo, trial, subscription proposal |
+| Automotive | Model, budget, financing, purchase timeline | Vehicle recommendation and test drive |
+| Real Estate | Location, budget, property type, buying timeline | Property shortlist and viewing |
+| B2B Distribution | Specification, quantity, budget, delivery timeline | Availability check and approved quote |
+| Clinic administration | Service inquiry, appointment preference, contact details | Consultation booking and professional handoff |
 
----
+Clinic templates cover administrative workflows; clinical decisions remain with qualified professionals.
 
-# 90. Recommended Build Order
+**Do not hard-code product logic directly in agent prompts.** Prompts define the role and interaction boundaries; structured configuration defines questions, fields, process choices, and rules.
 
-If engineering resources are limited:
+A deployment bundle contains the selected template, catalog, approved knowledge, workflow definitions, provider mappings, channel settings, policies, and evaluation cases. Version it, validate it, test it, obtain owner approval, and publish it with a rollback path.
 
-```text
-1. Customer360
-2. Conversation Gateway
-3. Knowledge Base
-4. Supervisor Agent
-5. Sales Agent
-6. Human Handoff
-7. CRM Integration
-8. Workflow Engine
-9. Analytics
-10. Support Agent
-11. Marketing Automation
-12. Retention Agent
+## 18. Product Catalog
+
+Sales must retrieve products and current approved commercial terms from the Product Catalog.
+
+```yaml
+product:
+  id: business_plan
+  name: Business
+  category: saas
+  price: {amount: 25, currency: USD, unit: user_per_month}
+  description: Shared workspace for growing teams
+  eligibility: {min_users: 10, max_users: 100}
+  promotion: {id: null, discount_percent: 0}
 ```
 
-This order creates a usable revenue-focused MVP before building the full platform.
+Recommendation flow:
 
----
+`Customer Need → Search Catalog → Filter → Recommend`
 
-# 91. Final Recommended System
+Filter by requirements, budget, eligibility, availability, and effective promotion rules. Explain the fit and trade-offs; do not invent an option when none qualifies.
 
-The most commercially useful version is:
+Maintain product/version IDs, currency, billing units, applicable taxes/fees, availability, and effective dates in production data. Revalidate terms before issuing a quote and save a price/version snapshot. Exceptions go through Section 14.
 
-```text
-                    AgentOS Customer360
-                           │
-                    Customer Journey
-                           │
-       ┌───────────────────┼───────────────────┐
-       │                   │                   │
-   Marketing             Sales              Support
-       │                   │                   │
-       └───────────────────┼───────────────────┘
-                           │
-                    Retention / Growth
-                           │
-                    Shared Customer360
-                           │
-       ┌───────────────────┼───────────────────┐
-       │                   │                   │
-   Knowledge            Workflow           Integrations
-       │                   │                   │
-       └───────────────────┼───────────────────┘
-                           │
-                       Analytics
+## 19. Product Packaging and Deployment
+
+Sell measurable business outcomes using modules on the same platform.
+
+| Package | Included outcome-focused scope | Primary KPI |
+|---|---|---|
+| A — Lead Agent | Lead capture, FAQ, recommendation, qualification, CRM, handoff | Qualified leads |
+| B — Sales Automation | Package A plus scoring, booking, follow-up, pipeline, quotations | Pipeline and sales conversion |
+| C — Customer Support AI | Knowledge, customer/order lookup, troubleshooting, ticketing, escalation | Resolution rate and handling cost |
+| D — Customer Lifecycle Platform | Marketing, Sales, Support, retention workflows, cross-channel context, analytics | Revenue growth and operational efficiency |
+
+These are target packages, not a claim that every module ships in the MVP.
+
+Proposed commercial model: platform fee + selected modules/connectors + metered AI/automation usage + implementation. Premium integrations can be scoped separately; exact pricing requires pilot validation.
+
+Choose one first vertical with frequent inquiries, repetitive qualification/support, measurable conversion, and a clear booking or quotation outcome. Do not launch all templates at once.
+
+Deployment sequence:
+
+1. Define the buyer, top 20 intents, target outcomes, and responsible business owners.
+2. Import products and approved knowledge; configure qualification and escalation.
+3. Connect the selected channels, CRM, and calendar; verify field ownership.
+4. Test representative conversations, handoffs, permissions, and failure paths.
+5. Launch with controlled autonomy; review outcomes before expansion.
+
+Provide a basic admin/operator console for configuration, knowledge/catalog maintenance, connections, human queues, dashboards, and audits. Visual Agent, Workflow, and Journey Builders are later usability layers.
+
+The defensible product value is tested vertical workflows, reusable skills/adapters, deployment experience, and linked customer outcomes—not exclusive access to an LLM.
+
+## 20. Analytics
+
+| Audience | Essential KPIs |
+|---|---|
+| Marketing | Leads, Qualified Leads, Cost per Lead (CPL), Cost per Qualified Lead |
+| Sales | Opportunities, Meetings, Quotes, Conversion, Revenue |
+| Support | AI Resolution Rate, Escalation Rate, Response Time, CSAT |
+| Business | Revenue influenced by AI, Customer Acquisition Cost (CAC), LTV, Retention, Upsell Revenue |
+
+Agree on event definitions, reporting periods, cohort rules, and denominators before launch.
+
+- CPL = attributed campaign spend / captured leads; Cost per Qualified Lead uses qualified leads.
+- Sales conversion uses a declared denominator, such as Won opportunities / closed opportunities.
+- AI resolution counts confirmed resolutions without human resolution; monitor reopened cases separately.
+- Revenue influenced by AI requires a recorded qualifying touch and a deduplicated order; it is attribution, not proof of incremental revenue.
+- CAC includes the agreed acquisition costs. LTV is labeled estimated until sufficient realized customer history exists.
+
+Unavailable data appears as unavailable, not zero. Pilot dashboards report only connected data; broader Marketing and retention reporting follows the roadmap.
+
+## 21. MVP
+
+Objective: prove one reusable inbound Sales journey with basic Support and accountable human handoff.
+
+```mermaid
+flowchart TD
+    Channels["Website / LINE"] --> Supervisor["Supervisor"]
+    Supervisor <--> C360[("Customer360")]
+    Supervisor --> Sales["Sales Agent"]
+    Supervisor --> Support["Basic Support Agent"]
+    Sales --> CRM["CRM / Booking"]
+    Sales -->|Exception| Workflow["Workflow / Policy"]
+    Support --> Workflow
+    CRM -->|Confirmed event| Workflow
+    Workflow -->|Approval or escalation| Human["Human Handoff"]
+    Human -->|AI ownership explicitly resumed| Workflow
+    Workflow -->|Outreach allowed| Followup["Workflow Follow-up"]
+    Workflow --> Analytics["Analytics"]
+    Followup --> Analytics
 ```
 
-The business should package and sell **customer outcomes**, not raw AI technology.
+The diagram shows MVP scope. Handoff is conditional, and analytics consumes events from every stage, not only follow-up.
 
-The recommended flagship proposition is:
+| Priority | Deliverable | Minimum usable behavior |
+|---:|---|---|
+| 1 | Customer360 | Tenant-scoped identity, contact, conversation, consent, lead and opportunity references |
+| 2 | Web/LINE chat | Inbound/outbound messaging, normalized events, delivery deduplication |
+| 3 | Knowledge | Approved catalog/FAQ ingestion, retrieval, source/version controls |
+| 4 | Supervisor | Sales/Support routing, context loading, safe clarification |
+| 5 | Sales qualification | Required questions, persisted fields, rules-based score |
+| 6 | Product recommendation | Catalog-backed choices with verified prices and eligibility |
+| 7 | CRM integration | One provider; contact/opportunity sync with known field ownership |
+| 8 | Booking | One calendar provider, verified availability and booking result |
+| 9 | Follow-up | One durable sequence with timers, consent checks, and stop rules |
+| 10 | Basic Support | FAQ answers, bounded guidance, unresolved-case capture |
+| 11 | Human handoff | Queue, assigned owner, complete summary, AI pause/resume |
+| 12 | Dashboard | Conversations, qualification, bookings, handoffs, basic support outcomes, cost |
 
-> **One AI customer operating system that captures leads, qualifies opportunities, follows up automatically, supports customers, and identifies retention and upsell opportunities — using one shared customer profile.**
+Permissions, tenant isolation, audit, and failure handling are acceptance requirements across all twelve items, not optional add-ons.
 
----
+Not in MVP: custom ML; automated ad management; full campaign/nurture automation; dedicated Retention Agent; advanced ticketing/SLA; automated quote generation, payment/refund/cancellation execution; voice; visual builders. Humans handle quotations and purchase confirmation through the chosen CRM process.
 
-# 92. Practical Next Step
+### Validation and rollout
 
-The next implementation artifact should be created around one target vertical and include:
+Run a fixed conversation test set after changing prompts, tools, catalog, knowledge, configuration, or workflows.
 
-1. exact customer personas,
-2. top 20 customer intents,
-3. qualification questions,
-4. product catalog structure,
-5. escalation policies,
-6. CRM fields,
-7. workflow definitions,
-8. knowledge sources,
-9. channel integrations,
-10. dashboard metrics.
+| Acceptance area | Required evidence |
+|---|---|
+| End-to-end journey | Lead → qualification → recommendation → booking → CRM; basic support → answer or human-owned case |
+| Shared context | Sales/Support handoff preserves identity, history, next action, and ownership |
+| Commercial correctness | Recommendations use approved terms; a 30% discount request cannot bypass policy |
+| Safety and privacy | Tenant-isolation, prompt-injection, unverified-identity, refund/cancellation, and human-request tests |
+| Reliability | Duplicate webhook, timeout, uncertain write, unavailable calendar, and failed-handoff tests |
+| Outreach | Opt-out, reply, closed opportunity, and human ownership prevent scheduled sends |
+| Agent quality | Routing, grounded answers, qualification, escalation, and configured language/tone tests |
 
-That vertical-specific blueprint can then become the template used to onboard future customers with approximately:
+Proposed pilot targets, to agree against a documented baseline: first response under 30 seconds; qualification completion above 60%; booking conversion +20% relative to baseline; repetitive Sales qualification time -30%; routine Support automation above 50%; handoff-summary completeness above 95%; policy-test compliance above 99%; **zero critical unauthorized actions**.
 
-```text
-80% reusable platform
-+
-20% customer configuration
+Progress through `Shadow → Human Copilot → Controlled Low-risk Automation → Expanded Autonomy`.
+Advance only after reviewing test results and pilot evidence; keep a human takeover and rollback path.
+
+## 22. Roadmap
+
+MVP already includes basic FAQ support and one follow-up sequence. Later phases deepen those capabilities rather than defer them.
+
+| Phase | Delivery focus | Exit evidence |
+|---|---|---|
+| 1 — Sales MVP | Customer360, Web/LINE, Knowledge, Supervisor; Lead → Qualification → Booking → CRM; basic Support/handoff/follow-up/dashboard | Section 21 acceptance checks pass and a pilot journey is measured |
+| 2 — Support | FAQ → troubleshooting → Ticket → Human; richer ticketing, priority/SLA, CSAT | Confirmed resolutions and context-complete escalations |
+| 3 — Workflow Automation | More follow-up and event workflows; approved quotation and commerce adapters as needed | Durable runs, safe retries, approvals, and verified outcomes |
+| 4 — Marketing | Campaign content, lead nurture, segmentation, campaign attribution, reactivation | Source → qualified lead → Sales result is traceable |
+| 5 — Retention | Adoption, renewal, churn signals, upsell/cross-sell, expansion | Renewal actions and expansion outcomes are recorded |
+| 6 — Marketing Intelligence | Prediction and optimization roadmap below | Sufficient linked data, validated predictions, human-reviewed recommendations |
+
+Before Phase 1, select the first vertical, pilot customer, CRM/calendar providers, business owners, and baseline metrics. This plan does not assume those choices are already made.
+
+## 23. Marketing Intelligence / ML — Roadmap Only
+
+Custom ML is not MVP core. Do not build an ad-bidding engine to replace Meta or Google.
+
+| Responsibility boundary | Optimization focus |
+|---|---|
+| Meta / Google | Delivery, Auction, Placement |
+| AgentOS | Lead Quality, Revenue, LTV, Budget Decision |
+
+```mermaid
+flowchart TD
+    Ads --> Lead --> C360["Customer360"]
+    C360 --> Results["Sales Result"]
+    Results --> ML["ML / Prediction"]
+    ML --> Marketing["Marketing Agent"]
+    Marketing --> Recommendation["Budget / Campaign Recommendation"]
 ```
 
-This is the key to making the solution truly packageable and scalable.
+| Intelligence phase | Capability | Dependency |
+|---|---|---|
+| 1 | Rules + Marketing Agent | Approved rules and campaign-to-lead tracking; no custom ML |
+| 2 | Lead Quality Prediction | Consistent qualification fields and labeled Sales outcomes |
+| 3 | Conversion Prediction | Reliable opportunity stages and Won/Lost history |
+| 4 | LTV / Expected Revenue | Linked revenue, renewal, expansion, and customer cohorts |
+| 5 | Budget Recommendation | Spend data and validated quality/revenue estimates |
+
+The intelligence phases are a capability ladder: rules arrive with Marketing; learned models follow only when data supports them. Validate on later, held-out outcomes, check calibration and drift, and compare with the rules baseline.
+
+Marketing proposes campaign and budget changes for human approval. Predictive scores and attributed revenue do not establish causal lift or authorize autonomous spend.
