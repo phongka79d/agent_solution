@@ -1,0 +1,8 @@
+schema: embedded-spec-driven
+goal: Initialize agent_solution as a Git-backed project with embedded Harness planning state
+complexity: TINY
+spec_impact: NONE
+risk: LOW
+mode: STANDALONE
+execution_authorization: EXPLICIT_EXECUTE
+created_at: 2026-09-09T11:13:07.309367+00:00
