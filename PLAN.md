@@ -9,5 +9,3 @@ Kế hoạch chi tiết đã được tách vào thư mục [plans/](plans/READM
 Ba module Marketing, Sales và Customer Support kết nối với ứng dụng, dữ liệu hiện có của doanh nghiệp qua API. Doanh nghiệp có thể chọn một hoặc nhiều module, dùng chung phần lõi nhưng tách riêng dữ liệu và cấu hình.
 
 Trạng thái: bản thiết kế sản phẩm, chưa phải hệ thống hoặc API đã triển khai.
-
-[Website Atlas hiện có](atlas/index.html) vẫn truy cập được; bộ sơ đồ đó chưa được tạo lại theo cấu trúc tài liệu và thiết kế API/module mới. Tài liệu trong `plans/` là nguồn kế hoạch hiện tại.
