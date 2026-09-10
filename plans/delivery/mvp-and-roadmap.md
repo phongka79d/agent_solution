@@ -1,209 +1,176 @@
-# MVP, Validation, and Roadmap
+# Bản đầu, kiểm chứng và lộ trình triển khai
 
-[Plan index](../README.md) · [Vietnamese easy-read flow](../plan-easy-read-flow.md) · [Glossary](../glossary.md)
+[Mục lục](../README.md) · [Bản dễ hiểu](../plan-easy-read-flow.md) · [Đo lường](analytics.md)
 
-Status: proposed design, not implemented functionality. Examples and targets are illustrative until agreed with a pilot customer.
+Trạng thái: kế hoạch đề xuất, chưa triển khai. P0–P3 là giai đoạn theo điều kiện nghiệm thu, không phải lịch phát hành đã cam kết.
 
 <a id=section-21></a>
 
-## MVP
+## 1. Bản đầu: một hành trình nhỏ chạy được
 
-Objective: prove the Sales Module works inside one company's existing application through the AgentOS API, with basic Support enabled for this pilot and accountable human handoff. Preserve the current Sales-first scope; full Marketing remains a later phase.
+Mục tiêu P1: Bán hàng tư vấn trong website hiện có của một doanh nghiệp, có Chăm sóc cơ bản, dữ liệu đúng quyền, nhân viên tiếp quản và báo cáo kiểm tra được.
 
-```mermaid
-flowchart TD
-    Channels["Customer clicks ad or opens existing website / LINE"] --> Existing["Company website/backend or LINE connector"]
-    Existing --> API["AgentOS API"]
-    API --> Supervisor["Supervisor"]
-    Supervisor <--> C360[("Customer360")]
-    Supervisor --> Sales["Sales Module"]
-    Supervisor --> Support["Basic Support Module"]
-    Sales --> Workflow["Workflow / Policy"]
-    Support --> Workflow
-    Workflow --> Connectors["Approved API connectors"]
-    Connectors --> CRM["Company CRM / Catalog / Calendar"]
-    CRM -->|Confirmed event via webhook| API
-    Workflow -->|Approval or escalation| Human["Human Handoff"]
-    Human -->|AI ownership explicitly resumed| Workflow
-    Workflow -->|One follow-up sequence, max 2 sends| Followup["Workflow Follow-up"]
-    Workflow --> Analytics["Analytics"]
-    Followup --> Analytics
-```
+Đề xuất ưu tiên B2C từ PDF; ngành/doanh nghiệp chưa chốt. Nếu chọn bán hàng B2B cần tư vấn, dùng cấu hình nhu cầu–ngân sách–người quyết định–thời điểm và lịch hẹn. Không triển khai hai hành trình riêng đồng thời trong một lần thử.
 
-The diagram shows MVP scope. Handoff is conditional, and analytics consumes events from every stage, not only follow-up. The existing website displays returned answers; connected channels can deliver replies directly. “One follow-up sequence, max 2 sends” means one initial message and at most one later reminder, subject to the stop rules; it does not mean unlimited automation.
+Thay đổi so với kế hoạch cũ đã được ghi ở [mục lục hợp nhất](../README.md): giữ Bán hàng trước, nhưng không bắt buộc LINE hoặc lịch hẹn cho mọi doanh nghiệp; nghiên cứu thị trường thủ công được đưa lên P0. Việc viết lại kế hoạch không đồng nghĩa phê duyệt kết nối, chạy quảng cáo hoặc giao dịch thật.
 
-| Priority | Deliverable | Minimum usable behavior |
-|---:|---|---|
-| 1 | Customer360 | Tenant-scoped identity, contact, conversation, consent, lead and opportunity references |
-| 2 | Module API + Web/LINE connection | Existing backend can create conversations, submit messages/events, and read task results; supported channels normalize messaging and deduplicate delivery |
-| 3 | Knowledge | Connect/import approved company catalog/FAQ data; retrieval and source/version controls |
-| 4 | Supervisor | Sales/Support routing, context loading, safe clarification |
-| 5 | Sales qualification | Required questions, persisted fields, rules-based score |
-| 6 | Product recommendation | Catalog-backed choices with verified prices and eligibility |
-| 7 | Company API connectors | One CRM and one approved catalog source; permitted reads/writes and contact/opportunity sync with known field ownership |
-| 8 | Booking | One calendar provider, verified availability and booking result |
-| 9 | Follow-up | One durable sequence with timers, consent checks, and stop rules |
-| 10 | Basic Support | Approved FAQ answers, bounded guidance, unresolved-case capture; optional order/ticket connectors are not required |
-| 11 | Human handoff | Queue, assigned owner, complete summary, AI pause/resume; approved operator event for accept/takeover/approve/reject |
-| 12 | Dashboard | Conversations, qualification, bookings, handoffs, basic support outcomes, cost |
+### Phạm vi bật trong P1
 
-Permissions, tenant isolation, audit, and failure handling are acceptance requirements across all twelve items, not optional add-ons.
-
-Not in MVP: custom ML; automated ad management; full campaign/nurture automation; a dedicated Retention Agent (retention is a cross-module workflow, not a fourth product module); advanced ticketing/SLA; automated quote generation, payment/refund/cancellation execution; voice; visual builders. Humans handle quotations and purchase confirmation through the chosen CRM process.
-
-### MVP action boundary
-
-An **allowlist** is the small set of actions the first release may perform. A **denylist** is the explicit set of actions that must remain unavailable even if a prompt asks for them.
-
-| Area | MVP allowlist | MVP denylist |
+| Thành phần | Mức tối thiểu | Điều kiện |
 |---|---|---|
-| Customer and conversation | Read/write AgentOS conversation, permitted Customer360 links, summaries and ownership | Cross-company lookup, unverified private data, deleting source records |
-| CRM | Read contact/lead/opportunity; create or update qualification, notes, owner, next action | Marking a sale without source confirmation; arbitrary CRM fields or bulk changes |
-| Product data | Read approved catalog/product terms and eligibility | Editing catalog prices, promotions or eligibility |
-| Calendar | Read free/busy and create one meeting request; save confirmed booking reference | Cancel/reschedule, double-booking, or claiming success before provider confirmation |
-| Customer messaging | Send one initial follow-up plus at most one reminder when every live consent/stop check passes | Unlimited nurture, ad operations, messages after opt-out/reply/human takeover |
-| Support | Answer approved FAQ and bounded troubleshooting; create a human queue item | Payment, refund, cancellation, account-changing action, or pretending a ticket is resolved |
-| Human operations | Create/accept/approve/reject/take over/resume through the approved operator path | Silent AI takeover, approval by timeout, or sending while a human owns the conversation |
+| Customer360 | Liên kết khách/phiên, yêu cầu, hội thoại, nguồn, đồng ý và người phụ trách | Tách doanh nghiệp, không ép sao chép toàn bộ dữ liệu |
+| API và website | Gửi câu hỏi/sự kiện, nhận mã công việc, đọc kết quả; có dự phòng khi mất thông báo | Máy chủ doanh nghiệp hoặc đường kết nối được xác thực |
+| Danh mục và kiến thức | Một nguồn sản phẩm, giá/điều kiện và tài liệu hỏi đáp đã duyệt | Có chủ nguồn, phiên bản và quy tắc độ mới |
+| Điều phối | Bán hàng, Chăm sóc cơ bản hoặc người xử lý | Tiếp thị tự động tắt; không gọi mô-đun chưa bật |
+| Bán hàng | Hỏi nhu cầu, gợi ý, giải thích dễ hiểu từ nguồn, ghi việc tiếp theo | Câu hỏi phù hợp B2C hoặc B2B đã chọn |
+| Lưu khách/yêu cầu | Một hệ thống hiện có hoặc CRM với trường đọc/ghi cụ thể | Không bắt mua CRM mới |
+| Hỗ trợ mua | Đưa khách tới trang/quy trình hiện có | Không tự phát hành báo giá, đơn ưu đãi hay yêu cầu thanh toán |
+| Lịch hẹn | Kiểm tra và tạo lịch có mã xác nhận | Chỉ khi hành trình được chọn cần hẹn |
+| Chăm sóc cơ bản | Trả lời có nguồn, hướng dẫn giới hạn, ghi vụ việc chưa giải quyết | Chưa bắt buộc API vận chuyển hoặc hệ thống phiếu hỗ trợ |
+| Nhắc lại | Một chuỗi tối đa hai tin, mặc định tắt nếu chưa đủ điều kiện | Kênh, nội dung, mục đích và người phụ trách đã duyệt |
+| Bàn giao | Hàng đợi, chấp nhận, tiếp quản, duyệt/từ chối, trả quyền AI | Có nhân viên chịu trách nhiệm và giờ làm việc |
+| Báo cáo | Câu hỏi, tìm hiểu nhu cầu, đề xuất, bàn giao, hỗ trợ, chi phí; lịch/đơn nếu có nguồn | Dữ liệu thiếu phải ghi rõ |
 
-The allowlist applies per company and enabled module. A request for a denied action returns an explicit unsupported or `awaiting_human` result and leaves an audit record; it does not fall through to a more powerful connector.
+Câu hỏi chọn nhanh trong P1 chỉ dùng thành phần giao diện có sẵn nếu phù hợp; không phụ thuộc bộ mã nhúng mới. Lưu nguồn đối tác/chiến dịch trong P1 là khả năng ghi nhận của lõi, không tự chạy Tiếp thị.
 
-### Validation and rollout
+Nếu không có nguồn đơn/thanh toán đáng tin, nghiệm thu P1 ở kết quả tư vấn và phục vụ; **không tuyên bố tăng doanh thu**. Muốn dùng chuyển đổi mua hàng làm chỉ tiêu phải bổ sung kết nối chỉ đọc hoặc bản đối chiếu do chủ nguồn xác nhận.
 
-Run a fixed conversation test set after changing prompts, tools, catalog, knowledge, configuration, or workflows.
+### Danh sách được phép và bị cấm
 
-| Acceptance area | Required evidence |
+| Được phép có điều kiện | Không được phép trong P1 |
 |---|---|
-| End-to-end journey | Lead → qualification → recommendation → booking → CRM; basic support → answer or human-owned case |
-| Existing application integration | A request from the company's backend receives a task result displayed in the existing UI; approved CRM updates are confirmed in that CRM; callback delivery has polling fallback |
-| Human handoff control | An authorized operator accepts, takes over, rejects, or resumes through the approved event path; the action is idempotent and the customer conversation pauses while human-owned |
-| Selectable modules | Sales works with Marketing disabled; Support routes only when enabled; an unavailable module is rejected or handed off explicitly |
-| Reusable deployment | The same build passes scoped tests for two isolated company configurations using test data; changing products/fields does not require Agent code edits |
-| Shared context | Sales/Support handoff preserves identity, history, next action, and ownership |
-| Commercial correctness | Recommendations use approved terms; a 30% discount request cannot bypass policy |
-| Safety and privacy | Tenant-isolation, prompt-injection, unverified-identity, refund/cancellation, and human-request tests |
-| Reliability | Repeated API request, duplicate webhook, timeout, uncertain write, unavailable calendar, callback delivery failure with polling recovery, and failed-handoff tests |
-| Outreach | Opt-out, reply, closed opportunity, and human ownership prevent scheduled sends |
-| Agent quality | Routing, grounded answers, qualification, escalation, and configured language/tone tests |
+| Đọc/lưu ngữ cảnh và trường khách/yêu cầu đã ánh xạ | Tra dữ liệu chéo doanh nghiệp, xem đơn chưa xác minh |
+| Đọc sản phẩm, giá, tài liệu đã duyệt | Sửa giá, điều kiện, tồn kho hoặc kho kiến thức lúc trả lời |
+| Đưa liên kết tới quy trình mua hiện tại | Tự tạo thanh toán/QR, thu tiền, hoàn tiền, hủy hoặc đổi trả |
+| Chuẩn bị thông tin báo giá cho nhân viên | Phát hành báo giá tự động, mặc cả hoặc cấp phiếu |
+| Tạo lịch nếu được chọn và xác nhận | Tự đổi/hủy lịch hoặc báo đặt xong khi chưa có mã |
+| Trả lời và nhắc theo điều kiện hiện tại | Chiến dịch chăm sóc vô hạn, liên hệ khi bị chặn |
+| Nhân viên duyệt, tiếp quản và trả quyền qua đường xác thực | Phê duyệt bằng im lặng, tự giành lại hội thoại |
+| Nhân viên dùng AI soạn nháp nghiên cứu trong P0 | Tự thu gom dữ liệu, liên hệ đối tác, xuất bản hay chi tiền quảng cáo |
 
-Proposed pilot targets, to agree against a documented baseline: first response under 30 seconds; qualification completion above 60%; booking conversion +20% relative to baseline; repetitive Sales qualification time -30%; routine Support automation above 50%; handoff-summary completeness above 95%; policy-test compliance above 99%; **zero critical unauthorized actions**.
+Không có trong P1: toàn bộ Tiếp thị tự động, học máy riêng, nhiều kênh đồng thời, bộ nhúng đầy đủ, thanh toán và ưu đãi tự động, phiếu bù giá, video đổi trả, giọng nói và trình kéo-thả.
 
-Progress through `Shadow → Human Copilot → Controlled Low-risk Automation → Expanded Autonomy`.
-Advance only after reviewing test results and pilot evidence; keep a human takeover and rollback path.
+## 2. Gói công việc theo phụ thuộc
+
+| Thứ tự | Gói công việc | Phụ thuộc | Bằng chứng để qua bước |
+|---|---|---|---|
+| 1 | Chốt doanh nghiệp, hành trình, đường cơ sở | Chủ doanh nghiệp và người nghiệp vụ | Phiếu đầu vào, một kết quả chính và chỉ số có nguồn |
+| 2 | Cấu hình, quyền, dữ liệu thử | Danh sách nguồn và quyền | Hai cấu hình tách biệt, phép thử từ chối truy cập chéo |
+| 3 | API và kết nối đầu vào | Máy chủ/kênh có quyền thử | Yêu cầu được lưu, kết quả về giao diện, chống trùng |
+| 4 | Danh mục, kiến thức, bằng chứng | Tài liệu và dữ liệu duyệt | Câu trả lời đúng nguồn/phiên bản; tài liệu bị gỡ không còn được dùng |
+| 5 | Điều phối, hỏi nhu cầu, tư vấn | Gói 2–4 | Hành trình thử từ câu hỏi đến đề xuất và bản ghi nguồn |
+| 6 | Ghi hệ thống nguồn, lịch nếu cần | Ánh xạ quyền và môi trường thử | Mỗi ghi có mã xác nhận; lỗi sau ghi được đối soát |
+| 7 | Bàn giao, nhắc có điều kiện | Trạng thái bền vững, nhân viên và kênh | Một người trả lời, tối đa hai tin, dừng và khởi động lại đúng |
+| 8 | Nhật ký, báo cáo, phục hồi | Sự kiện từ mọi gói | Đối chiếu tay ra đúng chỉ số, hiện dữ liệu thiếu, diễn tập quay lại cấu hình |
+| 9 | Thử có kiểm soát | Toàn bộ điều kiện an toàn đã qua | Nhân viên duyệt kết quả; ghi vấn đề và quyết định có mở thêm quyền không |
+
+Đây là các điều kiện phụ thuộc, không ép phát triển đo lường sau cùng: sự kiện và nhật ký phải đi cùng từng gói. Chưa có API/dữ liệu đầu vào thì chưa cam kết số tuần triển khai.
+
+<a id=pilot-inputs></a>
+
+## 3. Phiếu chốt đầu vào
+
+Điền hai dòng đầu trong khoảng 2 phút; dùng một buổi 60–90 phút với người nghiệp vụ và kỹ thuật để chốt phần còn lại. Đây là thời lượng họp gợi ý, không phải ước lượng xây sản phẩm.
+
+| Cần chốt | Giá trị hiện tại | Người chịu trách nhiệm |
+|---|---|---|
+| Doanh nghiệp thử nghiệm | Chưa chọn | Người bảo trợ dự án |
+| Website/ứng dụng đầu tiên | Chưa chọn | Chủ ứng dụng |
+| Ngành, sản phẩm và một hành trình B2C/B2B | Chưa chọn | Kinh doanh |
+| Vấn đề cần cải thiện và kết quả chính | Chưa có đường cơ sở | Kinh doanh + đo lường |
+| Danh mục, hệ thống lưu khách/yêu cầu, FAQ | Chưa xác nhận API/quyền/phiên bản | Chủ dữ liệu |
+| Nguồn xác nhận đơn/thanh toán nếu dùng chỉ tiêu mua | Chưa xác nhận | Vận hành + tài chính |
+| Có cần lịch hẹn không? | Chưa quyết định | Chủ hành trình |
+| Kênh nhắc, mục đích, nội dung, giờ và giới hạn | Chưa duyệt; mặc định tắt | Nghiệp vụ + bảo vệ dữ liệu |
+| Nhân viên nhận bàn giao, giờ trực, thời hạn | Chưa phân công | Vận hành |
+| Chính sách truy cập, lưu/xóa và nhà cung cấp AI | Chưa rà soát | Bảo vệ dữ liệu/pháp lý |
+| Ngân sách AI/vận hành và quyền ngắt | Chưa duyệt | Chủ doanh nghiệp + kỹ thuật |
+| Bộ thử, nguồn dữ liệu thử và người ký nghiệm thu | Chưa lập | Kiểm thử + nghiệp vụ |
+
+Không cần doanh nghiệp thật thứ hai để thử khả năng tách dữ liệu; dùng hai cấu hình thử trên cùng bản phần mềm. Không sao chép dữ liệu khách thật giữa chúng.
+
+## 4. Kiểm thử và điều kiện chạy thử
+
+| Nhóm | Bằng chứng bắt buộc |
+|---|---|
+| Hành trình chính | Câu hỏi → tìm hiểu nhu cầu → đề xuất có nguồn → bản ghi; hỗ trợ → giải quyết có xác nhận hoặc người nhận |
+| Kết nối thực | Kết quả hiện trong ứng dụng, ghi nguồn có mã; mất thông báo phục hồi bằng truy vấn |
+| Mô-đun độc lập | Bán hàng không cần Tiếp thị; tắt Chăm sóc thì chuyển người, không giả xử lý |
+| Quyền và dữ liệu | Hai doanh nghiệp không truy cập chéo; khách chưa xác minh không đọc riêng |
+| Nội dung AI | Đúng nguồn, không bịa công dụng/giá, không bị tài liệu hoặc khách cấp quyền bằng chỉ dẫn |
+| Bàn giao | Chờ chưa thành công; nhận/tiếp quản/trả quyền rõ; không trả lời chồng |
+| Liên hệ | Khách trả lời/rút phép, đóng yêu cầu, người nhận, ngoài giờ hoặc chạm hạn đều chặn gửi |
+| Độ tin cậy | Trùng yêu cầu/sự kiện, xung đột khóa, mất mạng, lỗi sau ghi, tiến trình chết, thông báo cũ/mất |
+| Chất lượng dữ liệu | Giá cũ, tài liệu chưa duyệt/bị gỡ, danh tính mơ hồ và thiếu nguồn xử lý đúng |
+| Phục hồi | Ngắt năng lực và quay lại cấu hình không phát lại tin, đơn hoặc thanh toán |
+| Đo lường | Mẫu tính tay khớp; hiển thị số chờ, loại trừ, dữ liệu thiếu và chi phí có nguồn |
+
+Chạy lại bộ tình huống cố định sau thay đổi lời hướng dẫn AI, công cụ, danh mục, kiến thức, cấu hình hoặc quy trình. Mỗi ca thử phải có dữ liệu đầu vào, kết quả mong đợi, kết quả thực, bằng chứng, người kiểm và trạng thái đạt/không đạt/chưa chạy.
+
+**Điều kiện an toàn bắt buộc:** không còn lỗi nghiêm trọng chưa xử lý về hành động trái quyền, rò dữ liệu, lách giá/quyền hoặc giả thành công trong bộ thử được duyệt. Điều này không phải cam kết hệ thống “an toàn 100%”.
+
+### Chỉ tiêu kinh doanh để thảo luận
+
+Các mục tiêu từ kế hoạch cũ được giữ để đối chiếu, chưa dùng làm lời hứa:
+
+| Mục tiêu tham khảo | Cách dùng trong kế hoạch mới |
+|---|---|
+| Phản hồi dưới 30 giây | Chốt cách đo và phân vị; không chỉ đo thời gian API nhận việc |
+| Hoàn thành tìm hiểu nhu cầu trên 60% | Dùng đúng nhóm đủ điều kiện và công bố số mẫu |
+| Chuyển đổi đặt lịch tăng 20% tương đối | Chỉ dùng nếu hành trình có lịch và có đường cơ sở phù hợp |
+| Thời gian hỏi nhu cầu lặp lại giảm 30% | Đo thời gian nhân viên thực, gồm cả kiểm tra/sửa câu trả lời |
+| Hỗ trợ thông thường tự động trên 50% | Chỉ tính giải quyết có xác nhận, báo số mở lại |
+| Tóm tắt bàn giao đầy đủ trên 95% | Chốt trường bắt buộc; trường an toàn quan trọng không được thiếu |
+| Tuân thủ bộ thử chính sách trên 99% | Chỉ là chỉ số tổng hợp; không cho phép bỏ qua bất kỳ lỗi nghiêm trọng nào |
+
+Với B2C, bổ sung lãi đóng góp, mua sai/đổi trả và tổng chi phí phục vụ làm điều kiện bảo vệ, nhưng ngưỡng phải do doanh nghiệp duyệt sau khi có dữ liệu.
+
+### Hồ sơ nghiệm thu
+
+Lưu phiên bản phần mềm/cấu hình/tài liệu, vết yêu cầu–kết quả, mã ghi hệ thống nguồn, kiểm thử hai doanh nghiệp, bộ tình huống và lỗi còn lại, phép tính báo cáo, quyết định bật quyền, người trực và phương án phục hồi. Ca chưa chạy không được đánh dấu đạt.
 
 <a id=section-22></a>
 
-## Roadmap
+## 5. Lộ trình theo bằng chứng
 
-MVP already includes basic FAQ support and one follow-up sequence. Later phases deepen those capabilities rather than defer them.
+| Giai đoạn | Mục tiêu | Phạm vi | Điều kiện ra |
+|---|---|---|---|
+| P0 — Hiểu nhu cầu | Chọn đúng thử nghiệm | Nghiên cứu thủ công có AI soạn nháp; phiếu cơ hội; phỏng vấn/đối tác do người thực hiện theo quyền; chọn dữ liệu và hành trình | Có vấn đề thật, giải pháp khả thi, người chịu trách nhiệm, dữ liệu và phép thử |
+| P1 — Bán hàng và Chăm sóc cơ bản | Chứng minh nền tảng dùng được | Phạm vi tại mục 1, một website và nguồn cần thiết | Qua bộ thử, nhân viên tiếp quản được, báo cáo kiểm được, chủ doanh nghiệp duyệt |
+| P2 — Thử cải tiến có kiểm soát | Tìm tính năng tạo giá trị | Chọn từng thử nghiệm: Tiếp thị/đối tác theo quy tắc, giao diện chọn nhanh/lưu món, hỗ trợ đơn, QR, so giỏ/nâng cấp, ưu đãi tính thử hoặc phiếu có người duyệt | Có nguồn, chi phí, người duyệt, kết quả thử và không vi phạm điều kiện dừng |
+| P3 — Mở rộng có căn cứ | Nhân rộng phần đã chứng minh | Mặc cả/phát phiếu có hạn mức, nhiều kênh/đối tác, mua lại/giới thiệu, tự động hóa sâu; học máy khi đủ điều kiện | Hiệu quả và chất lượng ổn định, ngân sách phù hợp, vận hành/phục hồi được nghiệm thu |
 
-| Phase | Delivery focus | Exit evidence |
-|---|---|---|
-| 1 — Sales Module MVP | Module API, existing website/LINE connection, company API connectors, Customer360, Knowledge, Supervisor; Lead → Qualification → Booking → CRM; basic Support/handoff/follow-up/dashboard | [MVP](mvp-and-roadmap.md#section-21) acceptance checks pass; a pilot journey runs in the existing app and configuration isolation is tested |
-| 2 — Support | FAQ → troubleshooting → Ticket → Human; richer ticketing, priority/SLA, CSAT | Confirmed resolutions and context-complete escalations |
-| 3 — Workflow Automation | More follow-up and event workflows; approved quotation and commerce adapters as needed | Durable runs, safe retries, approvals, and verified outcomes |
-| 4 — Marketing | Campaign content, lead nurture, segmentation, campaign attribution, reactivation | Source → qualified lead → Sales result is traceable |
-| 5 — Retention workflows | Adoption, renewal, churn signals, upsell/cross-sell, expansion across enabled modules; not a fourth module | Renewal actions and expansion outcomes are recorded |
-| 6 — Marketing Intelligence | Prediction and optimization roadmap below | Sufficient linked data, validated predictions, human-reviewed recommendations |
+P2 là danh sách lựa chọn, **không phải phải làm hết cùng lúc**. Chọn một tính năng theo vấn đề lớn nhất đã đo. Ví dụ giải thích sản phẩm hiệu quả hơn có thể được ưu tiên trước thanh toán mới.
 
-Before Phase 1, select the first vertical, pilot customer, existing application to integrate, available company APIs, CRM/catalog/calendar sources, business owners, and baseline metrics. This plan does not assume those choices or API access are already available.
+### Cổng riêng cho tính năng rủi ro
+
+| Tính năng | Chưa được bật cho tới khi |
+|---|---|
+| Mặc cả/giá ưu đãi | Tài chính duyệt chi phí/sàn/ngân sách; tính thử đúng; không lách qua API, giỏ hoặc mã ưu đãi; có hạn mức và ngắt |
+| Thanh toán QR | Có hợp đồng/năng lực kết nối, đối soát nguồn, nhánh trùng/muộn/thiếu/thừa và người xử lý |
+| Phiếu bù giá | Có chính sách công khai, chi phí, điều kiện đơn, chống cấp vượt/trùng và xử lý đơn trả |
+| Đối tác | Quy tắc nguồn/hoa hồng, quyền dữ liệu, đối soát và chống gian lận được duyệt |
+| Gợi ý tự bật/mã nhúng | Đo tương thích/tốc độ/khả năng tiếp cận và tần suất; không che thao tác mua |
+| Tra vận chuyển/hóa đơn | Nguồn xác nhận được năng lực cụ thể; không hứa ngoài dữ liệu |
+| Phân tích ảnh/video | Có dữ liệu đánh giá, quyền lưu/xóa, quy trình người duyệt; không tự quyết quyền lợi khách |
 
 <a id=section-23></a>
 
-## Marketing Intelligence / ML — Roadmap Only
+## 6. Nghiên cứu có AI khác học máy dự đoán
 
-Custom ML is not MVP core. Do not build an ad-bidding engine to replace Meta or Google.
+Nghiên cứu thị trường có thể bắt đầu ở P0 bằng đọc nguồn, phiếu cơ hội và nhân viên kiểm chứng. Không phải chờ có mô hình dự đoán riêng mới nghiên cứu được.
 
-| Responsibility boundary | Optimization focus |
+Học máy dự đoán là nhánh P3 có điều kiện:
+
+| Năng lực | Điều kiện |
 |---|---|
-| Meta / Google | Delivery, Auction, Placement |
-| AgentOS | Lead Quality, Revenue, LTV, Budget Decision |
+| Chấm phù hợp bằng quy tắc | Trường rõ, bằng chứng nguồn và phiên bản; làm trước mô hình học |
+| Dự đoán chất lượng/chuyển đổi | Dữ liệu đủ nhãn, trạng thái đáng tin, tập kiểm tra theo thời gian không dùng lúc học |
+| Ước tính giá trị vòng đời | Đủ lịch sử doanh thu/chi phí, mua lại và nhóm quan sát |
+| Đề xuất ngân sách | Có chi phí, kết quả kiểm định và người duyệt quyết định |
 
-```mermaid
-flowchart TD
-    Company["Company runs campaign"] --> Ads["Facebook / Google delivery"]
-    Ads --> LeadEvent["Authenticated lead/campaign event"]
-    LeadEvent --> C360["Customer360 links permitted data"]
-    C360 --> Results["CRM / Sales outcome event"]
-    Results --> Gate{"Enough labeled data and quality checks?"}
-    Gate -->|No| Rules["Rules + Marketing Module"]
-    Gate -->|Yes, roadmap| ML["Validated prediction"]
-    Rules --> Review["Human review"]
-    ML --> Review
-    Review --> Recommendation["Campaign / budget recommendation"]
-```
+So mô hình với quy tắc đơn giản, kiểm tra độ chính xác xác suất và suy giảm chất lượng theo thời gian. Chưa tốt hơn thì giữ quy tắc; không xây mô hình chỉ để có nhãn “AI”. Dự đoán không cho phép chi tiền tự động và không chứng minh quan hệ nhân quả.
 
-**ML** means a learned prediction model. It is not part of the MVP and it does not replace Facebook/Google's ad auction. The model may suggest a decision; a person approves any campaign or budget change.
+## 7. Quyết định tiếp theo
 
-| Intelligence phase | Capability | Dependency |
-|---|---|---|
-| 1 | Rules + Marketing Agent | Approved rules and campaign-to-lead tracking; no custom ML |
-| 2 | Lead Quality Prediction | Consistent qualification fields and labeled Sales outcomes |
-| 3 | Conversion Prediction | Reliable opportunity stages and Won/Lost history |
-| 4 | LTV / Expected Revenue | Linked revenue, renewal, expansion, and customer cohorts |
-| 5 | Budget Recommendation | Spend data and validated quality/revenue estimates |
-
-The intelligence phases are a capability ladder: rules arrive with Marketing; learned models follow only when data supports them. Validate on later, held-out outcomes, check calibration and drift, and compare with the rules baseline.
-
-Marketing proposes campaign and budget changes for human approval. Predictive scores and attributed revenue do not establish causal lift or authorize autonomous spend.
-
-## MVP build packages and evidence
-
-These packages are dependency gates, not a delivery schedule. Keep the same code path for both test companies; vary only tenant configuration, credentials, mappings, catalog, and test data.
-
-| Package | Depends on | Evidence to accept |
-|---|---|---|
-| Tenant and deployment bundle | [Product configuration](../product-and-packaging.md#product-and-business-configuration); access model | Two isolated test-company configs pass cross-tenant read and write-denial tests |
-| Existing ingress | [API contract](../platform/api-and-integrations.md#apis-and-enterprise-integrations); authenticated caller credentials | Existing web backend submits a message and reads a task; LINE delivery is deduplicated |
-| Shared context and knowledge | Tenant bundle; approved catalog and FAQ sources | Identity, consent, history, source version, and tenant scope appear in a trace |
-| Supervisor routing | Shared context; enabled-module configuration | Sales routes correctly; basic Support answers or creates a human-owned case |
-| Qualification and recommendation | Sales fields/rules; catalog connector | Required fields persist; recommendation shows approved price and eligibility |
-| CRM, catalog, and calendar adapters | Company credentials, field ownership, provider sandboxes | One CRM update, one catalog read, and one confirmed booking have provider references |
-| Follow-up and human queue | Event store; consent and stop rules; staff owner | One durable follow-up stops on reply/opt-out/closure; human handoff pauses AI replies |
-| Audit, analytics, and dashboard | Events from every package; metric dictionary | Correlated trace, policy result, cost, and unavailable-data state are reviewable |
-
-### Dependency and evidence gates
-
-- Do not enable an action until its connector has an owner, allowed fields, and an uncertain-write recovery test.
-- Treat `202 Accepted` as queued work; require a provider-confirmed result before calling a booking or CRM write successful.
-- Test the existing web backend and LINE API paths with duplicate requests, duplicate webhooks, timeout, callback failure, and polling recovery.
-- Run the fixed conversation set after any prompt, tool, catalog, knowledge, configuration, or workflow change.
-- Include tenant, conversation, correlation, event, configuration-version, actor, and policy-result identifiers in the audit trace.
-- Keep an explicit negative test for an unavailable module; it must reject or hand off rather than silently activate it.
-- Record human ownership, AI pause, and explicit resume before a workflow can continue after handoff.
-- Require a human-readable failure reason and named recovery owner for every failed or uncertain workflow.
-
-### Pilot prerequisites
-
-| Input | Ready when | Accountable owner |
-|---|---|---|
-| Pilot vertical and business outcome | One Sales outcome and one basic Support outcome are written | Business sponsor |
-| Existing application and channels | Web backend endpoint and LINE webhook/callback owner are named | Integration owner |
-| CRM, catalog, calendar | One provider each has test access, mappings, and permitted operations | Company system owners |
-| Products and policy | Approved prices, eligibility, discount ceiling, FAQ versions, and escalation rules exist | Sales/Support managers |
-| Human operations | Queue, assigned owner, business hours, pause/resume authority, and rollback contact exist | Operations owner |
-| Privacy and test data | Consent, retention, redaction, test identities, and deletion path are approved | Security/privacy owner |
-| Baseline and test cases | Baseline period, acceptance set, and target denominator are signed off | Analytics owner |
-| Reuse proof | Two isolated test-company configurations run on the same build; no second real customer is required | Product + engineering |
-
-### Open decisions before controlled use
-
-- Which vertical, pilot tenant, and existing web backend are first, and which LINE account is in scope?
-- Which system owns customer, opportunity, product, price, availability, booking, and consent fields?
-- What timezone, business hours, booking conflict rule, and calendar confirmation count as final?
-- What message/channel, quiet hours, consent wording, and stop conditions govern the single follow-up?
-- Who can accept a handoff, resume AI, approve exceptions, and trigger rollback?
-- Which baseline period and cohort rules apply to conversion, support resolution, and cost metrics?
-- What evidence may be retained, for how long, and who signs pilot exit or expansion?
-
-### Pilot evidence packet
-
-- Save representative web-backend and LINE request, response, callback, and polling traces.
-- Link every external write to its provider reference and audit correlation ID.
-- Include both test-company configuration IDs and a cross-tenant access-test result.
-- Attach the fixed conversation-set result, policy cases, failure cases, and human-handoff cases.
-- Record catalog, FAQ, workflow, policy, and configuration versions used by each run.
-- Mark missing or stale source data and list the owner responsible for correction.
-- Capture opt-out, reply, closed-opportunity, timeout, and rollback outcomes.
-- Obtain business-owner acceptance for the agreed pilot outcome and expansion gate.
-
-MVP scope remains Sales-first: the existing web backend and LINE API, Sales with basic Support enabled, one CRM/catalog/calendar, one follow-up sequence, and human handoff. Custom ML, full Marketing, automatic quotes, payments, refunds, and cancellations remain outside MVP.
+Điền tên doanh nghiệp và website ở [phiếu đầu vào](#pilot-inputs). Sau khi chọn hành trình, chốt một kết quả có thể kiểm tra rồi mới ước lượng công tích hợp. Các công việc trong tài liệu này chưa được đánh dấu đã làm.

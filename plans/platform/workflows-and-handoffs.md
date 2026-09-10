@@ -1,171 +1,125 @@
-# Workflows and Human Handoffs
+# Quy trình bền vững, phê duyệt và bàn giao
 
-[Plan index](../README.md) · [Vietnamese easy-read flow](../plan-easy-read-flow.md) · [Glossary](../glossary.md)
+[Mục lục](../README.md) · [API](api-and-integrations.md) · [Hành trình](../customer-lifecycle.md)
 
-Status: proposed design, not implemented functionality. Examples and targets are illustrative until agreed with a pilot customer.
+Trạng thái: hợp đồng thiết kế. P1 chỉ bật quy trình nghiệp vụ nhỏ trong [phạm vi bản đầu](../delivery/mvp-and-roadmap.md).
 
 <a id=section-13></a>
 
-## Workflow Engine
+## 1. Quy trình nằm ngoài lời hướng dẫn AI
 
-**AI understands the situation and proposes actions. The Workflow Engine controls the business process.**
-Rules, permissions, transitions, timers, and stop conditions must exist outside prompts.
+AI hiểu ngữ cảnh và đề xuất. Máy chủ giữ quyền, trạng thái, lịch chờ, điều kiện dừng và quyết định thực thi. Quy trình bền vững là chuỗi bước có thể tiếp tục đúng chỗ sau khởi động lại.
 
-In plain language, a **workflow** is a checklist that remembers where it stopped. A **timer** means “wait until this time or event”; a **policy** is a business rule; a **handoff** transfers responsibility to another module or person. The flow below is an example for a qualified lead, not an instruction to message every lead.
-
-Example — an eligible hot lead:
-
-```mermaid
-flowchart TD
-    Event["lead.qualified event"] --> Check["Check score > 80, required fields, open opportunity"]
-    Check -->|Not eligible| Stop["Stop; record reason; send nothing"]
-    Check -->|Eligible| Opportunity["Create or reuse Opportunity"]
-    Opportunity --> Notify["Notify Sales"]
-    Notify --> Gate["Recheck reply, consent, channel, hours, owner"]
-    Gate -->|Blocked| Stop2["Stop current sequence"]
-    Gate -->|Allowed| Send["Send follow-up 1"]
-    Send --> Wait["Wait 24h"]
-    Wait --> Response{"Customer replied?"}
-    Response -->|Yes| Reply["Stop outbound; route reply to owner"]
-    Response -->|No| Recheck["Recheck reply, consent, channel, hours, owner"]
-    Recheck -->|Blocked| Stop3["Stop current sequence"]
-    Recheck -->|Allowed| Second["Send follow-up 2; max 2 sends"]
-```
-
-A failed eligibility check ends the outbound path; it does not send a message.
-
-| Workflow element | Contract |
+| Trường bản ghi | Ý nghĩa |
 |---|---|
-| Trigger | A recorded event such as `lead.qualified`, `quotation.sent`, `payment.completed`, `ticket.resolved`, or `customer.upsell_signal` |
-| State | Persist current step, owner, next run time, and terminal outcome |
-| Conditions | Evaluate configured qualification, eligibility, policy, and current customer state |
-| Actions | Call approved skills and save verified results |
-| Timers and approvals | Resume durably after a wait or explicit human decision |
-| Event record | Include event ID, tenant/customer IDs, timestamp, source, and correlation ID |
+| `run_id`, sự kiện gốc | Mã lần chạy; khóa chống trùng theo doanh nghiệp + nguồn + sự kiện + quy trình |
+| Ngữ cảnh | Khách/phiên, cuộc trao đổi, cơ hội/đơn/vụ việc và mã truy vết |
+| Phiên bản | Cấu trúc quy trình và ảnh chụp cấu hình để kiểm toán |
+| Tiến độ | Trạng thái, bước, số lần thử, thời gian chạy tiếp, quyền giữ bước có hạn |
+| Trách nhiệm | Người/nhóm phụ trách, bên nhận bàn giao, hạn chờ và bên xử lý quá hạn |
+| Phê duyệt | Người duyệt, hành động, quyết định, lý do, thời điểm và hạn hiệu lực |
+| Kết quả | Mã tác động cố định, kết quả nguồn, điều chưa rõ, lý do dừng/thất bại |
 
-Stop the active sales/nurture sequence after opt-out, a customer reply, its opportunity reaching Won/Lost, or human takeover. Other lifecycle workflows need their own eligibility checks; do not implicitly restart a stopped sequence. Every send must respect purpose-specific consent, channel restrictions, business hours/timezone, frequency caps, and active human ownership; recheck immediately before sending and log the outcome.
+Phiên bản cấu trúc giúp truy vết; trước mỗi hành động vẫn phải đọc lại quyền, mô-đun bật, đồng ý liên hệ, giá/chính sách quan trọng và trạng thái khách hiện tại. Ảnh chụp cũ không được vượt thay đổi an toàn mới.
 
-The two message limit above is the planned MVP example: one initial follow-up and at most one reminder. A stopped sequence does not wake up and send later; a new permitted decision is required.
+## 2. Trạng thái thống nhất
+
+| Trạng thái máy | Nghĩa tiếng Việt | Khi nào đi tiếp |
+|---|---|---|
+| `queued` | Đã xếp hàng | Kiểm tra điều kiện rồi cấp quyền chạy một bước |
+| `running` | Đang xử lý | Có kết quả → bước sau, chờ, cần người hoặc kết thúc |
+| `waiting` | Chờ thời điểm hoặc sự kiện | Tiếp tục đúng lần chạy khi điều kiện chờ được đáp ứng |
+| `awaiting_human` | Chờ người nhận hoặc quyết định | Chỉ tiếp tục sau sự kiện hợp lệ của người có quyền |
+| `completed` | Đã hoàn tất kết quả yêu cầu | Kết thúc; không đồng nghĩa đơn đã trả tiền nếu yêu cầu chỉ là tư vấn |
+| `stopped` | Đã dừng theo điều kiện | Kết thúc; lưu lý do, không tự sống lại |
+| `failed` | Chưa xác lập được kết quả yêu cầu | Kết thúc lần chạy; giữ tác động đã xác nhận/chưa rõ và người phục hồi |
+
+API dùng `accepted` cho công việc đã nhận, tương ứng giai đoạn xếp hàng; không dùng `queued` thay trạng thái API. `waiting` và `awaiting_human` chưa phải hoàn tất. Mọi chờ phải có hạn/điều kiện thoát và người xử lý khi quá hạn.
+
+Chỉ một tiến trình được quyền thực hiện một bước. Hết quyền giữ bước thì đọc lại bản ghi và đối soát tác động trước khi chạy lại. Sự kiện đến để đánh thức lần chạy đang chờ không được tạo một lần chạy mới ngoài ý muốn.
+
+## 3. Một chuỗi nhắc của bản đầu
+
+Quy trình thuộc lõi/Bán hàng, không phải chăm sóc chiến dịch của Tiếp thị. Mặc định tắt nếu chưa chốt kênh, điều kiện liên hệ, nội dung và người chịu trách nhiệm.
+
+1. Nhận sự kiện khách đủ điều kiện `lead.qualified` hoặc sự kiện tương đương đã ánh xạ; yêu cầu còn mở và điều kiện nghiệp vụ đã được xác nhận.
+2. Chống trùng lần chạy và liên kết lại cơ hội/yêu cầu sẵn có.
+3. Có người/nhóm chịu trách nhiệm; thiếu người thì chờ, không gửi.
+4. Kiểm tra ngay trước gửi: mục đích/kênh được phép, chưa trả lời/từ chối, còn trong giờ, chưa đạt giới hạn tần suất, AI còn quyền và mô-đun vẫn bật.
+5. Gửi tin nhắc đầu bằng mã tác động cố định; lưu mã thông báo từ nhà cung cấp.
+6. Chờ thời gian đã duyệt, ví dụ 24 giờ; thời gian này không phải mặc định cho mọi ngành.
+7. Kiểm tra lại toàn bộ điều kiện; nếu còn hợp lệ gửi tối đa một tin nhắc nữa.
+8. Kết thúc với lý do rõ: khách trả lời, chuyển người, đủ số tin, không còn đủ điều kiện hoặc lỗi.
+
+Tối đa hai tin là tổng giới hạn của một chuỗi, không phải hai tin mỗi ngày. Khóa nghiệp vụ và lịch sử liên hệ phải ngăn việc đổi mã sự kiện để lách giới hạn.
+
+Điểm trên 80 trong kế hoạch cũ chỉ là ví dụ. Không yêu cầu mọi B2C phải có điểm hay tạo cơ hội CRM; nếu cấu hình dùng chấm điểm, phải có ngưỡng và xác nhận trường bắt buộc. Điểm không thay đồng ý liên hệ.
+
+| Tín hiệu dừng | Tác động |
+|---|---|
+| Khách trả lời | Dừng chuỗi nhắc, chuyển tin tới bên đang phụ trách |
+| Rút đồng ý / yêu cầu ngừng | Dừng các lịch liên hệ tương ứng và ghi bằng chứng |
+| Yêu cầu/cơ hội đã đóng, mua hoặc từ chối | Dừng chuỗi liên quan; không tự chuyển thành chiến dịch mới |
+| Nhân viên tiếp quản / mô-đun tắt / mất quyền | Ngừng AI thực thi |
+| Ngoài giờ / kênh bị chặn / chạm giới hạn tần suất | Dừng chuỗi hiện tại; muốn bắt đầu lại cần quyết định hợp lệ mới |
+| Quá số lần thử | Thất bại có người xử lý tiếp, không tiếp tục gửi ngầm |
+
+Kiểm tra đồng ý và quyền gửi cần ở bước thực thi cuối, xử lý tranh chấp với sự kiện dừng. Không chỉ kiểm tra từ lúc lên lịch.
 
 <a id=section-14></a>
 
-## Human-in-the-loop
+## 4. Người duyệt và người tiếp quản
 
-Flow: `Agent → Policy → Approval/Handoff → Human → Recorded decision`.
+Các chế độ vận hành: AI quan sát không gửi → AI soạn nháp cho người → tự động tác vụ rủi ro thấp → mở rộng có kiểm soát. Mỗi lần tăng quyền phải có bằng chứng và người duyệt.
 
-| Mandatory human involvement | AI may do before handoff |
+| Khi cần người | AI được chuẩn bị |
 |---|---|
-| High-value deal | Collect qualification and prepare the commercial summary |
-| Custom pricing or discount outside policy | Retrieve standard prices and submit an approval request |
-| Refund or cancellation | Verify identity, collect reasons, explain the process, create the request |
-| Legal or security issue | Acknowledge and route to the responsible team |
-| Low confidence, repeated failure, or SLA risk | Preserve evidence and recommend a next step |
-| Customer requests a human | Transfer without forcing further AI troubleshooting |
+| Đơn lớn, giá ngoại lệ, ngân sách không đủ | Nhu cầu, điều khoản gốc, phép tính và hành động đề xuất |
+| Hoàn tiền, hủy, đổi trả, thay tài khoản | Ý định, xác minh cần thiết, thông tin và quy trình |
+| Bảo mật, an toàn, tranh chấp hoặc thiếu nguồn | Tóm tắt và bằng chứng, không hướng dẫn rủi ro |
+| Khách yêu cầu người thật | Bàn giao ngay, không bắt tiếp tục bộ câu hỏi |
+| Thử phiếu bù giá, công bố nội dung, liên hệ đối tác | Bản nháp, chi phí, điều kiện và nguồn |
 
-High-value thresholds, discount limits, minimum evidence/confidence thresholds, and maximum failed troubleshooting steps are tenant configuration. No response from an approver is not approval.
+Người duyệt một hành động không nhất thiết tiếp quản toàn bộ hội thoại. Người tiếp quản hội thoại thì AI ngừng trả lời nghiệp vụ. Phải ghi rõ loại quyết định, phạm vi và thời hạn.
 
-Supported modes: shadow/silent assistance, human-first copilot, AI-first with escalation, and approved low-risk automation. If a human is unavailable, acknowledge the pending request, retain an accountable queue/owner, and apply the configured business-hours response.
+Trình tự bàn giao:
 
-## Durable workflow contracts (full-product target)
+1. Tạo yêu cầu có người/nhóm chịu trách nhiệm, nội dung và hạn phản hồi.
+2. Giữ trạng thái đang chờ; AI không tiếp tục xử lý phần đã chuyển người.
+3. Bên nhận chấp nhận qua sự kiện có xác thực; đổi chủ sở hữu một lần.
+4. Nhân viên xử lý hoặc phân công lại; mọi tin mới tới đúng bên đang phụ trách.
+5. Chỉ trả quyền cho AI bằng sự kiện tiếp tục rõ ràng, kiểm tra lại điều kiện trước hành động.
 
-These contracts make the example sequence executable and reviewable without putting transitions in a prompt. They describe the full product; MVP enables one bounded follow-up sequence and the owners named in [MVP](../delivery/mvp-and-roadmap.md#section-21).
+Không có phản hồi, hết thời gian hoặc gửi thông báo thành công đều không phải phê duyệt. Quyết định hết hạn/bị từ chối dẫn tới dừng hoặc người xử lý khác, không tự cấp ưu đãi.
 
-### Run record and state transitions
+## 5. Thử lại, đối soát và phục hồi
 
-Every run has one durable record. The record is the source of truth when a worker, callback, or timer is retried.
-
-“Durable” means the saved run survives a process crash, delayed callback, or server restart. “Terminal” means no more automatic steps are expected. `completed`, `stopped`, and `failed` are terminal; `waiting` and `awaiting_human` are not terminal.
-
-| Field | Contract |
+| Sự cố | Cách xử lý |
 |---|---|
-| `run_id` | Stable instance ID associated with the tenant + source + event ID + workflow identity deduplication key |
-| `trigger_event_id` | Source event ID that started the run; never silently replaced |
-| Context | Tenant, customer, conversation, opportunity, and correlation IDs |
-| Definition | Workflow name and structural version; configuration is an audit snapshot, not a substitute for live safety checks |
-| Progress | Current state, step ID, attempt count, and next run time |
-| Ownership | Accountable owner type/ID, queue, and last handoff time |
-| Decision | Approval reference, decision, actor, and decision time when required |
-| Outcome | Stop reason, verified result references, or stable failure code |
+| Lỗi mạng tạm thời, giới hạn tốc độ | Thử lại hữu hạn, tăng khoảng chờ, dùng cùng mã tác động |
+| Sai dữ liệu, bị từ chối quyền/chính sách | Không thử lại tự động; sửa đầu vào hoặc chuyển người |
+| Hết thời gian chờ sau khả năng ghi thành công | Tra hệ thống nguồn theo mã đối soát trước khi ghi lại |
+| Sự kiện lặp | Trả lại kết quả đã có; khác nội dung cùng khóa là xung đột |
+| Khởi động lại / hết quyền giữ bước | Đọc lại trạng thái, đối soát, không gửi lại mù |
+| Tín hiệu dừng trong lúc chờ thử lại | Hủy lần thử còn lại và ghi lý do |
+| Không xác định được tác động | Giữ `uncertain` ở kết quả hành động, phân công người; không bịa thất bại rồi làm lại |
 
-| State | Allowed meaning and transition |
+Thao tác bù trừ, hoàn tiền hoặc hủy tác động là hành động mới có quyền riêng. Quay lại cấu hình cũ không được phát lại đơn, thanh toán hay tin nhắn cũ.
+
+## 6. Quy trình sau bản đầu
+
+| Quy trình | Điều kiện bổ sung |
 |---|---|
-| `queued` | Trigger accepted; dedupe and eligibility checks have not finished |
-| `running` | One worker owns the current step lease and may execute it |
-| `waiting` | Timer or external event is pending; resume from the saved step; it is not a new run when the event arrives |
-| `awaiting_human` | A named person or queue must decide or take over; no automatic success |
-| `completed` | All required actions have verified results and the configured outcome is recorded |
-| `stopped` | A configured stop condition ended outbound work; reason is recorded |
-| `failed` | Overall outcome was not established; confirmed, rejected, or uncertain action results and next owner/action remain explicit |
+| Tiếp thị chăm sóc / giới thiệu | Mô-đun bật, nguồn hợp lệ, nội dung được duyệt, quyền liên hệ |
+| Mặc cả → báo giá → thanh toán | Ngân sách, giá sàn, báo giá có hạn, kiểm tra lúc tạo đơn, đối soát |
+| Bù giá → cấp phiếu → thông báo | Điều kiện đơn, ngân sách, duyệt, chống cấp trùng và kiểm soát tổng đã bù |
+| Mua lại / gia hạn / nâng cấp | Tín hiệu còn hiệu lực, không trùng cơ hội, Bán hàng hoặc người nhận |
+| Phản hồi → sửa kiến thức | Bằng chứng → chủ tài liệu duyệt → xuất bản phiên bản → chạy lại bộ thử |
 
-Only one active worker may advance a run step. Pin only structural process steps for reproducibility; reload live consent, permissions, enabled modules, security policy, and customer state before every execution. A stale lease is recovered from the record, and the step's effect key is reused before another attempt. A waiting event resumes the matching run by tenant/source/event/workflow key; a payload conflict is rejected. See the API task and callback rules in [APIs and Enterprise Integrations](api-and-integrations.md#section-15).
+## 7. Bằng chứng nghiệm thu
 
-### Guarded hot-lead follow-up contract
+Thử sự kiện trùng, khóa xung đột, tiến trình chết, hai tiến trình giành một bước, lỗi sau ghi, mất thông báo kết quả và phục hồi bằng truy vấn trạng thái. Kết quả phải nối được mã lần chạy tới tác động nguồn.
 
-The canonical trigger is `lead.qualified`. A lead is eligible only when its score is above the tenant threshold (the example uses `>80`), required qualification is complete, the opportunity is open, and current outreach policy allows the channel.
+Kiểm tra từng tín hiệu dừng ngay trước tin đầu, tin thứ hai và trong lúc chờ thử lại. Phải không gửi thêm khi bị chặn; thay đổi quyền hoặc đồng ý hiện tại phải có hiệu lực dù cấu hình cũ đã được lưu.
 
-| Step | Required contract |
-|---|---|
-| Dedupe | Use tenant + source + event ID + workflow identity for one run; reuse an opportunity by tenant + customer + external business key |
-| Owner | Keep the current opportunity owner; otherwise assign the configured Sales owner/queue before any send |
-| Approval | Pause for a recorded approval when value, discount, message, or policy requires it |
-| Notify | Give the owner the qualification evidence, proposed next action, and expiry/SLA |
-| Send gate | Recheck reply, opt-out, consent, channel, hours, frequency cap, opportunity stage, and human ownership immediately before sending |
-| Effect | Send with one stable `run_id:send_step` idempotency key and save the provider result/reference |
-| Wait | Save the configured wait (default example: 24 hours); wake from durable state, not process memory |
-| Follow-up 2 | Re-run the send gate; send only if still allowed and the sequence limit has not been reached |
-| Finish | Record replied, booked, stopped, handed-off, or failed outcome and update the owning system as permitted |
-
-If the score or qualification is below the threshold, the opportunity is closed, or no accountable owner can be assigned, the run records the reason and sends nothing. A customer reply stops the outbound path and routes the reply to the owner or configured queue.
-
-### Ownership and approval flow
-
-There is exactly one accountable owner at each human boundary, even when several watchers receive a notification. Ownership changes are events with actor, reason, timestamp, and the next action; an AI worker cannot silently reclaim a human-owned run.
-
-| Situation | State and next action |
-|---|---|
-| Assigned sales owner | `running` or `waiting`; owner receives the next action and SLA |
-| No owner or owner unavailable | `awaiting_human` on the configured queue; no outbound send |
-| High-value/custom/out-of-policy action | `awaiting_human` with evidence, proposed action, approver, and expiry |
-| Approval granted | Record actor and decision, recheck all gates, then resume the saved step |
-| Approval denied or expired | Record the reason; stop or route to the configured alternative |
-| Human takeover | Pause AI actions until a human explicitly resumes the AI-owned step |
-
-No approver response is never approval. Before the configured deadline, customer-facing status and the API task stay `awaiting_human`; they must not say completed, booked, or resolved. Human decisions are linked to the run and [Customer360](data-and-knowledge.md#section-11).
-
-Each waiting state has a configured expiry and escalation owner. When the deadline passes, the run stops or fails with an explicit reason according to policy; it does not send or approve anything automatically. A person can cancel a pending run through the approved operator event path, and that decision is idempotent and audited.
-
-### Retry and recovery contract
-
-Retry only a transient failure and only after reloading the durable run record. Use tenant-configured maximum attempts and bounded backoff; keep the same effect key for the same business action.
-
-| Failure | Required behavior |
-|---|---|
-| Temporary transport, rate, or worker failure | Retry within the bound; do not advance the step until a result is known |
-| Validation, policy, or eligibility failure | Do not retry; record the reason and apply the configured stop/handoff |
-| Timeout after a possible write | Reconcile the source system by its reference/business key before retrying |
-| Repeated failure | Mark `failed`, preserve evidence, and assign the configured human exception owner |
-| Stop condition during backoff | Cancel the pending attempt and mark `stopped`; never send on wake-up |
-
-### Configurable stops and acceptance tests
-
-Tenant configuration defines the threshold, wait times, sequence length, business hours, frequency cap, owner fallback, approval rules, maximum attempts, and stop signals. Structural process changes apply to new runs unless active runs are explicitly migrated. Live consent, access permissions, module enablement, safety policy, and current eligibility override any saved configuration snapshot before the next action.
-
-| Stop signal | Default effect |
-|---|---|
-| Customer reply | Stop outbound; route the reply and preserve ownership |
-| Opt-out or consent withdrawal | Stop all matching outreach and record the channel/reason |
-| Opportunity reaches Won/Lost or is deleted | Stop the sequence; keep the commercial outcome |
-| Human takeover | Pause until explicit resume; do not auto-resume on timer |
-| Channel blocked, outside hours, or frequency cap | Stop the current sequence; any later restart requires an explicit permitted new decision |
-| Maximum attempts/sequence reached | End with `failed` or `stopped` and a clear next owner/action |
-
-Acceptance tests must prove that:
-
-- an eligible hot lead creates one run, one opportunity link, one owner notification, and at most the configured sends;
-- a score at the boundary, missing qualification, closed opportunity, or missing owner sends nothing;
-- duplicate `lead.qualified` events reuse the run; a different legitimate event reuses the opportunity business key without duplicating the opportunity;
-- required approval remains `awaiting_human` until approve/reject/expire is recorded, with no silent success;
-- a reply, opt-out, takeover, closed opportunity, blocked channel, outside-hours trigger, or frequency cap before the timer prevents the next send and requires an explicit permitted decision to restart;
-- a provider timeout reconciles before retry, and an exhausted retry becomes an explicit human-owned failure;
-- a tenant's changed wait, stop, owner, and attempt settings are observable in the run record;
-- resume after approval or takeover executes the saved step once and records its verified outcome; a live consent, permission, module-enable, or policy change is enforced on the next execution even when the structural definition is pinned.
+Thử bàn giao chưa người nhận, nhận hai lần, phê duyệt hết hạn, từ chối, tiếp quản và trả quyền AI. Không tình huống nào được biến trạng thái chờ thành thành công mà thiếu bằng chứng.

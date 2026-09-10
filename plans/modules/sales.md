@@ -1,150 +1,106 @@
-# Sales Module
+# Mô-đun Bán hàng — Tư vấn đúng và kiểm soát giao dịch
 
-[Plan index](../README.md) · [Vietnamese easy-read flow](../plan-easy-read-flow.md) · [Glossary](../glossary.md)
+[Mục lục](../README.md) · [Hành trình](../customer-lifecycle.md) · [Thuật ngữ](../glossary.md)
 
-Status: proposed design, not implemented functionality. Examples and targets are illustrative until agreed with a pilot customer.
+Trạng thái: thiết kế đề xuất. P1 tập trung tư vấn và chuyển sang quy trình mua hiện có; ưu đãi, đơn hàng và thanh toán tự động phải được bật riêng sau nghiệm thu.
 
 <a id=section-7></a>
 
-## Sales Agent
+## 1. Mục tiêu
 
-Purpose: move a qualified lead to a clear commercial outcome.
+Giúp khách chọn giải pháp đủ dùng và đi đến bước mua phù hợp, với giá và điều kiện có căn cứ. Không tối ưu số đơn bằng cách bán sai nhu cầu hoặc giảm giá làm mất hiệu quả kinh tế.
 
-```text
-Company app / Marketing handoff → Sales intake → Discovery
-                                → Need → Budget → Authority → Timeline
-                                → Product Recommendation → Demo / human quote
-                                → Follow-up → Company-confirmed Won / Lost
-```
-
-**Discovery** means asking questions before recommending anything. An **opportunity** is a possible sale being tracked. A **stage** is the current step of that sale. A quote is only a draft or approved company action until the company's process confirms it.
-
-Default opportunity state:
-
-`New → Qualified → Demo → Proposal → Negotiation → Won/Lost`
-
-Stages may be skipped only through configured transitions. Incomplete qualification returns to discovery or nurture; record unknown fields instead of inventing answers.
-
-| Capability | Action or output |
-|---|---|
-| Qualification | Collect need, budget, authority, timeline, fit, and intent |
-| Recommendation and pricing | Search the approved Product Catalog and explain suitable options |
-| Meeting booking | Check availability, book a confirmed slot, and save the reference |
-| Quotation | Create a quote from approved catalog data or prepare an approval request |
-| CRM updates | Persist qualification, stage, owner, notes, and next action |
-| Follow-up | Start or stop the appropriate workflow |
-| Human handoff | Transfer high-value, complex, or exception deals with full context |
-
-Example — a SaaS buyer:
-
-1. Receive a qualified lead for a 30-user team.
-2. Confirm the need, a USD 900 monthly budget, CEO approval, and a six-week timeline.
-3. Retrieve the illustrative Business plan at USD 25 per user/month; 30 users cost USD 750/month before applicable taxes.
-4. Book a demo and save the opportunity in CRM.
-5. Prepare the approved quote, obtain any required human approval, and schedule follow-up.
-6. Mark Won only after the configured authoritative confirmation; trigger onboarding.
-
-Automated quotation and checkout are full-product capabilities. Their MVP boundaries are explicit in [MVP](../delivery/mvp-and-roadmap.md#section-21).
-
-### Detailed Sales flow
-
-```mermaid
-flowchart TD
-    Entry["Existing company app or accepted Marketing handoff"] --> API["Company backend calls Sales Module API"]
-    API --> Gate{"Sales Module enabled?"}
-    Gate -->|No| Staff["Return unsupported or human queue"]
-    Gate -->|Yes| Context["Load verified customer, conversation, and CRM context"]
-    Context --> Discovery["Ask discovery questions"]
-    Discovery --> Complete{"Need, budget, authority, timeline known?"}
-    Complete -->|No| More["Save unknown fields; ask next question"]
-    More --> Discovery
-    Complete -->|Yes| Catalog["Read current catalog and eligibility"]
-    Catalog --> Fit{"Suitable option available?"}
-    Fit -->|No| Human["Explain limitation or request human review"]
-    Fit -->|Yes| Recommend["Explain recommendation and terms"]
-    Recommend --> Demo{"Customer wants a meeting?"}
-    Demo -->|Yes| Calendar["Check calendar and save confirmed booking"]
-    Demo -->|No| Next["Save next action"]
-    Calendar --> Next
-    Next --> Approval{"High-value or out-of-policy?"}
-    Approval -->|Yes| Approve["Await named human approval"]
-    Approval -->|No| Follow["Start permitted follow-up"]
-    Approve --> Follow
-    Follow --> Outcome{"Company system confirms outcome?"}
-    Outcome -->|Won| Won["Record Won + source reference; start onboarding"]
-    Outcome -->|Lost| Lost["Record Lost + reason"]
-    Outcome -->|Not yet| Wait["Keep opportunity open; wait for reply"]
-```
-
-The **company system** in the final decision is the agreed CRM/order/billing source. Sales may prepare the information needed for a quote, but it must not claim “sold” because an AI reply was sent.
-
-## Sales Module Operating Contract
-
-Sales is independently selectable and may receive a new or unqualified direct company request, or an explicit handoff from Marketing. It owns the conversation while qualifying or progressing an opportunity; ownership is never shared concurrently with Support or a human queue.
-
-### Inputs and company-owned data
-
-| Input | Required data and source of truth |
-|---|---|
-| Customer context | Customer360 identity, verification state, contact, consent, conversation history, and prior owner |
-| Company lead source | Form/CRM source, campaign fields, and company customer reference; missing attribution remains unknown |
-| CRM | Contact/opportunity ID, stage, owner, notes, next action, and authoritative Won/Lost result |
-| Qualification | Need, fit, budget, authority, timeline, product interest, and customer-confirmed unknowns |
-| Product catalog | Product/version ID, approved price, currency, billing unit, availability, taxes/fees, and effective dates |
-| Calendar | Provider availability, timezone, booking reference, and confirmed meeting status |
-| Company policy | Stage transitions, discount limits, approval roles, quote terms, and permitted write fields |
-| Optional Marketing handoff | Source, score, rule versions, consent evidence, and campaign history; Sales does not treat a score as a sale |
-
-Read and write these records through approved company APIs and adapters described in [APIs and Integrations](../platform/api-and-integrations.md). The company application owns CRM, catalog, calendar, and commercial truth; do not use a prompt value or browser-supplied price as authority.
-
-The Planned MVP does not require order, payment, checkout, refund, cancellation, or commerce connectors. Humans prepare and send quotations and confirm purchase; those later actions are optional full-product integrations.
-
-### Actions and outputs
-
-| Scope | Supported action | Output and boundary |
+| Bối cảnh | Hỏi tối thiểu | Bước tiếp theo |
 |---|---|---|
-| Planned MVP | Ask and persist required qualification fields | Field values, unknowns, evidence, score, stage, owner, and next action |
-| Planned MVP | Read the approved catalog and explain suitable options | Product/version references, assumptions, terms, and source timestamp |
-| Planned MVP | Read availability and request a meeting | Confirmed booking reference, or an explicit unavailable/approval state |
-| Planned MVP | Save permitted CRM updates | Provider-confirmed record reference; uncertain writes remain pending reconciliation |
-| Planned MVP | Prepare inputs for a quote or approval packet | Draft context only; a human uses the company's configured quotation process |
-| Full product, later | Generate/send a quote or use commerce adapters | Labeled proposed action, policy/approval gate, and provider confirmation required |
-| Full product, later | Payment, cancellation, refund, or checkout execution | Human-approved, separately enabled connector; not MVP and never implied by an answer |
+| Bán lẻ B2C | Nhu cầu, điều kiện dùng, tầm giá nếu cần; thiết bị/kích cỡ/biến thể khi liên quan | Gợi ý vài lựa chọn, giỏ/trang mua hiện có |
+| Bán hàng B2B cần tư vấn | Nhu cầu, ngân sách, người quyết định, thời điểm, quy mô | Đặt lịch, chuẩn bị thông tin báo giá, theo dõi cơ hội |
+| Khách cũ | Nhu cầu mới và sản phẩm hiện dùng đã xác minh nếu cần | Giữ sản phẩm cũ, mua bổ sung hoặc nâng cấp có lý do |
 
-`Won`, payment, booking, and quote success are reported only when the corresponding company system returns a confirmed reference. A task marked `completed` can contain just an answer, not a commercial outcome.
+Không bắt người mua lẻ khai chức vụ hay người phê duyệt. Không ép khách tiết lộ dữ liệu không cần thiết. Trường chưa biết được ghi rõ, không suy đoán.
 
-### Main flow, decisions, and fallbacks
+## 2. Hợp đồng đầu vào và đầu ra
 
-1. Verify caller access and customer identity before loading private account details; check communication/Marketing consent separately before outbound follow-up.
-2. Load or create the permitted CRM contact/opportunity and required fields. Ask for missing information; record unknown instead of guessing.
-3. Read current catalog data and revalidate version, price, availability, and terms before presenting an option.
-4. Apply configured stage transitions. A request to skip a required stage returns to discovery or asks for approval.
-5. For a demo, check the connected calendar and save the confirmed booking reference only after the provider responds.
-6. Persist notes and next action with an idempotency key. Reconcile an uncertain write before retrying.
-7. Transfer to a human for high-value, complex, policy-exception, or explicitly requested cases; pause AI until resumed.
+Đầu vào gồm khách/phiên, cuộc trao đổi, nguồn, quyền liên hệ, người phụ trách; nhu cầu; danh mục với mã sản phẩm/phiên bản, giá, đơn vị tiền, thuế/phí, tồn kho/điều kiện; quy tắc và hệ thống xác nhận kết quả. Lịch/CRM/đơn hàng chỉ được dùng khi kết nối cho phép.
 
-| Exception | Safe fallback |
+Đầu ra gồm lựa chọn, lý do và nguồn; phần chưa rõ; yêu cầu/cơ hội/lịch đã xác nhận khi có; người phụ trách, trạng thái và bước tiếp theo. Một câu tư vấn hoàn thành không có nghĩa đã bán hàng.
+
+Luồng chung:
+
+1. Kiểm tra quyền, mô-đun bật và người đang trả lời; nhận bàn giao nếu có.
+2. Dùng thông tin đã có, xác minh khách trước khi đọc dữ liệu riêng.
+3. Hỏi phần thiếu theo hành trình đã chọn.
+4. Tra sản phẩm và điều kiện hiện hành, lọc nhu cầu, ngân sách, khả năng dùng và tồn kho.
+5. Đưa lựa chọn có bằng chứng, nêu đánh đổi; không có món phù hợp thì nói rõ.
+6. Khách tự xác nhận bước mua/hẹn; chỉ thực hiện hành động trong danh sách cho phép.
+7. Ghi kết quả được hệ thống gốc xác nhận; lỗi chưa rõ phải đối soát trước thử lại.
+
+Với B2B, chuỗi cơ hội tham khảo là mới → đủ điều kiện → tư vấn/trình diễn → đề xuất → thương lượng → thành công/thất bại. Có thể bỏ bước theo cấu hình; chưa phản hồi là đang chờ, không tự ghi thất bại hay thành công.
+
+## 3. Trải nghiệm tư vấn có bằng chứng
+
+| Năng lực | Quy tắc |
 |---|---|
-| Customer cannot be verified | Ask for the approved verification detail or hand off; expose no private account data |
-| Catalog price or eligibility is missing/stale | State that it is unconfirmed, request a catalog refresh or human review, and do not quote it as final |
-| Calendar unavailable or booking times out | Offer a human callback or approved alternatives; do not claim a booking |
-| Discount exceeds policy | Create an approval request; do not promise the discount or alter catalog terms |
-| Quote, payment, refund, or cancellation requested in MVP | Prepare context for a human and return `awaiting_human`; perform no commercial execution |
-| Sales disabled | Preserve the lead in core records and return unsupported or a human queue item; do not silently route to a disabled action |
-| Support disabled for a support-shaped request | Ask the Supervisor for an enabled destination or human handoff; Sales does not impersonate Support |
+| Giải thích thông số | Dùng mô tả đã duyệt; tách thông số đo được khỏi ước tính và điều kiện sử dụng |
+| Câu hỏi chọn nhanh | Hỏi từng câu cần thiết, khách có thể bỏ qua hoặc tự gõ |
+| So sánh nâng cấp | Xác nhận đúng mẫu cũ/mới, chỉ ra vài khác biệt liên quan; không có bằng chứng thì không nêu phần trăm hiệu năng |
+| Khuyên không mua đắt hơn | Nêu phương án đủ dùng hoặc chưa cần mua; không dựng lý do để ép nâng cấp |
+| Soát giỏ hàng | Gợi ý sản phẩm trùng/không tương thích dựa dữ liệu; khách xác nhận trước khi sửa |
+| Gợi ý đạt miễn phí giao hàng | Hiển thị tổng tiền trước/sau và điều kiện thật; không tự thêm món |
 
-When Marketing is disabled, Sales still preserves source and campaign values supplied by the company's form or CRM; label attribution unavailable only when those fields are absent. Sales can accept a new or unqualified inquiry and use discovery to qualify it. A Marketing score or handoff request is preliminary; Sales confirms the required fields before marking an SQL or creating an opportunity. When Sales transfers to Support, the prior owner is recorded and Support explicitly accepts ownership before Sales pauses.
+Không chuyển “10.000 mAh” thành số lần sạc cụ thể chỉ bằng suy đoán; không hứa thời gian đun nước, tiền điện, độ yên tĩnh hoặc kết quả sức khỏe từ một thông số đơn lẻ. Ví dụ trong PDF phải được kiểm chứng theo sản phẩm và điều kiện thử trước khi dùng với khách.
 
-For every handoff, pass the customer ID, conversation ID, current owner and stage, qualification evidence, source-record links, unresolved questions, summary and next action. The receiving owner must accept; until acceptance the task remains pending/`awaiting_human`, not a completed handoff.
+## 4. Giá ưu đãi: AI đề xuất, máy chủ quyết định
 
-### Configuration and acceptance scenarios
+Năng lực mặc cả nằm sau P1. Lớp hội thoại chỉ chuyển nhu cầu và giá khách đề nghị; **không nhận quyền quyết định tiền, không được truy cập hay tiết lộ giá vốn nội bộ, không tự ghi đè giá sàn**. Dữ liệu chi phí chỉ đi tới bộ tính giá máy chủ và vai trò được cấp quyền.
 
-Configure enabled modules, required qualification fields, score rules, CRM/catalog/calendar mappings, stage transitions, owner queues, approval thresholds, quote templates, allowed write fields, language/tone, timeout/retry limits, and authoritative outcome events. Keep credentials in protected company-scoped connector storage; a delegated secret may be held by an AgentOS connector when required, with scope, rotation, and audit. Keep field ownership in the company systems.
+Công thức ngân sách, giá sàn và ví dụ được định nghĩa duy nhất tại [kinh tế đơn hàng](../delivery/analytics.md#unit-economics).
 
-Acceptance scenarios:
+1. Máy chủ đọc giá gốc, chi phí, phiên bản chính sách, tồn kho và quyền áp dụng.
+2. Tính tổng lợi ích đã cấp: giảm tiền, mã ưu đãi, trợ phí vận chuyển, chi phí phiếu mua hàng dự kiến và hoa hồng đối tác.
+3. Từ chối nếu thiếu dữ liệu, vượt ngân sách, dưới sàn hoặc vi phạm cách kết hợp ưu đãi.
+4. Nếu hợp lệ, tạo báo giá gắn với doanh nghiệp, khách/phiên, giỏ hàng, số lượng, tiền tệ, giá, thời hạn và phiên bản chính sách; giữ chỗ ngân sách tương ứng bằng thao tác nguyên tử để nhiều đơn không cùng dùng một phần ngân sách.
+5. Khách chấp nhận; khi tạo đơn kiểm tra lại điều kiện và dùng mã hành động chống trùng.
+6. Đơn, báo giá và giao dịch thanh toán giữ mã liên kết để đối soát. Chuyển phần ngân sách giữ chỗ thành đã dùng hoặc giải phóng theo trạng thái được xác nhận; kết quả chưa rõ phải đối soát trước khi giải phóng.
 
-1. A qualified 30-user lead receives a current catalog recommendation, books an available slot, and creates one CRM update with confirmed references.
-2. A lead lacks budget and authority; Sales records both as unknown, asks discovery questions, and does not invent values or advance the stage.
-3. The CRM times out after a possible update; Sales reconciles by idempotency key and reports pending/confirmed rather than duplicating the opportunity.
-4. A customer asks for a refund or an out-of-policy discount; Sales returns a human approval handoff and performs no refund, payment, or unauthorized price change.
-5. Sales is disabled; an incoming `module: sales` request is explicitly rejected or queued for a human, with no silent cross-module action.
+Báo giá có thể dùng mã ngẫu nhiên tra phía máy chủ hoặc mã xác thực thông điệp HMAC để kiểm tra tính toàn vẹn. Đây không phải chứng nhận ngân hàng, không tự bảo vệ mọi đường mua hàng; trang thanh toán và API tạo đơn cũng phải áp dụng cùng kiểm tra giá.
+
+Thời hạn 10 phút là lựa chọn thử nghiệm từ PDF, cần nêu thật với khách. Không tạo khan hiếm giả, giả vờ “lỗ vốn” hoặc “xin sếp” để gây áp lực. Hết hạn báo giá không bảo đảm ngân hàng từ chối tiền chuyển muộn.
+
+## 5. Hỗ trợ thanh toán, giao hàng và hóa đơn
+
+P1 dùng trang thanh toán/quy trình hiện có; AI không tự tạo mã thanh toán hoặc đánh dấu đã trả tiền.
+
+Sau P1, ưu tiên kết nối nhà cung cấp/hệ thống doanh nghiệp đã dùng. Lưu lựa chọn ứng dụng thanh toán nếu khách cho phép; không lưu thông tin đăng nhập ngân hàng, mã OTP hoặc dữ liệu sinh trắc học. Có phương án QR, sao chép thông tin hay trang thanh toán thay thế nếu liên kết mở ứng dụng không hoạt động.
+
+Khách vẫn kiểm tra thông tin và xác nhận trong ứng dụng ngân hàng; đây là luồng được NAPAS mô tả, không phải thanh toán AI tự quyết. [Nguồn NAPAS](https://www.napas.com.vn/dich-vu-chuyen-tien-nhanh-napas-247).
+
+Thanh toán chỉ xác nhận bằng nguồn tin cậy, không bằng ảnh chụp hoặc trang quay về. [API và tích hợp](../platform/api-and-integrations.md#payments) quy định đối soát và nhánh trả tiền muộn/thiếu/thừa.
+
+Khung giờ giao và yêu cầu hóa đơn chỉ được chuyển tới hệ thống có năng lực tương ứng. Thu mã số thuế không có nghĩa hóa đơn đã phát hành; chọn khung giờ không có nghĩa đã được đơn vị vận chuyển chấp nhận.
+
+## 6. Ranh giới bản đầu
+
+| Cho phép trong P1 | Chưa cho phép trong P1 |
+|---|---|
+| Hỏi nhu cầu, giải thích từ nguồn duyệt, lưu ghi chú và bước tiếp theo | Sửa giá, mã khuyến mãi, tự mặc cả hoặc phát phiếu |
+| Đọc danh mục và chuyển khách tới quy trình mua hiện có | Tạo/thu thanh toán, hoàn tiền, hủy đơn hoặc sửa tài khoản |
+| Cập nhật trường khách/yêu cầu/CRM đã được cấp quyền | Cập nhật hàng loạt hoặc trường ngoài danh sách |
+| Đặt một lịch được xác nhận nếu cấu hình B2B chọn lịch | Tự đổi/hủy lịch hoặc báo đặt thành công khi chưa có mã |
+| Chuẩn bị thông tin để nhân viên báo giá | Tự phát hành báo giá thương mại |
+| Một chuỗi nhắc tối đa hai tin khi đủ điều kiện | Nhắc vô hạn, gửi sau khi khách trả lời/từ chối hoặc người tiếp quản |
+
+## 7. Ngoại lệ và nghiệm thu
+
+| Tình huống | Kết quả bắt buộc |
+|---|---|
+| Sản phẩm/giá cũ hoặc thiếu | Không đưa giá cuối; làm mới hoặc chuyển người |
+| Không có sản phẩm phù hợp | Nêu giới hạn và lựa chọn tiếp theo; không bịa sản phẩm |
+| Chưa xác minh khách | Chỉ dùng thông tin công khai/phiên hợp lệ |
+| Ghi CRM hoặc đặt lịch bị hết thời gian chờ | Tra kết quả bằng mã đối soát; không tạo trùng |
+| Đơn lớn, giá ngoại lệ hoặc khách muốn gặp người | Bàn giao có người chịu trách nhiệm, AI tạm dừng |
+| Mô-đun Bán hàng chưa bật | Từ chối rõ hoặc hàng đợi người xử lý |
+| Yêu cầu giá 0, sửa giỏ/báo giá/tiền tệ từ trình duyệt | Máy chủ từ chối; không thể lách bằng nội dung nhắc AI |
+| Báo giá/đơn hết hạn nhưng có tiền tới | Trạng thái cần đối soát, không bỏ tiền hoặc giao hàng tự động |
+| Tư vấn xong nhưng chưa có giao dịch nguồn | Hoàn thành tư vấn, không tính doanh thu |
+
+Mỗi kết quả cần nguồn, phiên bản, mã truy vết và người phụ trách. Bộ thử ưu đãi/QR chỉ áp dụng khi bật năng lực tương ứng, không được coi là đã vượt qua trong P1.

@@ -1,52 +1,80 @@
-# AgentOS Customer360 — Mục lục kế hoạch
+# AgentOS Customer360 — Kế hoạch hợp nhất
 
-Đọc [luồng dễ hiểu bằng tiếng Việt](plan-easy-read-flow.md) trước nếu bạn muốn nắm ý chính trong khoảng 5 phút.
+Đọc [bản tổng quan dễ hiểu](plan-easy-read-flow.md) trước, khoảng 5 phút. Muốn bắt đầu triển khai, mở [phạm vi bản đầu và điều kiện nghiệm thu](delivery/mvp-and-roadmap.md).
 
-Tra nghĩa các từ như **module**, **API**, **lead**, **Customer360**, **workflow** và **handoff** trong [bảng thuật ngữ dùng chung](glossary.md).
+Cập nhật: 10/09/2026. Trạng thái: **đề xuất thiết kế, chưa triển khai và chưa được kiểm chứng bằng thử nghiệm thực tế**. Việc nguồn PDF ghi “đã phê duyệt ý niệm” không có nghĩa bộ kế hoạch hợp nhất hoặc các tính năng đã được nghiệm thu.
 
-Sản phẩm gồm ba module Marketing, Sales và Customer Support. Doanh nghiệp chọn module cần dùng, kết nối vào ứng dụng và dữ liệu hiện tại qua API. Phần lõi được dùng lại; dữ liệu, quyền truy cập và cấu hình của từng doanh nghiệp được tách riêng.
+## 1. Định hướng thống nhất
 
-Trạng thái: thiết kế đề xuất, chưa phải tính năng đã triển khai. Ví dụ, giá và chỉ tiêu cần được xác nhận với doanh nghiệp thử nghiệm.
+Xây bộ trợ lý AI giúp doanh nghiệp **hiểu nhu cầu sớm → tư vấn đúng giải pháp → hỗ trợ mua thuận tiện → chăm sóc sau mua → tạo mua lại và giới thiệu**. Khách có thể đến từ tìm kiếm, quảng cáo, đối tác, khách cũ hoặc trực tiếp; quảng cáo không phải điểm khởi đầu duy nhất.
 
-## Đọc theo nhu cầu
+Giữ ba mô-đun có thể bật riêng:
 
-1. **Người không chuyên kỹ thuật:** đọc [bản dễ hiểu](plan-easy-read-flow.md).
-2. **Product / Business:** đọc [sản phẩm và cách đóng gói](product-and-packaging.md), rồi [luồng khách hàng và tình huống](customer-lifecycle.md).
-3. **Engineering:** bắt đầu từ [kiến trúc](platform/architecture.md), [dữ liệu](platform/data-and-knowledge.md), [API](platform/api-and-integrations.md), rồi xem module cần làm và [MVP](delivery/mvp-and-roadmap.md).
-4. **Tra thuật ngữ:** mở [glossary.md](glossary.md) bất cứ lúc nào.
-
-## Tài liệu chi tiết
-
-Các mục 1–23 của PLAN.md trước đây đã được chuyển vào các tài liệu dưới đây, không bỏ phần nào. Cột cuối giúp tìm lại nội dung cũ; mỗi tài liệu có thêm chi tiết thực hiện và kiểm chứng trong phạm vi kế hoạch.
-
-**Nguồn của flow:** [Customer lifecycle](customer-lifecycle.md) là luồng kinh doanh chính; ba tài liệu trong `modules/` là luồng chi tiết từng module; `platform/` là luồng điều phối, dữ liệu, API và xử lý lỗi. Khi hai flow có vẻ khác nhau, ưu tiên điều kiện bật/tắt module, quyền dữ liệu và xác nhận từ hệ thống doanh nghiệp.
-
-| Tài liệu | Nội dung chính | Mục từ bản cũ |
+| Mô-đun | Phạm vi hợp nhất | Kết quả cần đo |
 |---|---|---|
-| [Product and packaging](product-and-packaging.md) | Bài toán, ba module, phần dùng chung, cấu hình, cách bán và triển khai | 1, 2, 17, 19 |
-| [Customer lifecycle](customer-lifecycle.md) | Luồng khách, sáu tình huống, bàn giao giữa các module | 3, 4, 9 |
-| [Marketing](modules/marketing.md) | Tiếp nhận khách từ quảng cáo/form, phân loại, chăm sóc và chuyển Sales | 6 |
-| [Sales](modules/sales.md) | Tìm hiểu nhu cầu, tra sản phẩm/giá, đặt lịch, theo dõi bán hàng | 7 |
-| [Customer Support](modules/customer-support.md) | Hỏi đáp, xử lý sự cố, chuyển nhân viên và ghi nhận nhu cầu mới | 8 |
-| [Architecture](platform/architecture.md) | Điều phối module, ranh giới hệ thống và xử lý yêu cầu | 5, 10 |
-| [Data and knowledge](platform/data-and-knowledge.md) | Customer360, dữ liệu gốc, nội dung được duyệt và danh mục sản phẩm | 11, 12, 18 |
-| [Workflows and handoffs](platform/workflows-and-handoffs.md) | Quy trình, nhắc lại, phê duyệt, bàn giao và dừng tự động | 13, 14 |
-| [API and integrations](platform/api-and-integrations.md) | API hai chiều, thông báo sự kiện, bảo mật và xử lý lỗi kết nối | 15, 16 |
-| [Analytics](delivery/analytics.md) | Chỉ số, nguồn dữ liệu và cách đo kết quả | 20 |
-| [MVP and roadmap](delivery/mvp-and-roadmap.md) | Phạm vi bản đầu, công việc, kiểm thử, điều kiện chạy thử và các giai đoạn sau | 21, 22, 23 |
+| Tiếp thị | Nghiên cứu thị trường, tín hiệu trước nhu cầu, định vị, đối tác, tiếp nhận và chăm sóc khách quan tâm | Nhu cầu được kiểm chứng, khách phù hợp, chi phí thu hút |
+| Bán hàng | Hỏi nhu cầu, đề xuất có bằng chứng, giải thích sản phẩm, hỗ trợ mua; ưu đãi có kiểm soát ở giai đoạn sau | Chuyển đổi và lãi đóng góp, không chỉ số đơn |
+| Chăm sóc khách hàng | Hướng dẫn, xử lý vấn đề, chuyển nhân viên, ghi nhận nhu cầu mua lại | Giải quyết có xác nhận, hài lòng và mua lại |
 
-## Cách duy trì tài liệu
+Nghiên cứu thị trường là năng lực của Tiếp thị, không phải mô-đun thứ tư. Giữ chân và phát triển đối tác là quy trình liên quan đến ba mô-đun, không đòi thêm sản phẩm độc lập.
 
-1. Sửa quy định tại tài liệu chịu trách nhiệm cho quy định đó; dùng link để tham chiếu từ tài liệu khác.
-2. Khi đổi cách kết nối, đối chiếu API, dữ liệu, module liên quan và tiêu chí MVP.
-3. Khi đổi luồng kinh doanh, cập nhật thêm bản dễ hiểu. Bản dễ hiểu là bản tóm tắt, không thay thế các điều kiện bảo mật và phê duyệt trong tài liệu chi tiết.
+Lõi dùng chung gồm điều phối, hồ sơ khách hàng hợp nhất Customer360, kho kiến thức, quy trình, kết nối API, kiểm soát quyền, nhật ký và đo lường. Doanh nghiệp giữ ứng dụng và dữ liệu gốc; dùng chung phần mềm không đồng nghĩa dùng chung dữ liệu khách hàng.
 
-Giữ `PLAN.md` ở thư mục gốc làm trang dẫn đường cho các link cũ. Các mốc `section-N` trong tài liệu là điểm tham chiếu ổn định từ 23 mục ban đầu.
+## 2. Đọc theo nhu cầu
 
-## Website Atlas
+1. Người phụ trách kinh doanh: [bản dễ hiểu](plan-easy-read-flow.md) → [sản phẩm và cách đóng gói](product-and-packaging.md).
+2. Người thiết kế nghiệp vụ: [hành trình khách hàng](customer-lifecycle.md) → mô-đun liên quan.
+3. Nhóm kỹ thuật: [kiến trúc](platform/architecture.md) → [dữ liệu](platform/data-and-knowledge.md) → [API](platform/api-and-integrations.md) → [nghiệm thu](delivery/mvp-and-roadmap.md).
+4. Người ra quyết định đầu tư: [đo lường và kinh tế đơn hàng](delivery/analytics.md) → [thứ tự thử nghiệm](delivery/mvp-and-roadmap.md).
+5. Tra từ viết tắt: [bảng thuật ngữ](glossary.md).
 
-[Atlas hiện có](../atlas/index.html) vẫn dùng được để xem các sơ đồ trước đây. Nó chưa được tạo lại theo thiết kế API/module và cấu trúc tài liệu mới; không dùng nó để suy ra API đã hoạt động. Các tài liệu trong `plans/` là nguồn kế hoạch hiện tại.
+## 3. Nơi chịu trách nhiệm cho từng nội dung
 
-## Quyết định tiếp theo
+| Tài liệu | Nội dung chính | Mốc tham chiếu cũ được giữ |
+|---|---|---|
+| [Sản phẩm và cách đóng gói](product-and-packaging.md) | Khách hàng mục tiêu, giá trị, bộ cấu hình, mô hình thương mại, danh mục ý tưởng | 1, 2, 17, 19 |
+| [Hành trình khách hàng](customer-lifecycle.md) | Từ tín hiệu sớm đến mua lại; tình huống B2C và bán hàng cần tư vấn | 3, 4, 9 |
+| [Tiếp thị](modules/marketing.md) | Nghiên cứu, định vị, đối tác, tiếp nhận, chấm điểm và chăm sóc | 6 |
+| [Bán hàng](modules/sales.md) | Tư vấn, bằng chứng, giỏ hàng, ưu đãi và kiểm soát giá | 7 |
+| [Chăm sóc khách hàng](modules/customer-support.md) | Tra cứu, xử lý sự cố, bàn giao, bảo vệ giá và phản hồi | 8 |
+| [Kiến trúc](platform/architecture.md) | Ranh giới hệ thống, điều phối nghiệp vụ và giao diện nhúng | 5, 10 |
+| [Dữ liệu và kiến thức](platform/data-and-knowledge.md) | Danh tính, đồng ý liên hệ, nguồn gốc bằng chứng, danh mục sản phẩm | 11, 12, 18 |
+| [Quy trình và bàn giao](platform/workflows-and-handoffs.md) | Trạng thái bền vững, nhắc lại, người duyệt, dừng và phục hồi | 13, 14 |
+| [API và tích hợp](platform/api-and-integrations.md) | Hợp đồng kết nối, thanh toán, bảo mật và vận hành | 15, 16 |
+| [Đo lường](delivery/analytics.md) | Chỉ số, công thức kinh tế, thử nghiệm đối chứng và chất lượng dữ liệu | 20 |
+| [Bản đầu và lộ trình](delivery/mvp-and-roadmap.md) | Phạm vi bật/tắt, gói công việc, nghiệm thu và điều kiện mở rộng | 21, 22, 23 |
 
-Chọn ứng dụng của doanh nghiệp thử nghiệm để kết nối trước. Danh sách thông tin cần chốt nằm trong [MVP và lộ trình](delivery/mvp-and-roadmap.md).
+Mỗi quy định có một nơi chịu trách nhiệm; tài liệu khác chỉ tóm tắt và liên kết. Giữ đường dẫn tệp và các mốc `section-N` để hạn chế làm hỏng tham chiếu cũ. Tên tệp, tên sản phẩm, API và mã trạng thái giữ nguyên khi cần tương thích; toàn bộ phần diễn giải được viết bằng tiếng Việt.
+
+## 4. Đã hợp nhất ba nguồn như thế nào?
+
+| Nguồn | Ý được giữ | Cách điều chỉnh |
+|---|---|---|
+| Bộ `plans/` trước lần hợp nhất này | Ba mô-đun độc lập; API hai chiều; dữ liệu riêng từng doanh nghiệp; người duyệt; chống xử lý trùng; xác nhận từ hệ thống gốc | Gộp phần lặp, dịch phần tiếng Anh, giữ ràng buộc kỹ thuật và tiêu chí kiểm chứng |
+| [Báo cáo PDF](../BAO_CAO_DE_AN_AI_ECOMMERCE_3_MODULE.pdf), trang 1–2 | Giảm thao tác, giảm bị làm phiền, tư vấn theo nhu cầu, tạo niềm tin | Dùng ba nhóm động cơ mua làm giả thuyết nghiên cứu; không coi tuổi hay tỷ lệ trong báo cáo là dữ liệu khảo sát |
+| PDF, trang 2–4 | Ưu đãi từ chi phí thực sự tiết kiệm; máy chủ kiểm soát giá sàn | Bổ sung chi phí AI, đối tác, vận hành và rủi ro; không cam kết lợi nhuận hay an toàn tuyệt đối |
+| PDF, trang 4–5 | Giải thích thông số dễ hiểu; so sánh nâng cấp; phiếu bù giá; chọn nhanh; lưu món; theo dõi đơn | Phân kỳ theo độ rủi ro, yêu cầu bằng chứng và dữ liệu kết nối |
+| PDF, trang 5–6 | Giao diện nhúng nhẹ; điều phối hiển thị; đồng ý nhận tin; QR; chuyển nhân viên | Bộ giao diện là tùy chọn, không thay lõi máy chủ; không hứa mọi ngân hàng mở được, phí bằng 0 hoặc thanh toán trong 3 giây |
+| PDF, kết luận trang 6 | Soát giỏ hàng, can ngăn mua đắt, xem video mở hộp | Hai ý đầu là thử nghiệm tư vấn; video chỉ xem xét sau, không tự quyết đổi trả |
+| [Tài liệu nghiên cứu thị trường](../AGENT_NGIEN_CUU_THI_TRUONG.md), mục I–XXI | Nhu cầu thật, tín hiệu sớm, nơi tập trung khách, giải pháp, thời điểm và lợi thế có bằng chứng | Đưa thành phiếu cơ hội có nguồn, giả thuyết, phép thử và tiêu chí dừng |
+| Tài liệu thị trường, mục XXII–XXVIII | Bốn vai trò Tiếp thị; đối tác; mua lại; giới thiệu | Bốn vai trò nghiệp vụ trong một mô-đun; thử thủ công trước khi tự động hóa |
+
+### Những thay đổi có chủ ý so với kế hoạch cũ
+
+1. **Trọng tâm thử nghiệm đề xuất là B2C trên website hiện có**, phù hợp PDF. SIM/thẻ, hàng tiêu dùng, vận chuyển và xe điện là các ứng viên nghiên cứu, chưa phải ngành đã chọn. Không triển khai tất cả cùng lúc.
+2. **Giữ Bán hàng trước, kèm Chăm sóc cơ bản**, nhưng đưa nghiên cứu thị trường thủ công lên giai đoạn chuẩn bị; chưa bật tự động Tiếp thị trong bản đầu.
+3. **Lịch hẹn và LINE không còn bắt buộc với mọi dự án.** B2C dùng một nguồn sản phẩm và hệ thống lưu khách/yêu cầu hiện có; chỉ thêm lịch cho hành trình cần đặt hẹn. Chọn kênh bổ sung theo doanh nghiệp, không tự thay LINE bằng Zalo.
+4. **Thanh toán tự động, mặc cả và phiếu bù giá không vào bản đầu.** Khách mua qua quy trình hiện tại; các tính năng này có điều kiện kiểm chứng riêng.
+5. **Giữ phương án bán hàng B2B cần tư vấn** như cấu hình thay thế: nhu cầu, ngân sách, người quyết định, thời điểm, lịch hẹn và báo giá. Không ép bộ câu hỏi B2B lên người mua lẻ.
+6. **Không dùng lại các kết luận tuyệt đối của PDF.** “Độc bản”, “100% lợi nhuận”, “100% chống hack”, “phiếu mua hàng không tốn tiền” đều chưa có bằng chứng để khẳng định.
+7. **Không coi dẫn chiếu pháp lý cũ là chứng nhận tuân thủ.** Phần [API và bảo vệ dữ liệu](platform/api-and-integrations.md#section-16) bổ sung nguồn chính thức và bước rà soát trước vận hành.
+8. Bỏ liên kết Atlas khỏi mục lục này vì không có tệp `atlas/index.html` trong thư mục làm việc đã kiểm tra. Không sửa hay xóa tài liệu ngoài `plans/`.
+
+## 5. Cách cập nhật về sau
+
+1. Đổi phạm vi tại [bản đầu và lộ trình](delivery/mvp-and-roadmap.md), ghi lý do và người duyệt.
+2. Đổi quy định tại tài liệu chịu trách nhiệm; đối chiếu dữ liệu, quyền, API và chỉ số liên quan.
+3. Chạy lại bộ tình huống kiểm thử sau thay đổi cấu hình, lời hướng dẫn AI, kiến thức hoặc kết nối.
+4. Cập nhật bản dễ hiểu sau cùng; không dùng nó để thay thế điều kiện bảo mật và nghiệm thu.
+
+**Việc tiếp theo:** điền tên một doanh nghiệp và website dự kiến thử nghiệm vào [phiếu chốt đầu vào](delivery/mvp-and-roadmap.md#pilot-inputs).

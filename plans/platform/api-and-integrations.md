@@ -1,251 +1,182 @@
-# APIs, Integrations, Security, and Operations
+# API, tích hợp, bảo mật và vận hành
 
-[Plan index](../README.md) · [Vietnamese easy-read flow](../plan-easy-read-flow.md) · [Glossary](../glossary.md)
+[Mục lục](../README.md) · [Kiến trúc](architecture.md) · [Quy trình](workflows-and-handoffs.md)
 
-Status: proposed design, not implemented functionality. Examples and targets are illustrative until agreed with a pilot customer.
+Trạng thái: hợp đồng đề xuất, chưa có API được triển khai hoặc kiểm thử. Tên đường dẫn, trường và trạng thái máy giữ nguyên để làm điểm xuất phát cho đặc tả kỹ thuật.
 
 <a id=section-15></a>
 
-## APIs and Enterprise Integrations
+## 1. Hai chiều kết nối
 
-API-first means two directions of connection:
-
-| Direction | Simple flow | Example |
+| Chiều | Luồng | Ví dụ |
 |---|---|---|
-| Company calls a module | Company application → AgentOS API → Enabled module → Result back to the application | Existing website sends a buyer's question to Sales and displays the answer |
-| Module uses company data | Module / Workflow → Approved Skill → API Connector → Company application | Sales reads current prices and saves a qualified opportunity in the existing CRM |
+| Doanh nghiệp gọi AgentOS | Máy chủ doanh nghiệp → API → mô-đun được bật → kết quả | Website gửi câu hỏi và hiển thị câu trả lời |
+| AgentOS dùng hệ thống doanh nghiệp | Quy trình → công cụ được phép → bộ kết nối → API doanh nghiệp | Tra sản phẩm, lưu yêu cầu, đặt lịch khi được bật |
+| Sự kiện nghiệp vụ | Nguồn đăng ký → cổng sự kiện → lần chạy phù hợp | Có yêu cầu mới, đơn hoặc thanh toán được xác nhận |
 
-Company systems can also send event notifications (webhooks), such as a submitted lead form or confirmed order. AgentOS normalizes these into workflow events; receiving an event is not proof that all triggered work has finished.
+Hai cách vào hệ thống là máy chủ doanh nghiệp hoặc bộ kết nối kênh đã xác thực. Trình duyệt/ứng dụng di động không giữ khóa dịch vụ. Nếu cần mã truy cập phiên cho giao diện nhúng, dùng mã ngắn hạn, giới hạn quyền và phiên; không dùng khóa toàn doanh nghiệp.
 
-There are two supported ways to enter AgentOS:
+Xác thực bên gọi trả lời “hệ thống nào đang gọi”; xác minh khách trả lời “ai được xem dữ liệu riêng”. Một bên gọi hợp lệ không tự chứng minh mọi mã khách trong nội dung đều thuộc phiên được phép.
 
-1. **Company-backend call (recommended):** the company's server sends a request to the Module API. The browser or mobile app never holds the AgentOS credential.
-2. **Verified channel connector:** a LINE/Facebook/WhatsApp/email connector receives the provider event, verifies it, adds the company's tenant identity, and forwards it. The connector is still an authenticated company-scoped caller; an unknown provider event is rejected.
+## 2. Bốn API tối thiểu
 
-Both paths end at the same request flow: authenticate caller → verify customer when private data is needed → check enabled module and current owner → run the module → return a task result. A **webhook** is only the delivery mechanism for an event; it is not proof that a business action succeeded.
-
-### API flow in plain language
-
-```text
-1. The company's existing website/app receives a customer message.
-2. The company's backend sends the message to AgentOS with its company credential.
-3. AgentOS checks the company, the requested module, and the customer reference.
-4. The Supervisor sends the request to Marketing, Sales, Support, or a human queue.
-5. The selected module reads only the approved company data it needs.
-6. AgentOS returns an immediate task ID; the work may continue after the request ends.
-7. The company reads the task by polling or receives a server-to-server callback.
-8. The company UI shows the answer and the real action status: waiting, human review, confirmed, stopped, or failed.
-```
-
-The **task ID** is a tracking number, not a success receipt. `202 Accepted` means “AgentOS has safely received the work.” It does not mean “the meeting is booked” or “the order is paid.” A **callback** is a message to the company's backend, separate from the message sent to the customer through LINE, email or the website. One owner must control each customer-channel send so a callback and a channel connector cannot send duplicate replies.
-
-### Minimal proposed API
-
-These are proposed contracts, not implemented endpoints. Document requests, responses, permissions, and errors in one OpenAPI specification before the pilot.
-
-| Endpoint | Purpose | Result |
+| API | Ý nghĩa | Kết quả |
 |---|---|---|
-| `POST /v1/conversations` | Start or link a conversation using permitted company customer references | AgentOS conversation ID |
-| `POST /v1/conversations/{id}/messages` | Submit a message with `module: marketing / sales / support / auto`; `auto` asks the Supervisor to route | `202 Accepted` and a task ID |
-| `GET /v1/tasks/{id}` | Read task progress and available results | `accepted`, `running`, `waiting`, `awaiting_human`, `completed`, `stopped`, or `failed`; answer and confirmed action references when available |
-| `POST /v1/events` | Receive a company business event with its source and unique event ID | Accepted event ID and correlation ID, plus task IDs for any queued work; otherwise an explicit error |
+| `POST /v1/conversations` | Tạo/liên kết cuộc trao đổi với khách hoặc phiên được phép | Mã cuộc trao đổi và trạng thái xác minh |
+| `POST /v1/conversations/{id}/messages` | Gửi câu hỏi, chọn `marketing`, `sales`, `support` hoặc `auto` | `202 Accepted`, mã công việc |
+| `GET /v1/tasks/{id}` | Đọc trạng thái và kết quả đã được lưu | Trạng thái, phiên bản, câu trả lời và kết quả từng hành động |
+| `POST /v1/events` | Nhận sự kiện từ nguồn đã đăng ký, kể cả quyết định nhân viên | Mã sự kiện, truy vết và các công việc liên quan |
 
-Example: the company's backend submits to `POST /v1/conversations/conv_01/messages`:
+`202 Accepted` chỉ là đã nhận bền vững, không phải đã đặt lịch, đã bán hay đã giải quyết. Trạng thái công việc: `accepted`, `running`, `waiting`, `awaiting_human`, `completed`, `stopped`, `failed`.
+
+Ví dụ máy chủ doanh nghiệp gửi câu hỏi cho một cuộc trao đổi đã được phép:
 
 ```json
 {
   "module": "sales",
-  "message": "We need a plan for 30 users. What is the price?"
+  "message": "Tôi cần sản phẩm phù hợp với phòng nhỏ, có lựa chọn nào?"
 }
 ```
 
-The conversation already links to the permitted customer reference. AgentOS checks access, reads the connected catalog, and prepares a reply. The application polls the task result or receives a signed callback to its registered backend. `202 Accepted` means queued, not booked, sold, or resolved.
+Phản hồi tiếp nhận:
 
-Callbacks carry `event_id`, `task_id`, `status`, `correlation_id`, and a result or error. Retry delivery within bounds; recipients deduplicate by event ID. `awaiting_human` is paused, not final. A `completed` task may contain only an answer; an action is successful only with a provider-confirmed result/reference.
+```json
+{
+  "task_id": "task_01",
+  "conversation_id": "conv_01",
+  "status": "accepted",
+  "task_version": 1,
+  "correlation_id": "corr_01"
+}
+```
 
-Task status mapping is explicit: `accepted` means queued, `running` means a worker is active, `waiting` means a timer or external event is pending, `awaiting_human` means a named person must decide or take over, `completed` means the requested result was verified, `stopped` means a configured stop condition ended the work, and `failed` means the requested outcome was not established. A callback to the company backend is different from a customer-channel send: the callback reports task state; the connector that owns the customer channel sends the customer message once with an effect key and provider message ID.
+Ví dụ kết quả tra danh mục; chưa có hành động thương mại:
 
-The integration contract must distinguish customer verification from caller authentication, define field mappings and allowed reads/writes, carry a request/correlation ID, and return explicit errors for unsupported capabilities. Check each event's authenticated source and permitted event types before triggering workflows. Idempotency keys prevent repeat submissions from repeating actions; [Security, Reliability, and Operations](api-and-integrations.md#section-16) defines the shared security and recovery rules.
+```json
+{
+  "task_id": "task_01",
+  "task_version": 3,
+  "status": "completed",
+  "answer": "Có hai lựa chọn phù hợp; đây là điều kiện và giới hạn của từng loại.",
+  "sources": [{"source_record_id": "product_01", "source_version": "catalog_v3"}],
+  "actions": [{"operation": "catalog.read", "status": "confirmed", "provider_reference": "product_01"}],
+  "correlation_id": "corr_01"
+}
+```
 
-Human decisions use the same authenticated event ingress from an approved operator console or connected company system. Event types such as `human.approval`, `human.takeover`, `human.resume`, and `human.reject` include the run/task ID, actor ID, decision, reason and an idempotency key. The receiving owner is recorded before a paused task can resume; a customer message received while a human owns the conversation is queued for that owner rather than answered by AI.
+Ví dụ chỉ mô tả cấu trúc; câu trả lời thực phải được nguồn hỗ trợ. Trước thử nghiệm cần một đặc tả OpenAPI (tài liệu mô tả API theo cấu trúc chuẩn) được duyệt về đầu vào, đầu ra, quyền, lỗi, giới hạn và phiên bản. Bộ kế hoạch này chưa thay thế đặc tả đó.
 
-### Connected applications
+## 3. Định danh và quyền
 
-| Category | Purpose |
+| Trường/đối tượng | Quy tắc |
 |---|---|
-| CRM | Contacts, qualification, opportunities, ownership, sales outcomes |
-| LINE | Customer messages and channel identity |
-| WhatsApp | Customer messages and channel identity |
-| Facebook | Messenger, lead forms, and source attribution |
-| Email | Conversations and permitted follow-up |
-| Calendar | Availability, booking, cancellation/rescheduling |
-| Payment | Approved payment links and confirmed payment/refund status |
-| E-commerce | Catalog/availability, orders, delivery, subscriptions where supported |
-| Ticketing | Cases, assignment, status, resolution |
-| Ads | Campaign/source metadata, spend, and permitted outcome feedback |
-| Company-owned applications | Existing web/mobile backends, portals, custom CRM, product, or order APIs |
+| `tenant_id` / `company_ref` | Suy ra từ thông tin xác thực, không lấy quyền từ nội dung khách gửi |
+| `customer_id` / tham chiếu khách nguồn | Liên kết trong doanh nghiệp; cần bằng chứng phiên/tài khoản để xem dữ liệu riêng |
+| `conversation_id`, `task_id`, `run_id` | Kiểm tra quyền trên từng đối tượng, không chỉ quyền gọi API |
+| `event_id`, `source`, `occurred_at` | Sự kiện bất biến, nguồn được đăng ký và loại sự kiện nằm trong quyền nguồn |
+| `correlation_id` | Nối yêu cầu, công việc, hành động và nhật ký |
+| `configuration_version` | Phiên bản cấu hình để truy vết |
+| `source_version` | Phiên bản dữ liệu/tài liệu đã dùng |
+| `task_version` | Số tăng dần cho cập nhật trạng thái; dùng thống nhất ở truy vấn và thông báo |
+| `effect_key` | Mã cố định của một tác động bên ngoài, dùng khi thử lại/đối soát |
+| Nhân viên | Danh tính và vai trò đã xác thực; mã người dùng trong nội dung không tự cấp quyền |
 
-Each reusable API connector (adapter) handles provider-specific authentication, field mapping, API details, and event normalization. These details stay outside agent prompts. Prefer the company's application APIs over direct database access; never give an Agent unrestricted database credentials. If no suitable API exists, scope a controlled import or a company-owned API bridge before enabling that capability.
+Dùng khóa chống trùng cho yêu cầu theo doanh nghiệp + thao tác/cuộc trao đổi. Cùng khóa khác nội dung phải trả xung đột, không tạo hành động khác hoặc trả nhầm kết quả cũ.
 
-Start with one pilot company's backend, one CRM, one catalog source, and one calendar provider. Reuse supported connectors. Additional channels, including Instagram, SMS, mobile chat, and voice, are later adapters; internal alerts can use the operator console or connected messaging tools.
+Sự kiện có khóa doanh nghiệp + nguồn + mã sự kiện. Gửi lại cùng dữ liệu trả mã cũ; thay nội dung/loại dưới cùng khóa là xung đột. Một sự kiện có thể kích hoạt nhiều quy trình được cấu hình, mỗi quy trình có khóa lần chạy riêng.
+
+Sự kiện người vận hành có thể là `human.approval`, `human.reject`, `human.takeover`, `human.resume`, kèm công việc/lần chạy, người thực hiện, quyết định, lý do và khóa chống trùng. Máy chủ kiểm tra quyền quyết định tại thời điểm xử lý.
+
+## 4. Thông báo kết quả và chống xử lý lặp
+
+AgentOS có thể gửi thông báo máy chủ tới máy chủ hoặc để bên gọi truy vấn trạng thái. Địa chỉ nhận phải đăng ký và được phê duyệt; không gửi tới địa chỉ tùy ý lấy từ khách/tài liệu.
+
+Thông báo gồm `event_id`, `task_id`, `task_version`, `status`, `correlation_id`, kết quả/lỗi và người phụ trách nếu chờ người. Có xác thực, thời gian chống phát lại và thử gửi hữu hạn.
+
+Bên nhận lưu khóa sự kiện, bỏ cập nhật phiên bản cũ và chấp nhận bản trùng mà không tạo tác động lần hai. Mất thông báo thì dùng `GET /v1/tasks/{id}` với khoảng chờ có giới hạn. Không tạo công việc mới chỉ vì chưa thấy kết quả.
+
+**Thông báo kết quả về máy chủ khác tin gửi cho khách.** Phải chỉ định một nơi sở hữu việc gửi ra kênh; không để cả website và bộ kết nối cùng phát lại câu trả lời. Tin gửi cần mã tác động và mã nhà cung cấp.
+
+## 5. Bộ kết nối và phạm vi
+
+| Kết nối | Đọc | Ghi khi được phép | Giai đoạn |
+|---|---|---|---|
+| Danh mục | Sản phẩm, điều kiện, giá, khả dụng | Không sửa danh mục trong P1 | P1 bắt buộc một nguồn |
+| Hệ thống lưu khách/yêu cầu hoặc CRM | Khách, yêu cầu/cơ hội, chủ sở hữu | Ghi chú, trường hỏi nhu cầu, bước tiếp theo | P1 một nguồn; không yêu cầu CRM mới nếu hệ thống hiện có đáp ứng |
+| Kênh/website | Phiên, tin nhắn, trạng thái giao | Trả lời và nhắc có điều kiện | P1 website; kênh khác chọn riêng |
+| Lịch | Khả dụng và lịch đã đặt | Tạo lịch có xác nhận | P1 chỉ khi chọn hành trình cần hẹn |
+| Đơn hàng | Đơn và trạng thái | Tạo/sửa theo chính sách | P1 tùy nguồn chỉ đọc; thực thi sau P1 |
+| Thanh toán | Yêu cầu/giao dịch và đối soát | Tạo yêu cầu thanh toán được duyệt | Sau P1; hoàn tiền luôn quyền riêng |
+| Vận chuyển | Trạng thái, khả năng khung giờ, liên hệ được phép | Yêu cầu vận chuyển theo quyền | Sau P1 |
+| Phiếu hỗ trợ / phiếu mua hàng | Trạng thái, người nhận, điều kiện | Tạo/cập nhật/cấp theo chính sách | Sau P1 |
+| Quảng cáo / đối tác | Nguồn, chi phí và kết quả được phép | Không tự xuất bản, chi ngân sách hoặc trả hoa hồng | Sau P1 theo thử nghiệm |
+
+GHN, GHTK, Viettel Post, LINE, Zalo, Facebook, WhatsApp, email, ngân hàng và ví trong tài liệu nguồn chỉ là ứng viên kết nối. Cần xác nhận quyền truy cập và năng lực từng nhà cung cấp; không cam kết thông tin vị trí trực tiếp, số người giao hay mở ứng dụng nếu API không hỗ trợ.
+
+Mỗi bộ kết nối chịu trách nhiệm xác thực, ánh xạ trường, giới hạn tốc độ, thời gian chờ, loại lỗi, khóa đối soát và kiểm thử. Quyền đọc và ghi cấu hình độc lập; ngoài danh sách phải từ chối.
+
+Kết quả hành động chung gồm `operation_id`, `effect_key`, `operation`, `source_record`, `status`, `provider_reference`, `reconciliation_key`, `correlation_id`. Trạng thái hành động là `confirmed` (xác nhận), `rejected` (từ chối) hoặc `uncertain` (chưa rõ). Mã HTTP 200/202 không tự thay kết quả nghiệp vụ.
+
+<a id=payments></a>
+
+## 6. Thanh toán và báo giá có thời hạn
+
+NAPAS mô tả VietQR giúp giảm thao tác nhập thông tin; khách vẫn kiểm tra người nhận và xác nhận chuyển khoản trong ứng dụng ngân hàng. Không suy ra khả năng mở mọi ngân hàng, thời gian ba giây hoặc phí bằng 0 từ mô tả này. [Nguồn NAPAS](https://www.napas.com.vn/dich-vu-chuyen-tien-nhanh-napas-247).
+
+Thiết kế sau P1 phải phân biệt:
+
+| Đối tượng | Ý nghĩa | Không đồng nghĩa |
+|---|---|---|
+| Báo giá | Điều khoản có phiên bản và hạn hiệu lực | Tiền đã vào |
+| Đơn hàng | Yêu cầu mua được hệ thống đơn chấp nhận | Đã thanh toán/giao hàng |
+| Yêu cầu thanh toán/QR | Hướng dẫn chuyển tiền hoặc đối tượng thanh toán của nhà cung cấp | Xác nhận giao dịch |
+| Giao dịch đối soát | Nguồn tin cậy xác nhận tiền và kết quả ghép đơn | Đã giao hàng hoặc hết nghĩa vụ đổi trả |
+
+1. Máy chủ tạo báo giá hợp lệ và đơn/yêu cầu mua theo thứ tự nhà cung cấp hỗ trợ; khóa giá, tiền tệ, số lượng, người thụ hưởng và tham chiếu.
+2. Khách xem điều khoản rồi tự xác nhận thanh toán.
+3. Chỉ nhận sự kiện từ nguồn đáng tin; kiểm tra đúng đơn, số tiền, tiền tệ, người thụ hưởng và mã giao dịch.
+4. Sự kiện trùng chỉ ghi nhận một lần; sự kiện không theo thứ tự phải đối soát, không lùi trạng thái tùy tiện.
+5. Hết thời gian chờ giữ trạng thái chờ/cần kiểm tra, không tự coi đã trả hoặc chưa trả.
+6. Trả thiếu/thừa, sai nội dung, trả sau hạn, thiếu hàng hoặc đơn hủy phải có hàng đợi xử lý và chính sách được duyệt.
+7. Hoàn tiền là tác vụ riêng, có người có quyền quyết định và mã xác nhận; không tự bù trừ.
+
+Hạn báo giá 10 phút từ PDF được thi hành ở máy chủ. Mã xác thực HMAC có thể bảo vệ dữ liệu báo giá nội bộ, **không mặc nhiên ký chuẩn QR ngân hàng hoặc khiến ngân hàng từ chối tiền sau hạn**. Phải kiểm thử khả năng hết hạn thực của nhà cung cấp; mọi khoản tiền đến muộn đều cần được ghi và xử lý.
 
 <a id=section-16></a>
 
-## Security, Reliability, and Operations
+## 7. Bảo mật và quản trị dữ liệu
 
-| Area | Minimum design requirement |
+| Lĩnh vực | Yêu cầu thiết kế |
 |---|---|
-| Tenant and data ownership | Tenant owns its data; enforce isolation in records, retrieval, files, queues, and analytics; configure retention/export/deletion |
-| Access control | Role- and field-level permissions; least-privilege tools; assigned-deal/case access; admin MFA; enterprise SSO when required |
-| API access | Company-scoped service credentials stay on the backend, never in browser/mobile code; derive tenant access from verified credentials, not a request field; check module, conversation, task, and customer access on every request |
-| Data and credentials | Encrypt in transit/at rest; protect and rotate secrets; verify webhooks; redact sensitive logs |
-| Event and callback security | Verify signatures and replay windows; deduplicate event IDs; restrict callback and connector destinations to registered, approved endpoints |
-| Company data use | Send only necessary permitted data to model providers under agreed terms; no cross-company sharing or training reuse without explicit authorization |
-| Agent guardrails | Treat messages, documents, and tool output as untrusted input; prevent instructions in content from granting permissions; validate outbound responses |
-| Action authorization | Check identity, tenant, tool schema, policy, approval, and rate limits at execution time |
-| Delivery reliability | Timeouts, bounded retries, idempotency keys, durable events, and dead-letter/manual exception queues |
-| Partial failure | Reconcile uncertain outcomes before retrying; compensate only through an authorized action |
-| Audit | Record actor, tenant/customer/conversation, action, policy/config version, approval, result, timestamp, and correlation ID |
-| Observability | Track latency, tool/workflow failures, queue health, retrieval gaps, incidents, token usage, and cost per interaction |
+| Tách doanh nghiệp | Kiểm tra ở cơ sở dữ liệu, truy xuất, tệp, hàng đợi, công việc và báo cáo |
+| Vai trò | Chủ doanh nghiệp, quản trị, quản lý từng mô-đun, nhân viên được phân công, phân tích chỉ đọc |
+| Tài khoản quản trị | Xác thực nhiều yếu tố; đăng nhập tập trung khi doanh nghiệp yêu cầu |
+| Bí mật | Lưu bảo vệ, giới hạn quyền, xoay vòng; không đưa vào trình duyệt, lời hướng dẫn AI hay nhật ký |
+| Truyền/lưu dữ liệu | Mã hóa phù hợp hạ tầng; TLS 1.3 và AES-256 trong PDF là mục tiêu cấu hình cần kiểm tra, không là chứng nhận tuân thủ |
+| Sự kiện | Xác thực chữ ký/mã thông điệp theo nhà cung cấp, cửa sổ chống phát lại, chống trùng |
+| Điểm kết nối | Chỉ địa chỉ đã duyệt; chặn gọi mạng nội bộ/địa chỉ tùy ý do nội dung không tin cậy đề xuất |
+| AI và công cụ | Dữ liệu không được cấp quyền; kiểm tra lược đồ, vai trò, phê duyệt, hạn mức ngay khi thực thi |
+| Nhà cung cấp AI | Tối thiểu hóa dữ liệu, thỏa thuận mục đích/lưu trữ; không chia sẻ hay dùng lại chéo doanh nghiệp |
+| Vòng đời dữ liệu | Có người chịu trách nhiệm về lưu, xuất, xóa, bản sao lưu, sự cố và thu hồi quyền |
+| Nhật ký | Chủ thể, doanh nghiệp, khách/cuộc trao đổi, hành động, phiên bản, phê duyệt, kết quả, thời gian, truy vết; che dữ liệu nhạy cảm |
 
-Use roles such as Owner, Administrator, Marketing/Sales/Support Manager, assigned Sales/Support staff, and read-only Analyst.
+Về căn cứ pháp lý: Luật Bảo vệ dữ liệu cá nhân số 91/2025/QH15 có hiệu lực từ 01/01/2026. Vì vậy, kế hoạch tại thời điểm 10/09/2026 không thể chỉ viện dẫn Nghị định 13/2023/NĐ-CP như PDF để tự tuyên bố tuân thủ. [Cổng văn bản Chính phủ](https://vanban.chinhphu.vn/?classid=1&docid=214590&pageid=27160&typegroup=).
 
-Never tell a customer that a booking, quote, payment, or ticket succeeded until the relevant system confirms it. If a provider times out after possibly accepting a write, look up the result before retrying.
+Đây là lưu ý cần rà soát, không phải kết luận pháp lý đầy đủ. Trước vận hành, người phụ trách pháp lý/bảo vệ dữ liệu cần xác định quy định đang áp dụng, mục đích/căn cứ xử lý, quyền chủ thể dữ liệu, vai trò các bên, hồ sơ/thỏa thuận cần thiết, chuyển dữ liệu khi có, thông báo sự cố và chính sách ưu đãi/đổi trả. Đánh giá thêm quy định ngành và điều khoản nền tảng được chọn; không lấy mã hóa hoặc ô đồng ý làm bằng chứng đã hoàn tất mọi nghĩa vụ.
 
-## Implementation contracts (full-product target)
+## 8. Lỗi, vận hành và nghiệm thu
 
-These examples refine the four proposed endpoints above; they do not add a required public endpoint or provider. The connector envelope is a full-product target. MVP enables only the sources and actions named in [MVP](../delivery/mvp-and-roadmap.md#section-21).
+Lỗi cần mã ổn định, thông điệp tiếng Việt, `retryable` (cờ cho biết có thể thử lại), mã truy vết và chi tiết an toàn. Mã đề xuất: `AUTHENTICATION_FAILED`, `CUSTOMER_UNVERIFIED`, `CAPABILITY_NOT_ENABLED`, `VALIDATION_FAILED`, `IDEMPOTENCY_CONFLICT`, `APPROVAL_REQUIRED`, `PROVIDER_TIMEOUT`, `PROVIDER_REJECTED`, `RATE_LIMITED`, `TASK_NOT_FOUND`.
 
-### Caller, customer, and event identity
+Theo dõi độ trễ, lỗi công cụ, hàng đợi, công việc kẹt, thiếu nguồn kiến thức, lượng dùng AI và chi phí. Có giới hạn thử lại, người trực xử lý ngoại lệ và cách ngắt từng năng lực/từng doanh nghiệp. Phục hồi dữ liệu phải được diễn tập; quay lại cấu hình không phát lại giao dịch.
 
-The caller is the company's authenticated backend or a verified company-scoped channel connector. The customer is the person or account the work concerns. They are separate identities and must not be inferred from one another.
+Bộ thử bắt buộc:
 
-| Identity | Minimum contract | What it permits |
-|---|---|---|
-| Caller | Company-scoped backend credential, tenant binding, scopes, and an actor/service ID | Calling the API for that tenant and enabled modules |
-| Customer | Company customer reference plus verified channel/account assertion, matched within the tenant | Loading the permitted Customer360 context and customer records |
-| Event source | Authenticated registered source, unique source event ID scoped to the company/source, event type, and timestamp | Ingesting only the allowed event types for that source |
-| Human actor | Recorded user ID and role for an approval, takeover, or resume decision | The specific decision or ownership change allowed by policy |
-
-The API must not trust a tenant or customer ID supplied only as a request field. If the backend cannot prove the customer match, return an explicit unverified-identity result and restrict context to safe public/session data. Keep the caller credential on the company backend; the browser and mobile client never receive it. Security controls remain in [Security, Reliability, and Operations](api-and-integrations.md#section-16).
-
-### Identifiers and versions
-
-Use the same names everywhere so a business owner can trace one question without confusing a source version with a task state.
-
-| Field | Meaning | Where it appears |
-|---|---|---|
-| `tenant_id` / `company_ref` | The isolated company account | Caller, task, event, audit and analytics |
-| `customer_id` + `source_record_id` | AgentOS link plus the company's original record ID | Customer360, connector request and handoff |
-| `conversation_id` | One customer conversation in the selected channel | Messages, task, handoff and callback |
-| `task_id` | One asynchronous AgentOS job | API response, polling and callback |
-| `run_id` | One workflow instance created from a trigger | Workflow, audit and retry record |
-| `event_id` | One immutable event from a company/provider source | Webhook, dedupe and analytics fact |
-| `correlation_id` | Joins related requests, tasks, connector calls and outcomes | Logs, callbacks, audit and reports |
-| `configuration_version` | Rules and enabled-module settings used for the run | Task/run/audit and deployment bundle |
-| `source_version` | Version of the company catalog/document/data read | Answer evidence and connector result |
-| `task_version` | Monotonic state update number for polling/callback ordering | Task and callback |
-| `effect_key` | Stable key for one external side effect | Connector call and retry/reconciliation |
-
-The company can use a different external ID format, but the mapping must be stored. `task_version` is not a configuration or source version; changing a configuration creates a new bundle/version for later runs and never rewrites an old audit record.
-
-### Request and response examples (illustrative headers use the existing company-backend authentication contract)
-
-```text
-Authorization: Bearer <company-backend-token>
-Idempotency-Key: msg_7f1
-X-Correlation-ID: corr_9a2
-```
-
-Start or link a conversation (`POST /v1/conversations`). The company backend has validated the session/customer match and passes a registered assertion reference; AgentOS validates that assertion. Request:
-```json
-{"customer":{"source":"crm","reference":"crm_456","identity_assertion_ref":"sess_789"},"channel":"company_web","correlation_id":"corr_9a2"}
-```
-Response (201 Created):
-```json
-{"conversation_id":"conv_01","customer_id":"cust_123","identity_status":"verified"}
-```
-Submit work to a selected or automatically routed module (`POST /v1/conversations/{id}/messages`). Request:
-```json
-{"module":"sales","message":"We need a plan for 30 users. What is the price?"}
-```
-Response (202 Accepted):
-```json
-{"task_id":"task_01","conversation_id":"conv_01","status":"accepted","correlation_id":"corr_9a2"}
-```
-Read the authoritative task record (`GET /v1/tasks/{id}`). A result is not implied by `202`. Response:
-```json
-{"task_id":"task_01","version":3,"status":"completed","answer":"...","actions":[{"type":"catalog_read","source_ref":"catalog_v3"}],"correlation_id":"corr_9a2"}
-```
-Receive a business event from a registered company source (`POST /v1/events`). Request:
-```json
-{"event_id":"crm_evt_88","type":"lead.qualified","source":"crm","customer_ref":"crm_456","occurred_at":"2026-09-10T09:00:00Z"}
-```
-Response (202 Accepted):
-```json
-{"event_id":"crm_evt_88","correlation_id":"corr_evt_88","task_ids":["task_02"]}
-```
-
-### Minimum connector capability map
-
-Each row is an allowlisted capability mapping, not a direct database grant. Read and write permissions are configured independently and use the authoritative system identified in [Customer360](data-and-knowledge.md#section-11).
-
-| Existing system | Minimum read | Minimum write (only when enabled and authorized) |
-|---|---|---|
-| CRM | Customer, lead, opportunity, owner, stage | Qualification fields, notes, owner, opportunity outcome |
-| Catalog / commerce | Product, current terms, eligibility, availability, order status | Approved quote/order/subscription request or outcome |
-| Calendar | Free/busy and booking status | Create, cancel, or reschedule a booking with confirmed reference |
-| Ticketing | Case, assignment, status, resolution history | Case, note, assignment, or status update |
-| Channel / email | Thread, verified channel identity, delivery status | Send a permitted reply or follow-up |
-| Payment | Payment-link and payment/refund status | Request an approved payment or refund action; never claim success before confirmation |
-| Company-owned app | Explicit fields and operations agreed with the company | Only the mapped operations with a verified result |
-
-An unmapped field or operation fails closed with `CAPABILITY_NOT_ENABLED`; an agent cannot turn a read into a write by changing its prompt. MVP normally uses CRM reads/writes, catalog reads, one calendar path, and permitted messaging; later product phases may enable other rows after their acceptance evidence passes.
-
-Every connector call uses a small common envelope:
-
-| Field | Purpose |
-|---|---|
-| `operation_id` | One traceable connector attempt |
-| `effect_key` | Stable business action key used to prevent duplicate side effects |
-| `operation` | Allowlisted read/write name, such as `crm.update_qualification` |
-| `source_record` | Company system and record ID being read or changed |
-| `status` | `confirmed`, `rejected`, or `uncertain` |
-| `provider_reference` | Source-system ID or confirmation code when confirmed |
-| `reconciliation_key` | Lookup key used after timeout before retry |
-| `correlation_id` | Links the connector result to the task and conversation |
-
-An HTTP response such as `200` or `202` from a provider is transport information, not automatically a confirmed business result. The connector translates the provider response into this envelope and the Workflow decides whether the task may advance.
-
-### Task delivery, callbacks, and recovery
-
-The task record is durable and authoritative. `accepted` means stored for work, `running` means execution is active, `awaiting_human` means paused for an identified owner or approval, `completed` means the requested answer or action was validated, and `failed` means the overall requested outcome was not established. A failed task still reports each action as `confirmed`, `rejected`, or `uncertain`; uncertain external effects require reconciliation before replay.
-
-Callbacks are at-least-once notifications. Every transition carries a stable callback `event_id` scoped to the authenticated company/source, the `task_id`, a monotonic task version, status, correlation ID, and either a result or error. A recipient stores the scoped event ID (and task version), applies a transition once, and acknowledges a duplicate without repeating side effects. Callback ordering is checked by task version; an older callback cannot move a task backward.
-
-```json
-{"event_id":"cb_04","task_id":"task_02","version":1,
- "status":"awaiting_human","correlation_id":"corr_evt_88",
- "owner":"sales_manager","result":null}
-```
-
-If a callback is late or unavailable, the company polls `GET /v1/tasks/{id}` with bounded backoff. Polling returns the same durable status and version, so switching from callback to polling does not create a second run. A task left in `running` after a worker timeout is reconciled with the source system before any write is retried. `awaiting_human` remains pending until a recorded decision; it is never reported as completed merely because delivery succeeded.
-
-### Explicit failures and acceptance checks
-
-Failures use a stable code, human-readable message, `retryable`, correlation ID, and safe details. Typical codes are `AUTHENTICATION_FAILED`, `CUSTOMER_UNVERIFIED`, `CAPABILITY_NOT_ENABLED`, `VALIDATION_FAILED`, `APPROVAL_REQUIRED`, `PROVIDER_TIMEOUT`, `PROVIDER_REJECTED`, `RATE_LIMITED`, and `TASK_NOT_FOUND`. The caller can distinguish a retry, a customer clarification, and a human handoff without parsing prose.
-
-Scope request idempotency to the authenticated company and operation/conversation. Reusing a key with a different payload is an explicit conflict, not a new action or an unrelated cached result.
-
-Before pilot sign-off, test that:
-
-- the same company-scoped message idempotency key returns the same task and causes one action;
-- a duplicate event ID within the authenticated company/source returns the original correlation/task IDs and queues one workflow; the same string from another company/source is independent;
-- a duplicate callback is acknowledged without a second write, and an older version is ignored;
-- a missing callback is recovered by polling: terminal `failed` is visible and non-terminal `awaiting_human` remains pending;
-- an unverified customer, disabled capability, malformed payload, and wrong-tenant reference fail explicitly;
-- a provider timeout reconciles an uncertain write before retrying and never reports an unconfirmed success;
-- an approval-required task stays `awaiting_human` with its accountable owner;
-- a task result contains source references for material answers and confirmed references for completed actions.
-
-For a duplicate event, keep one immutable event fact per authenticated company + source + event ID. If the same key arrives with a different payload hash or event type, return an explicit conflict and do not run a second workflow. One accepted fact may fan out to several configured workflows, each with its own run ID; a waiting run resumes from its saved step instead of creating a new run.
+1. Quyền chéo doanh nghiệp, khách chưa xác minh, mô-đun tắt, thao tác ngoài quyền đều bị chặn.
+2. Yêu cầu/sự kiện trùng không tạo tác động thứ hai; khóa trùng khác nội dung bị báo xung đột.
+3. Thông báo trùng/cũ/mất không làm lùi trạng thái; truy vấn phục hồi đúng kết quả.
+4. Lỗi sau khả năng ghi phải đối soát; trạng thái chưa rõ không biến thành thành công.
+5. Bàn giao/phê duyệt được xác thực; chưa có người nhận thì vẫn đang chờ.
+6. Mỗi ghi thành công có tham chiếu hệ thống nguồn và nhật ký.
+7. Tấn công chèn chỉ dẫn, sửa giá phía khách, phát lại sự kiện và lách hạn mức đều có thử âm tính.
+8. Khi bật thanh toán: kiểm tra tiền muộn/thiếu/thừa, trùng giao dịch, sai người nhận, sai tiền tệ và hoàn tiền có quyền riêng.

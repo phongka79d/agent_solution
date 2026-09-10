@@ -1,189 +1,109 @@
-# Product, Configuration, and Packaging
+# Sản phẩm, cấu hình và cách đóng gói
 
-[Plan index](README.md) · [Vietnamese easy-read flow](plan-easy-read-flow.md) · [Glossary](glossary.md)
+[Mục lục](README.md) · [Bản dễ hiểu](plan-easy-read-flow.md) · [Thuật ngữ](glossary.md)
 
-Status: proposed design, not implemented functionality. Examples and targets are illustrative until agreed with a pilot customer.
+Trạng thái: đề xuất. Định hướng ngành, mức giá, ngân sách và hiệu quả cần doanh nghiệp thử nghiệm xác nhận.
 
 <a id=section-1></a>
 
-## Executive Summary
+## 1. Bài toán và giá trị sản phẩm
 
-AgentOS Customer360 is a packaged set of AI modules that connects to a company's existing applications and data, preferably through APIs.
-It addresses missed leads, inconsistent follow-up, repetitive support, and fragmented customer information.
-Companies can enable Marketing, Sales, Customer Support, or any combination; each module uses an AI Agent for its work.
-Enabled modules share a Supervisor, Customer360, Workflow, Knowledge, and Business Rules.
-The company's website, app, CRM, order system, and support tools can stay in place.
-AgentOS receives messages or events, retrieves permitted data, and returns answers or performs approved updates through connected APIs.
-Customer360 links customer history across modules while existing systems retain ownership of their business records.
-The same modules can serve many companies through separate data access, configuration, and reusable connections.
+AgentOS Customer360 giúp doanh nghiệp không bỏ sót nhu cầu, tư vấn nhất quán và nối thông tin từ trước mua đến sau mua. Sản phẩm không thay website, phần mềm quản lý khách hàng hay hệ thống bán hàng đang có.
 
-```mermaid
-flowchart LR
-    Company["Company runs campaign"] --> Ads["Facebook / Google Ads"]
-    Ads --> Click["Customer clicks"]
-    Click --> App["Existing website / chat / form"]
-    App --> API["AgentOS API"]
-    API --> Supervisor["Supervisor: route enabled module"]
-    Supervisor --> Marketing["Marketing Module"]
-    Marketing --> Lead["Lead / inquiry"]
-    Lead --> Sales["Sales Module"]
-    Sales --> Customer["Confirmed customer"]
-    Customer --> Support["Customer Support Module"]
-    Support --> Signal["Renewal / expansion signal"]
-    Signal --> Sales
-    C360[("Customer360: permitted shared context")] -.-> Supervisor
-```
+Định vị đề xuất: **Hiểu nhu cầu sớm, tư vấn có bằng chứng, hỗ trợ giao dịch có kiểm soát và chăm sóc xuyên suốt.**
 
-This is a business relationship map, not a mandatory synchronous sequence. A customer may enter directly at Sales or Support, and a company may buy only one module. The Supervisor routes only to enabled modules; Customer360 provides permitted context and does not replace the company's source systems.
+Ba nguồn bổ sung cho nhau: kế hoạch cũ cung cấp nền tảng vận hành; PDF bổ sung trải nghiệm B2C và kinh tế ưu đãi; tài liệu thị trường bổ sung cách tìm nhu cầu, đối tác và tăng trưởng sau mua. Giá trị không nằm ở việc có nhiều trợ lý AI, mà ở kết quả được xác nhận và khả năng triển khai lại.
+
+### Chọn thị trường đầu tiên
+
+Ưu tiên một doanh nghiệp có sản phẩm dễ giải thích, câu hỏi lặp lại, dữ liệu sản phẩm đáng tin, nhân viên tiếp quản và kết quả đo được. Đánh giá thêm biên lợi nhuận, mua lại, chi phí thu hút, cạnh tranh, kênh phân phối và rào cản vận hành.
+
+| Ứng viên từ nguồn | Vấn đề cần kiểm chứng | Dữ liệu quyết định |
+|---|---|---|
+| Hàng tiêu dùng | Khó chọn món phù hợp, lo chất lượng hoặc mua hớ | Danh mục, công dụng có bằng chứng, đổi trả, mua lại |
+| SIM/thẻ | Muốn kết nối thuận tiện khi đến nơi | Thiết bị, nơi dùng, thời hạn, kích hoạt, chính sách nhà cung cấp |
+| Vận chuyển | Cần biết giá, thời gian, trạng thái và cách xử lý sự cố | Tuyến, báo giá, trạng thái giao nhận, ngoại lệ |
+| Xe điện | Cần hiểu tổng chi phí và hành trình sử dụng | Sản phẩm, tài chính, sạc, bảo dưỡng, nhân viên tư vấn |
+
+Đây là danh sách nghiên cứu, không phải bốn ngành sẽ triển khai đồng thời. Phần mềm dịch vụ, phân phối B2B, ô tô, bất động sản và hành chính phòng khám từ kế hoạch cũ được giữ như hướng cấu hình về sau; quyết định chuyên môn y tế không giao cho AI.
 
 <a id=section-2></a>
 
-## Core Concept
+## 2. Ba mô-đun và phần dùng chung
 
-```text
-Shared Core + Selected AI Modules
-            + Connections to Existing Applications and Data
-            + Business Configuration and Approved Knowledge
-            = Customer Deployment
-```
-
-**A module is a packaged business capability, not a new AI model or a replacement application.**
-
-| Selectable module | Receives from the company's applications | Returns or updates through approved connections |
+| Phần chọn mua | Năng lực đích | Không sở hữu |
 |---|---|---|
-| Marketing | Ad/form leads, inquiries, campaign and engagement events | Lead details, permitted nurture actions, qualification and Sales handoff |
-| Sales | New or qualified inquiries, customer context, product and price data | Recommendations, meeting bookings, CRM updates, follow-up and human requests |
-| Customer Support | Customer questions, approved guides, verified order/account references | Answers, troubleshooting, case updates and human handoff |
+| Tiếp thị | Nghiên cứu, định vị, nội dung, đối tác, tiếp nhận, phân nhóm, chăm sóc có phép | Ngân sách quảng cáo tự quyết hoặc dữ liệu cá nhân của đối tác |
+| Bán hàng | Hỏi nhu cầu, gợi ý, giải thích, giỏ hàng, hẹn/báo giá nếu cần; ưu đãi và thanh toán khi được bật | Giá vốn, giá sàn, quyền phê duyệt tiền và sổ giao dịch gốc |
+| Chăm sóc khách hàng | Hướng dẫn, tra trạng thái khi có kết nối, ghi vụ việc, bàn giao, tín hiệu mua lại | Quyền tự hoàn tiền, hủy hoặc thay quyết định chuyên môn |
 
-Each module can be used without buying the other two, but all use the shared core below. If the receiving module is not enabled, hand off to the company's staff or existing application instead.
+Lõi dùng chung: bộ điều phối, Customer360, kho kiến thức được duyệt, quy trình bền vững, quy tắc máy chủ, bộ kết nối, quyền, nhật ký và báo cáo. Một mô-đun vẫn hoạt động độc lập; phần việc ngoài phạm vi đi tới nhân viên hoặc ứng dụng hiện có.
 
-| Area | Core — code once | Configuration — change by business |
-|---|---|---|
-| Agent behavior | Agent Runtime, Supervisor | Sales questions, qualification fields, agent tone |
-| Business process | Workflow Engine | Lead scoring, follow-up rules, sales stages, business hours |
-| Business information | Customer360, Knowledge/RAG | Products, prices, promotions, support FAQ |
-| Connectivity | Module API, reusable connectors, Messaging | Enabled modules, channels, company API connections, field mappings |
-| Control and measurement | Permissions, Audit, Analytics | Escalation policy, role assignments, KPI targets |
-
-Target: **80–90% reusable platform + 10–20% customer configuration**.
-This is a design target, not a measured reuse rate or a guarantee.
-
-A product or industry change should normally update configuration, catalog connections, knowledge, workflows, and business rules. Reuse a supported connector; a genuinely new company API may require a new reusable connector, not a customer-specific fork of the agents. Integration effort depends on the APIs and permissions the company can provide; this is not a promise of zero-setup compatibility.
+Nghiên cứu, chiến lược, thu hút khách và đo hiệu quả là bốn vai trò trong Tiếp thị. Chưa cần bốn dịch vụ hay bốn hệ thống AI riêng. Giữ chân khách và giới thiệu là quy trình liên mô-đun.
 
 <a id=section-17></a>
 
-## Product and Business Configuration
+## 3. Cấu hình thay vì sao chép sản phẩm
 
-Use the same Sales Agent with different data and qualification definitions.
+| Dùng chung trong phần mềm | Cấu hình riêng từng doanh nghiệp |
+|---|---|
+| Luồng gọi AI, điều phối, kiểm tra quyền | Mô-đun bật, giọng điệu, ngôn ngữ, trường cần hỏi |
+| Quy trình, bộ hẹn giờ, kiểm soát bàn giao | Người phụ trách, giờ làm việc, mức phê duyệt, giới hạn liên hệ |
+| Customer360 và truy xuất kiến thức | Danh mục, tài liệu, chính sách và dữ liệu khách được phép |
+| Bộ kết nối và chuẩn sự kiện | Địa chỉ API, ánh xạ trường, phạm vi quyền, tham chiếu bí mật |
+| Đo lường và nhật ký | Định nghĩa kết quả, nguồn xác nhận, đường cơ sở và ngưỡng dừng |
 
-```mermaid
-flowchart TD
-    Core["AgentOS Core"] --> Template["Industry Template"]
-    Template --> Bundle["Tenant-scoped Deployment Bundle"]
-    Company["Company apps, data, API permissions"] --> Bundle
-    Bundle --> Validate["Validate and test"]
-    Validate --> Approve["Company owner approves"]
-    Approve --> Publish["Publish version / keep rollback"]
-```
+Bộ cấu hình cần có chủ sở hữu, phiên bản, tài liệu/bảng giá đã duyệt, quyền đọc/ghi, quy tắc chuyển người, bộ tình huống thử và phiên bản có thể quay lại. Bí mật kết nối nằm trong kho bảo vệ, không nằm trong lời hướng dẫn AI hay mã trình duyệt.
 
-An **industry template** is a reusable starting configuration. A **tenant** is one isolated company. The deployment bundle contains that company's enabled modules, mappings, policies and protected connection references; it is not a copy of another company's data.
-
-| Industry template | Qualification fields | Typical next action |
-|---|---|---|
-| SaaS | Users, need, budget, authority, timeline | Demo, trial, subscription proposal |
-| Automotive | Model, budget, financing, purchase timeline | Vehicle recommendation and test drive |
-| Real Estate | Location, budget, property type, buying timeline | Property shortlist and viewing |
-| B2B Distribution | Specification, quantity, budget, delivery timeline | Availability check and approved quote |
-| Clinic administration | Service inquiry, appointment preference, contact details | Consultation booking and professional handoff |
-
-Clinic templates cover administrative workflows; clinical decisions remain with qualified professionals.
-
-**Do not hard-code product logic directly in agent prompts.** Prompts define the role and interaction boundaries; structured configuration defines questions, fields, process choices, and rules.
-
-A deployment bundle contains enabled modules, the selected template, catalog/knowledge sources, workflow definitions, company API connections, allowed operations, field mappings, callback/channel settings, policies, and evaluation cases. Keep secrets in protected storage and include only secret references in the bundle. Version it, validate it, test it, obtain owner approval, and publish it with a rollback path.
+Mục tiêu tái sử dụng 80–90% của bản cũ được giữ như **giả thuyết thiết kế**, không dùng làm cam kết bán hàng. Bằng chứng tối thiểu là cùng một bản phần mềm chạy với hai cấu hình doanh nghiệp tách biệt; kết nối nhà cung cấp mới có thể vẫn cần phát triển thêm.
 
 <a id=section-19></a>
 
-## Product Packaging and Deployment
+## 4. Đóng gói và triển khai
 
-Sell three independently selectable business modules on the same shared platform. A subscription enables capabilities for a company; it does not create a separate codebase. Keep company credentials, configuration, context, and permissions isolated.
+Bán từng mô-đun hoặc gói cả ba. Gói cả ba không phải mô-đun thứ tư. Giá thương mại đề xuất gồm phí nền tảng, mô-đun/kết nối được chọn, mức sử dụng AI và công triển khai; chưa chốt số tiền.
 
-| Package | Included outcome-focused scope | Primary KPI |
-|---|---|---|
-| Marketing Module | Lead capture, segmentation, scoring, nurture, attribution, Sales or staff handoff | Qualified leads |
-| Sales Module | Qualification, recommendation, booking, follow-up, CRM updates, approved quotations | Pipeline and sales conversion |
-| Customer Support Module | Knowledge, customer/order lookup, troubleshooting, ticketing, escalation | Resolution rate and handling cost |
-| Full Lifecycle Bundle | All three modules plus cross-module handoffs and retention/expansion workflows | Revenue growth and operational efficiency |
+Bộ mã nhúng website là cách tích hợp tùy chọn cho B2C, không phải toàn bộ sản phẩm. Doanh nghiệp có thể gọi API từ máy chủ và giữ giao diện riêng. Các tên `nexus-mkt.min.js`, `nexus-sales.min.js`, `nexus-cskh.min.js`, `nexus-sdk.min.js` trong PDF là tên dự kiến, chưa phải tệp hay sản phẩm đã xây.
 
-The optional bundle combines the three modules; it is not a fourth module. Each package includes access to the required shared core: Customer360, Supervisor, Workflow, Knowledge, API access, permissions, audit, and basic analytics. These are target packages, not a claim that every module ships in the MVP.
+Hai loại hoa hồng phải tách biệt: hoa hồng nhân viên bán hàng có thể giảm ở một số đơn, còn hoa hồng đối tác giới thiệu vẫn là chi phí thật. Không hứa “không hoa hồng” nếu đơn hàng còn phải trả đối tác.
 
-Proposed commercial model: platform fee + selected modules/connectors + metered AI/automation usage + implementation. Premium integrations can be scoped separately; exact pricing requires pilot validation.
+Trình tự triển khai:
 
-Choose one first vertical with frequent inquiries, repetitive qualification/support, measurable conversion, and a clear booking or quotation outcome. Do not launch all templates at once.
+1. Chọn một hành trình, kết quả cần cải thiện, người duyệt và nguồn đo.
+2. Kiểm tra dữ liệu, API và quyền thực tế trước khi báo công tích hợp.
+3. Duyệt cấu hình sản phẩm, câu trả lời, điều kiện liên hệ và nhân viên tiếp quản.
+4. Kiểm thử với dữ liệu thử, cả lỗi kết nối và hành động bị cấm.
+5. Chạy ở chế độ AI soạn nháp cho nhân viên; mở quyền thấp dần theo bằng chứng.
+6. Đo kết quả trước khi thêm mô-đun hoặc ngành mới.
 
-Deployment sequence:
+Bảng điều khiển ban đầu chỉ cần cấu hình, tài liệu, kết nối, hàng đợi người xử lý, nhật ký và báo cáo. Trình kéo-thả trợ lý, quy trình và hành trình để sau.
 
-1. Choose modules, target outcomes, and business owners; inventory existing applications, APIs, and data permissions.
-2. Configure product/knowledge sources, qualification, workflow rules, and escalation.
-3. Connect the company backend/channels and required systems; verify field ownership, credentials, and callbacks.
-4. Test representative conversations, API contracts, handoffs, permissions, and failure paths using agreed test data.
-5. Launch through the company's existing interface with controlled autonomy; review outcomes before adding modules.
+## 5. Danh mục ý tưởng đã chọn lọc
 
-Provide a basic admin/operator console for module settings, knowledge/catalog sources, connections, fallback human queues, dashboards, and audits. Customer-facing screens remain in the company's existing applications; use its staff tools for handoffs where supported. A chat widget is optional, not a deployment requirement. Visual Agent, Workflow, and Journey Builders are later usability layers.
+P0 là chuẩn bị; P1 là bản đầu; P2 là thử nghiệm sau bản đầu; P3 là mở rộng sau khi có dữ liệu. Đây là thứ tự ưu tiên, không phải cam kết lịch phát hành.
 
-The defensible product value is tested vertical workflows, reusable skills/adapters, deployment experience, and linked customer outcomes—not exclusive access to an LLM.
+| Ý tưởng | Nguồn | Ưu tiên | Điều kiện / cách đo |
+|---|---|---|---|
+| Phiếu cơ hội từ tín hiệu trước nhu cầu | Tài liệu thị trường II–XV | P0 thủ công, P2 tự động hỗ trợ | Có nguồn, phân khúc, phép thử và lý do chọn; không thu gom danh sách cá nhân |
+| Đối tác giới thiệu B2B2C | Tài liệu thị trường XI–XIV | P0 giả thuyết, P2 thử nhỏ, P3 mở rộng | Thỏa thuận, đường dẫn/mã nguồn, chi phí đối tác và đơn hợp lệ |
+| Giải thích thông số dễ hiểu | PDF tr. 4–5 | P1 từ nội dung được duyệt | Câu trả lời đúng nguồn, không chuyển đổi số học thành lời hứa hiệu năng |
+| Chọn nhanh và câu hỏi gợi ý theo ngữ cảnh | PDF tr. 2, 5 | P1 tối giản nếu giao diện hỗ trợ | Giảm thao tác; khách bỏ qua được; không cần biểu tượng hay hiệu ứng riêng |
+| Lưu món chưa đăng nhập | PDF tr. 5 | P2 | Chỉ lưu mã sản phẩm trên thiết bị; hợp nhất thành công mới xóa bản tạm |
+| Gợi ý tại chỗ, không đòi số điện thoại | PDF tr. 5–6 | P2 | Không che giỏ/chat; giới hạn tần suất; đo tỷ lệ tắt và rời trang |
+| Mặc cả với giá sàn máy chủ | PDF tr. 2–3 | P2 tính thử, P3 tự động có giới hạn | Đủ dữ liệu chi phí, không cộng dồn ưu đãi ngoài ngân sách |
+| Thanh toán QR / ghi nhớ lựa chọn thanh toán | PDF tr. 5 | P2 | Có đối soát, phương án thay thế, kiểm tra thiết bị và ngân hàng |
+| Bổ sung món đạt ngưỡng miễn phí vận chuyển | PDF tr. 5 | P2 | So tổng tiền hai phương án; không khuyên chi thêm nếu lợi ích không hợp lý |
+| Soát giỏ, khuyên không mua dư | PDF tr. 6; cải tiến hợp nhất | P2 | Phát hiện trùng/không tương thích bằng dữ liệu, khách tự xác nhận sửa |
+| So sánh lý do nâng cấp | PDF tr. 4 | P2 | Đúng mẫu cũ/mới, tối đa vài khác biệt có nguồn; chấp nhận “chưa cần nâng cấp” |
+| Phiếu bù giá trong khoảng theo dõi | PDF tr. 4–5 | P2 có người duyệt, P3 có hạn mức | Chính sách công khai, chi phí dự kiến, chống cấp trùng; 14 ngày chỉ là đề xuất |
+| Theo dõi đơn, khung giờ giao, yêu cầu hóa đơn | PDF tr. 5 | P2 | Từng bộ kết nối xác nhận được; không hứa vị trí trực tiếp hay lịch ngoài khả năng |
+| Xem ảnh/video hỗ trợ đổi trả | PDF tr. 1, 6 | P3 xem xét | Chỉ hỗ trợ nhân viên; phải có quyền lưu, xóa và dữ liệu kiểm chứng |
+| Dự đoán chất lượng khách, giá trị vòng đời, đề xuất ngân sách | Kế hoạch cũ | P3 có điều kiện | Đủ dữ liệu nhãn, so với quy tắc đơn giản, người duyệt quyết định |
 
-## Deployment configuration worksheet
+### Ba cải tiến xuyên suốt được đề xuất thêm
 
-Use one versioned bundle per company. A template provides starting values, not permission to reuse another company's data or credentials.
+1. **Mỗi đề xuất có thẻ bằng chứng:** nguồn, thời điểm, sản phẩm, giả định và giới hạn. Dùng cùng cách truy vết cho nghiên cứu, tư vấn và hỗ trợ.
+2. **Một ngân sách ưu đãi thống nhất:** giảm giá, hoa hồng đối tác, trợ phí vận chuyển và chi phí phiếu mua hàng không được duyệt riêng rồi cộng dồn vượt mức.
+3. **Phản hồi sau mua quay lại nghiên cứu:** lý do không mua, mua sai, đổi trả và câu hỏi lặp lại tạo đề xuất sửa nội dung/sản phẩm; nhân viên duyệt trước khi xuất bản.
 
-| Decision | Company supplies or approves | Reusable platform responsibility |
-|---|---|---|
-| Business outcome | Target audience, primary journey, baseline, accountable owner | Enable selected capabilities and measure the agreed journey |
-| Modules | Marketing, Sales, Support selection | Enforce enablement in routing and execution |
-| Customer experience | Existing app/channel, language, tone, business hours/timezone | Return responses to that interface through a supported connection |
-| Business data | Product/price source, customer-system references, approved guides | Map fields and retrieve only permitted data |
-| Actions | Allowed updates, approval limits, human destination | Enforce rules and record confirmed outcomes |
-| Connections | API access, field ownership, callback destination | Reuse connectors; declare any unsupported capability |
-| Operations | Staff queues, retention/export/deletion rules, incident contact | Isolate company state, surface errors, and support takeover |
-
-Example configuration outline, not a final schema or executable secret file:
-
-```yaml
-deployment:
-  company_ref: company_demo
-  configuration_version: demo_v1
-  enabled_modules: [sales, support]
-  template: saas
-  interface: existing_website
-  sources:
-    customers: approved_crm_connection
-    products: approved_catalog_connection
-    calendar: approved_calendar_connection
-  policies: approved_sales_support_rules
-  human_queue: company_service_team
-```
-
-Connection names resolve to approved settings and protected secret references. Missing required access blocks that capability; it must not fall back to another company's connection.
-
-## Repeatable customer onboarding
-
-| Step | Business owner | Required evidence before moving on |
-|---|---|---|
-| Select | Sponsor / Sales lead | Selected modules, intended users, success metric, pilot scope |
-| Map | Company IT + platform engineer | Existing app/data inventory, known field ownership, read/write permission list |
-| Configure | Business process owner | Product/knowledge sources, questions, handoff and approval rules approved |
-| Verify | Company tester + platform engineer | Scoped test data, working requests/results, denied-access and failure tests |
-| Release | Named approver | Versioned bundle, agreed operating mode, staff coverage, rollback decision |
-| Review | Sponsor + operations | Measured outcomes and known gaps; approval before expanding scope |
-
-Two deployments on the same supported connections should differ through these settings, not through copied Agent code. A new provider integration is a separately scoped reusable connector. Do not promise a fixed integration effort until the company's API capability is checked.
-
-## Package acceptance
-
-1. An enabled module works from the company's existing interface without requiring purchase of the other two modules.
-2. A disabled module cannot be reached by changing a request parameter or by an internal handoff.
-3. The same build passes with two isolated company test configurations; products, fields, and permissions remain separate.
-4. Configuration rollback restores an approved version without overwriting external business records or blindly replaying past actions.
-
-Build scope and evidence are owned by [MVP and roadmap](delivery/mvp-and-roadmap.md). API details are owned by [APIs and integrations](platform/api-and-integrations.md).
+Đây là đề xuất tổng hợp mới, không phải tính năng có sẵn hoặc bằng chứng lợi thế độc quyền. [Lộ trình](delivery/mvp-and-roadmap.md) quyết định khi nào được thử; [đo lường](delivery/analytics.md) quyết định dựa trên số liệu nào.

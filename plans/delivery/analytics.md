@@ -1,105 +1,177 @@
-# Analytics and Business Outcomes
+# Đo lường hiệu quả và kinh tế đơn hàng
 
-[Plan index](../README.md) · [Vietnamese easy-read flow](../plan-easy-read-flow.md) · [Glossary](../glossary.md)
+[Mục lục](../README.md) · [Bản đầu và lộ trình](mvp-and-roadmap.md) · [Bán hàng](../modules/sales.md)
 
-Status: proposed design, not implemented functionality. Examples and targets are illustrative until agreed with a pilot customer.
+Trạng thái: mô hình đo lường đề xuất, chưa có số liệu vận hành. Các phép tính là minh họa thiết kế, phải được người phụ trách tài chính kiểm tra bằng dữ liệu thực trước khi dùng để quyết định giá.
 
 <a id=section-20></a>
 
-## Analytics
+## 1. Đo giá trị, không chỉ đo hoạt động
 
-| Audience | Essential KPIs |
-|---|---|
-| Marketing | Leads, Qualified Leads, Cost per Lead (CPL), Cost per Qualified Lead |
-| Sales | Opportunities, Meetings, Quotes, Conversion, Revenue |
-| Support | AI Resolution Rate, Escalation Rate, Response Time, CSAT |
-| Business | Revenue influenced by AI, Customer Acquisition Cost (CAC), LTV, Retention, Upsell Revenue |
+Mục tiêu chính là giải quyết đúng nhu cầu với chi phí hợp lý và lãi đóng góp phù hợp. Nhiều tin nhắn, điểm khách cao hay nhiều đơn giảm giá chưa đủ chứng minh thành công.
 
-Agree on event definitions, reporting periods, cohort rules, and denominators before launch.
-
-- CPL = attributed campaign spend / captured leads; Cost per Qualified Lead uses qualified leads.
-- Sales conversion uses a declared denominator, such as Won opportunities / closed opportunities.
-- AI resolution counts confirmed resolutions without human resolution; monitor reopened cases separately.
-- Revenue influenced by AI requires a recorded qualifying touch and a deduplicated order; it is attribution, not proof of incremental revenue.
-- CAC includes the agreed acquisition costs. LTV is labeled estimated until sufficient realized customer history exists.
-
-Unavailable data appears as unavailable, not zero. Pilot dashboards report only connected data; broader Marketing and retention reporting follows the roadmap.
-
-## Measurement build packages
-
-Build the measurement path alongside the MVP flow. These are acceptance gates, not implementation-time promises. Follow the [API and integration contract](../platform/api-and-integrations.md#apis-and-enterprise-integrations) and the [deployment bundle rules](../product-and-packaging.md#product-packaging-and-deployment).
-
-| Package | Dependency | Evidence |
+| Đối tượng | Câu hỏi chính | Chỉ số phù hợp |
 |---|---|---|
-| Event envelope | Authenticated tenant and correlation IDs | Sample events carry `event_id`, `occurred_at`, source, actor, tenant, and config version |
-| Ingest and dedupe | Web/LINE API, webhook verification, idempotency | Replayed event produces one fact and one audit outcome |
-| Outcome mapping | One CRM, catalog, and calendar with field owners | Lead, qualification, opportunity, booking, handoff, and support states reconcile to source records |
-| Metric layer | Approved numerator, denominator, cohort, and timezone | Recomputed sample report matches hand-checked records |
-| Availability and ownership | Source permissions, freshness check, named metric owner | Dashboard labels available, partial, stale, or unavailable with a reason |
-| Pilot QA | Fixed test set and rollback path | Every MVP journey emits expected events without cross-tenant rows |
+| Nghiên cứu/Tiếp thị | Tìm đúng nhu cầu và nguồn khách chưa? | Giả thuyết được kiểm chứng, khách phù hợp, chi phí thu hút, kết quả theo nguồn/đối tác |
+| Bán hàng | Khách chọn đúng và tiến đến mua chưa? | Hoàn thành tìm hiểu nhu cầu, chuyển đổi, lãi đóng góp, đổi trả |
+| Chăm sóc | Vấn đề thật sự được giải quyết chưa? | Giải quyết có xác nhận, mở lại, bàn giao, thời gian phản hồi, mức hài lòng |
+| Vận hành | Tự động hóa có đáng tin và tiết kiệm không? | Lỗi, hành động bị chặn, thời gian nhân viên, chi phí AI và kết nối |
+| Doanh nghiệp | Tăng trưởng có chất lượng không? | Mua lại, giới thiệu, lãi theo kênh, chi phí thu hút, giá trị khách theo thời gian |
 
-### Event contract and ownership
+P1 chỉ báo các chỉ số từ nguồn đã kết nối. Chi phí quảng cáo, doanh thu, hoa hồng, giá trị vòng đời hay hiệu quả đối tác chưa có nguồn thì để chưa có dữ liệu, không tự ước lượng như số thực.
 
-Use immutable facts for what happened; derive rates from facts rather than from agent text. `event_id` is unique at the source, `correlation_id` links related work, and `occurred_at` is the business timestamp. `received_at` is transport time and must not replace it.
+## 2. Sự kiện và nguồn xác nhận
 
-| Event | Source of record | Minimum fact | Event/metric owner |
-|---|---|---|---|
-| `lead.captured` | Existing web backend or LINE connector | Lead reference, channel, consent, source | CRM/Sales Ops |
-| `message.received` / `message.sent` | Web/LINE API | Conversation, channel, timestamps, delivery result | Integration owner |
-| `qualification.started` | AgentOS qualification workflow | Lead/conversation, required-field version, start time | Sales Ops |
-| `qualification.completed` | AgentOS qualification record | Required-field version, outcome, reviewer/agent | Sales Ops |
-| `opportunity.updated` | Company CRM | Opportunity, stage, owner, value, stage timestamp | CRM owner |
-| `booking.offered` | Sales workflow | Conversation/opportunity, offer ID, available options, offer timestamp | Sales Ops |
-| `booking.confirmed` | Company calendar | Booking ID, slot, timezone, confirmation timestamp | Calendar owner |
-| `followup.sent` / `followup.stopped` | AgentOS workflow plus channel | Sequence, reason, consent, delivery result | Workflow owner |
-| `handoff.created` / `handoff.resolved` | Human queue or CRM | Owner, reason, pause/resume, resolution | Support/Sales manager |
-| `support.case_opened` | AgentOS Support queue or company ticketing | Case/conversation, reason, owner, opened time | Support manager |
-| `support.resolved` / `support.reopened` | Support queue or CRM | Resolution actor, confirmation, reopen flag | Support manager |
-| `order.confirmed` | Company order/CRM system | Order ID, amount, customer, confirmation | Finance/RevOps |
-| `ai.usage.recorded` | AgentOS runtime | Task, model/provider class, tokens or units, cost, currency | Platform Ops |
+Mỗi sự kiện gồm doanh nghiệp, nguồn, mã bất biến, thời điểm xảy ra, thời điểm nhận, đối tượng nghiệp vụ, mã truy vết, phiên bản và chủ thể khi cần. Dùng thời điểm nghiệp vụ để báo cáo, không thay bằng thời gian mạng nhận được.
 
-### Metric dictionary
+| Sự kiện máy | Ý nghĩa và nguồn |
+|---|---|
+| `lead.captured` | Yêu cầu/khách quan tâm được website hoặc hệ thống lưu khách chấp nhận |
+| `qualification.started`, `qualification.completed` | Bắt đầu/hoàn tất bộ thông tin theo phiên bản và kết quả |
+| `recommendation.presented` | Lựa chọn có nguồn đã được hiển thị |
+| `opportunity.updated` | Cơ hội đổi trạng thái được CRM xác nhận, nếu có dùng |
+| `booking.offered`, `booking.confirmed` | Đề nghị lịch và lịch được hệ thống xác nhận |
+| `message.received`, `message.sent` | Tin vào/ra với trạng thái giao thực từ kênh |
+| `followup.sent`, `followup.stopped` | Lần nhắc, kết quả gửi hoặc lý do dừng |
+| `handoff.created`, `handoff.accepted`, `handoff.resolved` | Yêu cầu chuyển, người nhận, kết quả xử lý; không gộp thành một trạng thái |
+| `support.case_opened`, `support.resolved`, `support.reopened` | Vụ việc, bên giải quyết, xác nhận và mở lại |
+| `order.confirmed`, `payment.confirmed` | Đơn và thanh toán là hai sự kiện nguồn riêng |
+| `order.returned`, `payment.refunded` | Điều chỉnh theo nguồn được phép, không suy từ lời khách |
+| `partner.attributed`, `voucher.issued`, `voucher.redeemed` | Ghi nhận nguồn đối tác/cấp/dùng phiếu sau khi bật năng lực |
+| `ai.usage.recorded` | Lượng dùng và chi phí AI thực, tiền tệ và độ bao phủ |
 
-For each reporting window, use the business timezone and a half-open interval `[start, end)`. Count each canonical entity ID once, use the latest confirmed terminal state at cutoff, and publish `n`, exclusions, and source freshness beside every rate.
+Chống trùng theo doanh nghiệp + nguồn + mã sự kiện; đếm đơn/vụ việc/cơ hội theo mã chuẩn, không theo số lần thông báo. Sửa dữ liệu phải có bản điều chỉnh truy vết, không xóa lịch sử sự kiện để làm đẹp số.
 
-| Metric | Numerator / denominator | Source and availability | Owner |
-|---|---|---|---|
-| Captured leads | Distinct `lead.captured` / not applicable | Web/LINE or CRM; MVP when lead IDs exist | CRM/Sales Ops |
-| Qualification completion | Completed required sets in window / eligible qualification starts in window; one per lead or conversation | AgentOS + conversation events; MVP | Sales Ops |
-| Qualified-lead rate | Qualified leads in cohort / captured leads in cohort; one canonical lead each | AgentOS/CRM; unavailable if either count is missing | Sales Ops |
-| Opportunity conversion | Won opportunities closed in window / closed opportunities in window; one final CRM outcome per opportunity | CRM stages; MVP only with stable Won/Lost mapping | Revenue Ops |
-| Booking conversion | Confirmed bookings in window / eligible booking offers observed in window; define repeat-offer rule | Calendar + Sales offer events; state the offer rule | Sales Ops |
-| AI resolution rate | Cases with final confirmed AI-only resolution in window / eligible support cases finally closed in window; one terminal outcome per case | Support queue/CRM; pending or reopened coverage reported separately | Support manager |
-| Escalation rate | Eligible cases handed to a human by observation cutoff / eligible cases opened in the same declared cohort; count each case once | Handoff events + support queue; exclude test cases and report still-pending cases | Support manager |
-| First-response time | Median elapsed seconds from inbound to first delivered reply over eligible observed conversations with both events in window; report `n` separately | Web/LINE timestamps; stale if delivery timestamps lag | Operations |
-| AI cost per interaction | Sum `ai.usage.recorded` cost in source currency / tasks with recorded usage in window; report usage coverage and currency | AgentOS runtime; unavailable when provider usage is not returned | Platform Ops |
-| Revenue influenced by AI | Sum confirmed order amounts for deduplicated orders with a qualifying AI touch in window; denominator is not applicable to the amount total | CRM/order + C360 touch; attribution only, later-phase | RevOps/Finance |
-| CAC | Agreed acquisition spend / new customers in cohort | Ads/finance + CRM; later-phase and unavailable without spend | Finance |
-| LTV | Realized or labeled-estimated customer value / customers in cohort | Billing/CRM; estimated until history is sufficient | Finance |
+## 3. Từ điển chỉ số
 
-For AI resolution, pending/open cases and cases with an unresolved reopen at cutoff stay outside the denominator and appear as coverage. A reopened case enters the denominator only after final closure; assign at most one final outcome (AI-only only when no human resolution occurred) and report reopened count/rate separately.
+Chốt múi giờ, khoảng báo cáo dạng [bắt đầu, kết thúc), nhóm quan sát và thời hạn theo dõi trước thử. Với chỉ số chuyển đổi, tử số phải thuộc đúng nhóm mẫu của mẫu số; kết quả đến sau được ghi theo cửa sổ quan sát đã chốt.
 
-For influenced revenue, deduplicate within each company by canonical `order_id`, include only confirmed orders whose qualifying AI touch precedes the order within the declared lookback, and never sum currencies. Report each source currency separately or use a recorded conversion rate; apply the agreed gross/net and adjustment policy. This is an attribution total, not incremental revenue or causal lift.
+| Chỉ số | Công thức / quy tắc |
+|---|---|
+| Hoàn thành tìm hiểu nhu cầu | Số yêu cầu hoàn tất trong nhóm bắt đầu đủ điều kiện / số yêu cầu bắt đầu của nhóm đó; công bố số còn chờ |
+| Khách đủ điều kiện | Khách được Bán hàng xác nhận / khách quan tâm cùng nhóm; không dùng điểm thay xác nhận |
+| Chuyển đổi B2C | Đơn hoặc khách mua được nguồn xác nhận / phiên hoặc khách đủ điều kiện trong cùng nhóm; chọn một mẫu số, ghi rõ đo đặt đơn hay trả tiền |
+| Chuyển đổi cơ hội B2B | Cơ hội thành công / cơ hội đóng trong kỳ; cơ hội mở báo riêng |
+| Chuyển đổi đặt lịch | Đề nghị lịch có đặt thành công trong thời hạn / đề nghị đủ điều kiện của cùng nhóm; chốt cách xử lý đề nghị lặp |
+| Tỷ lệ AI tự giải quyết | Vụ đóng có xác nhận và không cần người giải quyết / vụ đủ điều kiện đã đóng; công bố số mở, chờ và mở lại |
+| Tỷ lệ chuyển người | Vụ đã bàn giao trong hạn quan sát / vụ đủ điều kiện mở trong nhóm; phân biệt chờ nhận và đã nhận |
+| Thời gian phản hồi | Từ tin đến tới phản hồi đã giao đầu tiên; báo trung vị, phân vị 95 và số mẫu |
+| Mức hài lòng | Điểm người trả lời đánh giá; công bố tỷ lệ phản hồi, không coi người im lặng là hài lòng |
+| Chi phí AI/công việc | Tổng chi phí AI ghi nhận / số công việc cùng phạm vi; báo độ bao phủ, cộng riêng chi phí nhân sự/hạ tầng |
+| Chi phí mỗi khách quan tâm (CPL) | Chi phí chiến dịch được quy thuộc / khách quan tâm hợp lệ cùng phạm vi |
+| Chi phí thu hút khách (CAC) | Chi phí thu hút đã thống nhất, gồm đối tác khi có / khách mua mới cùng nhóm |
+| Hiệu suất chi quảng cáo (ROAS) | Doanh thu quy thuộc / chi quảng cáo; không phải lợi nhuận hoặc tác động nhân quả |
+| Giá trị đơn trung bình (AOV) | Doanh thu đơn theo cách tính đã chốt / số đơn hợp lệ; nêu điều chỉnh hủy/hoàn |
+| Mua lại | Khách có lần mua hợp lệ tiếp theo trong cửa sổ / khách của nhóm đã có đủ thời gian quan sát |
+| Giới thiệu | Khách mua mới hợp lệ từ giới thiệu / lượt giới thiệu hợp lệ, hoặc trên khách được mời; ghi rõ mẫu số |
+| Giá trị vòng đời (LTV) | Giá trị thực nhận theo nhóm; dự báo phải gắn nhãn ước tính, kỳ và giả định |
+| Doanh thu có AI tham gia | Tổng đơn hợp lệ có tương tác AI đủ điều kiện trước mua trong cửa sổ đã chốt; loại trùng và điều chỉnh theo chính sách |
 
-### Availability, ownership, and pilot decisions
+Vụ mở lại chỉ trở về mẫu số giải quyết khi đóng cuối cùng; nếu người đã tham gia giải quyết thì không xếp “AI tự giải quyết”. Đếm mỗi vụ một kết quả cuối tại thời điểm chốt và công bố riêng tỷ lệ mở lại để tránh làm đẹp số bằng đóng sớm.
 
-- `Available` means the approved source is connected, required fields are present, freshness is within the agreed window, and the owner has accepted the mapping.
-- `Partial` means some rows or fields are missing; show coverage and excluded counts beside the metric.
-- `Stale` means the source is connected but past its freshness rule; show the last refresh and do not silently reuse it as current.
-- `Unavailable` means no approved source, permission, required field, or accountable owner exists; render unavailable, never zero.
-- The source owner keeps the system-of-record value correct; the metric owner approves meaning, denominator, observation window, and exceptions; the pipeline owner maintains delivery and dedupe.
-- The dashboard owner publishes freshness, coverage, and definition versions; the business sponsor approves baseline and pilot targets.
-- Before pilot, decide the identity key, duplicate rule, timezone, attribution lookback, CRM stage mapping, support-resolution confirmation, and booking-offer denominator.
-- For later-stage Marketing/retention reporting only, optionally decide spend source for CAC, order source for influenced revenue, LTV cohort window, retention definition, retention period, and metric-change authority; none is an MVP prerequisite.
+Không cộng tiền khác loại tiền tệ. Báo riêng hoặc dùng tỷ giá đã lưu với nguồn/thời điểm. Doanh thu “có AI tham gia” là ghi nhận liên quan, **không chứng minh AI tạo thêm doanh thu**.
 
-### Pilot prerequisites
+Tương tác AI đủ điều kiện phải được định nghĩa trước: chẳng hạn khách nhận tư vấn sản phẩm có nội dung liên quan tới lần mua. Loại lời chào tự bật, lượt tải khung chat và tương tác sau mua. Lưu mã tương tác, khách/phiên đã liên kết hợp lệ, thời điểm và bằng chứng liên quan; đếm mỗi mã đơn chuẩn một lần trong doanh nghiệp. Cửa sổ quy thuộc và cách xử lý nhiều nguồn phải được chủ chỉ số duyệt; nguồn/định danh thiếu thì không tự quy thuộc. Báo riêng doanh thu gộp hay sau hủy/hoàn theo chính sách đã chốt.
 
-- Name a source owner, metric owner, pipeline owner, dashboard owner, and business sponsor.
-- Provide test access to the existing web backend, LINE connector, CRM, catalog, and calendar.
-- Approve consent, identity matching, test-company isolation, data-retention, and redaction rules; this is privacy governance, not a retention KPI decision.
-- Provide a baseline extract with record counts, timestamps, stages, and known gaps.
-- Run the same event and metric checks for two isolated test-company configurations on one build.
-- Sign the event dictionary, denominator rules, freshness thresholds, and unavailable-data display.
-- Keep Marketing, custom ML, and causal-lift metrics out of the MVP acceptance set.
+<a id=unit-economics></a>
 
-MVP reporting is limited to connected Sales and basic Support events from the existing web backend/LINE API, one CRM/catalog/calendar, one follow-up, and human handoff. Full Marketing, custom ML, and causal-lift claims remain roadmap work.
+## 4. Kinh tế ưu đãi và giá sàn
+
+### 4.1. Điều chỉnh giả thuyết của PDF
+
+PDF đề xuất chuyển phần hoa hồng bán hàng tiết kiệm thành giảm tiền cho khách. Giữ ý tưởng chia lợi ích, nhưng không giữ kết luận bảo toàn 100% lợi nhuận:
+
+1. Chỉ tính chi phí thực sự tránh được theo đơn; lương cố định không tự biến mất.
+2. Vẫn có chi phí AI, nhân viên hỗ trợ, thanh toán, vận chuyển, gian lận, đổi trả và đối tác.
+3. Hoa hồng đối tác không phải hoa hồng nhân viên đã tiết kiệm; phải tính riêng.
+4. Phiếu mua lần sau có chi phí khi sử dụng và nghĩa vụ cần theo dõi; không gọi là không mất tiền.
+5. Phải so lãi đóng góp trước/sau, rồi mới đánh giá lợi nhuận toàn doanh nghiệp sau chi phí cố định.
+
+### 4.2. Công thức đề xuất cho máy chủ
+
+Các biến dưới đây dùng cùng tiền tệ và cơ sở **chưa thuế gián thu**; các yếu tố thuế/kế toán phải được người phụ trách xác nhận. Đây là mô hình lãi đóng góp đơn giản, không phải công thức lợi nhuận ròng.
+
+| Biến | Nghĩa |
+|---|---|
+| P | Doanh thu sản phẩm sau giảm giá, chưa thuế; trong mô hình minh họa này không gồm phí vận chuyển thu riêng |
+| C | Chi phí theo đơn không tính theo tỷ lệ P: giá vốn, xử lý, AI, chi phí giao hàng sau khi trừ phí vận chuyển thu riêng, dự phòng đổi trả/phiếu mua hàng và chi phí khác đã xác định |
+| r | Tổng tỷ lệ chi phí thực sự tính trên P, ví dụ phí thanh toán/hoa hồng đối tác nếu hợp đồng dùng đúng cơ sở này |
+| L | Lãi đóng góp tối thiểu yêu cầu, số tiền trên đơn |
+| P_base | Giá sản phẩm cơ sở hiện hành trên cùng phạm vi đơn, chưa thuế và chưa gồm phí vận chuyển thu riêng |
+| D | Tổng giảm tiền trực tiếp so với P_base, gồm các mã giảm giá được kết hợp; không chỉ phần AI vừa đề xuất |
+| D_cap | Hạn mức giảm tiền của đơn đã được người có quyền duyệt |
+
+```text
+P = P_base − D; 0 ≤ D ≤ D_cap
+Lãi đóng góp = P × (1 − r) − C
+
+Giá sàn = max((C + L) / (1 − r), P_base − D_cap)
+Điều kiện: 0 ≤ r < 1; dữ liệu chi phí đầy đủ và hợp lệ.
+```
+
+Đầu vào phải là số hữu hạn, cùng tiền tệ và phạm vi số lượng; P_base > 0, D_cap ≥ 0, L ≥ 0, số lượng > 0. Chi phí âm bất thường hoặc khoản chưa xác định cần người kiểm tra, không tự coi bằng 0.
+
+Làm tròn sàn lên theo đơn vị tiền/giá được phép, không làm tròn xuống. Nếu sàn cao hơn giá cơ sở thì chặn phát hành báo giá/đơn tự động và yêu cầu xem lại giá, chi phí hoặc chính sách; không tự bán ở giá cơ sở dưới sàn. Thiếu dữ liệu hoặc không hợp lệ thì không tự cấp ưu đãi.
+
+Nếu doanh nghiệp chọn tỷ suất lãi đóng góp tối thiểu m trên doanh thu thay cho số tiền L:
+
+```text
+Giá tối thiểu theo tỷ suất = C / (1 − r − m)
+Chỉ dùng khi 1 − r − m > 0.
+```
+
+Không nhầm tỷ suất trên doanh thu với tỷ lệ cộng trên giá vốn: công thức giá vốn × (1 + tỷ lệ) trong PDF là dạng cộng trên chi phí, chưa bảo đảm tỷ suất trên doanh thu và chưa bao phủ mọi chi phí.
+
+Nếu chi phí có bậc, mức sàn/trần, thuế hoặc cơ sở khác P, dùng đúng quy tắc nhà cung cấp thay vì nhét vào r. Không tính cùng một khoản ở cả C và r.
+
+### 4.3. Nguồn ngân sách giảm giá
+
+Giới hạn ngân sách từ tiết kiệm được tính theo kịch bản cơ sở:
+
+```text
+Ngân sách từ tiết kiệm
+= max(0, chi phí bán hàng thực sự tránh được
+         − chi phí phát sinh thêm so với cách bán cơ sở)
+```
+
+Chi phí phát sinh thêm gồm các khoản AI, hỗ trợ, đối tác hoặc rủi ro chưa có trong cách bán cơ sở. Các khoản đã có được so phần chênh lệch, không trừ hai lần. Phép tính này giới hạn **nguồn tài trợ ưu đãi**; công thức giá sàn kiểm tra **hiệu quả đơn sau ưu đãi**. Hai phép kiểm phải cùng đạt.
+
+D_cap không vượt ngân sách còn lại và trần chính sách. Nếu bổ sung ngân sách khuyến mãi riêng, ghi rõ đó là khoản đầu tư được duyệt, không gọi là tiết kiệm hoa hồng. Ưu đãi vận chuyển, phiếu và giảm tiền phải cùng đi qua một kiểm tra ngân sách để không cộng dồn ngoài ý muốn.
+
+### 4.4. Ví dụ số để kiểm tra
+
+Giả định cho một đơn: P_base = 1.000.000 đồng; C = 780.000 đồng; r = 2%; L = 120.000 đồng; D_cap = 50.000 đồng.
+
+```text
+Sàn theo lãi = (780.000 + 120.000) / 0,98 ≈ 918.367,35 đồng
+Sàn theo hạn giảm = 1.000.000 − 50.000 = 950.000 đồng
+Giá sàn áp dụng = 950.000 đồng
+Lãi đóng góp ở giá sàn = 950.000 × 0,98 − 780.000 = 151.000 đồng
+```
+
+Giá 940.000 đồng bị từ chối dù vẫn có thể đạt mức L, vì vượt trần giảm 50.000 đồng. Ví dụ không chứng minh lãi bằng mô hình cũ và không phải đề xuất giá cho sản phẩm thật.
+
+## 5. Thử nghiệm và điều kiện dừng
+
+1. Chọn một thay đổi tại một thời điểm: cách giải thích, câu hỏi nhanh, kênh đối tác hoặc ưu đãi.
+2. Chốt nhóm đủ điều kiện, chỉ số chính, thời gian, ngân sách, nguồn và ngưỡng dừng trước khi chạy.
+3. Khi đủ lượng mẫu, chia nhóm đối chứng phù hợp để đo thay đổi; không chỉ so ngày chạy quảng cáo mạnh với ngày yếu.
+4. Theo dõi đồng thời chuyển đổi, lãi đóng góp, đổi trả, khiếu nại, từ chối nhận tin và chi phí phục vụ.
+5. Báo quy mô mẫu, độ bất định và sai lệch chọn nhóm; thiếu mẫu thì kết luận chưa đủ, không tuyên bố chiến thắng.
+6. Dừng ngay khi có hành động trái quyền nghiêm trọng, rò dữ liệu hoặc giá dưới sàn; dừng thử thương mại theo ngưỡng ngân sách/lãi/khiếu nại đã duyệt.
+
+P1 không bắt buộc chứng minh tác động nhân quả hay dựng mô hình học máy. Có thể bắt đầu từ kiểm tra chất lượng và đường cơ sở; phép thử đối chứng dành cho giai đoạn đủ dữ liệu.
+
+## 6. Chất lượng dữ liệu và trách nhiệm
+
+Báo cáo phải hiển thị đủ, một phần, đã cũ hoặc chưa có dữ liệu, kèm lần cập nhật, độ bao phủ và lý do loại mẫu. Thiếu nguồn không hiển thị số 0.
+
+| Vai trò | Trách nhiệm |
+|---|---|
+| Chủ hệ thống nguồn | Xác nhận dữ liệu và ánh xạ trạng thái |
+| Chủ chỉ số | Duyệt tử/mẫu số, nhóm quan sát, cửa sổ, ngoại lệ |
+| Người phụ trách tích hợp | Giao nhận, chống trùng, phục hồi và độ mới |
+| Người phụ trách báo cáo | Công khai nguồn, phiên bản và dữ liệu thiếu |
+| Tài chính/chủ doanh nghiệp | Duyệt chi phí, giá sàn, ngân sách, đường cơ sở và quyết định mở rộng |
+
+Nghiệm thu bằng bộ dữ liệu mẫu tính tay: đối chiếu sự kiện → đối tượng → chỉ số; thử đơn trùng, đơn hủy/hoàn, vụ mở lại, thiếu chi phí và khác tiền tệ. Cùng phép tính phải chạy tách biệt cho hai cấu hình doanh nghiệp thử. Đây là yêu cầu cho sản phẩm tương lai, không phải kiểm thử đã chạy.
