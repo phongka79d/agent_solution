@@ -1,6 +1,6 @@
 # Analytics and Business Outcomes
 
-[Plan index](../README.md) · [Vietnamese easy-read flow](../plan-easy-read-flow.md)
+[Plan index](../README.md) · [Vietnamese easy-read flow](../plan-easy-read-flow.md) · [Glossary](../glossary.md)
 
 Status: proposed design, not implemented functionality. Examples and targets are illustrative until agreed with a pilot customer.
 
@@ -46,13 +46,17 @@ Use immutable facts for what happened; derive rates from facts rather than from 
 |---|---|---|---|
 | `lead.captured` | Existing web backend or LINE connector | Lead reference, channel, consent, source | CRM/Sales Ops |
 | `message.received` / `message.sent` | Web/LINE API | Conversation, channel, timestamps, delivery result | Integration owner |
+| `qualification.started` | AgentOS qualification workflow | Lead/conversation, required-field version, start time | Sales Ops |
 | `qualification.completed` | AgentOS qualification record | Required-field version, outcome, reviewer/agent | Sales Ops |
 | `opportunity.updated` | Company CRM | Opportunity, stage, owner, value, stage timestamp | CRM owner |
+| `booking.offered` | Sales workflow | Conversation/opportunity, offer ID, available options, offer timestamp | Sales Ops |
 | `booking.confirmed` | Company calendar | Booking ID, slot, timezone, confirmation timestamp | Calendar owner |
 | `followup.sent` / `followup.stopped` | AgentOS workflow plus channel | Sequence, reason, consent, delivery result | Workflow owner |
 | `handoff.created` / `handoff.resolved` | Human queue or CRM | Owner, reason, pause/resume, resolution | Support/Sales manager |
+| `support.case_opened` | AgentOS Support queue or company ticketing | Case/conversation, reason, owner, opened time | Support manager |
 | `support.resolved` / `support.reopened` | Support queue or CRM | Resolution actor, confirmation, reopen flag | Support manager |
 | `order.confirmed` | Company order/CRM system | Order ID, amount, customer, confirmation | Finance/RevOps |
+| `ai.usage.recorded` | AgentOS runtime | Task, model/provider class, tokens or units, cost, currency | Platform Ops |
 
 ### Metric dictionary
 
@@ -68,6 +72,7 @@ For each reporting window, use the business timezone and a half-open interval `[
 | AI resolution rate | Cases with final confirmed AI-only resolution in window / eligible support cases finally closed in window; one terminal outcome per case | Support queue/CRM; pending or reopened coverage reported separately | Support manager |
 | Escalation rate | Eligible cases handed to a human by observation cutoff / eligible cases opened in the same declared cohort; count each case once | Handoff events + support queue; exclude test cases and report still-pending cases | Support manager |
 | First-response time | Median elapsed seconds from inbound to first delivered reply over eligible observed conversations with both events in window; report `n` separately | Web/LINE timestamps; stale if delivery timestamps lag | Operations |
+| AI cost per interaction | Sum `ai.usage.recorded` cost in source currency / tasks with recorded usage in window; report usage coverage and currency | AgentOS runtime; unavailable when provider usage is not returned | Platform Ops |
 | Revenue influenced by AI | Sum confirmed order amounts for deduplicated orders with a qualifying AI touch in window; denominator is not applicable to the amount total | CRM/order + C360 touch; attribution only, later-phase | RevOps/Finance |
 | CAC | Agreed acquisition spend / new customers in cohort | Ads/finance + CRM; later-phase and unavailable without spend | Finance |
 | LTV | Realized or labeled-estimated customer value / customers in cohort | Billing/CRM; estimated until history is sufficient | Finance |

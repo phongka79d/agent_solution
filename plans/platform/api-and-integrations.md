@@ -1,6 +1,6 @@
 # APIs, Integrations, Security, and Operations
 
-[Plan index](../README.md) · [Vietnamese easy-read flow](../plan-easy-read-flow.md)
+[Plan index](../README.md) · [Vietnamese easy-read flow](../plan-easy-read-flow.md) · [Glossary](../glossary.md)
 
 Status: proposed design, not implemented functionality. Examples and targets are illustrative until agreed with a pilot customer.
 
@@ -17,6 +17,28 @@ API-first means two directions of connection:
 
 Company systems can also send event notifications (webhooks), such as a submitted lead form or confirmed order. AgentOS normalizes these into workflow events; receiving an event is not proof that all triggered work has finished.
 
+There are two supported ways to enter AgentOS:
+
+1. **Company-backend call (recommended):** the company's server sends a request to the Module API. The browser or mobile app never holds the AgentOS credential.
+2. **Verified channel connector:** a LINE/Facebook/WhatsApp/email connector receives the provider event, verifies it, adds the company's tenant identity, and forwards it. The connector is still an authenticated company-scoped caller; an unknown provider event is rejected.
+
+Both paths end at the same request flow: authenticate caller → verify customer when private data is needed → check enabled module and current owner → run the module → return a task result. A **webhook** is only the delivery mechanism for an event; it is not proof that a business action succeeded.
+
+### API flow in plain language
+
+```text
+1. The company's existing website/app receives a customer message.
+2. The company's backend sends the message to AgentOS with its company credential.
+3. AgentOS checks the company, the requested module, and the customer reference.
+4. The Supervisor sends the request to Marketing, Sales, Support, or a human queue.
+5. The selected module reads only the approved company data it needs.
+6. AgentOS returns an immediate task ID; the work may continue after the request ends.
+7. The company reads the task by polling or receives a server-to-server callback.
+8. The company UI shows the answer and the real action status: waiting, human review, confirmed, stopped, or failed.
+```
+
+The **task ID** is a tracking number, not a success receipt. `202 Accepted` means “AgentOS has safely received the work.” It does not mean “the meeting is booked” or “the order is paid.” A **callback** is a message to the company's backend, separate from the message sent to the customer through LINE, email or the website. One owner must control each customer-channel send so a callback and a channel connector cannot send duplicate replies.
+
 ### Minimal proposed API
 
 These are proposed contracts, not implemented endpoints. Document requests, responses, permissions, and errors in one OpenAPI specification before the pilot.
@@ -25,7 +47,7 @@ These are proposed contracts, not implemented endpoints. Document requests, resp
 |---|---|---|
 | `POST /v1/conversations` | Start or link a conversation using permitted company customer references | AgentOS conversation ID |
 | `POST /v1/conversations/{id}/messages` | Submit a message with `module: marketing / sales / support / auto`; `auto` asks the Supervisor to route | `202 Accepted` and a task ID |
-| `GET /v1/tasks/{id}` | Read task progress and available results | `accepted`, `running`, `completed`, `awaiting_human`, or `failed`; answer and confirmed action references when available |
+| `GET /v1/tasks/{id}` | Read task progress and available results | `accepted`, `running`, `waiting`, `awaiting_human`, `completed`, `stopped`, or `failed`; answer and confirmed action references when available |
 | `POST /v1/events` | Receive a company business event with its source and unique event ID | Accepted event ID and correlation ID, plus task IDs for any queued work; otherwise an explicit error |
 
 Example: the company's backend submits to `POST /v1/conversations/conv_01/messages`:
@@ -41,7 +63,11 @@ The conversation already links to the permitted customer reference. AgentOS chec
 
 Callbacks carry `event_id`, `task_id`, `status`, `correlation_id`, and a result or error. Retry delivery within bounds; recipients deduplicate by event ID. `awaiting_human` is paused, not final. A `completed` task may contain only an answer; an action is successful only with a provider-confirmed result/reference.
 
+Task status mapping is explicit: `accepted` means queued, `running` means a worker is active, `waiting` means a timer or external event is pending, `awaiting_human` means a named person must decide or take over, `completed` means the requested result was verified, `stopped` means a configured stop condition ended the work, and `failed` means the requested outcome was not established. A callback to the company backend is different from a customer-channel send: the callback reports task state; the connector that owns the customer channel sends the customer message once with an effect key and provider message ID.
+
 The integration contract must distinguish customer verification from caller authentication, define field mappings and allowed reads/writes, carry a request/correlation ID, and return explicit errors for unsupported capabilities. Check each event's authenticated source and permitted event types before triggering workflows. Idempotency keys prevent repeat submissions from repeating actions; [Security, Reliability, and Operations](api-and-integrations.md#section-16) defines the shared security and recovery rules.
+
+Human decisions use the same authenticated event ingress from an approved operator console or connected company system. Event types such as `human.approval`, `human.takeover`, `human.resume`, and `human.reject` include the run/task ID, actor ID, decision, reason and an idempotency key. The receiving owner is recorded before a paused task can resume; a customer message received while a human owns the conversation is queued for that owner rather than answered by AI.
 
 ### Connected applications
 
@@ -92,7 +118,7 @@ These examples refine the four proposed endpoints above; they do not add a requi
 
 ### Caller, customer, and event identity
 
-The caller is the company's authenticated backend. The customer is the person or account the work concerns. They are separate identities and must not be inferred from one another.
+The caller is the company's authenticated backend or a verified company-scoped channel connector. The customer is the person or account the work concerns. They are separate identities and must not be inferred from one another.
 
 | Identity | Minimum contract | What it permits |
 |---|---|---|
@@ -102,6 +128,26 @@ The caller is the company's authenticated backend. The customer is the person or
 | Human actor | Recorded user ID and role for an approval, takeover, or resume decision | The specific decision or ownership change allowed by policy |
 
 The API must not trust a tenant or customer ID supplied only as a request field. If the backend cannot prove the customer match, return an explicit unverified-identity result and restrict context to safe public/session data. Keep the caller credential on the company backend; the browser and mobile client never receive it. Security controls remain in [Security, Reliability, and Operations](api-and-integrations.md#section-16).
+
+### Identifiers and versions
+
+Use the same names everywhere so a business owner can trace one question without confusing a source version with a task state.
+
+| Field | Meaning | Where it appears |
+|---|---|---|
+| `tenant_id` / `company_ref` | The isolated company account | Caller, task, event, audit and analytics |
+| `customer_id` + `source_record_id` | AgentOS link plus the company's original record ID | Customer360, connector request and handoff |
+| `conversation_id` | One customer conversation in the selected channel | Messages, task, handoff and callback |
+| `task_id` | One asynchronous AgentOS job | API response, polling and callback |
+| `run_id` | One workflow instance created from a trigger | Workflow, audit and retry record |
+| `event_id` | One immutable event from a company/provider source | Webhook, dedupe and analytics fact |
+| `correlation_id` | Joins related requests, tasks, connector calls and outcomes | Logs, callbacks, audit and reports |
+| `configuration_version` | Rules and enabled-module settings used for the run | Task/run/audit and deployment bundle |
+| `source_version` | Version of the company catalog/document/data read | Answer evidence and connector result |
+| `task_version` | Monotonic state update number for polling/callback ordering | Task and callback |
+| `effect_key` | Stable key for one external side effect | Connector call and retry/reconciliation |
+
+The company can use a different external ID format, but the mapping must be stored. `task_version` is not a configuration or source version; changing a configuration creates a new bundle/version for later runs and never rewrites an old audit record.
 
 ### Request and response examples (illustrative headers use the existing company-backend authentication contract)
 
@@ -156,6 +202,21 @@ Each row is an allowlisted capability mapping, not a direct database grant. Read
 
 An unmapped field or operation fails closed with `CAPABILITY_NOT_ENABLED`; an agent cannot turn a read into a write by changing its prompt. MVP normally uses CRM reads/writes, catalog reads, one calendar path, and permitted messaging; later product phases may enable other rows after their acceptance evidence passes.
 
+Every connector call uses a small common envelope:
+
+| Field | Purpose |
+|---|---|
+| `operation_id` | One traceable connector attempt |
+| `effect_key` | Stable business action key used to prevent duplicate side effects |
+| `operation` | Allowlisted read/write name, such as `crm.update_qualification` |
+| `source_record` | Company system and record ID being read or changed |
+| `status` | `confirmed`, `rejected`, or `uncertain` |
+| `provider_reference` | Source-system ID or confirmation code when confirmed |
+| `reconciliation_key` | Lookup key used after timeout before retry |
+| `correlation_id` | Links the connector result to the task and conversation |
+
+An HTTP response such as `200` or `202` from a provider is transport information, not automatically a confirmed business result. The connector translates the provider response into this envelope and the Workflow decides whether the task may advance.
+
 ### Task delivery, callbacks, and recovery
 
 The task record is durable and authoritative. `accepted` means stored for work, `running` means execution is active, `awaiting_human` means paused for an identified owner or approval, `completed` means the requested answer or action was validated, and `failed` means the overall requested outcome was not established. A failed task still reports each action as `confirmed`, `rejected`, or `uncertain`; uncertain external effects require reconciliation before replay.
@@ -186,3 +247,5 @@ Before pilot sign-off, test that:
 - a provider timeout reconciles an uncertain write before retrying and never reports an unconfirmed success;
 - an approval-required task stays `awaiting_human` with its accountable owner;
 - a task result contains source references for material answers and confirmed references for completed actions.
+
+For a duplicate event, keep one immutable event fact per authenticated company + source + event ID. If the same key arrives with a different payload hash or event type, return an explicit conflict and do not run a second workflow. One accepted fact may fan out to several configured workflows, each with its own run ID; a waiting run resumes from its saved step instead of creating a new run.

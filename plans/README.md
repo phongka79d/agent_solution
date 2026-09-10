@@ -2,6 +2,8 @@
 
 Đọc [luồng dễ hiểu bằng tiếng Việt](plan-easy-read-flow.md) trước nếu bạn muốn nắm ý chính trong khoảng 5 phút.
 
+Tra nghĩa các từ như **module**, **API**, **lead**, **Customer360**, **workflow** và **handoff** trong [bảng thuật ngữ dùng chung](glossary.md).
+
 Sản phẩm gồm ba module Marketing, Sales và Customer Support. Doanh nghiệp chọn module cần dùng, kết nối vào ứng dụng và dữ liệu hiện tại qua API. Phần lõi được dùng lại; dữ liệu, quyền truy cập và cấu hình của từng doanh nghiệp được tách riêng.
 
 Trạng thái: thiết kế đề xuất, chưa phải tính năng đã triển khai. Ví dụ, giá và chỉ tiêu cần được xác nhận với doanh nghiệp thử nghiệm.
@@ -11,10 +13,13 @@ Trạng thái: thiết kế đề xuất, chưa phải tính năng đã triển 
 1. **Người không chuyên kỹ thuật:** đọc [bản dễ hiểu](plan-easy-read-flow.md).
 2. **Product / Business:** đọc [sản phẩm và cách đóng gói](product-and-packaging.md), rồi [luồng khách hàng và tình huống](customer-lifecycle.md).
 3. **Engineering:** bắt đầu từ [kiến trúc](platform/architecture.md), [dữ liệu](platform/data-and-knowledge.md), [API](platform/api-and-integrations.md), rồi xem module cần làm và [MVP](delivery/mvp-and-roadmap.md).
+4. **Tra thuật ngữ:** mở [glossary.md](glossary.md) bất cứ lúc nào.
 
 ## Tài liệu chi tiết
 
 Các mục 1–23 của PLAN.md trước đây đã được chuyển vào các tài liệu dưới đây, không bỏ phần nào. Cột cuối giúp tìm lại nội dung cũ; mỗi tài liệu có thêm chi tiết thực hiện và kiểm chứng trong phạm vi kế hoạch.
+
+**Nguồn của flow:** [Customer lifecycle](customer-lifecycle.md) là luồng kinh doanh chính; ba tài liệu trong `modules/` là luồng chi tiết từng module; `platform/` là luồng điều phối, dữ liệu, API và xử lý lỗi. Khi hai flow có vẻ khác nhau, ưu tiên điều kiện bật/tắt module, quyền dữ liệu và xác nhận từ hệ thống doanh nghiệp.
 
 | Tài liệu | Nội dung chính | Mục từ bản cũ |
 |---|---|---|

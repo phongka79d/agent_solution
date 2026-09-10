@@ -1,6 +1,6 @@
 # Sales Module
 
-[Plan index](../README.md) · [Vietnamese easy-read flow](../plan-easy-read-flow.md)
+[Plan index](../README.md) · [Vietnamese easy-read flow](../plan-easy-read-flow.md) · [Glossary](../glossary.md)
 
 Status: proposed design, not implemented functionality. Examples and targets are illustrative until agreed with a pilot customer.
 
@@ -11,10 +11,13 @@ Status: proposed design, not implemented functionality. Examples and targets are
 Purpose: move a qualified lead to a clear commercial outcome.
 
 ```text
-Qualified Lead → Discovery → Need → Budget → Authority → Timeline
-               → Product Recommendation → Demo / Quote → Follow-up
-               → Won / Lost
+Company app / Marketing handoff → Sales intake → Discovery
+                                → Need → Budget → Authority → Timeline
+                                → Product Recommendation → Demo / human quote
+                                → Follow-up → Company-confirmed Won / Lost
 ```
+
+**Discovery** means asking questions before recommending anything. An **opportunity** is a possible sale being tracked. A **stage** is the current step of that sale. A quote is only a draft or approved company action until the company's process confirms it.
 
 Default opportunity state:
 
@@ -42,6 +45,38 @@ Example — a SaaS buyer:
 6. Mark Won only after the configured authoritative confirmation; trigger onboarding.
 
 Automated quotation and checkout are full-product capabilities. Their MVP boundaries are explicit in [MVP](../delivery/mvp-and-roadmap.md#section-21).
+
+### Detailed Sales flow
+
+```mermaid
+flowchart TD
+    Entry["Existing company app or accepted Marketing handoff"] --> API["Company backend calls Sales Module API"]
+    API --> Gate{"Sales Module enabled?"}
+    Gate -->|No| Staff["Return unsupported or human queue"]
+    Gate -->|Yes| Context["Load verified customer, conversation, and CRM context"]
+    Context --> Discovery["Ask discovery questions"]
+    Discovery --> Complete{"Need, budget, authority, timeline known?"}
+    Complete -->|No| More["Save unknown fields; ask next question"]
+    More --> Discovery
+    Complete -->|Yes| Catalog["Read current catalog and eligibility"]
+    Catalog --> Fit{"Suitable option available?"}
+    Fit -->|No| Human["Explain limitation or request human review"]
+    Fit -->|Yes| Recommend["Explain recommendation and terms"]
+    Recommend --> Demo{"Customer wants a meeting?"}
+    Demo -->|Yes| Calendar["Check calendar and save confirmed booking"]
+    Demo -->|No| Next["Save next action"]
+    Calendar --> Next
+    Next --> Approval{"High-value or out-of-policy?"}
+    Approval -->|Yes| Approve["Await named human approval"]
+    Approval -->|No| Follow["Start permitted follow-up"]
+    Approve --> Follow
+    Follow --> Outcome{"Company system confirms outcome?"}
+    Outcome -->|Won| Won["Record Won + source reference; start onboarding"]
+    Outcome -->|Lost| Lost["Record Lost + reason"]
+    Outcome -->|Not yet| Wait["Keep opportunity open; wait for reply"]
+```
+
+The **company system** in the final decision is the agreed CRM/order/billing source. Sales may prepare the information needed for a quote, but it must not claim “sold” because an AI reply was sent.
 
 ## Sales Module Operating Contract
 
@@ -98,7 +133,9 @@ The Planned MVP does not require order, payment, checkout, refund, cancellation,
 | Sales disabled | Preserve the lead in core records and return unsupported or a human queue item; do not silently route to a disabled action |
 | Support disabled for a support-shaped request | Ask the Supervisor for an enabled destination or human handoff; Sales does not impersonate Support |
 
-When Marketing is disabled, Sales still preserves source and campaign values supplied by the company's form or CRM; label attribution unavailable only when those fields are absent. Sales can accept a new or unqualified inquiry and use discovery to qualify it. When Sales transfers to Support, the prior owner is recorded and Support explicitly accepts ownership before Sales pauses.
+When Marketing is disabled, Sales still preserves source and campaign values supplied by the company's form or CRM; label attribution unavailable only when those fields are absent. Sales can accept a new or unqualified inquiry and use discovery to qualify it. A Marketing score or handoff request is preliminary; Sales confirms the required fields before marking an SQL or creating an opportunity. When Sales transfers to Support, the prior owner is recorded and Support explicitly accepts ownership before Sales pauses.
+
+For every handoff, pass the customer ID, conversation ID, current owner and stage, qualification evidence, source-record links, unresolved questions, summary and next action. The receiving owner must accept; until acceptance the task remains pending/`awaiting_human`, not a completed handoff.
 
 ### Configuration and acceptance scenarios
 

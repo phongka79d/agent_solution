@@ -1,6 +1,6 @@
 # Customer Data, Knowledge, and Product Catalog
 
-[Plan index](../README.md) · [Vietnamese easy-read flow](../plan-easy-read-flow.md)
+[Plan index](../README.md) · [Vietnamese easy-read flow](../plan-easy-read-flow.md) · [Glossary](../glossary.md)
 
 Status: proposed design, not implemented functionality. Examples and targets are illustrative until agreed with a pilot customer.
 

@@ -1,6 +1,6 @@
 # Architecture and Orchestration
 
-[Plan index](../README.md) · [Vietnamese easy-read flow](../plan-easy-read-flow.md)
+[Plan index](../README.md) · [Vietnamese easy-read flow](../plan-easy-read-flow.md) · [Glossary](../glossary.md)
 
 Status: proposed design, not implemented functionality. Examples and targets are illustrative until agreed with a pilot customer.
 
@@ -14,10 +14,11 @@ An application may request a specific enabled module or let the Supervisor route
 
 ```mermaid
 flowchart TD
-    Message["Customer Message"] --> Identify["Identify Customer"]
+    App["Existing company app / channel"] --> Auth["Authenticate company caller + normalize request"]
+    Auth --> Identify["Verify customer identity when private data is needed"]
     Identify --> Load["Load permitted Customer360 context"]
-    Load --> Intent["Detect Intent"]
-    Intent --> Policy{"Policy and confidence check"}
+    Load --> Intent["Detect intent"]
+    Intent --> Policy{"Policy, owner, and confidence check"}
     Policy -->|Clarification needed| Clarify["Ask one focused question"]
     Clarify --> Intent
     Policy -->|Approval or handoff required| Human["Human queue"]
@@ -25,7 +26,10 @@ flowchart TD
     Route -->|Acquisition| Marketing["Marketing"]
     Route -->|Purchase or expansion| Sales["Sales"]
     Route -->|Service or cancellation intake| Support["Support"]
+    Route -->|Module disabled| Unsupported["Unsupported response or company staff queue"]
 ```
+
+**Caller authentication** proves which company's backend is making the request. **Customer verification** proves which customer may see private information. These are different checks. The Supervisor can route a request, but it cannot enable a disabled module or bypass a human owner.
 
 | Customer message | Routing |
 |---|---|
@@ -54,11 +58,14 @@ flowchart TD
     Marketing --> Execution["Approved Skills / Workflow / Business Rules"]
     Sales --> Execution
     Support --> Execution
-    Execution <--> Shared[("Customer360 / Approved Knowledge")]
+    Execution <--> C360[("Customer360: links + permitted context")]
+    Execution --> Knowledge["Approved Knowledge: read/search"]
     Execution <--> Connectors["Reusable API Connectors"]
     Connectors <--> Systems["Company CRM / Catalog / Orders / Tickets / Calendar"]
     Systems -->|Business events via webhooks| API
 ```
+
+Customer360 and the Knowledge Base are separate: Customer360 links customer context; the Knowledge Base contains approved reference material. Agents can search approved knowledge, but cannot rewrite it while answering a customer. Connectors mediate all reads/writes to company systems.
 
 This is a logical map, not a requirement to deploy each module as a separate service. Responses return through the AgentOS API or a configured callback; the company application or connected channel displays them.
 

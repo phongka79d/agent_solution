@@ -29,9 +29,8 @@ Trước mắt, chọn một doanh nghiệp pilot để kiểm chứng ROI.
 
 ## Đã hoàn thành hôm nay
 
-- Viết lại `PLAN.md`.
+- Viết kế hoạch hoàn chỉnh cho 3 Agent và các luồng.
 - Mô hình hóa 38 flow/business case bằng Archify.
-- Tạo website Atlas để Product, Engineering và Business cùng xem, lọc và kiểm tra toàn bộ hệ thống.
 
 ## Kế hoạch ngày mai
 

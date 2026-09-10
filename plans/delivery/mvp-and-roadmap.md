@@ -1,6 +1,6 @@
 # MVP, Validation, and Roadmap
 
-[Plan index](../README.md) · [Vietnamese easy-read flow](../plan-easy-read-flow.md)
+[Plan index](../README.md) · [Vietnamese easy-read flow](../plan-easy-read-flow.md) · [Glossary](../glossary.md)
 
 Status: proposed design, not implemented functionality. Examples and targets are illustrative until agreed with a pilot customer.
 
@@ -12,23 +12,25 @@ Objective: prove the Sales Module works inside one company's existing applicatio
 
 ```mermaid
 flowchart TD
-    Channels["Existing website backend / LINE connector"] --> API["AgentOS API"]
+    Channels["Customer clicks ad or opens existing website / LINE"] --> Existing["Company website/backend or LINE connector"]
+    Existing --> API["AgentOS API"]
     API --> Supervisor["Supervisor"]
     Supervisor <--> C360[("Customer360")]
     Supervisor --> Sales["Sales Module"]
     Supervisor --> Support["Basic Support Module"]
-    Sales --> CRM["Company CRM / Catalog / Calendar via API connectors"]
-    Sales -->|Exception| Workflow["Workflow / Policy"]
+    Sales --> Workflow["Workflow / Policy"]
     Support --> Workflow
-    CRM -->|Confirmed event| Workflow
+    Workflow --> Connectors["Approved API connectors"]
+    Connectors --> CRM["Company CRM / Catalog / Calendar"]
+    CRM -->|Confirmed event via webhook| API
     Workflow -->|Approval or escalation| Human["Human Handoff"]
     Human -->|AI ownership explicitly resumed| Workflow
-    Workflow -->|Outreach allowed| Followup["Workflow Follow-up"]
+    Workflow -->|One follow-up sequence, max 2 sends| Followup["Workflow Follow-up"]
     Workflow --> Analytics["Analytics"]
     Followup --> Analytics
 ```
 
-The diagram shows MVP scope. Handoff is conditional, and analytics consumes events from every stage, not only follow-up. The existing website displays returned answers; connected channels can deliver replies directly.
+The diagram shows MVP scope. Handoff is conditional, and analytics consumes events from every stage, not only follow-up. The existing website displays returned answers; connected channels can deliver replies directly. “One follow-up sequence, max 2 sends” means one initial message and at most one later reminder, subject to the stop rules; it does not mean unlimited automation.
 
 | Priority | Deliverable | Minimum usable behavior |
 |---:|---|---|
@@ -41,13 +43,29 @@ The diagram shows MVP scope. Handoff is conditional, and analytics consumes even
 | 7 | Company API connectors | One CRM and one approved catalog source; permitted reads/writes and contact/opportunity sync with known field ownership |
 | 8 | Booking | One calendar provider, verified availability and booking result |
 | 9 | Follow-up | One durable sequence with timers, consent checks, and stop rules |
-| 10 | Basic Support | FAQ answers, bounded guidance, unresolved-case capture |
-| 11 | Human handoff | Queue, assigned owner, complete summary, AI pause/resume |
+| 10 | Basic Support | Approved FAQ answers, bounded guidance, unresolved-case capture; optional order/ticket connectors are not required |
+| 11 | Human handoff | Queue, assigned owner, complete summary, AI pause/resume; approved operator event for accept/takeover/approve/reject |
 | 12 | Dashboard | Conversations, qualification, bookings, handoffs, basic support outcomes, cost |
 
 Permissions, tenant isolation, audit, and failure handling are acceptance requirements across all twelve items, not optional add-ons.
 
-Not in MVP: custom ML; automated ad management; full campaign/nurture automation; dedicated Retention Agent; advanced ticketing/SLA; automated quote generation, payment/refund/cancellation execution; voice; visual builders. Humans handle quotations and purchase confirmation through the chosen CRM process.
+Not in MVP: custom ML; automated ad management; full campaign/nurture automation; a dedicated Retention Agent (retention is a cross-module workflow, not a fourth product module); advanced ticketing/SLA; automated quote generation, payment/refund/cancellation execution; voice; visual builders. Humans handle quotations and purchase confirmation through the chosen CRM process.
+
+### MVP action boundary
+
+An **allowlist** is the small set of actions the first release may perform. A **denylist** is the explicit set of actions that must remain unavailable even if a prompt asks for them.
+
+| Area | MVP allowlist | MVP denylist |
+|---|---|---|
+| Customer and conversation | Read/write AgentOS conversation, permitted Customer360 links, summaries and ownership | Cross-company lookup, unverified private data, deleting source records |
+| CRM | Read contact/lead/opportunity; create or update qualification, notes, owner, next action | Marking a sale without source confirmation; arbitrary CRM fields or bulk changes |
+| Product data | Read approved catalog/product terms and eligibility | Editing catalog prices, promotions or eligibility |
+| Calendar | Read free/busy and create one meeting request; save confirmed booking reference | Cancel/reschedule, double-booking, or claiming success before provider confirmation |
+| Customer messaging | Send one initial follow-up plus at most one reminder when every live consent/stop check passes | Unlimited nurture, ad operations, messages after opt-out/reply/human takeover |
+| Support | Answer approved FAQ and bounded troubleshooting; create a human queue item | Payment, refund, cancellation, account-changing action, or pretending a ticket is resolved |
+| Human operations | Create/accept/approve/reject/take over/resume through the approved operator path | Silent AI takeover, approval by timeout, or sending while a human owns the conversation |
+
+The allowlist applies per company and enabled module. A request for a denied action returns an explicit unsupported or `awaiting_human` result and leaves an audit record; it does not fall through to a more powerful connector.
 
 ### Validation and rollout
 
@@ -56,7 +74,8 @@ Run a fixed conversation test set after changing prompts, tools, catalog, knowle
 | Acceptance area | Required evidence |
 |---|---|
 | End-to-end journey | Lead → qualification → recommendation → booking → CRM; basic support → answer or human-owned case |
-| Existing application integration | A request from the company's backend receives a task result displayed in the existing UI; approved CRM updates are confirmed in that CRM |
+| Existing application integration | A request from the company's backend receives a task result displayed in the existing UI; approved CRM updates are confirmed in that CRM; callback delivery has polling fallback |
+| Human handoff control | An authorized operator accepts, takes over, rejects, or resumes through the approved event path; the action is idempotent and the customer conversation pauses while human-owned |
 | Selectable modules | Sales works with Marketing disabled; Support routes only when enabled; an unavailable module is rejected or handed off explicitly |
 | Reusable deployment | The same build passes scoped tests for two isolated company configurations using test data; changing products/fields does not require Agent code edits |
 | Shared context | Sales/Support handoff preserves identity, history, next action, and ownership |
@@ -101,12 +120,19 @@ Custom ML is not MVP core. Do not build an ad-bidding engine to replace Meta or 
 
 ```mermaid
 flowchart TD
-    Ads --> Lead --> C360["Customer360"]
-    C360 --> Results["Sales Result"]
-    Results --> ML["ML / Prediction"]
-    ML --> Marketing["Marketing Agent"]
-    Marketing --> Recommendation["Budget / Campaign Recommendation"]
+    Company["Company runs campaign"] --> Ads["Facebook / Google delivery"]
+    Ads --> LeadEvent["Authenticated lead/campaign event"]
+    LeadEvent --> C360["Customer360 links permitted data"]
+    C360 --> Results["CRM / Sales outcome event"]
+    Results --> Gate{"Enough labeled data and quality checks?"}
+    Gate -->|No| Rules["Rules + Marketing Module"]
+    Gate -->|Yes, roadmap| ML["Validated prediction"]
+    Rules --> Review["Human review"]
+    ML --> Review
+    Review --> Recommendation["Campaign / budget recommendation"]
 ```
+
+**ML** means a learned prediction model. It is not part of the MVP and it does not replace Facebook/Google's ad auction. The model may suggest a decision; a person approves any campaign or budget change.
 
 | Intelligence phase | Capability | Dependency |
 |---|---|---|

@@ -1,6 +1,6 @@
 # Customer Support Module
 
-[Plan index](../README.md) · [Vietnamese easy-read flow](../plan-easy-read-flow.md)
+[Plan index](../README.md) · [Vietnamese easy-read flow](../plan-easy-read-flow.md) · [Glossary](../glossary.md)
 
 Status: proposed design, not implemented functionality. Examples and targets are illustrative until agreed with a pilot customer.
 
@@ -12,17 +12,52 @@ Purpose: resolve routine problems with customer and product context, then transf
 
 ```mermaid
 flowchart TD
-    Question["Customer Question"] --> Identify["Identify and verify Customer"]
-    Identify --> Load["Load Product / Order / Subscription"]
-    Load --> Search["Knowledge Search"]
-    Search --> Answer["Answer / Troubleshoot"]
+    Entry["Company app / connected channel"] --> API["Company backend sends support request via API"]
+    API --> Enabled{"Support Module enabled?"}
+    Enabled -->|No| Staff["Return unsupported or company staff queue"]
+    Enabled -->|Yes| Identify["Identify and verify Customer"]
+    Identify -->|Unverified| Public["Give public guidance only or ask for verification"]
+    Identify -->|Verified| Context["Load Customer360 + available account context"]
+    Public --> Search["Search approved knowledge"]
+    Context --> Search
+    Search --> Answer["Answer / Troubleshoot with source"]
     Answer --> Resolved{"Customer confirms resolved?"}
     Resolved -->|Yes| Close["Close case"]
-    Close --> CSAT["Request CSAT"]
-    Resolved -->|No| Ticket["Create Ticket"]
+    Close --> CSAT["Optional CSAT if enabled"]
+    Resolved -->|No / no reliable answer| Ticket["Create case through approved connector, if enabled"]
     Ticket --> Summary["Prepare context summary"]
-    Summary --> Human["Human Support"]
+    Summary --> Human["Human Support / awaiting_human"]
 ```
+
+The **knowledge base** is the approved FAQ and guide collection. A **ticket** is a trackable support case. **CSAT** is the customer's satisfaction rating after help. Order/subscription lookup and ticket creation are optional connectors in the full product; the basic MVP can still answer approved general questions and hand off a context summary.
+
+### Detailed Support flow
+
+```mermaid
+flowchart TD
+    Request["Customer asks for help"] --> Receive["Existing app/channel sends request"]
+    Receive --> Verify{"Can the customer be verified?"}
+    Verify -->|No| Safe["Do not show private order/account data"]
+    Verify -->|Yes| Load["Load only permitted Customer360 context"]
+    Safe --> KB["Search approved knowledge"]
+    Load --> Optional{"Optional account/order connector available?"}
+    Optional -->|No| KB
+    Optional -->|Yes| Account["Read current account/order status"]
+    Account --> KB
+    KB --> Evidence{"Approved source supports answer?"}
+    Evidence -->|No| Escalate["Explain limitation and prepare human handoff"]
+    Evidence -->|Yes| Guide["Answer or run bounded troubleshooting"]
+    Guide --> Solved{"Customer confirms solved?"}
+    Solved -->|Yes| Close["Record resolution and close"]
+    Solved -->|No| Escalate
+    Escalate --> Ticket{"Ticket connector enabled?"}
+    Ticket -->|Yes| Create["Create/update case and verify provider result"]
+    Ticket -->|No| Queue["Create human queue item"]
+    Create --> Human["Human owns case; pause AI"]
+    Queue --> Human
+```
+
+Support never treats a message sent as proof that the case is solved. The result must include the evidence used, steps attempted, current owner and next action. If a ticket API times out, reconcile it before trying again so one problem does not create two tickets.
 
 Without a reliable answer, or when permitted troubleshooting is exhausted, take the escalation path. Do not close a case solely because the AI sent a response.
 

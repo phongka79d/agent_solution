@@ -1,6 +1,6 @@
 # Product, Configuration, and Packaging
 
-[Plan index](README.md) · [Vietnamese easy-read flow](plan-easy-read-flow.md)
+[Plan index](README.md) · [Vietnamese easy-read flow](plan-easy-read-flow.md) · [Glossary](glossary.md)
 
 Status: proposed design, not implemented functionality. Examples and targets are illustrative until agreed with a pilot customer.
 
@@ -19,14 +19,22 @@ The same modules can serve many companies through separate data access, configur
 
 ```mermaid
 flowchart LR
-    subgraph Journey["Customer lifecycle"]
-        Marketing --> Lead --> Sales --> Customer --> Support --> Retention
-        Retention --> Sales
-    end
-    Supervisor -. coordinates .-> Journey
-    C360[("Customer360")] -. shared_context .-> Journey
-    Supervisor <--> C360
+    Company["Company runs campaign"] --> Ads["Facebook / Google Ads"]
+    Ads --> Click["Customer clicks"]
+    Click --> App["Existing website / chat / form"]
+    App --> API["AgentOS API"]
+    API --> Supervisor["Supervisor: route enabled module"]
+    Supervisor --> Marketing["Marketing Module"]
+    Marketing --> Lead["Lead / inquiry"]
+    Lead --> Sales["Sales Module"]
+    Sales --> Customer["Confirmed customer"]
+    Customer --> Support["Customer Support Module"]
+    Support --> Signal["Renewal / expansion signal"]
+    Signal --> Sales
+    C360[("Customer360: permitted shared context")] -.-> Supervisor
 ```
+
+This is a business relationship map, not a mandatory synchronous sequence. A customer may enter directly at Sales or Support, and a company may buy only one module. The Supervisor routes only to enabled modules; Customer360 provides permitted context and does not replace the company's source systems.
 
 <a id=section-2></a>
 
@@ -71,8 +79,14 @@ Use the same Sales Agent with different data and qualification definitions.
 ```mermaid
 flowchart TD
     Core["AgentOS Core"] --> Template["Industry Template"]
-    Template --> Client["Client Configuration"]
+    Template --> Bundle["Tenant-scoped Deployment Bundle"]
+    Company["Company apps, data, API permissions"] --> Bundle
+    Bundle --> Validate["Validate and test"]
+    Validate --> Approve["Company owner approves"]
+    Approve --> Publish["Publish version / keep rollback"]
 ```
+
+An **industry template** is a reusable starting configuration. A **tenant** is one isolated company. The deployment bundle contains that company's enabled modules, mappings, policies and protected connection references; it is not a copy of another company's data.
 
 | Industry template | Qualification fields | Typical next action |
 |---|---|---|

@@ -1,6 +1,6 @@
 # Workflows and Human Handoffs
 
-[Plan index](../README.md) · [Vietnamese easy-read flow](../plan-easy-read-flow.md)
+[Plan index](../README.md) · [Vietnamese easy-read flow](../plan-easy-read-flow.md) · [Glossary](../glossary.md)
 
 Status: proposed design, not implemented functionality. Examples and targets are illustrative until agreed with a pilot customer.
 
@@ -11,19 +11,25 @@ Status: proposed design, not implemented functionality. Examples and targets are
 **AI understands the situation and proposes actions. The Workflow Engine controls the business process.**
 Rules, permissions, transitions, timers, and stop conditions must exist outside prompts.
 
+In plain language, a **workflow** is a checklist that remembers where it stopped. A **timer** means “wait until this time or event”; a **policy** is a business rule; a **handoff** transfers responsibility to another module or person. The flow below is an example for a qualified lead, not an instruction to message every lead.
+
 Example — an eligible hot lead:
 
 ```mermaid
 flowchart TD
-    Score["Lead Score > 80 and required qualification complete"] --> Opportunity["Create or reuse Opportunity"]
+    Event["lead.qualified event"] --> Check["Check score > 80, required fields, open opportunity"]
+    Check -->|Not eligible| Stop["Stop; record reason; send nothing"]
+    Check -->|Eligible| Opportunity["Create or reuse Opportunity"]
     Opportunity --> Notify["Notify Sales"]
-    Notify --> Check["Check outreach eligibility and stop conditions"]
-    Check --> Send["Send Follow-up"]
+    Notify --> Gate["Recheck reply, consent, channel, hours, owner"]
+    Gate -->|Blocked| Stop2["Stop current sequence"]
+    Gate -->|Allowed| Send["Send follow-up 1"]
     Send --> Wait["Wait 24h"]
-    Wait --> Response{"No response?"}
-    Response -->|Yes| Recheck["Recheck outreach eligibility"]
-    Recheck --> Second["Follow-up 2 if still allowed"]
-    Response -->|No| Resume["Stop sequence and route reply"]
+    Wait --> Response{"Customer replied?"}
+    Response -->|Yes| Reply["Stop outbound; route reply to owner"]
+    Response -->|No| Recheck["Recheck reply, consent, channel, hours, owner"]
+    Recheck -->|Blocked| Stop3["Stop current sequence"]
+    Recheck -->|Allowed| Second["Send follow-up 2; max 2 sends"]
 ```
 
 A failed eligibility check ends the outbound path; it does not send a message.
@@ -38,6 +44,8 @@ A failed eligibility check ends the outbound path; it does not send a message.
 | Event record | Include event ID, tenant/customer IDs, timestamp, source, and correlation ID |
 
 Stop the active sales/nurture sequence after opt-out, a customer reply, its opportunity reaching Won/Lost, or human takeover. Other lifecycle workflows need their own eligibility checks; do not implicitly restart a stopped sequence. Every send must respect purpose-specific consent, channel restrictions, business hours/timezone, frequency caps, and active human ownership; recheck immediately before sending and log the outcome.
+
+The two message limit above is the planned MVP example: one initial follow-up and at most one reminder. A stopped sequence does not wake up and send later; a new permitted decision is required.
 
 <a id=section-14></a>
 
@@ -66,6 +74,8 @@ These contracts make the example sequence executable and reviewable without putt
 
 Every run has one durable record. The record is the source of truth when a worker, callback, or timer is retried.
 
+“Durable” means the saved run survives a process crash, delayed callback, or server restart. “Terminal” means no more automatic steps are expected. `completed`, `stopped`, and `failed` are terminal; `waiting` and `awaiting_human` are not terminal.
+
 | Field | Contract |
 |---|---|
 | `run_id` | Stable instance ID associated with the tenant + source + event ID + workflow identity deduplication key |
@@ -81,13 +91,13 @@ Every run has one durable record. The record is the source of truth when a worke
 |---|---|
 | `queued` | Trigger accepted; dedupe and eligibility checks have not finished |
 | `running` | One worker owns the current step lease and may execute it |
-| `waiting` | Timer or external event is pending; resume from the saved step |
+| `waiting` | Timer or external event is pending; resume from the saved step; it is not a new run when the event arrives |
 | `awaiting_human` | A named person or queue must decide or take over; no automatic success |
 | `completed` | All required actions have verified results and the configured outcome is recorded |
 | `stopped` | A configured stop condition ended outbound work; reason is recorded |
 | `failed` | Overall outcome was not established; confirmed, rejected, or uncertain action results and next owner/action remain explicit |
 
-Only one active worker may advance a run step. Pin only structural process steps for reproducibility; reload live consent, permissions, enabled modules, security policy, and customer state before every execution. A stale lease is recovered from the record, and the step's effect key is reused before another attempt. See the API task and callback rules in [APIs and Enterprise Integrations](api-and-integrations.md#section-15).
+Only one active worker may advance a run step. Pin only structural process steps for reproducibility; reload live consent, permissions, enabled modules, security policy, and customer state before every execution. A stale lease is recovered from the record, and the step's effect key is reused before another attempt. A waiting event resumes the matching run by tenant/source/event/workflow key; a payload conflict is rejected. See the API task and callback rules in [APIs and Enterprise Integrations](api-and-integrations.md#section-15).
 
 ### Guarded hot-lead follow-up contract
 
@@ -120,7 +130,9 @@ There is exactly one accountable owner at each human boundary, even when several
 | Approval denied or expired | Record the reason; stop or route to the configured alternative |
 | Human takeover | Pause AI actions until a human explicitly resumes the AI-owned step |
 
-No approver response is an unresolved pending state, not approval. Customer-facing status and the API task must say `awaiting_human`; they must not say completed, booked, or resolved. Human decisions are linked to the run and [Customer360](data-and-knowledge.md#section-11).
+No approver response is never approval. Before the configured deadline, customer-facing status and the API task stay `awaiting_human`; they must not say completed, booked, or resolved. Human decisions are linked to the run and [Customer360](data-and-knowledge.md#section-11).
+
+Each waiting state has a configured expiry and escalation owner. When the deadline passes, the run stops or fails with an explicit reason according to policy; it does not send or approve anything automatically. A person can cancel a pending run through the approved operator event path, and that decision is idempotent and audited.
 
 ### Retry and recovery contract
 

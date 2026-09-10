@@ -1,6 +1,6 @@
 # Marketing Module
 
-[Plan index](../README.md) · [Vietnamese easy-read flow](../plan-easy-read-flow.md)
+[Plan index](../README.md) · [Vietnamese easy-read flow](../plan-easy-read-flow.md) · [Glossary](../glossary.md)
 
 Status: proposed design, not implemented functionality. Examples and targets are illustrative until agreed with a pilot customer.
 
@@ -11,9 +11,12 @@ Status: proposed design, not implemented functionality. Examples and targets are
 Purpose: turn campaign engagement into qualified demand with a traceable source.
 
 ```text
-Campaign → Traffic → Lead Capture → Customer360 → Lead Scoring
-         → Nurture → Qualified Lead → Sales Handoff
+Company runs ad → Customer clicks → Company website / form / chat
+                → AgentOS receives inquiry → Lead Capture → Customer360
+                → Lead Scoring → Nurture or Qualified Lead → Sales Handoff
 ```
+
+**Important boundary:** Facebook/Google delivers the ad and records the click. Marketing Module starts when the customer reaches the company's entry point or submits an event. A **landing page** is the page opened after the click; a **lead** is the contact or account that has shown interest; **attribution** is the record of which campaign brought that lead.
 
 Already-ready leads can skip nurture.
 
@@ -27,9 +30,36 @@ Already-ready leads can skip nurture.
 
 Start with configurable rules, not ML. Example scoring inputs include form submission, pricing engagement, budget, timeline, and demo requests. Cap and deduplicate behavioral contributions; missing qualification fields still need confirmation.
 
-Example: Facebook Ad → landing page → product question → lead captured → pricing viewed three times → combined configured score = 82 → qualification requirements satisfied → Sales handoff.
+Example: Facebook Ad → landing page → product question → lead captured → pricing viewed three times → combined configured score = 82 → preliminary qualification evidence → Sales confirms required fields → Sales handoff.
 
 The score includes prior fit and engagement signals; three page views alone do not imply a score of 82. Contact eligibility is governed separately by the outreach rules in [Workflow Engine](../platform/workflows-and-handoffs.md#section-13).
+
+### Detailed Marketing flow
+
+```mermaid
+flowchart TD
+    Company["Company creates ad"] --> Ads["Facebook / Google distributes ad"]
+    Ads --> Click["Customer clicks ad"]
+    Click --> Entry["Company landing page / website / chat / form"]
+    Entry --> Send["Company backend sends inquiry/event via API"]
+    Send --> Gate{"Marketing Module enabled and source authenticated?"}
+    Gate -->|No| Staff["Return unsupported or company staff queue"]
+    Gate -->|Yes| Capture["Capture inquiry, source, and consent"]
+    Capture --> Identity{"Customer reference verified?"}
+    Identity -->|No / unclear| Review["Keep unmerged; ask or request review"]
+    Identity -->|Yes / public inquiry| Record["Link permitted Customer360 context"]
+    Record --> Score["Apply configured fit + engagement score"]
+    Score --> Ready{"Required fields and Sales criteria complete?"}
+    Ready -->|No| Nurture["Nurture only if contact is allowed"]
+    Nurture --> Signal["New permitted engagement signal"]
+    Signal --> Score
+    Ready -->|Yes + Sales enabled| Handoff["Send evidence to Sales; wait for acceptance"]
+    Ready -->|Yes + Sales disabled| Queue["Create human queue item"]
+```
+
+The system records each handoff with the source event, customer reference, score rules, missing fields, consent state, owner and next action. The receiving Sales owner must accept it; until then the handoff is `awaiting_human` or pending, not complete. Marketing produces preliminary evidence; Sales confirms required fields and decides whether the lead is an SQL or opportunity. A score alone never creates either record. **Nurture** means useful follow-up while a lead is not ready; it is not permission to send unlimited messages. If consent is missing, the module can answer an inbound question but must not start outbound nurture.
+
+The MVP's one follow-up sequence belongs to the Core/Sales flow. Marketing campaign nurture and reactivation remain disabled until the Marketing roadmap phase.
 
 ## Marketing Module Operating Contract
 
