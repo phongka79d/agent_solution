@@ -48,7 +48,7 @@ Nếu không có nguồn đơn/thanh toán đáng tin, nghiệm thu P1 ở kết
 | Nhân viên duyệt, tiếp quản và trả quyền qua đường xác thực | Phê duyệt bằng im lặng, tự giành lại hội thoại |
 | Nhân viên dùng AI soạn nháp nghiên cứu trong P0 | Tự thu gom dữ liệu, liên hệ đối tác, xuất bản hay chi tiền quảng cáo |
 
-Không có trong P1: toàn bộ Tiếp thị tự động, học máy riêng, nhiều kênh đồng thời, bộ nhúng đầy đủ, thanh toán và ưu đãi tự động, phiếu bù giá, video đổi trả, giọng nói và trình kéo-thả.
+Không có trong P1: toàn bộ Tiếp thị tự động, nhiều kênh đồng thời, bộ nhúng đầy đủ, thanh toán và ưu đãi tự động, phiếu bù giá, video đổi trả, giọng nói, trình kéo-thả và các dự báo tự động.
 
 ## 2. Gói công việc theo phụ thuộc
 
@@ -138,7 +138,7 @@ Lưu phiên bản phần mềm/cấu hình/tài liệu, vết yêu cầu–kết
 | P0 — Hiểu nhu cầu | Chọn đúng thử nghiệm | Nghiên cứu thủ công có AI soạn nháp; phiếu cơ hội; phỏng vấn/đối tác do người thực hiện theo quyền; chọn dữ liệu và hành trình | Có vấn đề thật, giải pháp khả thi, người chịu trách nhiệm, dữ liệu và phép thử |
 | P1 — Bán hàng và Chăm sóc cơ bản | Chứng minh nền tảng dùng được | Phạm vi tại mục 1, một website và nguồn cần thiết | Qua bộ thử, nhân viên tiếp quản được, báo cáo kiểm được, chủ doanh nghiệp duyệt |
 | P2 — Thử cải tiến có kiểm soát | Tìm tính năng tạo giá trị | Chọn từng thử nghiệm: Tiếp thị/đối tác theo quy tắc, giao diện chọn nhanh/lưu món, hỗ trợ đơn, QR, so giỏ/nâng cấp, ưu đãi tính thử hoặc phiếu có người duyệt | Có nguồn, chi phí, người duyệt, kết quả thử và không vi phạm điều kiện dừng |
-| P3 — Mở rộng có căn cứ | Nhân rộng phần đã chứng minh | Mặc cả/phát phiếu có hạn mức, nhiều kênh/đối tác, mua lại/giới thiệu, tự động hóa sâu; học máy khi đủ điều kiện | Hiệu quả và chất lượng ổn định, ngân sách phù hợp, vận hành/phục hồi được nghiệm thu |
+| P3 — Mở rộng có căn cứ | Nhân rộng phần đã chứng minh | Mặc cả/phát phiếu có hạn mức, nhiều kênh/đối tác, mua lại/giới thiệu và tự động hóa sâu theo quy tắc | Hiệu quả và chất lượng ổn định, ngân sách phù hợp, vận hành/phục hồi được nghiệm thu |
 
 P2 là danh sách lựa chọn, **không phải phải làm hết cùng lúc**. Chọn một tính năng theo vấn đề lớn nhất đã đo. Ví dụ giải thích sản phẩm hiệu quả hơn có thể được ưu tiên trước thanh toán mới.
 
@@ -156,21 +156,6 @@ P2 là danh sách lựa chọn, **không phải phải làm hết cùng lúc**. 
 
 <a id=section-23></a>
 
-## 6. Nghiên cứu có AI khác học máy dự đoán
-
-Nghiên cứu thị trường có thể bắt đầu ở P0 bằng đọc nguồn, phiếu cơ hội và nhân viên kiểm chứng. Không phải chờ có mô hình dự đoán riêng mới nghiên cứu được.
-
-Học máy dự đoán là nhánh P3 có điều kiện:
-
-| Năng lực | Điều kiện |
-|---|---|
-| Chấm phù hợp bằng quy tắc | Trường rõ, bằng chứng nguồn và phiên bản; làm trước mô hình học |
-| Dự đoán chất lượng/chuyển đổi | Dữ liệu đủ nhãn, trạng thái đáng tin, tập kiểm tra theo thời gian không dùng lúc học |
-| Ước tính giá trị vòng đời | Đủ lịch sử doanh thu/chi phí, mua lại và nhóm quan sát |
-| Đề xuất ngân sách | Có chi phí, kết quả kiểm định và người duyệt quyết định |
-
-So mô hình với quy tắc đơn giản, kiểm tra độ chính xác xác suất và suy giảm chất lượng theo thời gian. Chưa tốt hơn thì giữ quy tắc; không xây mô hình chỉ để có nhãn “AI”. Dự đoán không cho phép chi tiền tự động và không chứng minh quan hệ nhân quả.
-
-## 7. Quyết định tiếp theo
+## 6. Quyết định tiếp theo
 
 Điền tên doanh nghiệp và website ở [phiếu đầu vào](#pilot-inputs). Sau khi chọn hành trình, chốt một kết quả có thể kiểm tra rồi mới ước lượng công tích hợp. Các công việc trong tài liệu này chưa được đánh dấu đã làm.

@@ -81,7 +81,7 @@ Thẻ bằng chứng dùng chung gồm: phát biểu/đề xuất, loại sự k
 
 Ngữ cảnh AI chỉ lấy tin gần đây, tóm tắt, thông tin đã xác minh, trạng thái đang xử lý và nguồn liên quan. Không gửi cả hồ sơ chỉ vì có sẵn. Nội dung tài liệu, trang web và kết quả công cụ là dữ liệu không đáng tin về mặt chỉ dẫn; không thể cấp quyền bằng câu “bỏ qua quy tắc”.
 
-Truy xuất hai giai đoạn hoặc xếp hạng lại là lựa chọn cải thiện khi bộ thử cho thấy cần; không yêu cầu cơ sở dữ liệu véc-tơ hoặc mô hình riêng ngay từ đầu. Mức tự tin AI tự báo không thay bằng chứng.
+Truy xuất hai giai đoạn hoặc xếp hạng lại là lựa chọn cải thiện khi bộ thử cho thấy cần; không yêu cầu hệ thống truy xuất phức tạp ngay từ đầu. Mức tự tin AI tự báo không thay bằng chứng.
 
 <a id=section-18></a>
 

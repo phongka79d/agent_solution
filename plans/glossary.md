@@ -61,7 +61,6 @@ Dùng từ tiếng Việt trong diễn giải. Giữ tên viết tắt, tên ri�
 | Câu hỏi thường gặp (FAQ) | Bộ câu hỏi và câu trả lời phổ biến đã được duyệt |
 | Trả lời dựa truy xuất (RAG) | Tìm nguồn phù hợp trước khi trả lời; không bảo đảm đúng nếu nguồn/quyền sai |
 | Thẻ bằng chứng | Nguồn, phiên bản, thời điểm, điều kiện và giới hạn hỗ trợ một phát biểu |
-| Học máy (ML) | Mô hình học từ dữ liệu để dự đoán; không bắt buộc cho quy tắc nghiệp vụ hoặc nghiên cứu ban đầu |
 | Đồng ý nhận tin (opt-in) | Sự cho phép theo mục đích/kênh, có bằng chứng và có thể rút lại |
 | Ngừng nhận tin (opt-out) | Yêu cầu dừng liên hệ tương ứng, phải kiểm tra trước lần gửi |
 | Chống xử lý trùng (idempotency) | Gửi lại cùng một yêu cầu không tạo tác động lần hai |

@@ -98,7 +98,6 @@ P0 là chuẩn bị; P1 là bản đầu; P2 là thử nghiệm sau bản đầu
 | Phiếu bù giá trong khoảng theo dõi | PDF tr. 4–5 | P2 có người duyệt, P3 có hạn mức | Chính sách công khai, chi phí dự kiến, chống cấp trùng; 14 ngày chỉ là đề xuất |
 | Theo dõi đơn, khung giờ giao, yêu cầu hóa đơn | PDF tr. 5 | P2 | Từng bộ kết nối xác nhận được; không hứa vị trí trực tiếp hay lịch ngoài khả năng |
 | Xem ảnh/video hỗ trợ đổi trả | PDF tr. 1, 6 | P3 xem xét | Chỉ hỗ trợ nhân viên; phải có quyền lưu, xóa và dữ liệu kiểm chứng |
-| Dự đoán chất lượng khách, giá trị vòng đời, đề xuất ngân sách | Kế hoạch cũ | P3 có điều kiện | Đủ dữ liệu nhãn, so với quy tắc đơn giản, người duyệt quyết định |
 
 ### Ba cải tiến xuyên suốt được đề xuất thêm
 

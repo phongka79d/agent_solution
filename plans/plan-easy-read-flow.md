@@ -86,7 +86,7 @@ Dữ liệu công ty A không được dùng để trả lời khách công ty B
 | Một doanh nghiệp, một hành trình, website hiện có | Nhiều ngành, nhiều kênh và giao diện nhúng đầy đủ |
 | Bán hàng hỏi nhu cầu, tra sản phẩm, giải thích có nguồn | Mặc cả tự động, ưu đãi kết hợp, thanh toán QR mới |
 | Chăm sóc trả lời câu hỏi phổ biến, chuyển nhân viên | Vận chuyển, phiếu bù giá, đổi trả chuyên sâu |
-| Hồ sơ khách hợp nhất, quyền riêng, nhật ký, báo cáo | Dự đoán riêng bằng học máy và trình kéo-thả quy trình |
+| Hồ sơ khách hợp nhất, quyền riêng, nhật ký, báo cáo | Nhiều kênh, trình kéo-thả quy trình và tự động hóa nâng cao |
 | Tối đa một chuỗi nhắc với hai tin, chỉ khi đủ điều kiện liên hệ | Chăm sóc Tiếp thị theo chiến dịch |
 | Nghiên cứu thị trường thủ công có AI hỗ trợ soạn nháp | Tự động tìm kiếm và quản lý mạng lưới đối tác |
 

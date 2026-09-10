@@ -160,7 +160,7 @@ Giá 940.000 đồng bị từ chối dù vẫn có thể đạt mức L, vì v�
 5. Báo quy mô mẫu, độ bất định và sai lệch chọn nhóm; thiếu mẫu thì kết luận chưa đủ, không tuyên bố chiến thắng.
 6. Dừng ngay khi có hành động trái quyền nghiêm trọng, rò dữ liệu hoặc giá dưới sàn; dừng thử thương mại theo ngưỡng ngân sách/lãi/khiếu nại đã duyệt.
 
-P1 không bắt buộc chứng minh tác động nhân quả hay dựng mô hình học máy. Có thể bắt đầu từ kiểm tra chất lượng và đường cơ sở; phép thử đối chứng dành cho giai đoạn đủ dữ liệu.
+P1 không bắt buộc chứng minh tác động nhân quả hay xây hệ thống dự báo. Có thể bắt đầu từ kiểm tra chất lượng và đường cơ sở; phép thử đối chứng dành cho giai đoạn đủ dữ liệu.
 
 ## 6. Chất lượng dữ liệu và trách nhiệm
 
