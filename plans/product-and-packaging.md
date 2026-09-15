@@ -29,23 +29,23 @@ Toàn bộ giải pháp vận hành theo nguyên tắc tách rời: **Lõi thôn
 
 1. **Cơ chế Phích cắm bản địa (Plug-and-Play Adapters)**:
    - Giữ nguyên 100% Lõi AI (Core AI Engine), Customer360, máy chủ tính giá sàn toán học ($P_{floor}$) và máy trạng thái quy trình.
-   - Chỉ hoán đổi 3 cổng kết nối địa phương hóa theo từng thị trường mục tiêu:
-     - *Cổng giao tiếp (Communication Port)*: Đài Loan dùng LINE Official Account (LINE OA) + Web Widget; Thị trường quốc tế hoán đổi sang WhatsApp Business API, Telegram hoặc Web Widget đa ngôn ngữ.
-     - *Cổng thanh toán & đối soát (Payment Port)*: Đài Loan dùng ECPay, NewebPay, LINE Pay và 7-Eleven/FamilyMart CVS COD; Thị trường quốc tế hoán đổi sang Stripe, PayPal, Apple Pay, Google Pay hoặc COD bưu điện nội địa.
-     - *Cổng pháp lý & hạ tầng dữ liệu (Compliance & Residency Port)*: Đài Loan tuân thủ Taiwan PDPA lưu trữ tại cụm máy chủ GCP Changhua / AWS Taipei; Thị trường quốc tế chuyển sang GDPR (Châu Âu), CCPA (Mỹ), PDPA (Singapore) với các module quản lý cookie và thu thập đồng ý (Consent Management).
+   - Hoán đổi giữa Gói adapter Đài Loan (**ADPT-TW-001**) và các Cổng kết nối toàn cầu (**ADPT-GL-001..003**):
+     - *Cổng giao tiếp (Communication Port - ADPT-GL-001)*: Đài Loan dùng LINE Official Account (LINE OA) + Web Widget; Thị trường quốc tế hoán đổi sang WhatsApp Business API, Telegram hoặc Web Widget đa ngôn ngữ.
+     - *Cổng thanh toán & đối soát (Payment Port - ADPT-GL-002)*: Đài Loan dùng ECPay, NewebPay, LINE Pay và 7-Eleven/FamilyMart CVS COD; Thị trường quốc tế hoán đổi sang Stripe, PayPal, Apple Pay, Google Pay hoặc COD bưu điện nội địa.
+     - *Cổng pháp lý & hạ tầng dữ liệu (Compliance Port - ADPT-GL-003)*: Đài Loan tuân thủ Taiwan PDPA lưu trữ tại cụm máy chủ GCP Changhua / AWS Taipei; Thị trường quốc tế chuyển sang GDPR (Châu Âu), CCPA (Mỹ), PDPA (Singapore) với các module quản lý cookie và thu thập đồng ý (Consent Management).
 
-2. **Đóng gói thành 2 sản phẩm chuyên ngành (Vertical SaaS Packaging)**:
+2. **GTM-001: Đóng gói thành 2 sản phẩm chuyên ngành (Vertical SaaS Packaging)**:
    - Thay vì bán nền tảng chung chung, giải pháp được đóng gói thành 2 sản phẩm chuyên biệt:
-     - **AgentOS Mobility**: Chuyên biệt cho ngành xe điện và phương tiện giao thông giá trị cao. Tích hợp sẵn luồng O2O (Online-to-Offline), bộ tính trợ cấp chính phủ / bang, bản đồ trạm sạc & đổi pin thời gian thực, luồng đặt lịch lái thử tại showroom với cọc giữ chỗ hoàn lại và thẩm định sơ bộ hồ sơ mua trả góp.
-     - **AgentOS FMCG**: Chuyên biệt cho thương mại điện tử hàng tiêu dùng nhanh. Tối ưu thuật toán giỏ hàng thông minh, tư vấn combo tương thích, cơ chế mua hàng định kỳ (Subscription / 定期購) tự động áp mức giá sàn ưu đãi theo chu kỳ, cơ chế tích điểm tiến độ (Endowed Progress) và bộ lọc chống bùng hàng siêu thị.
+     - **GTM-001A: AgentOS Mobility Edition**: Dành cho ngành xe điện và phương tiện giao thông O2O giá trị cao (tích hợp DOM-MOB-001..004: luồng O2O, bộ tính trợ cấp chính phủ theo hộ khẩu, bản đồ trạm sạc & đổi pin thời gian thực, luồng đặt lịch lái thử tại showroom với cọc giữ chỗ hoàn lại và thẩm định sơ bộ hồ sơ mua trả góp).
+     - **GTM-001B: AgentOS FMCG Edition**: Dành cho thương mại điện tử hàng tiêu dùng nhanh, subscription và CVS COD (tích hợp DOM-FMCG-001..005: thuật toán giỏ hàng thông minh, tư vấn combo tương thích, cơ chế mua hàng định kỳ Subscription / 定期購 tự động áp mức giá sàn P_floor, chọn điểm nhận siêu thị tiện lợi CVS COD, tích điểm tiến độ Endowed Progress LINE Points và bộ lọc chống bùng hàng siêu thị).
 
-3. **Phân phối quy mô qua Shopify & WooCommerce App Store**:
+3. **GTM-002: Phân phối quy mô qua Shopify & WooCommerce 1-Click App Store Integration**:
    - Đóng gói giải pháp thành ứng dụng cài đặt 1-chạm (1-click install app) trên hai kho ứng dụng thương mại điện tử lớn nhất toàn cầu: **Shopify App Store** và **WooCommerce Marketplace**.
    - Tự động đồng bộ sản phẩm, bảng giá sàn, đơn hàng và tồn kho qua Shopify GraphQL Admin API và WooCommerce REST API.
    - Tiếp cận hàng trăm nghìn nhà bán lẻ trực tuyến toàn cầu (Global Merchants) theo mô hình Tăng trưởng dựa trên sản phẩm (Product-Led Growth - PLG) với chi phí thu hút khách hàng (CAC) tối thiểu, không cần đội ngũ kinh doanh bán hàng trực tiếp (sales tay).
 
-4. **Tận dụng Case Study thực nghiệm Đài Loan làm đòn bẩy thương mại**:
-   - Sử dụng bộ chỉ số thực tế đo lường được từ đối tác mỏ neo Đài Loan (được định nghĩa và theo dõi tại [analytics.md](delivery/analytics.md)): tỷ lệ tăng chuyển đổi (+25%–40%), độ trễ phản hồi (< 1.5 giây), chi phí AI đơn vị (0.5–1 TWD / phiên tư vấn), tỷ lệ tự động hóa CSKH (> 65%) và bảo toàn 100% biên lợi nhuận ròng.
+4. **GTM-003: Đòn bẩy số liệu thực nghiệm Đài Loan để bán toàn cầu (Empirical Social Proof Leverage)**:
+   - Sử dụng bộ chỉ số thực tế đo lường được từ đối tác mỏ neo Đài Loan (được định nghĩa và theo dõi tại [analytics.md](delivery/analytics.md)): tỷ lệ tăng chuyển đổi (+25%–40%), độ trễ phản hồi (< 1.5 giây), chi phí AI đơn vị (0.5–1 TWD / phiên tư vấn ECN-003), tỷ lệ tự động hóa CSKH (> 65%) và bảo toàn 100% biên lợi nhuận ròng (ECN-002).
    - Xuất bản dữ liệu thực nghiệm thành Case Study và Whitepaper định lượng làm bằng chứng xã hội (Social Proof) và cam kết ROI để chào bán cho các doanh nghiệp quốc tế tiếp theo.
 
 <a id=section-2></a>
@@ -84,13 +84,14 @@ Mục tiêu tái sử dụng 80–90% của bản cũ được giữ như **gi�
 
 Bán theo hai hình thức đóng gói chính:
 1. **Theo mô-đun chức năng**: Từng mô-đun (Tiếp thị, Bán hàng, Chăm sóc) hoặc trọn bộ cả ba. Gói cả ba không phải mô-đun thứ tư.
-2. **Theo giải pháp ngành dọc (Vertical SaaS)**:
-   - **AgentOS Mobility Edition**: Đóng gói sẵn toàn bộ nghiệp vụ xe điện (O2O, tính trợ cấp chính phủ/bang, bản đồ trạm sạc/pin, cọc lái thử và thẩm định trả góp).
-   - **AgentOS FMCG Edition**: Đóng gói sẵn toàn bộ nghiệp vụ bán lẻ tiêu dùng (giỏ hàng thông minh, giao định kỳ Subscription, tích điểm tiến độ và chống bùng hàng).
+2. **Theo giải pháp ngành dọc (Vertical SaaS - GTM-001)**:
+   - **GTM-001A: AgentOS Mobility Edition**: Dành cho xe điện & phương tiện giao thông O2O. Đóng gói sẵn toàn bộ nghiệp vụ xe điện (DOM-MOB-001..004: O2O showroom, tính trợ cấp chính phủ theo hộ khẩu, bản đồ trạm sạc/pin thời gian thực, cọc lái thử hoàn lại và thẩm định trả góp).
+   - **GTM-001B: AgentOS FMCG Edition**: Dành cho bán lẻ tiêu dùng, subscription, CVS COD. Đóng gói sẵn toàn bộ nghiệp vụ bán lẻ tiêu dùng (DOM-FMCG-001..005: giỏ hàng thông minh, giao định kỳ Subscription 定期購, chọn điểm nhận siêu thị tiện lợi CVS COD, tích điểm tiến độ LINE Points và bộ lọc chống bùng hàng).
 
 Hình thức triển khai và phân phối:
-- **Tùy biến cho doanh nghiệp lớn (Custom Enterprise)**: Nhúng mã website (`nexus-sales.min.js`), tích hợp API trực tiếp từ máy chủ doanh nghiệp, kết nối LINE OA / WhatsApp Business.
-- **Phân phối tự động 1-chạm (Shopify & WooCommerce App Store)**: Cài đặt trực tiếp từ kho ứng dụng cho hàng trăm nghìn nhà bán lẻ trực tuyến toàn cầu, tự động kích hoạt Core Engine và Plug-and-Play Adapter tương ứng theo quốc gia của merchant.
+- **Tùy biến cho doanh nghiệp lớn (Custom Enterprise)**: Nhúng mã website (`nexus-sales.min.js`), tích hợp API trực tiếp từ máy chủ doanh nghiệp, kết nối LINE OA (ADPT-TW-001) hoặc WhatsApp Business (ADPT-GL-001).
+- **GTM-002: Phân phối tự động 1-chạm (Shopify & WooCommerce 1-Click App Store Integration)**: Cài đặt trực tiếp từ kho ứng dụng cho hàng trăm nghìn nhà bán lẻ trực tuyến toàn cầu, tự động kích hoạt Core Engine và Plug-and-Play Adapter tương ứng theo quốc gia của merchant.
+- **GTM-003: Đòn bẩy số liệu thực nghiệm Đài Loan để bán toàn cầu (Empirical Social Proof Leverage)**: Cam kết ROI dựa trên bộ số liệu vận hành thực tế đã kiểm chứng từ đối tác mỏ neo Đài Loan (tỷ lệ chuyển đổi, chi phí AI 0.5–1 TWD/phiên ECN-003, bảo toàn biên lãi ECN-002).
 
 Giá thương mại đề xuất gồm phí nền tảng theo tháng (Subscription Tier), mức sử dụng AI và công triển khai (nếu là khách hàng tùy biến doanh nghiệp lớn); chưa chốt số tiền cụ thể.
 

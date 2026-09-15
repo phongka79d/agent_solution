@@ -106,4 +106,4 @@ Khi chúng ta "ghép cơ học" toàn bộ mã hiệu kỹ thuật của SRS (`M
    - **Trục Kỹ thuật (Engineering Track)**: Bám sát 6 Cổng P0–P5 của SRS (Foundation ➔ Care ➔ Sales ➔ Marketing ➔ Cross-domain ➔ Autonomy).
    - **Trục Thương mại (Commercial Track)**: Bám sát lộ trình Pilot mỏ neo Đài Loan ➔ Phân phối Shopify App Store toàn cầu.
 3. **Cập nhật Báo cáo Thuyết trình**:
-   - Đồng bộ trang 1–2 trong tệp thuyết trình [BAO_CAO_DE_AN_AI_ECOMMERCE_3_MODULE.pdf](file:///C:/Users/ACER/OtherProjects/agent_solution/BAO_CAO_DE_AN_AI_ECOMMERCE_3_MODULE.pdf) để trình bày rõ mô hình 3 tầng này, giúp đối tác kỹ thuật lẫn đối tác kinh doanh đều nắm bắt ngay lập tức mà không bị nhầm lẫn.
+   - Đồng bộ trang 1–2 trong tệp thuyết trình [BAO_CAO_DE_AN_AI_ECOMMERCE_3_MODULE.pdf](../BAO_CAO_DE_AN_AI_ECOMMERCE_3_MODULE.pdf) để trình bày rõ mô hình 3 tầng này, giúp đối tác kỹ thuật lẫn đối tác kinh doanh đều nắm bắt ngay lập tức mà không bị nhầm lẫn.

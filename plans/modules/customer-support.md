@@ -6,13 +6,15 @@ Trạng thái: thiết kế đề xuất. P1 có hỏi đáp cơ bản, hướng
 
 <a id=section-8></a>
 
+# PHẦN 1: KHUNG GẦM KỸ THUẬT CHUẨN SRS (CORE CARE & RETENTION ENGINE)
+
 ## 1. Mục tiêu và ranh giới
 
 Giúp khách dùng sản phẩm thành công, xử lý vấn đề nhất quán và được gặp nhân viên khi cần. Hỗ trợ là một phần của sản phẩm, không phải điểm cuối sau bán (khớp mục tiêu **OBJ-003** và **OBJ-004** trong SRS).
 
 Chăm sóc có thể nhận câu hỏi trước mua. Câu hỏi công dụng chung dùng nguồn đã duyệt; khi khách cần đề xuất thương mại hoặc mua hàng, bàn giao Bán hàng (SAL-02) nếu bật, nếu không thì chuyển nhân viên. Không trì hoãn giải quyết khiếu nại để bán thêm. Mọi hành vi tra cứu phải tuân thủ nguyên tắc cô lập dữ liệu khách hàng (**NFR-006**) và xử lý an toàn thất bại (**NFR-008 - Fail Closed**).
 
-## 2. Hệ thống Agent Chăm sóc & Giữ chân khách hàng (CS-01 & CS-02)
+## 2. Hệ thống Agent Chăm sóc & Giữ chân khách hàng chuẩn SRS (CS-01 & CS-02)
 
 Mô-đun vận hành với 2 Agent chủ lực chịu trách nhiệm xuyên suốt chuỗi hỗ trợ và duy trì quan hệ khách hàng:
 
@@ -87,6 +89,21 @@ Mỗi Case phải lưu trữ tối thiểu các trường dữ liệu:
 `Case_Record = { Case_ID, Customer_ID, Intent, Priority, Conversation_ID, Related_Order_ID, Evidence_Refs, Owner_Type (AI/Human), Owner_ID, Status, SLA_Target, Resolution_Summary, Outcome_Metric }`.
 Tuyệt đối không đóng Case đơn phương khi chưa có xác nhận hoặc kết quả nhân viên có bằng chứng.
 
+### 3.3. Hệ thống Kỹ năng Chăm sóc & Giữ chân (Care & Retention Skill System)
+
+Theo Mục 11 của SRS, các Agent CS-01 và CS-02 gọi các Skill chuyên trách thông qua Orchestrator với hợp đồng kiểm soát nghiêm ngặt:
+
+| Mã Skill (Skill ID) | Mục đích (Purpose) | Agent được phép dùng | Quyền hạn yêu cầu | Tool / Connector | Quy tắc kiểm tra (Validation) & Audit |
+|---|---|---|---|---|---|
+| `search-faq` | Tra cứu FAQ và chính sách bảo hành, đổi trả đã được duyệt từ Second Brain | CS-01 | AUTH-0 (Observe) | Knowledge Base (/customer-care) | Chỉ trích dẫn tài liệu trạng thái `approved`; không bịa chính sách |
+| `lookup-order` | Tra cứu thông tin đơn hàng, trạng thái xử lý và thanh toán từ ERP/OMS | CS-01 | AUTH-0 (Observe) | ERP Connector (API-001) | Bắt buộc xác minh danh tính khách hàng (Customer Verification - TC-E2E-004) |
+| `track-shipping` | Tra cứu hành trình vận chuyển thực tế và mã bưu gửi siêu thị CVS | CS-01 | AUTH-0 (Observe) | Logistics / CVS Adapter (ADPT-TW-001) | Trả về dữ liệu hành trình vật lý từ nhà vận chuyển; ghi log tra cứu |
+| `manage-case` | Khởi tạo, cập nhật trạng thái hoặc đóng vụ việc theo State Machine 7 trạng thái | CS-01 | AUTH-3 (Bounded Execute) | Case Management Store | Tuân thủ nghiêm ngặt chuyển tiếp trạng thái; không đóng case đơn phương |
+| `initiate-return` | Khởi tạo yêu cầu đổi/trả hàng nháp, thu thập hình ảnh và lý do khiếu nại | CS-01 | AUTH-2 (Draft) / AUTH-4 (Refund) | Returns API / Core Engine | Kiểm tra điều kiện thời hạn đổi trả; hoàn tiền bắt buộc người duyệt (AUTH-4) |
+| `escalate-to-human` | Bàn giao phiên chat và vụ việc sang hàng đợi nhân viên tại SCR-005 | CS-01 | AUTH-3 (Bounded Execute) | Conversation Console (SCR-005) | Kích hoạt khóa phiên (Session Mutex Lock); AI ngừng trả lời nghiệp vụ |
+| `analyze-churn-risk` | Nhận diện tín hiệu bất thường (ngừng mua, giảm tần suất) trên Customer 360 | CS-02 | AUTH-1 (Recommend) | Customer 360 Analytics Layer | Ghi nhận dưới dạng HYPOTHESIS; không ghi đè thành FACT (FR-C360-003) |
+| `issue-retention-offer` | Phát hành ưu đãi/voucher giữ chân hoặc điểm thưởng trong hạn mức ngân sách | CS-02 | AUTH-3 (trong hạn mức) / AUTH-4 (vượt trần) | Promotion Engine / Loyalty Store | Kiểm tra hạn mức ngân sách và trần ưu đãi ($D_{cap}$); gắn mã `effect_key` |
+
 ## 4. Năng lực được hợp nhất
 
 | Năng lực | Thực hiện tối thiểu | Giai đoạn |
@@ -100,88 +117,25 @@ Tuyệt đối không đóng Case đơn phương khi chưa có xác nhận hoặ
 | Dùng ảnh/video hỗ trợ xử lý | Nhận tài liệu theo quyền, AI tóm tắt cho nhân viên | P3 xem xét, không tự quyết đổi trả |
 | Tín hiệu mua lại/nâng cấp | Ghi nhu cầu thật; Bán hàng chịu trách nhiệm đề nghị thương mại | P1 ghi nhận; tự động mở rộng sau |
 
-Tra cứu hai giai đoạn trong PDF được giữ như phương án: lọc đúng sản phẩm/quyền rồi tìm tài liệu liên quan. Chưa cần thêm hệ thống xếp hạng phức tạp nếu tìm kiếm đơn giản đáp ứng bộ thử; chỉ bổ sung khi đo được khoảng trống chất lượng.
+Tra cứu hai giai đoạn: lọc đúng sản phẩm/quyền rồi tìm tài liệu liên quan. Chưa cần thêm hệ thống xếp hạng phức tạp nếu tìm kiếm đơn giản đáp ứng bộ thử; chỉ bổ sung khi đo được khoảng trống chất lượng.
 
-## 5. Chính sách bù giá đề xuất
-
-Mục tiêu là thử giảm lo mua hớ và tăng mua lại; **phiếu mua hàng vẫn có chi phí và nghĩa vụ thực hiện**, không phải tiền miễn phí. Khoảng 14 ngày từ PDF là tham số đề xuất, cần công khai và duyệt trước.
-
-Trước thử nghiệm, phải xác định:
-
-| Quy tắc | Cần chốt |
-|---|---|
-| Mốc thời gian | Tính từ thanh toán hay giao hàng; múi giờ; cửa sổ phát hiện |
-| Tương đương sản phẩm | Mã hàng, biến thể, số lượng, điều kiện bán và loại khuyến mãi |
-| Giá so sánh | Giá thực trả sau phân bổ giảm giá với giá đủ điều kiện sau đó; không so các điều kiện khác nhau |
-| Điều kiện đơn | Đã xác nhận, chưa hủy/trả; xử lý hoàn một phần và các phiếu đã cấp |
-| Hạn mức | Trần mỗi đơn/khách và toàn chương trình; cách xử lý nhiều lần giảm giá |
-| Phiếu phát hành | Giá trị, hạn dùng, giá trị đơn tối thiểu, khả năng cộng dồn và cách thông báo |
-| Quyền khách hàng | Không dùng phiếu để thay quyền hoàn tiền hoặc cam kết đã có nếu chưa phù hợp chính sách được rà soát |
-| Thông báo | Kênh và mục đích được phép; không tự biến thông báo quyền lợi thành quảng cáo |
-
-Luồng: sự kiện giảm giá được xác thực → đối chiếu đơn đủ điều kiện → tính phần chênh lệch theo chính sách → kiểm tra ngân sách → người duyệt hoặc quy tắc đã được bật → cấp phiếu → xác nhận mã → thông báo.
-
-Chống trùng theo doanh nghiệp + đơn/dòng hàng + chương trình + sự kiện giảm giá; đồng thời kiểm soát tổng đã bù để nhiều sự kiện không cấp vượt. Cấp thành công nhưng gửi tin thất bại thì thử lại việc gửi, không cấp phiếu thứ hai. Đơn trả/hủy sau khi cấp cần xử lý theo chính sách, không tự trừ tiền khách.
-
-## 6. Cơ chế Điểm thưởng đổi Phiếu ưu đãi & Vòng lặp khách hàng thân thiết
-
-Thay vì phát phiếu mua hàng tự động liên tục (dễ gây lờn giá, discount fatigue và làm suy giảm định vị sản phẩm), hệ thống áp dụng cơ chế **Điểm thưởng tích lũy (Reward Points)** để khách hàng chủ động quy đổi phiếu theo nỗ lực mua sắm và tương tác.
-
-### 6.1. Nguyên lý hành vi và cấu trúc điểm
-1. **Hiệu ứng tiến độ trao sẵn (Endowed Progress Effect)**: Đơn hàng đầu tiên luôn nhận số điểm thưởng lớn nhất (ví dụ: tặng ngay 9/10 điểm để chỉ thiếu 1 điểm là mở khóa phiếu giảm 15–20% + freeship). Đơn đầu tiên **bắt buộc phải đạt giá trị đơn tối thiểu (`Min_Spend_First_Order`)** để chặn hành vi mua món tượng trưng vài nghìn đồng nhằm lấy điểm.
-2. **Tích điểm theo giá trị đơn (Dynamic Spend-to-Points)**: Các đơn hàng tiếp theo không cố định điểm số mà tích lũy tỷ lệ thuận theo giá trị đơn thực tế (ví dụ: mỗi 100.000 VNĐ = 1 điểm). Đơn giá hoặc tổng giá trị đơn càng lớn thì điểm thưởng càng nhiều, kích thích khách gom đơn và gia tăng giá trị giỏ hàng (AOV).
-3. **Giới hạn trần điểm thưởng (Max Cap Enforcement)**:
-   - Cài đặt trần điểm tối đa trên mỗi đơn hàng (`Cap_Max_Points_Per_Order`) và trần ngày (`Cap_Daily`).
-   - Công thức tính điểm đơn sau: `Points = min(floor(Order_Value / Spend_Unit), Cap_Max_Points_Per_Order)`.
-   - Chặn rủi ro các đơn sỉ, đơn B2B hoặc đại lý gom hàng hưởng điểm vượt trần làm thâm hụt quỹ thưởng.
-   - Với ngành hàng giá trị cao (như Xe máy điện): áp dụng bảng quy đổi có mức trần trọn gói (ví dụ trần 50–100 điểm/xe), không nhân lũy tiến vô hạn theo giá trị hàng chục triệu đồng.
-4. **Tránh điểm rơi động lực (Tiered Micro-Milestones)**: Sau khi đạt mốc đầu tiên (đơn 2), điểm quay về 0 được dẫn tiếp bằng các mốc thưởng nhỏ hơn dạng bậc thang (3 điểm đổi phiếu 5%, 6 điểm đổi phiếu 10%) để duy trì hưng phấn mua lặp lại.
-5. **Hạn sử dụng điểm (Points Expiry)**: Điểm có hạn dùng 6–12 tháng nhằm kích thích chi tiêu định kỳ và ngăn tích lũy nợ nghĩa vụ tài chính kéo dài trên sổ sách kế toán.
-
-### 6.2. Phân loại Phiếu ưu đãi theo ngành hàng & Kiểm soát trần (Voucher Caps)
-- **Xe máy điện (Giá trị cao, chu kỳ 3–5 năm)**:
-  - **Tuyệt đối KHÔNG áp dụng phiếu giảm %**: Giảm % trên đơn xe hàng chục triệu sẽ làm sụp đổ biên lợi nhuận ròng.
-  - **Hình thức áp dụng**: Chỉ phát hành phiếu tiền mặt cố định (500.000đ–1.000.000đ cho đơn đầu; 1.500.000đ–2.000.000đ cho mốc tích lũy lớn) hoặc quy đổi trực tiếp thành gói phụ kiện chính hãng, dịch vụ bảo dưỡng định kỳ (1.000km, 5.000km), gói thuê/đổi pin, hoặc cứu hộ SOS khẩn cấp 24/7.
-- **Hàng tiêu dùng (FMCG, chu kỳ lặp ngắn)**:
-  - Cho phép phiếu giảm %: Đơn đầu từ 10%–15%; phiếu mở khóa theo mốc tích lũy 1 lần (1-time milestone) tối đa từ 20%–30%.
-  - **Kiểm soát trần (Không thả nổi không giới hạn)**: Để tránh trường hợp đại lý/tạp hóa gom hàng sỉ, hệ thống cài đặt trần mềm qua **Trần độ lớn giỏ hàng (Basket Cap tối đa 1.000.000đ–2.000.000đ được hưởng % ưu đãi)** hoặc **Trần số lượng sản phẩm (tối đa 3–5 món/đơn)** hoặc trần tiền mặt quy đổi tối đa (200.000đ–500.000đ).
-  - **Khóa cứng giá sàn $P_{floor}$**: Toàn bộ giỏ hàng sau khi áp dụng phiếu ưu đãi phải thỏa mãn giá sàn máy chủ để bảo toàn biên lợi nhuận tối thiểu.
-
-### 6.3. Kiểm soát rủi ro và chống gian lận tạo tài khoản mới (Anti-Sybil & Anti-Exploit)
-- **Bộ tứ định danh chống lập acc mới (Anti-Clone Accounts)**:
-  1. **SĐT/LINE ID xác thực OTP**: Xác thực qua LINE OA hoặc SMS; mỗi định danh thực chỉ được nhận ưu đãi chào mừng đơn đầu đúng 1 lần.
-  2. **Vân tay thiết bị (Device Fingerprint)**: Nhận diện mã thiết bị/trình duyệt theo chuẩn Taiwan PDPA (thông báo đồng thuận rõ ràng), chặn việc mở trình duyệt ẩn danh để tạo tài khoản mới.
-  3. **Dấu vết thanh toán & Lịch sử nhận hàng Siêu thị (CVS History)**: Lưu vết mã băm thanh toán (LINE Pay / Thẻ); đồng thời lưu vết SĐT/lịch sử nhận hàng tại 7-Eleven/FamilyMart. Khách có tiền sử bùng hàng quá 7 ngày (未取貨) sẽ bị hệ thống tự động khóa quyền áp dụng trợ cấp giá.
-  4. **Đối soát địa chỉ & Mã bưu chính Đài Loan (Fuzzy Address Matching)**: Quét trùng lặp địa chỉ nhận hàng và tên người nhận để ngăn gom ưu đãi về cùng một địa chỉ.
-- **Kiểm soát điều kiện kép (Min Spend & Max Cap)**: Đơn nhận điểm đầu tiên phải đạt `Min_Spend_First_Order`; các đơn sau vừa có điều kiện giá trị tối thiểu vừa bị chặn trần `Max_Cap` điểm.
-- **Thu hồi điểm khi hủy/trả hàng**: Khi đơn hàng bị hoàn tiền hoặc hủy, hệ thống tự động thu hồi điểm tương ứng qua sự kiện `loyalty.points_revoked`.
-- **Trần ngân sách điểm thưởng**: Bộ phận tài chính duyệt tỷ lệ trích tối đa từ biên lợi nhuận cho quỹ điểm thưởng; hệ thống tự ngắt phát hành điểm thưởng nếu vượt hạn mức ngân sách chương trình.
-
-### 6.4. Vòng lặp hệ sinh thái thực tế tại thị trường Đài Loan
-- **Xe máy điện (High-Ticket EV)**:
-  - **Chương trình giới thiệu hai chiều (Dual-Sided Referral kiểu Tesla)**: Khách đã mua xe được cấp mã giới thiệu trên LINE OA. Khi bạn bè quét mã đặt cọc lái thử và mua xe thành công: Người giới thiệu nhận 1–3 tháng miễn phí gói thuê/đổi pin (BaaS) hoặc credit bảo dưỡng; người mua mới được tặng phụ kiện chính hãng hoặc voucher trừ thẳng vào tiền cọc.
-  - **Chăm sóc vòng đời bảo dưỡng**: AI CSKH trên LINE OA tự động gửi tin nhắc bảo dưỡng định kỳ theo số km ước tính (1.000km, 5.000km, 10.000km) và thông báo tình trạng trạm đổi pin mới mở gần nhà khách.
-- **Hàng tiêu dùng (FMCG)**:
-  - **Tích điểm đổi LINE Points**: Khách mua hàng tích lũy điểm thưởng quy đổi trực tiếp thành điểm **LINE Points** (chi tiêu được tại hầu hết các chuỗi siêu thị/cửa hàng tiện lợi Đài Loan), tăng tính hấp dẫn thực tế vượt trội so với điểm thưởng nội bộ.
-  - **Nhắc nhở đơn hàng định kỳ (Predictive Replenishment)**: AI CSKH dự báo ngày sắp hết hàng tiêu dùng, gửi tin nhắn 1-chạm qua LINE để khách tái đặt hàng giao đến 7-Eleven quen thuộc.
-
-## 7. Khiếu nại và bàn giao khẩn
+## 5. Khiếu nại và bàn giao khẩn (Human Escalation)
 
 Các tín hiệu bảo mật, an toàn, tranh chấp nghiêm trọng, lặp lỗi hoặc khách yêu cầu người thật cần chuyển người có trách nhiệm. Từ khóa chỉ là một tín hiệu, không phải bộ phân loại đáng tin duy nhất.
 
-Mục tiêu gọi lại dưới hai phút của PDF chỉ là **mục tiêu thử nghiệm khi có nhân sự trực và điều kiện đáp ứng**, không phải lời hứa 24/7. Chưa có người nhận thì thông báo đang chờ và thời gian dự kiến được cấu hình.
+Mục tiêu gọi lại dưới hai phút chỉ là mục tiêu thử nghiệm khi có nhân sự trực và điều kiện đáp ứng, không phải lời hứa 24/7. Chưa có người nhận thì thông báo đang chờ và thời gian dự kiến được cấu hình.
 
-Gói bàn giao chứa khách đã xác minh, vấn đề, kết quả mong muốn, đơn/sản phẩm liên quan, nguồn, bước đã thử, mức ảnh hưởng và hành động tiếp theo. Nhân viên nhận trách nhiệm thì AI ngừng trả lời nghiệp vụ. Thời hạn chờ phải có người theo dõi; hết hạn không tự đánh dấu giải quyết.
+Gói bàn giao chứa: thông tin khách đã xác minh, vấn đề cụ thể, kết quả mong muốn, đơn hàng/sản phẩm liên quan, tài liệu nguồn, các bước đã thử, mức độ ảnh hưởng và hành động tiếp theo. Nhân viên nhận trách nhiệm thì AI ngừng trả lời nghiệp vụ. Thời hạn chờ phải có người theo dõi; hết hạn không tự đánh dấu giải quyết.
 
-## 8. Phản hồi để cải tiến
+## 6. Phản hồi để cải tiến
 
-Tổng hợp câu hỏi lặp lại, lý do không phù hợp, lỗi dùng, khiếu nại và đổi trả thành đề xuất sửa tài liệu, sản phẩm hoặc thông điệp. Dữ liệu gửi sang Tiếp thị cần tối thiểu hóa, ưu tiên tổng hợp và không lộ danh tính ngoài quyền.
+Tổng hợp câu hỏi lặp lại, lý do không phù hợp, lỗi sử dụng, khiếu nại và yêu cầu đổi trả thành đề xuất sửa tài liệu tri thức, sản phẩm hoặc thông điệp tiếp thị. Dữ liệu gửi sang Tiếp thị cần tối thiểu hóa, ưu tiên dữ liệu tổng hợp (aggregated) và không để lộ danh tính cá nhân ngoài thẩm quyền.
 
-Khách dùng tốt có thể được mời đánh giá, mua lại hoặc giới thiệu khi phù hợp; không yêu cầu đánh giá tích cực để được giải quyết quyền lợi. AI không tự xuất bản lời chứng thực hay sửa kho kiến thức.
+Khách hàng có trải nghiệm tốt có thể được mời đánh giá, mua lại hoặc tham gia chương trình giới thiệu khi phù hợp; tuyệt đối không yêu cầu đánh giá tích cực để được giải quyết quyền lợi khiếu nại. AI không tự xuất bản lời chứng thực hay tự ý sửa kho kiến thức.
 
-## 9. Tiêu chí nghiệm thu & Chỉ số đo lường
+## 7. Tiêu chí nghiệm thu kỹ thuật & Hệ chỉ số KPI chuẩn SRS
 
-### 9.1. Bảng kiểm tra nghiệm thu (Acceptance Criteria)
+### 7.1. Bảng kiểm tra nghiệm thu (Acceptance Criteria)
 
 | Tình huống | Kết quả bắt buộc | Mã kiểm thử SRS |
 |---|---|---|
@@ -198,7 +152,7 @@ Khách dùng tốt có thể được mời đánh giá, mua lại hoặc giới
 | Mô-đun CSKH chưa bật | Trả trạng thái không hỗ trợ hoặc chuyển hàng đợi người xử lý | Lộ trình P1 |
 | Khiếu nại vượt thẩm quyền | Chuyển luồng bàn giao khẩn cấp; ghi vết audit đầy đủ | PILOT-04, AUTH-4 |
 
-### 9.2. Hệ chỉ số KPI Chăm sóc & Thành công khách hàng theo SRS
+### 7.2. Hệ chỉ số KPI Chăm sóc & Thành công khách hàng theo SRS
 
 - **Chăm sóc khách hàng (Customer Care KPIs):**
   - **First Response Time (FRT):** Thời gian phản hồi lần đầu (thiết kế gần thời gian thực qua Web/App/LINE).
@@ -213,4 +167,82 @@ Khách dùng tốt có thể được mời đánh giá, mua lại hoặc giới
   - **Reactivation Rate:** Tỷ lệ thu hồi và kích hoạt lại thành công khách hàng ngủ quên (dormant/win-back).
   - **Customer Lifetime Value (CLV):** Giá trị vòng đời khách hàng gia tăng xuyên suốt chuỗi dịch vụ.
 
-Mọi thao tác hoàn tiền, hủy, đổi trả hoặc thay tài khoản phải qua người có quyền và hệ thống nguồn; không nằm trong P1.
+Mọi thao tác hoàn tiền, hủy đơn, đổi trả hoặc thay đổi thông tin tài khoản bắt buộc phải qua nhân viên có thẩm quyền phê duyệt trên hệ thống nguồn; không nằm trong phạm vi tự động của P1.
+
+---
+
+# PHẦN 2: KỊCH BẢN CHĂM SÓC & GIỮ CHÂN THỰC CHIẾN (DOMAIN PLAYBOOKS)
+
+## DOM-FMCG-004: Endowed Progress Loyalty Engine — Điểm thưởng tiến độ trao sẵn, kích hoạt mua lại qua LINE/Zalo
+
+Thay vì phát phiếu giảm giá tự động liên tục (dễ gây lờn giá, discount fatigue và làm suy giảm định vị sản phẩm), hệ thống áp dụng cơ chế Điểm thưởng tích lũy (Reward Points) nhằm thúc đẩy khách hàng chủ động tương tác và mua lại:
+
+1. **Hiệu ứng tiến độ trao sẵn (Endowed Progress Effect):**
+   - Đơn hàng đầu tiên luôn được trao số điểm thưởng ban đầu lớn nhất (ví dụ: tặng sẵn 9/10 điểm trong thanh tiến độ để khách chỉ thiếu 1 điểm là mở khóa voucher giảm 15–20% kèm miễn phí giao hàng cho đơn thứ 2).
+   - **Chốt chặn điều kiện đơn đầu (`Min_Spend_First_Order`):** Đơn hàng đầu tiên bắt buộc phải đạt giá trị tối thiểu theo quy định để được kích hoạt điểm trao sẵn, triệt tiêu hành vi mua đơn giá rẻ tượng trưng nhằm trục lợi điểm thưởng.
+2. **Tích điểm theo giá trị đơn (Dynamic Spend-to-Points):**
+   - Các đơn hàng tiếp theo không cố định điểm số mà tích lũy theo tỷ lệ giá trị đơn hàng thực tế (ví dụ: mỗi 100.000 VNĐ hoặc 100 TWD = 1 điểm). Đơn hàng càng lớn điểm càng nhiều, kích thích gia tăng quy mô giỏ hàng (AOV).
+3. **Kiểm soát trần điểm thưởng (Max Cap Enforcement):**
+   - Áp dụng trần tối đa trên mỗi đơn (`Cap_Max_Points_Per_Order`) và trần ngày (`Cap_Daily`).
+   - Công thức tính điểm: `Points = min(floor(Order_Value / Spend_Unit), Cap_Max_Points_Per_Order)`.
+   - Ngăn chặn triệt để rủi ro đại lý hoặc đơn gom sỉ tích lũy điểm vượt hạn mức làm thâm hụt ngân sách quỹ thưởng.
+4. **Mốc vi mô theo bậc thang (Tiered Micro-Milestones):**
+   - Sau khi hoàn thành mốc lớn đầu tiên ở đơn thứ 2, điểm quay về 0 và được duy trì động lực bằng các mốc thưởng nhỏ hơn dạng bậc thang (3 điểm đổi voucher 5%, 6 điểm đổi voucher 10%) nhằm nuôi dưỡng thói quen mua sắm liên tục.
+5. **Thời hạn điểm thưởng (Points Expiry):**
+   - Điểm tích lũy có hạn dùng từ 6–12 tháng để kích thích mua sắm định kỳ và ngăn chặn việc ghi nhận nợ nghĩa vụ tài chính kéo dài trên sổ sách kế toán.
+6. **Tích hợp kênh liên lạc & Dự báo mua lại (Predictive Replenishment):**
+   - Tại Đài Loan: Điểm thưởng có thể quy đổi trực tiếp thành **LINE Points** (tiêu dùng được trong mạng lưới bán lẻ toàn Đài Loan).
+   - Tại Việt Nam: Đồng bộ thông báo điểm thưởng và ưu đãi qua Zalo OA.
+   - AI CS-02 dựa trên chu kỳ tiêu dùng thực tế để tự động gửi thông điệp chăm sóc kèm lời mời tái đặt hàng 1-chạm khi khách sắp hết sản phẩm.
+
+## DOM-FMCG-005: 4-Layer Anti-Sybil Defense — Bộ tứ định danh chống clone tài khoản & bùng hàng CVS
+
+Bộ tứ chốt chặn phòng chống gian lận tạo nhiều tài khoản ảo nhằm trục lợi chính sách ưu đãi đơn đầu và điểm thưởng chào mừng:
+
+1. **Lớp 1 - SĐT & Định danh mạng xã hội xác thực OTP (Phone & Social Identity):**
+   - Xác thực số điện thoại qua mã OTP hoặc liên kết tài khoản LINE ID / Zalo ID chính chủ.
+   - Mỗi định danh thực chỉ được phép nhận gói điểm thưởng chào mừng hoặc ưu đãi đơn đầu đúng 1 lần duy nhất trong toàn bộ vòng đời.
+2. **Lớp 2 - Vân tay thiết bị (Device Fingerprint):**
+   - Nhận diện mã định danh phần cứng, trình duyệt và môi trường thiết bị theo tiêu chuẩn bảo mật và quyền riêng tư (Taiwan PDPA / GDPR).
+   - Chặn đứng hành vi mở trình duyệt ẩn danh (Incognito) hoặc chuyển đổi tài khoản trên cùng một thiết bị để đăng ký mới.
+3. **Lớp 3 - Dấu vết thanh toán & Lịch sử nhận hàng Siêu thị (Payment Hash & CVS History):**
+   - Lưu trữ mã băm một chiều (Hash) của tài khoản thanh toán trực tuyến (LINE Pay, JKOPAY, số thẻ tín dụng).
+   - Theo dõi lịch sử giao nhận tại hệ thống cửa hàng tiện lợi 7-Eleven / FamilyMart. Khách hàng có tiền sử bùng hàng quá 7 ngày (未取貨) sẽ bị tự động đưa vào danh sách hạn chế và tước quyền hưởng ưu đãi trợ cấp giá.
+4. **Lớp 4 - Đối soát địa chỉ mờ (Fuzzy Address Matching):**
+   - Sử dụng thuật toán khớp mờ đối soát địa chỉ nhận hàng, họ tên và mã bưu chính.
+   - Phát hiện các biến thể cố tình thay đổi ký tự trong địa chỉ giao hàng nhằm gom hàng ưu đãi về cùng một địa điểm thực tế.
+5. **Cơ chế thu hồi và trần quỹ thưởng:**
+   - **Thu hồi điểm khi hủy/trả hàng:** Khi đơn hàng bị hoàn tiền hoặc hủy, hệ thống tự động phát sự kiện `loyalty.points_revoked` để trừ lại số điểm đã cấp tương ứng.
+   - **Trần ngân sách quỹ thưởng:** Bộ phận tài chính thiết lập tỷ lệ trích tối đa từ biên lợi nhuận cho quỹ điểm thưởng; hệ thống tự động ngắt phát hành điểm thưởng nếu tổng chi chạm trần ngân sách cho phép.
+
+## DOM-MOB-004: Two-Sided EV Referral Program — Giới thiệu 2 chiều xe máy điện kiểu Tesla
+
+Kịch bản phát triển mạng lưới khách hàng trung thành thông qua mô hình giới thiệu hai chiều cho sản phẩm Xe máy điện giá trị cao:
+
+1. **Cơ chế giới thiệu hai chiều (Two-Sided Incentive):**
+   - Chủ xe hiện tại sau khi mua xe và hoàn tất đăng ký biển số được cấp một mã giới thiệu độc quyền tích hợp trên LINE OA.
+   - Khi bạn bè hoặc người quen quét mã này để đặt lịch lái thử Showroom và tiến hành mua xe thành công:
+     * **Quyền lợi người giới thiệu:** Nhận ngay 1–3 tháng miễn phí gói thuê/đổi pin (BaaS - Battery as a Service) hoặc gói tín dụng (credit) bảo dưỡng định kỳ chính hãng.
+     * **Quyền lợi người mua mới:** Được tặng bộ phụ kiện cao cấp chính hãng (mũ bảo hiểm thông minh, thảm để chân, giá treo điện thoại) hoặc voucher chiết khấu trừ trực tiếp vào tiền đặt cọc giữ chỗ.
+2. **Chăm sóc vòng đời bảo dưỡng định kỳ (EV Lifecycle Care):**
+   - AI CSKH trên LINE OA tự động ước tính quãng đường di chuyển dựa trên lịch sử vận hành, chủ động gửi tin nhắn nhắc lịch bảo dưỡng định kỳ tại mốc 1.000km (rút dầu phanh/siết ốc đầu tiên), 5.000km và 10.000km.
+   - Tự động thông báo khi có trạm đổi pin mới (GoStation / Ionex) được lắp đặt và đưa vào vận hành trong bán kính 1km quanh nơi ở của chủ xe.
+
+## ECN-004: Unified Promotion & Price Protection Budget — Chính sách bù giá trong 14 ngày có hạn mức
+
+Kịch bản bảo vệ quyền lợi khách hàng, giảm thiểu tâm lý lo lắng mua hớ và duy trì niềm tin thương hiệu mà vẫn kiểm soát chặt chẽ ngân sách tài chính:
+
+1. **Mục tiêu và nguyên tắc vận hành:**
+   - Phiếu bù giá (Price Protection Voucher) là cam kết thương hiệu có chi phí tài chính và nghĩa vụ nợ thực hiện trên hệ thống kế toán, không phải dòng tiền miễn phí.
+   - Áp dụng trong cửa sổ thử nghiệm **14 ngày** tính từ ngày đơn hàng được xác nhận thanh toán hoặc giao hàng thành công.
+2. **Tiêu chuẩn đối soát và điều kiện áp dụng:**
+   - **Tương đương sản phẩm:** Phải cùng mã SKU, cùng biến thể màu sắc/cấu hình, điều kiện bán và loại chương trình khuyến mãi hợp lệ.
+   - **Cơ sở tính chênh lệch:** So sánh giá thực trả của khách hàng trên đơn hàng cũ (sau khi đã trừ hết các khoản chiết khấu/mã giảm giá phân bổ) với giá niêm yết mới đủ điều kiện; không so sánh với các chương trình thanh lý hàng tồn kho hoặc flash sale cục bộ có điều kiện đặc thù.
+   - **Trạng thái đơn hàng:** Đơn hàng cũ phải ở trạng thái giao thành công, chưa bị hoàn trả, chưa hủy hoặc phát sinh tranh chấp.
+3. **Kiểm soát trần hạn mức và ngân sách tập trung:**
+   - Cài đặt trần bù giá tối đa trên mỗi đơn hàng (`Cap_Per_Order`), trần trên mỗi khách hàng (`Cap_Per_Customer`) và trần tổng thể cho toàn chương trình (`Total_Protection_Budget_Cap`).
+   - Mọi đề xuất bù giá đều phải kiểm tra tính sẵn sàng của ngân sách thời gian thực; hệ thống tự động từ chối nếu ngân sách bảo vệ giá đã được giải ngân hết.
+4. **Quy trình thực thi và chống trùng lặp nguyên tử:**
+   - Luồng nghiệp vụ: Sự kiện giảm giá hợp lệ được kích hoạt → Hệ thống đối chiếu danh sách đơn hàng trong 14 ngày → Tính toán khoản chênh lệch theo chính sách → Kiểm tra ngân sách còn lại → Người có thẩm quyền (AUTH-4) duyệt hoặc quy tắc tự động kích hoạt → Cấp phiếu mua hàng (voucher) bù giá gắn mã định danh duy nhất → Gửi thông báo đến khách hàng.
+   - Chống cấp trùng bằng khóa Idempotency tổng hợp: `Business_ID + Order_ID + Item_SKU + Event_ID`.
+   - Nếu việc cấp phiếu thành công nhưng đường truyền thông báo tin nhắn thất bại, hệ thống chỉ thực hiện gửi lại tin nhắn thông báo, tuyệt đối không cấp thêm mã phiếu bù giá thứ hai.
