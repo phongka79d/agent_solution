@@ -17,11 +17,12 @@ Hệ thống được thiết kế theo kiến trúc đa người dùng (Multi-t
 agent_solution/
 ├── README.md                                  # Trang chủ điều hướng tổng thể dự án
 ├── PLAN.md                                    # Chỉ mục chuyển tiếp kế hoạch gốc
-├── AGENT_NGIEN_CUU_THI_TRUONG.md              # Chỉ mục chuyển tiếp tài liệu nghiên cứu thị trường
 ├── BAO_CAO_DE_AN_AI_ECOMMERCE_3_MODULE.pdf    # Báo cáo đề án tổng quan (bản PDF in 6 trang)
+├── DAC_TA_KY_THUAT_HE_THONG_AI_AGENT.pdf     # Bản đặc tả kỹ thuật chi tiết nền tảng (bản PDF 8 trang)
 ├── presentation/                              # Mã nguồn và công cụ xuất bản thuyết trình
-│   ├── index.html                             # Giao diện HTML chuẩn A4 thiết kế báo cáo thuyết trình
-│   └── export_pdf.py                          # Script tự động biên dịch HTML thành PDF
+│   ├── index.html                             # Giao diện HTML chuẩn A4 thiết kế báo cáo đề án
+│   ├── tech_spec.html                         # Giao diện HTML chuẩn A4 đặc tả kỹ thuật hệ thống
+│   └── export_pdf.py                          # Script tự động biên dịch HTML thành 2 bản PDF
 ├── research/                                  # Tài liệu nghiên cứu thị trường và người dùng
 │   └── market_research.md                     # Khung chiến lược sản phẩm, phân tích thị trường chi tiết
 ├── plans/                                     # Toàn bộ hồ sơ quy hoạch kiến trúc và kế hoạch nghiệp vụ
@@ -127,7 +128,9 @@ Hệ thống phân định rành mạch giữa 2 nhóm mã hiệu: Nhóm SRS (qu
 | Tài Liệu / Hạng Mục | Đường Dẫn Tương Đối | Định Dạng | Mô Tả Trọng Tâm |
 |---|---|---|---|
 | Báo Cáo Đề Án Thuyết Trình | [BAO_CAO_DE_AN_AI_ECOMMERCE_3_MODULE.pdf](BAO_CAO_DE_AN_AI_ECOMMERCE_3_MODULE.pdf) | PDF (6 Trang) | Đề án tóm lược trực quan dành cho ban lãnh đạo và đối tác |
+| Bản Đặc Tả Kỹ Thuật Nền Tảng | [DAC_TA_KY_THUAT_HE_THONG_AI_AGENT.pdf](DAC_TA_KY_THUAT_HE_THONG_AI_AGENT.pdf) | PDF (8 Trang) | Bản đặc tả kỹ thuật chi tiết đối chiếu 100% đề bài SRS v0.1 |
 | Giao Diện Thuyết Trình | [presentation/index.html](presentation/index.html) | HTML5 / CSS A4 | Mã nguồn giao diện thiết kế báo cáo thuyết trình chuẩn A4 |
+| Giao Diện Đặc Tả Kỹ Thuật | [presentation/tech_spec.html](presentation/tech_spec.html) | HTML5 / CSS A4 | Mã nguồn giao diện thiết kế bản đặc tả kỹ thuật chuẩn A4 |
 | Bộ Kế Hoạch 3 Module | [plans/README.md](plans/README.md) | Markdown | Mục lục điều phối toàn bộ 11 tài liệu kế hoạch chi tiết |
 | Luồng Đọc Dễ Hiểu | [plans/plan-easy-read-flow.md](plans/plan-easy-read-flow.md) | Markdown | Bản tóm lược 5 phút dành cho người không chuyên kỹ thuật |
 | Nghiên Cứu Thị Trường | [research/market_research.md](research/market_research.md) | Markdown | 28 mục chiến lược sản phẩm, khách hàng mục tiêu và thị trường |
@@ -173,11 +176,12 @@ Hệ thống phân định rành mạch giữa 2 nhóm mã hiệu: Nhóm SRS (qu
 ### 3. Dành Cho Đội Ngũ Kỹ Thuật (Architects, Tech Leads, Developers)
 - Mục tiêu: Triển khai hạ tầng, xây dựng API, cấu hình kho tri thức RAG và tích hợp hệ thống.
 - Trình tự đọc đề xuất:
-  1. [plans/platform/architecture.md](plans/platform/architecture.md): Ranh giới hệ thống, cơ chế Multi-tenant và Plug-and-Play Adapters.
-  2. [plans/platform/data-and-knowledge.md](plans/platform/data-and-knowledge.md): Lược đồ dữ liệu Customer360, quyền riêng tư và RAG.
-  3. [plans/platform/workflows-and-handoffs.md](plans/platform/workflows-and-handoffs.md): Quản lý phiên hội thoại, trạng thái và bàn giao nhân viên.
-  4. [plans/platform/api-and-integrations.md](plans/platform/api-and-integrations.md): Đặc tả API hai chiều, bảo mật và kết nối kênh chat/thanh toán.
-  5. [plans/delivery/mvp-and-roadmap.md](plans/delivery/mvp-and-roadmap.md): 6 Cổng kỹ thuật P0–P5, tiêu chuẩn hoàn thành DoD và bộ test TC-E2E-001..009.
+  1. [Bản đặc tả kỹ thuật PDF](DAC_TA_KY_THUAT_HE_THONG_AI_AGENT.pdf): Xem toàn bộ 8 trang đặc tả kỹ thuật kiến trúc, data model, skill contracts và kiểm toán.
+  2. [plans/platform/architecture.md](plans/platform/architecture.md): Ranh giới hệ thống, cơ chế Multi-tenant và Plug-and-Play Adapters.
+  3. [plans/platform/data-and-knowledge.md](plans/platform/data-and-knowledge.md): Lược đồ dữ liệu Customer360, quyền riêng tư và RAG.
+  4. [plans/platform/workflows-and-handoffs.md](plans/platform/workflows-and-handoffs.md): Quản lý phiên hội thoại, trạng thái và bàn giao nhân viên.
+  5. [plans/platform/api-and-integrations.md](plans/platform/api-and-integrations.md): Đặc tả API hai chiều, bảo mật và kết nối kênh chat/thanh toán.
+  6. [plans/delivery/mvp-and-roadmap.md](plans/delivery/mvp-and-roadmap.md): 6 Cổng kỹ thuật P0–P5, tiêu chuẩn hoàn thành DoD và bộ test TC-E2E-001..009.
 
 ### 4. Dành Cho Nhà Đầu Tư & Tài Chính (Investors, Finance & CFO)
 - Mục tiêu: Thẩm định tính khả thi tài chính, hiệu quả đầu tư và lộ trình hoàn vốn.

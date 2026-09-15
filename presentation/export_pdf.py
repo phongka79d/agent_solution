@@ -85,10 +85,16 @@ def main() -> None:
     script_dir = Path(__file__).resolve().parent
     project_root = script_dir.parent
 
-    html_file = script_dir / "index.html"
-    target_pdf = project_root / "BAO_CAO_DE_AN_AI_ECOMMERCE_3_MODULE.pdf"
+    # Document 1: Master Executive & Business Strategy Report
+    report_html = script_dir / "index.html"
+    report_pdf = project_root / "BAO_CAO_DE_AN_AI_ECOMMERCE_3_MODULE.pdf"
+    export_pdf(report_html, report_pdf)
 
-    export_pdf(html_file, target_pdf)
+    # Document 2: In-depth Technical Specification Blueprint
+    spec_html = script_dir / "tech_spec.html"
+    spec_pdf = project_root / "DAC_TA_KY_THUAT_HE_THONG_AI_AGENT.pdf"
+    if spec_html.is_file():
+        export_pdf(spec_html, spec_pdf)
 
 
 if __name__ == "__main__":

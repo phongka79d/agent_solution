@@ -91,7 +91,7 @@ Hệ thống phân định rành mạch giữa 2 nhóm mã hiệu: Nhóm SRS (qu
 
 1. Người phụ trách kinh doanh: [bản dễ hiểu](plan-easy-read-flow.md) → [sản phẩm và cách đóng gói](product-and-packaging.md).
 2. Người thiết kế nghiệp vụ: [hành trình khách hàng](customer-lifecycle.md) → mô-đun liên quan.
-3. Nhóm kỹ thuật: [kiến trúc](platform/architecture.md) → [dữ liệu](platform/data-and-knowledge.md) → [API](platform/api-and-integrations.md) → [nghiệm thu](delivery/mvp-and-roadmap.md).
+3. Nhóm kỹ thuật: [bản đặc tả kỹ thuật PDF](../DAC_TA_KY_THUAT_HE_THONG_AI_AGENT.pdf) → [kiến trúc](platform/architecture.md) → [dữ liệu](platform/data-and-knowledge.md) → [API](platform/api-and-integrations.md) → [nghiệm thu](delivery/mvp-and-roadmap.md).
 4. Người ra quyết định đầu tư: [đo lường và kinh tế đơn hàng](delivery/analytics.md) → [thứ tự thử nghiệm](delivery/mvp-and-roadmap.md).
 5. Tra từ viết tắt: [bảng thuật ngữ](glossary.md).
 
