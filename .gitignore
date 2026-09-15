@@ -1,3 +1,22 @@
+# Local & scratch artifacts
 openspec/
 atlas/
 scratch/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.env
+.env
+.venv/
+env/
+venv/
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Output temp files
+temp_*
