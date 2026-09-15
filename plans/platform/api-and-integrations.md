@@ -97,21 +97,36 @@ Bên nhận lưu khóa sự kiện, bỏ cập nhật phiên bản cũ và chấ
 
 **Thông báo kết quả về máy chủ khác tin gửi cho khách.** Phải chỉ định một nơi sở hữu việc gửi ra kênh; không để cả website và bộ kết nối cùng phát lại câu trả lời. Tin gửi cần mã tác động và mã nhà cung cấp.
 
-## 5. Bộ kết nối và phạm vi
+## 5. Bộ kết nối và phạm vi (Connector & Integration Layer)
+
+### 5.1 Các cổng kết nối cốt lõi theo mã chuẩn hóa
+
+- **API-001 - ERP/POS Connector (Hệ thống giao dịch nguồn)**:
+  - *Chức năng*: Kết nối với ERP/POS/Commerce hiện hành để đọc dữ liệu có thẩm quyền (System of Record) gồm: danh mục sản phẩm, SKU, giá niêm yết, tồn kho thời gian thực, hồ sơ khách hàng, đơn hàng, hóa đơn và lịch sử mua sắm.
+  - *Kiểm soát thay đổi*: Mọi hành động ghi (mutation: tạo đơn, giữ hàng, cập nhật trạng thái) bắt buộc phải qua API/action được kiểm soát, kiểm tra quyền hạn và gắn `effect_key`. Tuyệt đối không cho phép AI tự tạo hoặc ghi đè giá/tồn kho trực tiếp vào cơ sở dữ liệu.
+- **API-002 - Web/App Event Ingestion (Cổng thu nhận sự kiện số)**:
+  - *Chức năng*: Thu nhận và chuẩn hóa các sự kiện hành vi số từ Website và Mobile App của doanh nghiệp theo thời gian thực.
+  - *Sự kiện tối thiểu bắt buộc*: `session` (phiên truy cập), `product_view` (xem sản phẩm), `search` (tìm kiếm), `click` (tương tác liên kết), `add_to_cart` (thêm vào giỏ hàng), `checkout` (bắt đầu thanh toán), `purchase` (mua hàng thành công).
+  - *Xử lý*: Dòng sự kiện được nạp vào Customer 360 để xây dựng Timeline thống nhất (FR-C360-002) và sinh các tín hiệu hành vi (`SIGNAL`).
+- **API-003 - Communication Connectors (Cổng kết nối đa kênh tương tác)**:
+  - *Chức năng*: Kiến trúc kết nối đa kênh hợp nhất phục vụ gửi/nhận tin nhắn hai chiều giữa khách hàng và các AI Agent/Nhân viên.
+  - *Phạm vi kênh hỗ trợ*: Facebook Messenger, TikTok DM, Zalo OA/ZNS, LINE Official Account, WhatsApp Business, Email, SMS và Web Chat Widget nhúng.
+  - **[UNCONFIRMED][ASM-001]**: Danh sách kênh triển khai thực tế trên production sẽ được chốt theo tài khoản doanh nghiệp, quyền hạn API và chính sách nền tảng cụ thể.
 
 | Kết nối | Đọc | Ghi khi được phép | Giai đoạn |
 |---|---|---|---|
-| Danh mục | Sản phẩm, điều kiện, giá, khả dụng | Không sửa danh mục trong P1 | P1 bắt buộc một nguồn |
-| Hệ thống lưu khách/yêu cầu hoặc CRM | Khách, yêu cầu/cơ hội, chủ sở hữu | Ghi chú, trường hỏi nhu cầu, bước tiếp theo | P1 một nguồn; không yêu cầu CRM mới nếu hệ thống hiện có đáp ứng |
-| Kênh/website | Phiên, tin nhắn, trạng thái giao | Trả lời và nhắc có điều kiện | P1 website; kênh khác chọn riêng |
-| Lịch | Khả dụng và lịch đã đặt | Tạo lịch có xác nhận | P1 chỉ khi chọn hành trình cần hẹn |
-| Đơn hàng | Đơn và trạng thái | Tạo/sửa theo chính sách | P1 tùy nguồn chỉ đọc; thực thi sau P1 |
+| Danh mục (API-001) | Sản phẩm, điều kiện, giá, khả dụng | Không sửa danh mục trong P1 | P1 bắt buộc một nguồn |
+| Khách/CRM (API-001) | Khách, yêu cầu/cơ hội, chủ sở hữu | Ghi chú, trường hỏi nhu cầu, bước tiếp theo | P1 một nguồn; không yêu cầu CRM mới |
+| Kênh tương tác (API-003) | Phiên, tin nhắn, trạng thái giao | Trả lời và nhắc có điều kiện | P1 website/LINE; kênh khác chọn riêng |
+| Sự kiện số (API-002) | Hành vi session, view, cart | Tạo timeline, tín hiệu Customer 360 | P1 thu nhận sự kiện cơ bản |
+| Lịch hẹn | Khả dụng và lịch đã đặt | Tạo lịch có xác nhận | P1 chỉ khi chọn hành trình cần hẹn |
+| Đơn hàng (API-001) | Đơn và trạng thái | Tạo/sửa theo chính sách | P1 chỉ đọc; ghi sau P1 |
 | Thanh toán | Yêu cầu/giao dịch và đối soát | Tạo yêu cầu thanh toán được duyệt | Sau P1; hoàn tiền luôn quyền riêng |
-| Vận chuyển | Trạng thái, khả năng khung giờ, liên hệ được phép | Yêu cầu vận chuyển theo quyền | Sau P1 |
-| Phiếu hỗ trợ / phiếu mua hàng | Trạng thái, người nhận, điều kiện | Tạo/cập nhật/cấp theo chính sách | Sau P1 |
-| Quảng cáo / đối tác | Nguồn, chi phí và kết quả được phép | Không tự xuất bản, chi ngân sách hoặc trả hoa hồng | Sau P1 theo thử nghiệm |
+| Vận chuyển | Trạng thái, khả năng khung giờ | Yêu cầu vận chuyển theo quyền | Sau P1 |
+| Phiếu hỗ trợ / Voucher | Trạng thái, người nhận, điều kiện | Tạo/cập nhật/cấp theo chính sách | Sau P1 |
+| Quảng cáo / Đối tác | Nguồn, chi phí và kết quả được phép | Không tự xuất bản, chi ngân sách | Sau P1 theo thử nghiệm |
 
-### Bộ kết nối bản địa hóa Đài Loan (Taiwan Localization Adapters)
+### 5.2 Bộ kết nối bản địa hóa Đài Loan (Taiwan Localization Adapters)
 Đối với khách hàng mỏ neo tại Đài Loan, hệ thống tích hợp sẵn các bộ kết nối đặc thù của thị trường nội địa:
 1. **Nền tảng TMĐT Đài Loan**: Connectors cho **91APP**, **SHOPLINE**, **Cyberbiz** qua Open API và Webhook (đồng bộ tồn kho, danh mục sản phẩm và trạng thái đơn hàng thời gian thực).
 2. **Kênh tương tác & Định danh**: **LINE Messaging API** (tương tác trực tiếp trên LINE Official Account), **LINE Login** (xác thực danh tính 1-chạm không cần tạo tài khoản mới).
@@ -162,39 +177,50 @@ Hạn báo giá 10 phút từ PDF được thi hành ở máy chủ. Mã xác th
 
 <a id=section-16></a>
 
-## 7. Bảo mật và quản trị dữ liệu
+## 7. Bảo mật, Quản trị và Yêu cầu phi chức năng (NFR)
+
+### Các yêu cầu phi chức năng cốt lõi (Non-functional Requirements)
+
+- **NFR-001 - Security (Bảo mật & Phân quyền) - MUST**: Agent chỉ được truy cập dữ liệu và công cụ theo đúng cấp độ thẩm quyền được giao (`AUTH-0` đến `AUTH-3`); không có bất kỳ ca kiểm thử nào cho phép vượt ranh giới authority boundary.
+- **NFR-002 - Auditability (Khả năng kiểm toán) - MUST**: 100% hành động tạo ra thay đổi bên ngoài (External Action) đều phải sinh bản ghi kiểm toán audit/evidence record kèm mã lần chạy `run_id`, timestamp, latency, cost và người/agent thực hiện.
+- **NFR-003 - Idempotency (Chống trùng lặp tác vụ) - MUST**: Thực hiện lại cùng một yêu cầu (trùng `effect_key`) tuyệt đối không được tạo ra giao dịch, đơn hàng hoặc thông điệp ngoài ý muốn lần thứ hai.
+- **NFR-006 - Data Isolation (Cô lập dữ liệu đa doanh nghiệp) - MUST**: Dữ liệu của khách hàng hoặc doanh nghiệp A tuyệt đối không xuất hiện trong ngữ cảnh (context) của khách hàng hoặc doanh nghiệp B ở mọi tầng (DB schema, cache Redis, vector index, AI memory).
+- **NFR-008 - Failure Safety (An toàn khi sự cố - Fail Closed) - MUST**: Khi không xác minh được giá, tồn kho, cấp độ quyền hạn (authority) hoặc sự đồng ý (consent), hệ thống bắt buộc phải fail closed (chặn thực thi, giữ trạng thái an toàn, chuyển người xử lý).
+- **NFR-010 - Cost Observability (Giám sát chi phí) - MUST**: Đo lường chi tiết mức tiêu hao token, mô hình LLM, chi phí API/tool, tính toán chính xác cost/run, cost/customer và cost/conversion theo thời gian thực.
 
 | Lĩnh vực | Yêu cầu thiết kế |
 |---|---|
-| Tách doanh nghiệp | Kiểm tra ở cơ sở dữ liệu, truy xuất, tệp, hàng đợi, công việc và báo cáo |
+| Tách doanh nghiệp | Phân tách schema ở cơ sở dữ liệu, truy xuất, tệp, hàng đợi, công việc và báo cáo (NFR-006) |
 | Vai trò | Chủ doanh nghiệp, quản trị, quản lý từng mô-đun, nhân viên được phân công, phân tích chỉ đọc |
-| Tài khoản quản trị | Xác thực nhiều yếu tố; đăng nhập tập trung khi doanh nghiệp yêu cầu |
-| Bí mật | Lưu bảo vệ, giới hạn quyền, xoay vòng; không đưa vào trình duyệt, lời hướng dẫn AI hay nhật ký |
-| Truyền/lưu dữ liệu | Mã hóa phù hợp hạ tầng; TLS 1.3 và AES-256 trong PDF là mục tiêu cấu hình cần kiểm tra, không là chứng nhận tuân thủ |
-| Sự kiện | Xác thực chữ ký/mã thông điệp theo nhà cung cấp, cửa sổ chống phát lại, chống trùng |
-| Điểm kết nối | Chỉ địa chỉ đã duyệt; chặn gọi mạng nội bộ/địa chỉ tùy ý do nội dung không tin cậy đề xuất |
-| AI và công cụ | Dữ liệu không được cấp quyền; kiểm tra lược đồ, vai trò, phê duyệt, hạn mức ngay khi thực thi |
-| Nhà cung cấp AI | Tối thiểu hóa dữ liệu, thỏa thuận mục đích/lưu trữ; không chia sẻ hay dùng lại chéo doanh nghiệp |
-| Vòng đời dữ liệu | Có người chịu trách nhiệm về lưu, xuất, xóa, bản sao lưu, sự cố và thu hồi quyền |
-| Nhật ký | Chủ thể, doanh nghiệp, khách/cuộc trao đổi, hành động, phiên bản, phê duyệt, kết quả, thời gian, truy vết; che dữ liệu nhạy cảm |
+| Tài khoản quản trị | Xác thực nhiều yếu tố (MFA); đăng nhập tập trung SSO khi doanh nghiệp yêu cầu |
+| Bí mật | Lưu trong biến môi trường (.env), giới hạn quyền, xoay vòng; không đưa vào trình duyệt hay log |
+| Truyền/lưu dữ liệu | Mã hóa đường truyền TLS 1.3 và lưu trữ AES-256; kiểm tra cấu hình định kỳ |
+| Sự kiện | Xác thực chữ ký số/HMAC theo nhà cung cấp, cửa sổ chống phát lại, chống trùng (NFR-003) |
+| Điểm kết nối | Chỉ địa chỉ đã duyệt; chặn gọi mạng nội bộ/địa chỉ tùy ý từ prompt injection |
+| AI và công cụ | Kiểm tra lược đồ JSON, vai trò, phê duyệt `AUTH-4`, hạn mức giá sàn $P_{floor}$ ngay khi thực thi |
+| Nhà cung cấp AI | Tối thiểu hóa dữ liệu, thỏa thuận zero data retention; không huấn luyện lại chéo doanh nghiệp |
+| Vòng đời dữ liệu | Quản lý lưu, xuất, xóa theo yêu cầu chủ thể, phân vùng lưu trữ theo luật sở tại |
+| Nhật ký | Lưu `run_id`, `tenant_id`, hành động, phiên bản, phê duyệt, kết quả, chi phí, che dữ liệu nhạy cảm |
 
-Về căn cứ pháp lý: Với doanh nghiệp quốc tế hoặc triển khai đa thị trường, hệ thống phải tuân thủ các khung pháp lý bảo vệ dữ liệu cá nhân quốc tế tương ứng như **GDPR (Châu Âu)**, **CCPA/CPRA (Hoa Kỳ)**, **PDPA (Singapore & Đông Nam Á)** song song với luật dữ liệu tại quốc gia sở tại của doanh nghiệp (ví dụ tại Việt Nam gồm Luật Bảo vệ dữ liệu cá nhân số 91/2025/QH15 có hiệu lực từ 01/01/2026 và Nghị định 13/2023/NĐ-CP). Tuyệt đối không tự động tuyên bố tuân thủ chỉ dựa trên cấu hình mã hóa hay ô chọn đồng thuận đơn lẻ.
+### Căn cứ pháp lý đa thị trường
 
-Đây là lưu ý cần rà soát, không phải kết luận pháp lý đầy đủ. Trước vận hành, người phụ trách pháp lý/bảo vệ dữ liệu cần xác định quy định đang áp dụng, mục đích/căn cứ xử lý, quyền chủ thể dữ liệu, vai trò các bên, hồ sơ/thỏa thuận cần thiết, chuyển dữ liệu khi có, thông báo sự cố và chính sách ưu đãi/đổi trả. Đánh giá thêm quy định ngành và điều khoản nền tảng được chọn; không lấy mã hóa hoặc ô đồng ý làm bằng chứng đã hoàn tất mọi nghĩa vụ.
+Với doanh nghiệp quốc tế hoặc triển khai đa thị trường, hệ thống tuân thủ các khung pháp lý bảo vệ dữ liệu cá nhân quốc tế tương ứng:
+- **Đài Loan (Taiwan PDPA)**: Đặt cụm máy chủ và cơ sở dữ liệu tại GCP Changhua hoặc AWS Region Taipei đảm bảo lưu trữ dữ liệu cá nhân tại chỗ và độ trễ < 50ms.
+- **Quốc tế**: Tuân thủ **GDPR (Châu Âu)**, **CCPA/CPRA (Hoa Kỳ)**, **PDPA (Singapore & Đông Nam Á)** song song với luật dữ liệu tại quốc gia sở tại (Việt Nam: Luật Bảo vệ dữ liệu cá nhân số 91/2025/QH15 và Nghị định 13/2023/NĐ-CP). Tuyệt đối không tự động tuyên bố tuân thủ chỉ dựa trên cấu hình mã hóa hay ô chọn đồng thuận đơn lẻ.
 
 ## 8. Lỗi, vận hành và nghiệm thu
 
 Lỗi cần mã ổn định, thông điệp tiếng Việt, `retryable` (cờ cho biết có thể thử lại), mã truy vết và chi tiết an toàn. Mã đề xuất: `AUTHENTICATION_FAILED`, `CUSTOMER_UNVERIFIED`, `CAPABILITY_NOT_ENABLED`, `VALIDATION_FAILED`, `IDEMPOTENCY_CONFLICT`, `APPROVAL_REQUIRED`, `PROVIDER_TIMEOUT`, `PROVIDER_REJECTED`, `RATE_LIMITED`, `TASK_NOT_FOUND`.
 
-Theo dõi độ trễ, lỗi công cụ, hàng đợi, công việc kẹt, thiếu nguồn kiến thức, lượng dùng AI và chi phí. Có giới hạn thử lại, người trực xử lý ngoại lệ và cách ngắt từng năng lực/từng doanh nghiệp. Phục hồi dữ liệu phải được diễn tập; quay lại cấu hình không phát lại giao dịch.
+Theo dõi độ trễ, lỗi công cụ, hàng đợi, công việc kẹt, thiếu nguồn kiến thức, lượng dùng AI và chi phí theo thời gian thực (NFR-010). Có giới hạn thử lại, người trực xử lý ngoại lệ và cơ chế ngắt từng năng lực (Circuit Breaker).
 
 Bộ thử bắt buộc:
 
-1. Quyền chéo doanh nghiệp, khách chưa xác minh, mô-đun tắt, thao tác ngoài quyền đều bị chặn.
-2. Yêu cầu/sự kiện trùng không tạo tác động thứ hai; khóa trùng khác nội dung bị báo xung đột.
-3. Thông báo trùng/cũ/mất không làm lùi trạng thái; truy vấn phục hồi đúng kết quả.
-4. Lỗi sau khả năng ghi phải đối soát; trạng thái chưa rõ không biến thành thành công.
-5. Bàn giao/phê duyệt được xác thực; chưa có người nhận thì vẫn đang chờ.
-6. Mỗi ghi thành công có tham chiếu hệ thống nguồn và nhật ký.
-7. Tấn công chèn chỉ dẫn, sửa giá phía khách, phát lại sự kiện và lách hạn mức đều có thử âm tính.
-8. Khi bật thanh toán: kiểm tra tiền muộn/thiếu/thừa, trùng giao dịch, sai người nhận, sai tiền tệ và hoàn tiền có quyền riêng.
+1. **TC-E2E-001**: Luồng E2E qua chu trình 11 bước: Signal → Execution → Outcome → Learning.
+2. **TC-E2E-002 / TC-E2E-006**: Thao tác ngoài quyền hoặc thiếu phê duyệt `AUTH-4` đều bị chặn (DENY) và sinh audit event (NFR-001, NFR-002, BR-008).
+3. **TC-E2E-005**: Yêu cầu trùng (cùng `effect_key`) không tạo tác động thứ hai; khóa trùng khác nội dung báo lỗi xung đột (NFR-003).
+4. **NFR-006**: Kiểm thử cô lập dữ liệu; không có rò rỉ dữ liệu giữa 2 tenant thử nghiệm.
+5. **NFR-008**: Khi không xác minh được giá/tồn từ API-001 hoặc consent từ API-002, hệ thống phải fail closed.
+6. **TC-E2E-008**: Lỗi từ cổng kết nối API-001/002/003 phải ghi nhận thất bại/thử lại, không báo thành công giả.
+7. **Bảo mật chỉ thị**: Tấn công chèn chỉ dẫn (prompt injection) từ khách hàng qua API-003 không thể nâng quyền Agent (BR-009).
+8. **Thanh toán & CVS COD**: Kiểm tra xử lý tiền muộn/thiếu/thừa, trùng mã đơn, sai người nhận và quyền hoàn tiền độc lập.

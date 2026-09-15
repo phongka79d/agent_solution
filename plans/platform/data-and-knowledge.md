@@ -8,84 +8,115 @@ Trạng thái: thiết kế đề xuất. Chỉ lưu dữ liệu cần thiết �
 
 ## 1. Customer360 — Hồ sơ khách hàng hợp nhất
 
-Customer360 nối thông tin được phép giữa các mô-đun, không thay phần mềm quản lý khách hàng (CRM).
+Customer360 đóng vai trò là lớp tổng hợp thông tin khách hàng đa kênh phục vụ chuỗi điều phối Revenue Orchestrator, không thay thế hệ thống giao dịch gốc (ERP/POS/CRM).
 
-| Nhóm bản ghi | Nội dung tối thiểu |
-|---|---|
-| Danh tính | Doanh nghiệp, khách/phiên, mã nguồn, bằng chứng xác minh, thời điểm |
-| Liên hệ và đồng ý | Kênh, mục đích, trạng thái, nguồn đồng ý/rút lại, phiên bản thông báo |
-| Nguồn và nhu cầu | Chiến dịch/đối tác nếu có, sản phẩm, nhu cầu, thời điểm dự kiến do khách cung cấp |
-| Hội thoại | Tin cần lưu, tóm tắt, người đang phụ trách, bàn giao, việc tiếp theo |
-| Thương mại | Liên kết cơ hội, báo giá, đơn, thanh toán, giao hàng; trạng thái riêng từng loại |
-| Hỗ trợ và tăng trưởng | Vụ việc, bước đã thử, kết quả, mở lại, nhu cầu mua thêm/giới thiệu có nguồn |
-| Suy luận | Điểm phù hợp, tín hiệu, quy tắc/phiên bản, bằng chứng và giới hạn |
+- **FR-C360-001 - Hồ sơ khách hàng thống nhất - MUST**: Chứa tối thiểu thông tin định danh, lịch sử mua hàng, sản phẩm đã mua, hành vi Web/App, tương tác Marketing, nhật ký hội thoại, ticket CSKH, phản hồi, giỏ hàng, ưu đãi/voucher, tần suất/giá trị mua (RFM), trạng thái đồng ý (consent) và vòng đời khách hàng.
+- **FR-C360-002 - Timeline thống nhất - MUST**: Chuỗi sự kiện truy vết thời gian thực: View → Search → Click → Chat → Add to cart → Purchase → Delivery → Support → Review → Repurchase.
 
-Một lượt xem là hoạt động của phiên, chưa phải người được xác minh. Mã đơn, email hoặc số điện thoại tự khai không đủ để xem hồ sơ riêng. Liên kết danh tính cần nguồn đáng tin trong cùng doanh nghiệp; nghi ngờ trùng thì giữ riêng, nhờ xác minh, không hợp nhất tự động.
-
-### Nguồn nào giữ giá trị chính thức?
+### Nguồn nào giữ giá trị chính thức (System of Record)?
 
 | Nguồn | Giá trị chính thức |
 |---|---|
 | Ứng dụng/CRM doanh nghiệp | Tài khoản, khách, yêu cầu, cơ hội và chủ sở hữu theo ánh xạ |
-| Danh mục/kho/hệ thống bán hàng | Sản phẩm, giá, tồn kho, đơn và điều kiện áp dụng |
-| Ngân hàng/nhà cung cấp thanh toán được chọn | Giao dịch, số tiền và trạng thái thanh toán được đối soát |
-| Hệ thống vận chuyển/phiếu hỗ trợ | Trạng thái giao hàng, vụ việc, người nhận theo khả năng nguồn |
-| Nguồn đối tác/quảng cáo | Mã nguồn, sự kiện giới thiệu, chi phí được cấp quyền |
-| AgentOS | Liên kết, hội thoại, quy trình, cấu hình, nhật ký và suy luận có nguồn |
+| Danh mục/kho/hệ thống bán hàng (ERP/POS) | Sản phẩm, SKU, giá niêm yết, tồn kho, đơn hàng và hóa đơn |
+| Ngân hàng / Cổng thanh toán (ECPay, Stripe...) | Giao dịch, số tiền và trạng thái thanh toán được đối soát |
+| Đơn vị vận chuyển / Hệ thống giao hàng | Trạng thái giao hàng, mã bưu vận, người nhận |
+| Nguồn đối tác / Kênh tiếp thị | Mã nguồn giới thiệu, sự kiện click, chi phí chiến dịch |
+| AgentOS Data Layer | Liên kết danh tính, hội thoại, quy trình, thẻ bằng chứng, suy luận AI |
 
-Phải có bảng sở hữu từng trường trước kết nối. Không tự ghi đè nguồn gốc bằng tóm tắt AI. Dữ liệu lưu đệm cần mã nguồn, phiên bản/thời điểm và hạn dùng; giá, tồn kho, quyền và trạng thái quan trọng được kiểm tra lại trước hành động.
+Phải có bảng sở hữu từng trường trước kết nối. Tuyệt đối không tự ghi đè nguồn gốc bằng tóm tắt AI. Dữ liệu lưu đệm cần mã nguồn, phiên bản/thời điểm và hạn dùng; giá, tồn kho, quyền và trạng thái quan trọng được kiểm tra lại trước hành động.
 
-## 2. Tín hiệu thị trường khác hồ sơ cá nhân
+<a id=evidence-separation></a>
 
-Phiếu nghiên cứu gồm vấn đề, phân khúc, nguồn, thời gian quan sát, tín hiệu sớm, tổ chức liên quan, giả thuyết và phép thử. Mặc định dùng dữ liệu tổng hợp, tài liệu được cấp quyền hoặc thông tin công khai phù hợp mục đích.
+## 2. Phân định bằng chứng (FR-C360-003 - Evidence Separation)
 
-Không nối một quan sát thị trường với người cụ thể chỉ bằng suy đoán. Không lấy danh sách học viên, thành viên nhóm, hồ sơ nhạy cảm hoặc dữ liệu đăng nhập để “tìm nhu cầu sớm”. Đối tác có thể được ghi như tổ chức và nguồn giới thiệu; quyền đối tác chỉ bao phủ dữ liệu cần thiết đã thỏa thuận.
+Hệ thống bắt buộc phải phân định rạch ròi 5 khái niệm dữ liệu trong Customer 360 để bảo đảm tính toàn vẹn và tránh ảo giác:
 
-Tín hiệu phải có thời hạn hữu ích. Ví dụ thời điểm chuyến đi đã qua không còn là lý do tiếp tục chăm sóc chiến dịch đó; hệ thống cần cập nhật hoặc ngừng dùng.
+- **FACT**: Dữ liệu sự thật đã được xác minh từ System of Record (đơn hàng đã thanh toán, giá niêm yết ERP, tồn kho kho hàng, biên lai bưu cục).
+- **SIGNAL**: Dấu hiệu hành vi khách quan sát được qua kênh số (xem sản phẩm 3 lần, thêm vào giỏ hàng, thời lượng phiên 10 phút, click link khuyến mãi).
+- **HYPOTHESIS**: Giả thuyết do AI suy luận dựa trên mô hình (khách hàng có nguy cơ churn 70%, sở thích thời trang công sở, độ nhạy cảm giá cao).
+- **DECISION**: Quyết định nghiệp vụ đã được Orchestrator hoặc Policy Engine xác lập (kích hoạt kịch bản giỏ hàng bỏ quên, chuyển ticket sang CSKH).
+- **ACTION**: Hành động cụ thể dự kiến hoặc đã thực thi ra kênh ngoài (gửi tin nhắn Zalo, tạo mã giảm giá 5%, tạo draft order).
 
-## 3. Đồng ý liên hệ theo mục đích
+**Quy tắc bất biến: Giả thuyết AI (HYPOTHESIS) tuyệt đối không được ghi ngược thành Sự thật khách hàng (FACT).**
+
+## 3. Phân tầng 5 cấp bộ nhớ AI (AI Memory Hierarchy)
+
+Hệ thống phân định nghiêm ngặt 5 tầng bộ nhớ để đảm bảo an toàn dữ liệu và tối ưu chi phí vận hành:
+
+1. **Working Memory (Bộ nhớ tác vụ)**: Ngữ cảnh hội thoại và dữ liệu tạm của tác vụ hiện tại (session context). Lưu trong RAM/Redis, bị giải phóng hoặc đóng băng ngay sau khi kết thúc vòng xử lý.
+2. **Customer Context (Ngữ cảnh khách hàng)**: Dữ liệu hồ sơ Customer 360 được phép nạp theo quyền hạn và phạm vi consent của khách hàng.
+3. **Organizational Knowledge (Tri thức tổ chức)**: Toàn bộ tài liệu, chính sách, playbook, quy chế kinh doanh của doanh nghiệp lưu tại Second Brain; được kiểm duyệt trước khi lập chỉ mục RAG.
+4. **Agent Operational Memory (Bộ nhớ vận hành Agent)**: Trạng thái workflow bền vững của Agent (tiến trình đang chờ `task_id`, `run_id`, biến bước, lịch hẹn gọi lại, số lần retry).
+5. **Learning Memory (Bộ nhớ học tập & cải tiến)**: Dữ liệu đánh giá hiệu quả của các hành động trước (outcome, doanh thu đóng góp, phản hồi chấm điểm từ SCR-005, tỷ lệ chuyển đổi) phục vụ tinh chỉnh prompt và trọng số mô hình.
+
+**Nguyên tắc: Không cho phép AI tự ý ghi toàn bộ nội dung hội thoại thành tri thức lâu dài mà không qua bộ lọc làm sạch và người duyệt.**
+
+## 4. Kho kiến thức doanh nghiệp (Second Brain Knowledge Base)
+
+AI Agent không được hoạt động dựa trên tri thức nội tại thiếu kiểm chứng của LLM mà phải truy xuất từ Knowledge Base phân cấp chuẩn:
+
+```text
+/company
+  company.md              # Giới thiệu doanh nghiệp, tầm nhìn, mô hình hoạt động
+  positioning.md          # Định vị thương hiệu, phân khúc thị trường
+/customer
+  customer.md             # Chân dung khách hàng mục tiêu, ICP
+  segmentation.md         # Quy tắc phân khúc cohort, tiêu chí phân loại
+/product
+  products.md             # Danh mục sản phẩm, tính năng, thông số kỹ thuật
+  pricing.md              # Bảng giá chính thức, cơ cấu chi phí
+  promotion-policy.md     # Chính sách khuyến mãi, điều kiện áp dụng
+/brand
+  voice.md                # Tone of voice, phong cách ngôn ngữ theo từng kênh
+  terminology.md          # Thuật ngữ chuẩn hóa, từ ngữ khuyến khích sử dụng
+  prohibited-claims.md    # Danh mục từ cấm, cam kết vượt thẩm quyền bị cấm
+/marketing
+  playbook.md             # Kịch bản chiến dịch, hướng dẫn tiếp thị
+  content-guidelines.md   # Tiêu chuẩn nội dung social, video, email
+  campaign-rules.md       # Giới hạn ngân sách, quy định phân bổ kênh
+/sales
+  sales-playbook.md       # Quy trình bán hàng chuẩn, kịch bản chốt đơn
+  qualification.md        # Bộ câu hỏi sàng lọc lead, tiêu chí BANT
+  objection-handling.md   # Kịch bản xử lý từ chối và phản bác giá
+/customer-care
+  faq.md                  # Bộ câu hỏi - trả lời thường gặp đã được phê duyệt
+  support-policy.md       # Chính sách bảo hành, đổi trả, giao nhận hàng
+  escalation.md           # Ma trận phân cấp xử lý sự cố, tiêu chí chuyển người
+/policy
+  authority.md            # Quy chế phân quyền Agent, hạn mức tự chủ
+  approval.md             # Ma trận phê duyệt cho các hành động rủi ro cao
+```
+
+Mỗi tài liệu bắt buộc có thông tin chủ sở hữu (owner), phiên bản (`source_version`), trạng thái phê duyệt, ngày hiệu lực và hạn dùng. AI chỉ được sử dụng tài liệu ở trạng thái đã duyệt (`approved`).
+
+Thẻ bằng chứng (Evidence Card) dùng chung gồm: phát biểu/đề xuất, loại sự kiện hay suy luận, nguồn và vị trí, phiên bản/ngày tra, điều kiện áp dụng, giới hạn và người duyệt nếu cần.
+
+## 5. Đồng ý liên hệ, Taiwan PDPA và Phân tách dữ liệu đa doanh nghiệp
+
+### Đồng ý liên hệ theo mục đích (Purpose Limitation)
 
 | Tình huống | Quy tắc thiết kế |
 |---|---|
-| Khách hỏi thông tin công khai | Có thể trả lời hợp lệ mà không ép đăng ký tiếp thị |
-| Khách đặt giao hàng | Chỉ thu thông tin giao nhận cần thiết; không tự bật quảng cáo |
+| Khách hỏi thông tin công khai | Trả lời thông tin công khai mà không ép đăng ký tiếp thị |
+| Khách đặt giao hàng | Thu thập thông tin giao nhận tối thiểu; không tự động bật quảng cáo |
 | Khách đăng ký nhận ưu đãi | Lưu kênh, mục đích, cách xác nhận, thời gian và phiên bản nội dung |
-| Khách rút đồng ý | Ngừng lịch gửi tương ứng, ghi lý do và sự kiện rút lại |
-| Chuyển mô-đun hoặc đối tác | Không mở rộng mục đích/đối tượng nhận dữ liệu chỉ vì đã có hồ sơ |
+| Khách rút đồng ý | Ngừng ngay lịch gửi tương ứng, ghi lý do và sự kiện rút lại (BR-004) |
+| Chuyển mô-đun hoặc đối tác | Không mở rộng mục đích/đối tượng nhận dữ liệu ngoài phạm vi đã duyệt |
 
-Phân loại thông báo giao dịch, quyền lợi và quảng cáo phải được người phụ trách rà soát. Mọi lần gửi kiểm tra điều kiện hiện tại, không chỉ ảnh chụp cấu hình lúc bắt đầu.
+### Phân tách dữ liệu đa doanh nghiệp (Multi-Tenant Data Isolation - NFR-006)
 
-### Lưu món chưa đăng nhập
+Hệ thống bảo đảm cô lập dữ liệu tuyệt đối giữa các tenant:
+1. **Phân tách lưu trữ**: Mỗi tenant sở hữu schema cơ sở dữ liệu riêng biệt hoặc được gắn nhãn `tenant_id` bắt buộc tại mọi tầng truy vấn, không bao giờ thực thi truy vấn thiếu điều kiện `tenant_id`.
+2. **Cô lập Vector Embedding**: Không gian embedding của các tenant được lưu trữ trong các namespace hoặc index hoàn toàn độc lập; RAG không thể tìm kiếm chéo tri thức giữa các doanh nghiệp.
+3. **Cô lập bộ nhớ đệm và tiến trình**: Cache Redis và hàng đợi tác vụ được đánh tiền tố theo tenant; không chia sẻ ngữ cảnh bộ nhớ runtime giữa các khách hàng khác nhau.
 
-Chỉ áp dụng khi bật tính năng sau P1. Bộ nhớ trình duyệt chỉ lưu mã sản phẩm và phiên bản dữ liệu cần thiết, không lưu hồ sơ, khóa dịch vụ hay thông tin ngân hàng.
+### Tuân thủ pháp lý Đài Loan & Quốc tế
 
-Khi đăng nhập, xác minh tài khoản → đề nghị/áp dụng cách hợp nhất đã công bố → máy chủ xác nhận → mới xóa bản tạm. Hợp nhất lỗi thì không xóa mất dữ liệu. Thiết bị dùng chung cần cách xóa và xử lý đăng xuất; mã phiên không phải bằng chứng danh tính.
+- **Đài Loan (Taiwan PDPA)**: Triển khai cụm máy chủ và cơ sở dữ liệu tại GCP Changhua hoặc AWS Region Taipei; tuân thủ đầy đủ quy định về lưu trữ dữ liệu cá nhân tại chỗ, quyền xóa dữ liệu và quyền xuất dữ liệu của chủ thể.
+- **Quốc tế**: Hỗ trợ phân vùng dữ liệu theo khu vực tuân thủ GDPR (Châu Âu), CCPA/CPRA (Hoa Kỳ) và luật dữ liệu sở tại.
 
-<a id=section-12></a>
-
-## 4. Kho kiến thức và thẻ bằng chứng
-
-Mỗi tài liệu cần chủ sở hữu, nguồn, phiên bản, trạng thái duyệt, quyền xem, ngày hiệu lực/hết hạn và sản phẩm liên quan.
-
-Luồng trả lời: câu hỏi → lọc doanh nghiệp/quyền/sản phẩm → tìm nguồn hiện hành → tạo câu trả lời được nguồn hỗ trợ → lưu tham chiếu. AI không tự sửa hoặc phê duyệt kho kiến thức trong lúc trả lời.
-
-| Loại nội dung | Cách sử dụng |
-|---|---|
-| Công dụng, thông số, hướng dẫn hãng | Giải thích và so sánh đúng điều kiện |
-| Câu hỏi phổ biến, xử lý lỗi | Hướng dẫn trong danh sách được duyệt |
-| Giao hàng, bảo hành, đổi trả | Giải thích chính sách; không thay quyền phê duyệt |
-| Tài liệu nội bộ | Chỉ dùng theo vai trò; không trích nội dung riêng cho khách |
-| Nghiên cứu/nhận xét thị trường | Hỗ trợ giả thuyết; không coi là chính sách hoặc sự thật về cá nhân |
-
-Thẻ bằng chứng dùng chung gồm: phát biểu/đề xuất, loại sự kiện hay suy luận, nguồn và vị trí, phiên bản/ngày tra, điều kiện áp dụng, giới hạn và người duyệt nếu cần.
-
-Ngữ cảnh AI chỉ lấy tin gần đây, tóm tắt, thông tin đã xác minh, trạng thái đang xử lý và nguồn liên quan. Không gửi cả hồ sơ chỉ vì có sẵn. Nội dung tài liệu, trang web và kết quả công cụ là dữ liệu không đáng tin về mặt chỉ dẫn; không thể cấp quyền bằng câu “bỏ qua quy tắc”.
-
-Truy xuất hai giai đoạn hoặc xếp hạng lại là lựa chọn cải thiện khi bộ thử cho thấy cần; không yêu cầu hệ thống truy xuất phức tạp ngay từ đầu. Mức tự tin AI tự báo không thay bằng chứng.
-
-<a id=section-18></a>
-
-## 5. Danh mục sản phẩm và dữ liệu giá
+## 6. Danh mục sản phẩm, dữ liệu giá và kiểm soát giá sàn
 
 Dùng API danh mục hiện có hoặc bản nhập được kiểm soát. Không tạo hệ thống sản phẩm thứ hai nếu không cần.
 
@@ -93,20 +124,21 @@ Dùng API danh mục hiện có hoặc bản nhập được kiểm soát. Khôn
 |---|---|
 | Nhận diện | Mã hàng, biến thể, phiên bản, tên, nhóm và đơn vị bán |
 | Phù hợp | Nhu cầu đáp ứng, giới hạn, tương thích, điều kiện dùng |
-| Điều khoản | Tiền tệ, giá, cách tính thuế/phí, đơn vị thời gian nếu thuê bao |
-| Khả dụng | Tồn kho/khả năng cung cấp, vùng phục vụ, thời điểm cập nhật |
+| Điều khoản | Tiền tệ, giá niêm yết, cách tính thuế/phí, đơn vị thời gian nếu thuê bao |
+| Khả dụng | Tồn kho/khả năng cung cấp thời gian thực, vùng phục vụ, thời điểm cập nhật |
 | Bằng chứng | Nguồn thông số, mô tả đã duyệt, điều kiện đo |
 | Khuyến mãi | Chương trình, điều kiện, thời hạn, cách cộng dồn |
-| Kinh tế nội bộ | Giá vốn/chi phí/giới hạn chỉ cho bộ tính giá và vai trò được phép, không đưa nguyên vào ngữ cảnh khách |
+| Kinh tế nội bộ | Giá vốn/chi phí/giới hạn giá sàn ($P_{floor}$), chỉ cho bộ tính giá và vai trò được phép |
 
-Thiếu giá hoặc điều kiện quan trọng thì không phát hành báo giá tự động. Lưu phiên bản/ảnh chụp điều khoản với đề xuất; kiểm tra lại trước tạo đơn. Công thức giá sàn ở [đo lường](../delivery/analytics.md#unit-economics), quyền thực thi ở [Bán hàng](../modules/sales.md).
+Thiếu giá hoặc điều kiện quan trọng thì không phát hành báo giá tự động (BR-001, BR-002, BR-003). Lưu phiên bản/ảnh chụp điều khoản với đề xuất; kiểm tra lại trước tạo đơn. Công thức giá sàn ở [đo lường](../delivery/analytics.md#unit-economics), quyền thực thi ở [Bán hàng](../modules/sales.md).
 
-## 6. Vòng đời dữ liệu và kiểm thử
+## 7. Vòng đời dữ liệu và kiểm thử nghiệm thu
 
-1. Tài liệu mới chưa duyệt không được dùng trả lời.
-2. Nguồn hết hạn, thu hồi quyền hoặc bị gỡ phải bị loại khỏi truy xuất và bộ nhớ đệm liên quan.
-3. Yêu cầu xuất/xóa dữ liệu phải bao phủ bản lưu, tệp, chỉ mục dẫn xuất, bản sao lưu theo thời hạn và nhật ký theo chính sách được duyệt; không hứa xóa tức thì mọi bản sao nếu chưa có cơ chế.
-4. Ghi rõ thời hạn lưu, vai trò truy cập, dữ liệu gửi nhà cung cấp AI và quy trình sự cố.
-5. Không dùng dữ liệu giữa doanh nghiệp hoặc huấn luyện lại cho mục đích khác nếu chưa có quyền thích hợp.
-
-Kiểm thử phải chứng minh không truy xuất chéo doanh nghiệp, không xem đơn bằng mã tự khai, không dùng tài liệu bị gỡ, không hợp nhất danh tính mơ hồ, không mất danh sách món khi hợp nhất lỗi và không tiếp tục gửi sau rút đồng ý.
+1. **Kiểm duyệt tri thức**: Tài liệu mới chưa duyệt tuyệt đối không được dùng để trả lời khách hàng.
+2. **Loại bỏ nguồn lỗi thời**: Nguồn hết hạn, thu hồi quyền hoặc bị gỡ bỏ phải bị loại lập tức khỏi chỉ mục truy xuất RAG và bộ nhớ đệm liên quan.
+3. **Quyền chủ thể dữ liệu**: Yêu cầu xuất/xóa dữ liệu phải bao phủ bản lưu Customer 360, tệp, chỉ mục vector và bản sao lưu theo chính sách được duyệt.
+4. **Không đào tạo chéo**: Không dùng dữ liệu giữa doanh nghiệp để huấn luyện mô hình hoặc chia sẻ cho bên thứ ba khi chưa có thỏa thuận pháp lý.
+5. **Kiểm thử nghiệm thu**:
+   - Chứng minh không xảy ra tình trạng rò rỉ dữ liệu chéo tenant (NFR-006).
+   - Chứng minh giả thuyết AI không bị lưu đè thành Customer Fact (FR-C360-003).
+   - Chứng minh hệ thống ngừng hoàn toàn việc gửi thông điệp sau khi khách hàng rút đồng ý (BR-004, TC-E2E-007).

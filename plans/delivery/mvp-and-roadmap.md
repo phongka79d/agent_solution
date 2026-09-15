@@ -2,17 +2,31 @@
 
 [Mục lục](../README.md) · [Bản dễ hiểu](../plan-easy-read-flow.md) · [Đo lường](analytics.md)
 
-Trạng thái: kế hoạch đề xuất, chưa triển khai. P0–P3 là giai đoạn theo điều kiện nghiệm thu, không phải lịch phát hành đã cam kết.
+Trạng thái: kế hoạch đề xuất theo chuẩn SRS v0.1 (AI-REV-SRS-001). P0–P5 là giai đoạn theo cổng nghiệm thu kỹ thuật và thương mại, không phải lịch phát hành cố định chưa kiểm chứng.
 
 <a id=section-21></a>
 
 ## 1. Bản đầu: một hành trình nhỏ chạy được
 
-Mục tiêu P1: Bán hàng tư vấn trong website hiện có của một doanh nghiệp, có Chăm sóc cơ bản, dữ liệu đúng quyền, nhân viên tiếp quản và báo cáo kiểm tra được.
+Mục tiêu P1: Bán hàng tư vấn và Chăm sóc cơ bản trong website/kênh hiện có của doanh nghiệp mỏ neo, đảm bảo dữ liệu đúng quyền, nhân viên tiếp quản trơn tru và báo cáo kiểm tra được.
 
-Đề xuất ưu tiên B2C từ PDF; ngành/doanh nghiệp chưa chốt. Nếu chọn bán hàng B2B cần tư vấn, dùng cấu hình nhu cầu–ngân sách–người quyết định–thời điểm và lịch hẹn. Không triển khai hai hành trình riêng đồng thời trong một lần thử.
+Đề xuất ưu tiên B2C từ PDF; hành trình thí điểm mỏ neo tại Đài Loan tập trung vào Hàng tiêu dùng (FMCG) và Xe máy điện thông minh (Mobility). Nếu chọn bán hàng B2B cần tư vấn, dùng cấu hình nhu cầu–ngân sách–người quyết định–thời điểm và lịch hẹn. Không triển khai hai hành trình riêng đồng thời trong một lần thử.
 
-Thay đổi so với kế hoạch cũ đã được ghi ở [mục lục hợp nhất](../README.md): giữ Bán hàng trước, nhưng không bắt buộc LINE hoặc lịch hẹn cho mọi doanh nghiệp; nghiên cứu thị trường thủ công được đưa lên P0. Việc viết lại kế hoạch không đồng nghĩa phê duyệt kết nối, chạy quảng cáo hoặc giao dịch thật.
+### 1.1. Tiêu chuẩn hoàn thành cấp hệ thống (System-level Definition of Done)
+
+Hệ thống không được coi là hoàn thành chỉ vì Agent có khả năng trò chuyện (chat). Một năng lực (capability) hoặc quy trình nghiệp vụ chỉ đạt chuẩn nghiệm thu khi chứng minh được đầy đủ 10 thành tố thực tế:
+
+> **Data thật + Agent thật + Skill thật + Tool thật + Policy thật + Approval thật + Execution thật + Evidence thật + Outcome thật + Test thật.**
+
+Mục tiêu cốt lõi là thiết lập một **AI Revenue Workforce** có khả năng trực tiếp tham gia vận hành Tiếp thị, Bán hàng và Chăm sóc khách hàng với mức tự động hóa cao, nhưng mọi quyền thực thi đều có giới hạn, có thể kiểm soát và truy vết tuyệt đối.
+
+### 1.2. Bốn kịch bản thí điểm nghiệm thu (Acceptance Pilots)
+
+Theo Mục 21 của SRS v0.1, hệ thống thiết kế 4 kịch bản nghiệm thu mẫu:
+- **PILOT-01 — Tiếp thị → Bán hàng (Marketing → Sales):** Customer Signal → Segment → Campaign → Content → Approval → Send/Publish → Customer Response → Sales Conversation → Recommendation → Order → Revenue Evidence.
+- **PILOT-02 — Phục hồi giỏ hàng (Cart Recovery):** Abandoned Cart → Customer Context → Eligibility → Recommendation → Message → Conversion → Order → Attribution.
+- **PILOT-03 — Chăm sóc khách hàng (Customer Care):** Customer Question → Intent Detection → Customer Identification → ERP/Order Lookup → AI Resolution → Customer Response → Case Outcome.
+- **PILOT-04 — Khiếu nại & Chuyển cấp (Escalation):** Complaint → Classification → Policy Check → AI unable/unauthorized → Human Escalation → Resolution → Outcome.
 
 ### Phạm vi bật trong P1
 
@@ -89,6 +103,18 @@ Không có trong P1: toàn bộ Tiếp thị tự động, nhiều kênh đồng
 
 Không cần doanh nghiệp thật thứ hai để thử khả năng tách dữ liệu; dùng hai cấu hình thử trên cùng bản phần mềm. Không sao chép dữ liệu khách thật giữa chúng.
 
+### 3.1. Bộ giả định bắt buộc phải khóa trước Production (Mandatory Assumptions)
+
+Theo Mục 26 của SRS v0.1 (AI-REV-SRS-001), các giả định dưới đây bắt buộc phải được chủ trì (Owner) xác nhận và hành động trước khi triển khai vận hành thương mại:
+
+| Mã giả định | Tên giả định cần khóa | Người chịu trách nhiệm (Owner) | Hành động nghiệp vụ bắt buộc |
+|---|---|---|---|
+| **ASM-001** | Danh sách cổng kết nối Production (Connectors) | Product / IT | Rà soát và kiểm toán danh sách API, quyền hạn, token, webhook và chính sách nền tảng thực tế (Facebook, LINE OA, Zalo, TikTok, Shopify, WooCommerce, ERP, POS, Payment Gateways). |
+| **ASM-002** | Đường cơ sở KPI và chỉ tiêu cam kết (KPI Baselines & Targets) | Business / Commercial Lead | Thu thập dữ liệu vận hành lịch sử để thiết lập đường cơ sở (baseline) thực tế trước khi cam kết các chỉ tiêu tăng trưởng (conversion rate, response time, CSAT, CAC, ROAS). |
+| **ASM-003** | Ngưỡng chiết khấu & khuyến mãi của AI (Discount & Promotion Thresholds) | Business / Finance | Ban hành hạn mức giảm giá tối đa ($D_{cap}$), trần ưu đãi đơn hàng cá nhân (Basket Cap), tỷ suất lãi đóng góp tối thiểu ($m$) và ngân sách trợ cấp; AI cấm vượt ngưỡng nếu không có Human Approval. |
+| **ASM-004** | Phê duyệt hoàn tiền & đền bù (Refund & Compensation Approval) | Finance / Operations | Xác định rõ các trường hợp hoàn tiền, phát hành voucher đền bù bắt buộc phải có phê duyệt của con người; cấm tuyệt đối AI tự ý kích hoạt hoàn tiền hoặc cấp bù ngoài thẩm quyền. |
+| **ASM-005** | Thời hạn và phạm vi lưu trữ dữ liệu Customer360 (Data Retention Policy) | Data / Legal / Product | Ban hành danh mục các trường dữ liệu định danh, lịch sử giao dịch và ngữ cảnh hội thoại được phép lưu trữ lâu dài theo luật bảo vệ dữ liệu (Taiwan PDPA / GDPR / CCPA); cấm AI tự ghi toàn bộ hội thoại thành fact vĩnh viễn. |
+
 ## 4. Kiểm thử và điều kiện chạy thử
 
 | Nhóm | Bằng chứng bắt buộc |
@@ -104,6 +130,22 @@ Không cần doanh nghiệp thật thứ hai để thử khả năng tách dữ 
 | Chất lượng dữ liệu | Giá cũ, tài liệu chưa duyệt/bị gỡ, danh tính mơ hồ và thiếu nguồn xử lý đúng |
 | Phục hồi | Ngắt năng lực và quay lại cấu hình không phát lại tin, đơn hoặc thanh toán |
 | Đo lường | Mẫu tính tay khớp; hiển thị số chờ, loại trừ, dữ liệu thiếu và chi phí có nguồn |
+
+### 4.1. Bộ kiểm thử chấp nhận E2E cấp hệ thống (System Acceptance Tests)
+
+Theo Mục 22 của SRS v0.1, hệ thống phải vượt qua toàn bộ 9 ca kiểm thử E2E bắt buộc trước khi đóng cổng Gate:
+
+| Mã kiểm thử | Tên kịch bản E2E | Phạm vi & Tiêu chí nghiệm thu (Pass Criteria) |
+|---|---|---|
+| **TC-E2E-001** | Luồng xử lý tín hiệu khép kín E2E | Một tín hiệu (signal) đi trọn vẹn chuỗi: **Signal → Decision → Action → Execution → Evidence → Outcome**. Mọi bước đều có log liên kết đồng nhất qua `trace_id`. |
+| **TC-E2E-002** | Kiểm soát phê duyệt Tiếp thị | Marketing Agent tuyệt đối không thể xuất bản (publish) nội dung hoặc kích hoạt chiến dịch nếu thiếu thẩm quyền (authority) hoặc chưa có phê duyệt (human approval) theo chính sách. |
+| **TC-E2E-003** | Toàn vẹn giá bán chính thức | Sales Agent không thể đưa ra mức giá, chiết khấu hoặc điều kiện bán hàng không có trong nguồn dữ liệu chính thức (Catalog/ERP/Price Rules); không bịa đặt hoặc phá giá sàn. |
+| **TC-E2E-004** | Xác minh danh tính chăm sóc khách hàng | Customer Care Agent chỉ tra cứu và hiển thị dữ liệu đơn hàng/tài khoản đối với khách hàng đã được xác minh danh tính; cấm rò rỉ dữ liệu giữa các khách hàng khác nhau. |
+| **TC-E2E-005** | Chống trùng lặp hành động (Idempotency) | Thực hiện lại cùng một yêu cầu thực thi (retry execution request do timeout/lỗi mạng) không được tạo tin nhắn gửi trùng hoặc phát sinh giao dịch/đơn hàng ngoài ý muốn lần hai. |
+| **TC-E2E-006** | Từ chối và ghi vết vượt quyền | Bất kỳ hành vi nào của AI cố vượt thẩm quyền hoặc vi phạm chính sách bảo mật đều phải bị hệ thống từ chối lập tức (**DENY**) và tự động phát sinh sự kiện kiểm toán bảo mật (Security Audit Event). |
+| **TC-E2E-007** | Triệt tiêu liên hệ thiếu đồng ý (Suppression) | Khách hàng chưa cấp sự đồng ý (consent) hoặc đã rút phép nhận tin (opt-out) phải bị hệ thống triệt tiêu liên hệ tự động; cấm gửi tin tiếp thị hoặc tin nhắc ngoài ý muốn. |
+| **TC-E2E-008** | Xử lý lỗi cổng kết nối trung thực | Khi cổng kết nối (Connector) bên thứ ba gặp sự cố (lỗi mạng, HTTP 5xx, token hết hạn), hệ thống phải chuyển sang trạng thái failure/retry; tuyệt đối cấm ghi nhận thành công giả. |
+| **TC-E2E-009** | Khả năng truy vết ngược toàn diện | Mỗi hành động thành công đều phải cho phép truy ngược 100%: **Trigger → Context → Decision → Approval → Execution → Evidence → Outcome**, kèm đầy đủ tham số, chi phí và độ trễ. |
 
 Chạy lại bộ tình huống cố định sau thay đổi lời hướng dẫn AI, công cụ, danh mục, kiến thức, cấu hình hoặc quy trình. Mỗi ca thử phải có dữ liệu đầu vào, kết quả mong đợi, kết quả thực, bằng chứng, người kiểm và trạng thái đạt/không đạt/chưa chạy.
 
@@ -131,14 +173,18 @@ Lưu phiên bản phần mềm/cấu hình/tài liệu, vết yêu cầu–kết
 
 <a id=section-22></a>
 
-## 5. Lộ trình theo bằng chứng
+## 5. Lộ trình theo bằng chứng & Cổng kỹ thuật P0–P5
 
-| Giai đoạn | Mục tiêu | Phạm vi | Điều kiện ra |
+Lộ trình kết hợp chặt chẽ giữa 6 Cổng kỹ thuật nghiêm ngặt theo SRS v0.1 và Chiến lược thương mại hóa B2B SaaS toàn cầu:
+
+| Giai đoạn | Mục tiêu kỹ thuật & thương mại | Phạm vi triển khai | Cổng ra nghiệm thu (Exit Gate) |
 |---|---|---|---|
-| P0 — Hiểu nhu cầu & Cấu hình | Chọn đúng bài toán & chuẩn bị hạ tầng | Nghiên cứu thủ công có AI soạn nháp; phiếu cơ hội; chuẩn bị môi trường Multi-tenant; thiết lập tài liệu và bộ quy tắc giá sàn | Có vấn đề thật, giải pháp khả thi, người chịu trách nhiệm, dữ liệu và phép thử |
-| P1 — Thí điểm mỏ neo Đài Loan (Taiwan Anchor Pilot) | Chứng minh hiệu quả thực tế trên thị trường nội địa | Triển khai B2C cho đối tác Đài Loan (FMCG & Xe máy điện); kết nối LINE OA, ECPay, 7-Eleven CVS COD, bộ tính trợ cấp xe điện O2O | Qua bộ kiểm thử, nhân viên tiếp quản trơn tru, thu thập đầy đủ bộ chỉ số thực nghiệm tại [analytics.md](analytics.md) |
-| P2 — Chuẩn hóa Vertical SaaS & Plug-and-Play Adapters | Tách rời lõi và cơ chế phích cắm đa quốc gia | Đóng gói 2 gói ngành dọc (**AgentOS Mobility** & **AgentOS FMCG**); xây dựng 3 cổng kết nối cắm-rút (WhatsApp Business API, Stripe/PayPal, GDPR/CCPA) | Hoán đổi thành công cổng kết nối mà không sửa Core Engine; vượt qua kiểm thử bảo mật và phân tách schema đa doanh nghiệp |
-| P3 — Tăng trưởng toàn cầu qua App Store & Social Proof | Nhân rộng quy mô cho $N$ doanh nghiệp quốc tế | Đóng gói ứng dụng 1-chạm trên **Shopify App Store** và **WooCommerce Marketplace**; xuất bản Case Study Đài Loan làm đòn bẩy bán hàng B2B | Tự động hóa onboarding merchant toàn cầu, vận hành ổn định trên quy mô lớn, chi phí AI/đơn tối ưu |
+| **P0 — Hạ tầng nền tảng & Hợp đồng chuẩn hóa (Foundation & Canonical Contracts)** | Chuẩn hóa giao diện dữ liệu, kiến trúc lõi đa doanh nghiệp (Multi-tenant) và chuẩn bị hạ tầng kiểm soát giá sàn. | Canonical contracts cho Customer360, Agent, Skill, Decision, Action, Approval, Evidence, Outcome; Connector Framework; Policy Engine; phân tách schema dữ liệu; nghiên cứu thị trường thủ công có AI soạn nháp; bộ quy tắc giá sàn và chi phí cơ sở. | Agent chưa cần thông minh nhất nhưng tuyệt đối không được vượt quyền hoặc mất dấu vết truy vết (Traceability). Vượt qua kiểm thử cô lập dữ liệu 2 doanh nghiệp; không có ca kiểm thử nào lọt lỗi ranh giới bảo mật. |
+| **P1 — Thí điểm mỏ neo Đài Loan: Customer Care & Sales (Taiwan Anchor Pilot)** | Chứng minh hiệu quả vận hành thực tế trên thị trường nội địa Đài Loan cho 2 ngành FMCG và Xe máy điện thông minh (Mobility). | Triển khai B2C cho đối tác Đài Loan; Conversation Agent, intent, identity, ERP/Order lookup, FAQ, escalation bàn giao người (PILOT-03, PILOT-04); kết nối LINE OA, ECPay, 7-Eleven CVS COD, bộ tính trợ cấp xe điện O2O, cọc lái thử showroom; ngân sách AI 0.5–1 TWD/phiên. | Một hội thoại thật được xử lý E2E và có bằng chứng (evidence) xác thực từ ERP nguồn; nhân viên tiếp quản trơn tru; thu thập đầy đủ bộ chỉ số thực nghiệm tại [analytics.md](analytics.md). |
+| **P2 — Sales Pilot & Chuẩn hóa Vertical SaaS + Plug-and-Play Adapters** | Chứng minh chuyển đổi doanh thu từ AI Sales (PILOT-02) và tách rời lõi thông qua cơ chế Adapter cắm-rút đa quốc gia. | Chấm điểm nhu cầu (qualification), tra cứu sản phẩm, đề xuất giỏ hàng, phục hồi giỏ hàng bỏ quên, cross-sell/upsell, hỗ trợ chốt đơn; đóng gói 2 gói chuyên ngành (**AgentOS Mobility** & **AgentOS FMCG**); xây dựng 3 cổng cắm-rút (WhatsApp Business API, Stripe/PayPal, GDPR/CCPA). | Chứng minh chuỗi: AI action → order → revenue evidence; hoán đổi thành công cổng kết nối mà không sửa Core Engine; vượt qua kiểm thử cô lập dữ liệu đa doanh nghiệp; thỏa mãn TC-E2E-003 và TC-E2E-005. |
+| **P3 — Marketing Pilot & Phân phối 1-chạm qua App Store (Shopify & WooCommerce)** | Kích hoạt Tiếp thị tự động có kiểm duyệt (PILOT-01) và mở rộng kênh phân phối 1-chạm B2B SaaS toàn cầu. | Phân tập khách hàng (audience segment), tạo chiến dịch, sinh nội dung có human approval gate, phát hành đa kênh (Facebook, TikTok, Email), quy thuộc doanh thu (attribution); đóng gói ứng dụng 1-chạm trên Shopify App Store và WooCommerce Marketplace; dùng Case Study Đài Loan làm đòn bẩy B2B. | Tự động hóa quy trình onboarding merchant toàn cầu; chiến dịch Marketing chạy E2E có approval 100%; thỏa mãn TC-E2E-002; attribution doanh thu chuẩn xác, không suy đoán. |
+| **P4 — Điều phối liên miền (Cross-domain Orchestration)** | Kết nối liền mạch chuỗi giá trị: Tiếp thị → Bán hàng → Chăm sóc khách hàng → Customer Success / Giữ chân (Retention). | Revenue Orchestrator đồng bộ ngữ cảnh Customer360 xuyên suốt các Agent; tự động chuyển tiếp tín hiệu từ chiến dịch tiếp thị sang hội thoại tư vấn bán hàng, chuyển trạng thái đơn hàng sang CSKH, kích hoạt chu kỳ bảo dưỡng, tích điểm đơn 2 và chống rời bỏ (churn prevention). | Toàn bộ hành trình khách hàng xuyên suốt 3 Agent duy trì thống nhất Customer360 Context mà không thất thoát dữ liệu; đạt chuẩn TC-E2E-001 và TC-E2E-009 trên luồng liên phòng ban. |
+| **P5 — Tự chủ có kiểm soát & Tăng trưởng quy mô toàn cầu (Controlled Autonomy & Global Scale)** | Nâng cấp cấp độ tự động hóa an toàn cho $N$ doanh nghiệp toàn cầu trên hạ tầng Serverless/Multi-tenant. | Hành động rủi ro thấp đủ điều kiện được nâng từ *Recommend* → *Draft* → *Auto Execute*; hành động rủi ro cao (hoàn tiền, giảm giá ngoài khung, khiếu nại nghiêm trọng) bắt buộc giữ Human Approval; tự động hóa mở rộng quy mô, tối ưu token cost và bảo vệ biên lợi nhuận ròng. | Vận hành ổn định ở quy mô lớn với tỷ lệ tự động hóa cao; 0 vi phạm chính sách vượt quyền (Policy Violation Rate = 0%); chi phí AI trên mỗi kết quả thành công đạt định mức kinh tế đơn vị; 100% rủi ro cao tuân thủ cổng duyệt. |
 
 Lộ trình được dẫn dắt bằng dữ liệu thực nghiệm: kết quả đo lường định lượng từ P1 tại Đài Loan là điều kiện tiên quyết để đóng gói và mở rộng thương mại sang P2 và P3.
 
@@ -157,6 +203,17 @@ Lộ trình được dẫn dắt bằng dữ liệu thực nghiệm: kết quả
 
 <a id=section-23></a>
 
-## 6. Quyết định tiếp theo
+## 6. Quyết định tiếp theo & Quy trình Handoff triển khai
 
 Điền tên doanh nghiệp và website ở [phiếu đầu vào](#pilot-inputs). Sau khi chọn hành trình, chốt một kết quả có thể kiểm tra rồi mới ước lượng công tích hợp. Các công việc trong tài liệu này chưa được đánh dấu đã làm.
+
+### 6.1. Quy trình Handoff 7 bước triển khai đề xuất
+
+Theo Mục 28 của SRS v0.1, các nhóm chuyên môn thực hiện chuyển giao theo quy trình:
+1. **Business / BA**: Khóa danh sách KPI, cổng kết nối (Connectors), ngưỡng phê duyệt (Approval Thresholds) và phạm vi dữ liệu được phép sử dụng (ASM-001..ASM-005).
+2. **Solution Architect**: Khóa Canonical Contracts cho Customer360, Agent, Skill, Decision, Action, Approval, Evidence và Outcome.
+3. **AI Engineering**: Xây dựng Revenue Orchestrator, Agent Runtime, Knowledge/Skill Framework và bộ công cụ đánh giá tự động (Evaluation Harness).
+4. **Backend / Integration**: Xây dựng API Gateway, Event Ingestion Pipeline, hệ thống Connector cắm-rút và cơ chế thực thi Idempotent chống trùng lặp.
+5. **Frontend**: Phát triển Human Command Center gồm Executive Dashboard, Agent Operations, Approval Center, Customer360 Timeline và Conversation Console.
+6. **QA / Testing**: Thiết lập bộ Acceptance Test Suite tự động hóa từ TC-E2E-001..TC-E2E-009 kèm các bộ kiểm thử phủ định (Negative / Adversarial Tests).
+7. **Triển khai Pilot Production-like**: Vận hành thử nghiệm theo đúng thứ tự cổng Gate: Customer Care → Sales → Marketing → Cross-domain Orchestration → Controlled Autonomy.

@@ -8,32 +8,84 @@ Trạng thái: thiết kế đề xuất. P1 có hỏi đáp cơ bản, hướng
 
 ## 1. Mục tiêu và ranh giới
 
-Giúp khách dùng sản phẩm thành công, xử lý vấn đề nhất quán và được gặp nhân viên khi cần. Hỗ trợ là một phần của sản phẩm, không phải điểm cuối sau bán.
+Giúp khách dùng sản phẩm thành công, xử lý vấn đề nhất quán và được gặp nhân viên khi cần. Hỗ trợ là một phần của sản phẩm, không phải điểm cuối sau bán (khớp mục tiêu **OBJ-003** và **OBJ-004** trong SRS).
 
-Chăm sóc có thể nhận câu hỏi trước mua. Câu hỏi công dụng chung dùng nguồn đã duyệt; khi khách cần đề xuất thương mại hoặc mua hàng, bàn giao Bán hàng nếu bật, nếu không thì chuyển nhân viên. Không trì hoãn giải quyết khiếu nại để bán thêm.
+Chăm sóc có thể nhận câu hỏi trước mua. Câu hỏi công dụng chung dùng nguồn đã duyệt; khi khách cần đề xuất thương mại hoặc mua hàng, bàn giao Bán hàng (SAL-02) nếu bật, nếu không thì chuyển nhân viên. Không trì hoãn giải quyết khiếu nại để bán thêm. Mọi hành vi tra cứu phải tuân thủ nguyên tắc cô lập dữ liệu khách hàng (**NFR-006**) và xử lý an toàn thất bại (**NFR-008 - Fail Closed**).
 
-## 2. Luồng xử lý chuẩn
+## 2. Hệ thống Agent Chăm sóc & Giữ chân khách hàng (CS-01 & CS-02)
 
-1. Kiểm tra mô-đun bật, người đang phụ trách và yêu cầu gặp người thật.
-2. Với câu hỏi chung, dùng kiến thức công khai; trước khi đọc đơn/tài khoản riêng, xác minh đúng khách.
-3. Đọc phần ngữ cảnh cần thiết qua kết nối được phép; nếu chưa có kết nối đơn thì không hứa tra được đơn.
-4. Tìm tài liệu hiện hành đã duyệt, đúng sản phẩm/phiên bản.
-5. Trả lời hoặc hướng dẫn các bước được cho phép; ghi bước đã thử và kết quả.
-6. Hỏi khách vấn đề đã giải quyết chưa. Chưa xác nhận thì giữ mở/đang chờ, không đóng vì đã gửi câu trả lời.
-7. Khi thiếu nguồn, hướng dẫn không hiệu quả, vấn đề rủi ro hoặc khách yêu cầu, tạo hàng đợi nhân viên kèm ngữ cảnh.
-8. Chỉ đánh dấu giải quyết bằng xác nhận của khách hoặc kết quả nhân viên có bằng chứng theo quy trình; ghi riêng nếu phải mở lại.
+Mô-đun vận hành với 2 Agent chủ lực chịu trách nhiệm xuyên suốt chuỗi hỗ trợ và duy trì quan hệ khách hàng:
 
-## 3. Dữ liệu và đầu ra
+### 2.1. CS-01 - Omnichannel Customer Care Agent
 
-| Đầu vào | Cách dùng |
-|---|---|
-| Khách/phiên và bằng chứng xác minh | Giới hạn quyền xem dữ liệu riêng; mã đơn tự khai không đủ |
-| Vấn đề, mong muốn, mức ảnh hưởng | Chọn câu hỏi, hướng dẫn và mức ưu tiên |
-| Sản phẩm, tài liệu, phiên bản | Trả lời có nguồn; không dùng hướng dẫn khác mẫu |
-| Lịch sử, người phụ trách, bước đã thử | Tránh hỏi lại, không trả lời chồng nhân viên |
-| Đơn, vận chuyển, phiếu hỗ trợ nếu có kết nối | Chỉ trình bày trạng thái được nguồn gốc xác nhận |
+Tiếp nhận tương tác đa kênh: Web Chat, Mobile App, mạng xã hội (Facebook, TikTok Shop), Zalo OA, LINE OA, Email và các connector được phê duyệt.
 
-Đầu ra phải có câu trả lời và nguồn, phần chưa biết, bước đã thử, vụ việc/hàng đợi, người phụ trách và bước tiếp theo. Nếu tạo phiếu hỗ trợ ở hệ thống ngoài, phải có mã được nhà cung cấp xác nhận; nếu lỗi, dùng hàng đợi nội bộ có trạng thái rõ.
+**FR-CS-001 - MUST: Nhận biết tối thiểu 10 nhóm Intent chuẩn:**
+1. **Hỏi thông tin sản phẩm (Product Info):** Tính năng, công dụng, thông số kỹ thuật đã kiểm duyệt.
+2. **Tra cứu giá & ưu đãi (Price & Promotions):** Bảng giá niêm yết, chính sách khuyến mãi hiện hành.
+3. **Kiểm tra tồn kho (Stock Availability):** Khả dụng của SKU tại các kho hoặc cửa hàng gần nhất.
+4. **Trạng thái đơn hàng (Order Status):** Xác nhận đơn, đang đóng gói, mã vận đơn, thời gian giao dự kiến.
+5. **Giao hàng & vận chuyển (Shipping Tracking):** Định vị đơn, đổi điểm nhận hàng siêu thị tiện lợi (CVS).
+6. **Đổi / Trả / Hoàn tiền (Return & Refund):** Quy trình trả hàng, chính sách bảo hành, hoàn tiền.
+7. **Xử lý sự cố thanh toán (Payment Issue):** Thanh toán lỗi, trùng lệnh, chưa nhận tiền mặt CVS COD.
+8. **Tiếp nhận khiếu nại (Complaint Management):** Hàng lỗi, thái độ phục vụ, sai sót giao vận.
+9. **Hướng dẫn sử dụng & kỹ thuật (Usage & Technical Support):** Hướng dẫn kích hoạt, xử lý sự cố cơ bản.
+10. **Yêu cầu gặp nhân viên (Human Escalation):** Khách chủ động đòi gặp người thật hoặc vấn đề vượt thẩm quyền.
+
+**FR-CS-002 - MUST: Ma trận định tuyến quyết định của CS-01:**
+- **Tự trả lời (AUTH-3):** Đối với câu hỏi FAQ, chính sách công khai đã được duyệt trong `/customer-care/faq.md`.
+- **Tra cứu dữ liệu (AUTH-0):** Đọc trạng thái đơn hàng, vận chuyển qua API ERP/WMS sau khi đã xác minh danh tính khách hàng thành công (**TC-E2E-004**).
+- **Thực thi hành động giới hạn (AUTH-3):** Cập nhật ghi chú giao hàng, tạo yêu cầu đổi trả theo điều kiện có sẵn.
+- **Bàn giao Agent khác:** Chuyển sang Sales (SAL-02/SAL-03) khi khách phát sinh nhu cầu mua sắm mới; chuyển sang CS-02 khi phát hiện tín hiệu cần giữ chân.
+- **Chuyển người thật (Human Escalation):** Khiếu nại nghiêm trọng, tranh chấp pháp lý, khách kích động, hoặc hệ thống thiếu dữ liệu xác thực.
+
+### 2.2. CS-02 - Retention / Customer Success Agent
+
+Chủ động phát hiện các nguy cơ rời bỏ hoặc cơ hội mở rộng giá trị vòng đời: khách ngừng tương tác (inactivity), giảm tần suất mua sắm, khách không hài lòng (dissatisfaction), đơn hàng lỗi/hủy (failed order), khiếu nại lặp lại (repeated complaint), cơ hội mua bổ sung (replenishment) và thu hồi khách cũ (win-back).
+
+**FR-CS-003 - MUST: Quy trình vận hành 6 bước chuẩn (Retention Workflow):**
+```text
+[Signal] (Phát hiện tín hiệu bất thường trên Customer 360 Timeline)
+   │
+   ▼
+[Hypothesis] (Xây dựng giả thuyết nguyên nhân; không ghi đè thành Fact)
+   │
+   ▼
+[Recommended Action] (Đề xuất Next-Best-Action: hỏi thăm, bù giá, ưu đãi cá nhân hóa)
+   │
+   ▼
+[Eligibility Check] (Kiểm tra chính sách, consent, hạn mức ngân sách điểm thưởng)
+   │
+   ▼
+[Execution / Approval] (AUTH-3 tự thực thi nếu trong hạn mức; AUTH-4 trình người duyệt nếu chi phí lớn)
+   │
+   ▼
+[Outcome] (Đo lường phản hồi của khách, tỷ lệ giữ chân và ghi nhận vào Learning Memory)
+```
+
+## 3. Hệ thống Quản lý Vụ việc (Case Management State Machine)
+
+Mọi yêu cầu hỗ trợ hoặc khiếu nại đều được theo dõi dưới dạng Case có cấu trúc, vận hành theo State Machine 7 trạng thái chuẩn:
+
+```text
+[NEW] ──► [CLASSIFIED] ──► [ASSIGNED] ──► [IN_PROGRESS] ──► [WAITING_CUSTOMER] ──► [RESOLVED] ──► [CLOSED]
+                                │               ▲                    │
+                                └───────────────┴────────────────────┘
+```
+
+### 3.1. Đặc tả 7 trạng thái vòng đời Case
+1. **NEW:** Vụ việc mới được khởi tạo từ tin nhắn/yêu cầu của khách qua kênh bất kỳ.
+2. **CLASSIFIED:** CS-01 đã phân loại Intent, gắn nhãn mức độ ưu tiên (P1-Khẩn cấp đến P4-Thấp) và liên kết hồ sơ khách hàng.
+3. **ASSIGNED:** Hệ thống phân bổ quyền xử lý cho Agent (CS-01/CS-02) hoặc nhân viên hỗ trợ chuyên trách.
+4. **IN_PROGRESS:** Đang tích cực tra cứu dữ liệu, hướng dẫn khách hàng hoặc xử lý nghiệp vụ với các bên liên quan.
+5. **WAITING_CUSTOMER:** Tạm dừng tính SLA chờ phản hồi hoặc cung cấp thêm thông tin từ phía khách hàng.
+6. **RESOLVED:** Đã cung cấp giải pháp hoặc hoàn tất xử lý; chờ xác nhận hài lòng từ khách hàng.
+7. **CLOSED:** Khách hàng xác nhận hài lòng hoặc quá thời gian quy định sau giải quyết mà không có khiếu nại thêm.
+
+### 3.2. Cấu trúc dữ liệu Case bắt buộc
+Mỗi Case phải lưu trữ tối thiểu các trường dữ liệu:
+`Case_Record = { Case_ID, Customer_ID, Intent, Priority, Conversation_ID, Related_Order_ID, Evidence_Refs, Owner_Type (AI/Human), Owner_ID, Status, SLA_Target, Resolution_Summary, Outcome_Metric }`.
+Tuyệt đối không đóng Case đơn phương khi chưa có xác nhận hoặc kết quả nhân viên có bằng chứng.
 
 ## 4. Năng lực được hợp nhất
 
@@ -127,16 +179,38 @@ Tổng hợp câu hỏi lặp lại, lý do không phù hợp, lỗi dùng, khi�
 
 Khách dùng tốt có thể được mời đánh giá, mua lại hoặc giới thiệu khi phù hợp; không yêu cầu đánh giá tích cực để được giải quyết quyền lợi. AI không tự xuất bản lời chứng thực hay sửa kho kiến thức.
 
-## 9. Nghiệm thu
+## 9. Tiêu chí nghiệm thu & Chỉ số đo lường
 
-1. Câu hỏi chung được trả lời từ tài liệu đúng phiên bản, không cần buộc khai số điện thoại.
-2. Khách chưa xác minh hỏi đơn hàng không nhận dữ liệu riêng.
-3. Thiếu nguồn, nguồn mâu thuẫn hoặc bước không an toàn dẫn tới bàn giao, không suy đoán.
-4. Khách chưa xác nhận thì vụ việc chưa giải quyết; vụ mở lại được liên kết đúng.
-5. Tạo phiếu bị lỗi phải đối soát; một vụ việc không sinh nhiều phiếu do thử lại.
-6. Khách yêu cầu người thật được bàn giao ngay; AI không trả lời chồng.
-7. Khi thử bù giá, đơn không đủ điều kiện và ngân sách hết bị chặn; sự kiện trùng không cấp lặp.
-8. Hệ thống điểm thưởng chặn được đơn dưới mức sàn (Min Spend), tự thu hồi điểm khi đơn hủy/trả và có hạn dùng rõ ràng.
-9. Mô-đun chưa bật thì trả trạng thái không hỗ trợ hoặc hàng đợi nhân viên.
+### 9.1. Bảng kiểm tra nghiệm thu (Acceptance Criteria)
+
+| Tình huống | Kết quả bắt buộc | Mã kiểm thử SRS |
+|---|---|---|
+| Câu hỏi chung (FAQ, tính năng) | Trả lời từ tài liệu đúng phiên bản; không ép khai số điện thoại | PILOT-03 |
+| Khách chưa xác minh hỏi đơn hàng | Tuyệt đối không tiết lộ dữ liệu riêng; yêu cầu OTP/đăng nhập | TC-E2E-004, NFR-006 |
+| Khách hợp lệ tra cứu đơn hàng | Gọi API ERP/WMS lấy trạng thái thực; hiển thị thời gian đối soát | PILOT-03, FR-CS-001 |
+| Thiếu nguồn, mâu thuẫn hoặc rủi ro | Bàn giao hàng đợi nhân viên kèm ngữ cảnh; không suy đoán bịa đặt | PILOT-04, NFR-008 |
+| Vụ việc đang xử lý | Khách chưa xác nhận thì giữ WAITING/IN_PROGRESS; không tự đóng | FR-CS-002 |
+| Vụ việc mở lại (Reopen) | Liên kết đúng Case ID cũ, bảo toàn lịch sử và evidence | Quản lý Case |
+| Lỗi mạng khi tạo phiếu hỗ trợ | Đối soát bằng Idempotency key; không sinh nhiều phiếu trùng lặp | NFR-003, TC-E2E-005 |
+| Khách yêu cầu gặp người thật | Bàn giao ngay cho nhân viên trực; AI dừng trả lời nghiệp vụ | NFR-007 |
+| Thử bù giá tự động | Đơn không đủ điều kiện hoặc hết ngân sách bị chặn; không cấp trùng | BR-002, BR-007 |
+| Hệ thống điểm thưởng | Chặn đơn dưới mức sàn (Min Spend); tự thu hồi điểm khi đơn hủy/trả | Chống gian lận |
+| Mô-đun CSKH chưa bật | Trả trạng thái không hỗ trợ hoặc chuyển hàng đợi người xử lý | Lộ trình P1 |
+| Khiếu nại vượt thẩm quyền | Chuyển luồng bàn giao khẩn cấp; ghi vết audit đầy đủ | PILOT-04, AUTH-4 |
+
+### 9.2. Hệ chỉ số KPI Chăm sóc & Thành công khách hàng theo SRS
+
+- **Chăm sóc khách hàng (Customer Care KPIs):**
+  - **First Response Time (FRT):** Thời gian phản hồi lần đầu (thiết kế gần thời gian thực qua Web/App/LINE).
+  - **Resolution Time:** Thời gian trung bình từ khi tạo Case đến khi trạng thái chuyển sang RESOLVED.
+  - **AI Resolution Rate:** Tỷ lệ vụ việc AI giải quyết tự động thành công mà không cần can thiệp của con người.
+  - **Escalation Rate:** Tỷ lệ vụ việc phải chuyển giao cho nhân viên trực tiếp xử lý.
+  - **Reopen Rate:** Tỷ lệ khách hàng khiếu nại lại hoặc mở lại vụ việc sau khi đã thông báo giải quyết.
+  - **Customer Satisfaction (CSAT):** Điểm số hài lòng của khách hàng đánh giá sau khi đóng Case.
+- **Giữ chân khách hàng (Customer Success / Retention KPIs):**
+  - **Repeat Purchase Rate:** Tỷ lệ khách hàng mua lại định kỳ nhờ CS-02 kích hoạt lời nhắc hoặc gói bổ sung.
+  - **Retention & Churn Rate:** Tỷ lệ giữ chân khách hàng và mức giảm tỷ lệ khách hàng rời bỏ.
+  - **Reactivation Rate:** Tỷ lệ thu hồi và kích hoạt lại thành công khách hàng ngủ quên (dormant/win-back).
+  - **Customer Lifetime Value (CLV):** Giá trị vòng đời khách hàng gia tăng xuyên suốt chuỗi dịch vụ.
 
 Mọi thao tác hoàn tiền, hủy, đổi trả hoặc thay tài khoản phải qua người có quyền và hệ thống nguồn; không nằm trong P1.

@@ -43,37 +43,79 @@ Mỗi sự kiện gồm doanh nghiệp, nguồn, mã bất biến, thời điể
 
 Chống trùng theo doanh nghiệp + nguồn + mã sự kiện; đếm đơn/vụ việc/cơ hội theo mã chuẩn, không theo số lần thông báo. Sửa dữ liệu phải có bản điều chỉnh truy vết, không xóa lịch sử sự kiện để làm đẹp số.
 
-## 3. Từ điển chỉ số
+## 3. Từ điển chỉ số KPI theo chuẩn SRS v0.1
 
-Chốt múi giờ, khoảng báo cáo dạng [bắt đầu, kết thúc), nhóm quan sát và thời hạn theo dõi trước thử. Với chỉ số chuyển đổi, tử số phải thuộc đúng nhóm mẫu của mẫu số; kết quả đến sau được ghi theo cửa sổ quan sát đã chốt.
+Chốt múi giờ, khoảng báo cáo dạng [bắt đầu, kết thúc), nhóm quan sát và thời hạn theo dõi trước khi bắt đầu đo lường. Với các chỉ số tỷ lệ, tử số phải thuộc đúng tập mẫu của mẫu số. Toàn bộ các chỉ số dưới đây tuân thủ phân nhóm chuẩn tại Mục 20 của SRS (AI-REV-SRS-001):
 
-| Chỉ số | Công thức / quy tắc |
-|---|---|
-| Hoàn thành tìm hiểu nhu cầu | Số yêu cầu hoàn tất trong nhóm bắt đầu đủ điều kiện / số yêu cầu bắt đầu của nhóm đó; công bố số còn chờ |
-| Khách đủ điều kiện | Khách được Bán hàng xác nhận / khách quan tâm cùng nhóm; không dùng điểm thay xác nhận |
-| Chuyển đổi B2C | Đơn hoặc khách mua được nguồn xác nhận / phiên hoặc khách đủ điều kiện trong cùng nhóm; chọn một mẫu số, ghi rõ đo đặt đơn hay trả tiền |
-| Chuyển đổi cơ hội B2B | Cơ hội thành công / cơ hội đóng trong kỳ; cơ hội mở báo riêng |
-| Chuyển đổi đặt lịch | Đề nghị lịch có đặt thành công trong thời hạn / đề nghị đủ điều kiện của cùng nhóm; chốt cách xử lý đề nghị lặp |
-| Tỷ lệ AI tự giải quyết | Vụ đóng có xác nhận và không cần người giải quyết / vụ đủ điều kiện đã đóng; công bố số mở, chờ và mở lại |
-| Tỷ lệ chuyển người | Vụ đã bàn giao trong hạn quan sát / vụ đủ điều kiện mở trong nhóm; phân biệt chờ nhận và đã nhận |
-| Thời gian phản hồi | Từ tin đến tới phản hồi đã giao đầu tiên; báo trung vị, phân vị 95 và số mẫu |
-| Mức hài lòng | Điểm người trả lời đánh giá; công bố tỷ lệ phản hồi, không coi người im lặng là hài lòng |
-| Chi phí AI/công việc | Tổng chi phí AI ghi nhận / số công việc cùng phạm vi; báo độ bao phủ, cộng riêng chi phí nhân sự/hạ tầng |
-| Chi phí mỗi khách quan tâm (CPL) | Chi phí chiến dịch được quy thuộc / khách quan tâm hợp lệ cùng phạm vi |
-| Chi phí thu hút khách (CAC) | Chi phí thu hút đã thống nhất, gồm đối tác khi có / khách mua mới cùng nhóm |
-| Hiệu suất chi quảng cáo (ROAS) | Doanh thu quy thuộc / chi quảng cáo; không phải lợi nhuận hoặc tác động nhân quả |
-| Giá trị đơn trung bình (AOV) | Doanh thu đơn theo cách tính đã chốt / số đơn hợp lệ; nêu điều chỉnh hủy/hoàn |
-| Mua lại | Khách có lần mua hợp lệ tiếp theo trong cửa sổ / khách của nhóm đã có đủ thời gian quan sát |
-| Chuyển đổi đơn 2 nhờ tích điểm | Tỷ lệ khách mua đơn thứ 2 sau khi nhận điểm thưởng lớn từ đơn đầu; tỷ lệ đổi điểm thành phiếu mua hàng (Points Burn Rate) |
-| Giới thiệu | Khách mua mới hợp lệ từ giới thiệu / lượt giới thiệu hợp lệ, hoặc trên khách được mời; ghi rõ mẫu số |
-| Giá trị vòng đời (LTV) | Giá trị thực nhận theo nhóm; dự báo phải gắn nhãn ước tính, kỳ và giả định |
-| Doanh thu có AI tham gia | Tổng đơn hợp lệ có tương tác AI đủ điều kiện trước mua trong cửa sổ đã chốt; loại trùng và điều chỉnh theo chính sách |
+**[UNCONFIRMED][ASM-002]** Các chỉ tiêu (target) số lượng cụ thể bắt buộc phải được thiết lập và phê duyệt sau khi thu thập đầy đủ dữ liệu đường cơ sở (baseline) thực tế từ đối tác mỏ neo.
 
-Vụ mở lại chỉ trở về mẫu số giải quyết khi đóng cuối cùng; nếu người đã tham gia giải quyết thì không xếp “AI tự giải quyết”. Đếm mỗi vụ một kết quả cuối tại thời điểm chốt và công bố riêng tỷ lệ mở lại để tránh làm đẹp số bằng đóng sớm.
+### 3.1. Chỉ số Tiếp thị (Marketing KPIs)
 
-Không cộng tiền khác loại tiền tệ. Báo riêng hoặc dùng tỷ giá đã lưu với nguồn/thời điểm. Doanh thu “có AI tham gia” là ghi nhận liên quan, **không chứng minh AI tạo thêm doanh thu**.
+| Chỉ số | Tên tiếng Anh | Công thức / Quy tắc đo lường |
+|---|---|---|
+| Doanh thu chiến dịch | Campaign Revenue | Tổng doanh thu đơn hàng hợp lệ được quy thuộc cho chiến dịch tiếp thị cụ thể; loại trừ đơn hủy/hoàn. |
+| Chuyển đổi Lead | Lead Conversion Rate | Số lượng Lead/khách quan tâm hợp lệ thu được / Tổng lượt tiếp cận hoặc lượt nhấp chiến dịch. |
+| Chi phí thu hút khách | CAC (Customer Acquisition Cost) | Tổng chi phí tiếp thị và đối tác được phân bổ / Số lượng khách hàng mua mới hợp lệ trong cùng kỳ. |
+| Hiệu suất chi quảng cáo | ROAS (Return on Ad Spend) | Doanh thu quy thuộc cho quảng cáo / Tổng ngân sách chi tiêu quảng cáo thực tế. |
+| Chi phí mỗi Lead | CPL (Cost per Lead) | Tổng chi phí chiến dịch / Số lượng khách hàng quan tâm (Lead) hợp lệ ghi nhận vào CRM. |
+| Mức độ tương tác | Engagement | Tỷ lệ tương tác (bình luận, nhắn tin, nhấp link, điền form) trên tổng lượt hiển thị thông điệp tiếp thị. |
+| Tỷ lệ Lead đạt chuẩn | Qualified Lead Rate | Số Lead được Sales Agent hoặc nhân viên xác nhận đủ điều kiện / Tổng số Lead tiếp nhận. |
 
-Tương tác AI đủ điều kiện phải được định nghĩa trước: chẳng hạn khách nhận tư vấn sản phẩm có nội dung liên quan tới lần mua. Loại lời chào tự bật, lượt tải khung chat và tương tác sau mua. Lưu mã tương tác, khách/phiên đã liên kết hợp lệ, thời điểm và bằng chứng liên quan; đếm mỗi mã đơn chuẩn một lần trong doanh nghiệp. Cửa sổ quy thuộc và cách xử lý nhiều nguồn phải được chủ chỉ số duyệt; nguồn/định danh thiếu thì không tự quy thuộc. Báo riêng doanh thu gộp hay sau hủy/hoàn theo chính sách đã chốt.
+### 3.2. Chỉ số Bán hàng (Sales KPIs)
+
+| Chỉ số | Tên tiếng Anh | Công thức / Quy tắc đo lường |
+|---|---|---|
+| Chuyển đổi Lead sang Đơn | Lead-to-Order Conversion | Số đơn hàng hoàn tất thanh toán / Tổng số Lead đủ điều kiện được tư vấn trong cùng cửa sổ quan sát. |
+| Phục hồi giỏ hàng bỏ quên | Cart Recovery Rate | Số đơn hàng giỏ bỏ quên được phục hồi thành công / Tổng số phiên giỏ hàng bị bỏ quên đủ điều kiện liên hệ. |
+| Chuyển đổi đề xuất | Recommendation Conversion | Số lượt khách bấm mua sản phẩm được gợi ý / Tổng số lượt AI đưa ra đề xuất sản phẩm có căn cứ. |
+| Doanh thu bán thêm | Upsell Revenue | Chênh lệch doanh thu tăng thêm khi khách chọn phiên bản cao cấp hơn sản phẩm ban đầu hỏi mua. |
+| Doanh thu bán chéo | Cross-sell Revenue | Tổng doanh thu phát sinh từ các phụ kiện, gói bảo hành hoặc dịch vụ kèm theo được AI gợi ý thêm. |
+| Giá trị đơn trung bình | AOV (Average Order Value) | Tổng doanh thu đơn hàng hợp lệ / Tổng số đơn hàng thành công trong kỳ (sau điều chỉnh hủy/hoàn). |
+| Chu kỳ bán hàng | Sales Cycle | Thời gian trung bình từ thời điểm tiếp nhận nhu cầu đầu tiên đến khi đơn hàng được xác nhận thanh toán. |
+| Chuyển đổi đặt lịch O2O | Booking Conversion Rate | Số lịch hẹn lái thử showroom / tư vấn B2B được xác nhận / Tổng số đề nghị lịch hẹn được gửi. |
+
+### 3.3. Chỉ số Chăm sóc khách hàng (Customer Care KPIs)
+
+| Chỉ số | Tên tiếng Anh | Công thức / Quy tắc đo lường |
+|---|---|---|
+| Thời gian phản hồi đầu | First Response Time (FRT) | Thời gian từ lúc khách gửi tin nhắn đầu tiên đến khi nhận được phản hồi giá trị từ hệ thống (báo trung vị và p95). |
+| Thời gian giải quyết | Resolution Time | Thời gian từ khi mở vụ việc (case) đến khi vụ việc được xác nhận giải quyết hoàn tất (đóng case). |
+| Tỷ lệ AI tự giải quyết | AI Resolution Rate | Số vụ việc đóng thành công bởi AI không cần nhân viên can thiệp / Tổng số vụ việc đủ điều kiện giải quyết. |
+| Tỷ lệ chuyển cấp nhân viên | Escalation Rate | Số phiên/vụ việc phải bàn giao cho nhân viên tiếp quản / Tổng số vụ việc tiếp nhận. |
+| Tỷ lệ mở lại vụ việc | Reopen Rate | Số vụ việc bị khách hàng mở lại trong vòng 72 giờ sau khi AI đóng / Tổng số vụ việc AI đã đóng. |
+| Mức độ hài lòng | CSAT (Customer Satisfaction) | Điểm đánh giá trung bình từ khách hàng phản hồi khảo sát sau phiên hỗ trợ; công bố rõ tỷ lệ phản hồi. |
+
+### 3.4. Chỉ số Khách hàng thành công & Giữ chân (Customer Success & Retention KPIs)
+
+| Chỉ số | Tên tiếng Anh | Công thức / Quy tắc đo lường |
+|---|---|---|
+| Mua lại | Repeat Purchase Rate | Tỷ lệ khách hàng phát sinh đơn hàng hợp lệ thứ $N+1$ trong cửa sổ theo dõi quy định (30/60/90 ngày). |
+| Giữ chân khách hàng | Retention Rate | Tỷ lệ khách hàng tiếp tục hoạt động hoặc mua hàng sau kỳ quan sát / Tổng khách hàng đầu kỳ. |
+| Kích hoạt lại khách cũ | Reactivation Rate | Số khách hàng ngừng mua (ngủ đông > 90 ngày) quay lại mua hàng sau thông điệp chăm sóc / Tổng khách ngủ đông. |
+| Tỷ lệ rời bỏ | Churn Rate | Tỷ lệ khách hàng không quay lại hoặc hủy dịch vụ trong kỳ quan sát (1 − Retention Rate). |
+| Giá trị vòng đời khách | CLV / LTV (Customer Lifetime Value) | Tổng giá trị lợi nhuận đóng góp thực tế mà một khách hàng mang lại trong toàn bộ thời gian gắn bó. |
+| Chuyển đổi đơn 2 từ tích điểm | Loyalty Repeat Conversion | Tỷ lệ khách hàng mua đơn thứ 2 sau khi nhận điểm thưởng đơn đầu; tỷ lệ đổi điểm thành voucher (Points Burn Rate). |
+| Giới thiệu khách hàng mới | Referral Rate | Số khách hàng mới mua đơn hợp lệ từ mã giới thiệu / Tổng số lượt chia sẻ giới thiệu hợp lệ. |
+
+### 3.5. Chỉ số Hệ thống AI & Vận hành (AI System KPIs)
+
+| Chỉ số | Tên tiếng Anh | Công thức / Quy tắc đo lường |
+|---|---|---|
+| Tỷ lệ hoàn thành tự chủ | Autonomous Completion Rate | Số chuỗi tác vụ AI tự động thực thi thành công từ Signal đến Outcome / Tổng số tác vụ được phân công. |
+| Tỷ lệ người can thiệp | Human Override Rate | Tỷ lệ phiên hoặc quyết định AI bị nhân viên con người chỉnh sửa, chặn lại hoặc giành quyền tiếp quản. |
+| Tỷ lệ vi phạm chính sách | Policy Violation Rate | Số lần AI vi phạm ranh giới thẩm quyền hoặc bộ quy tắc giá/dữ liệu (Mục tiêu bắt buộc = 0%). |
+| Tỷ lệ ảo giác & phát sinh lỗi | Hallucination / Error Rate | Tỷ lệ câu trả lời bịa đặt thông tin, sai giá catalog hoặc sai chính sách được phát hiện qua audit log. |
+| Chi phí / kết quả thành công | Cost per Successful Outcome | Tổng chi phí API AI + hạ tầng / Số đơn hàng hoặc vụ việc CSKH được giải quyết thành công. |
+| Tỷ lệ thực thi thất bại | Failed Execution Rate | Số lượt gọi công cụ/kết nối bên ngoài bị thất bại hoặc lỗi hệ thống / Tổng số lượt thực thi (Target < 0.1%). |
+| Tỷ lệ thực thi trùng lặp | Duplicate Execution Rate | Số hành động gửi tin hoặc tạo đơn bị trùng lặp do lỗi Idempotency (Mục tiêu bắt buộc = 0%). |
+| Ngân sách AI trên mỗi phiên | AI Cost per Session | Chi phí token và API model thực tế trên mỗi phiên tư vấn đầy đủ (Định mức mục tiêu: **0,5–1 TWD/phiên**). |
+
+### 3.6. Quy tắc hợp nhất dữ liệu và quy thuộc doanh thu
+
+1. **Không tính hai lần**: Vụ việc mở lại chỉ tính một kết quả cuối; nếu có nhân viên can thiệp thì không được tính vào "AI tự giải quyết".
+2. **Không suy đoán doanh thu**: Doanh thu "có AI tham gia" chỉ là số liệu liên quan, **không chứng minh quan hệ nhân quả AI tạo thêm doanh thu** trừ khi có đối chứng A/B testing hợp lệ.
+3. **Phân tách tiền tệ**: Không cộng gộp các khoản tiền khác loại tiền tệ (TWD, VND, USD). Báo cáo phân theo từng loại tiền hoặc quy đổi theo tỷ giá cố định tại thời điểm phát sinh sự kiện.
+4. **Quy tắc đủ điều kiện**: Tương tác AI chỉ được gắn với đơn hàng nếu tương tác có nội dung tư vấn sản phẩm và diễn ra trong cửa sổ quy thuộc (attribution window) đã chốt trước (thường 24–72 giờ). Các tin nhắn tự động mở khung chat không được tính là tương tác tư vấn.
 
 <a id=unit-economics></a>
 
@@ -96,9 +138,9 @@ Các biến dưới đây dùng cùng tiền tệ và cơ sở **chưa thuế gi
 | Biến | Nghĩa |
 |---|---|
 | P | Doanh thu sản phẩm sau giảm giá, chưa thuế; trong mô hình minh họa này không gồm phí vận chuyển thu riêng |
-| C | Chi phí theo đơn không tính theo tỷ lệ P: giá vốn, xử lý, AI, chi phí giao hàng sau khi trừ phí vận chuyển thu riêng, dự phòng đổi trả/phiếu mua hàng và chi phí khác đã xác định |
+| C | Chi phí theo đơn không tính theo tỷ lệ P: giá vốn, xử lý, chi phí vận hành AI (ngân sách định mức 0,5–1 TWD/phiên tư vấn hoàn chỉnh, tương đương ~400–800 VNĐ hoặc ~0,016–0,032 USD), chi phí giao hàng sau khi trừ phí vận chuyển thu riêng, dự phòng đổi trả/phiếu mua hàng và chi phí khác đã xác định |
 | r | Tổng tỷ lệ chi phí thực sự tính trên P, ví dụ phí thanh toán/hoa hồng đối tác nếu hợp đồng dùng đúng cơ sở này |
-| L | Lãi đóng góp tối thiểu yêu cầu, số tiền trên đơn |
+| L | Lãi đóng góp tối thiểu yêu cầu, số tiền trên đơn (bảo toàn biên lợi nhuận ròng doanh nghiệp) |
 | P_base | Giá sản phẩm cơ sở hiện hành trên cùng phạm vi đơn, chưa thuế và chưa gồm phí vận chuyển thu riêng |
 | D | Tổng giảm tiền trực tiếp so với P_base, gồm các mã giảm giá được kết hợp; không chỉ phần AI vừa đề xuất |
 | D_cap | Hạn mức giảm tiền của đơn đã được người có quyền duyệt |
@@ -110,6 +152,8 @@ Lãi đóng góp = P × (1 − r) − C
 Giá sàn = max((C + L) / (1 − r), P_base − D_cap)
 Điều kiện: 0 ≤ r < 1; dữ liệu chi phí đầy đủ và hợp lệ.
 ```
+
+Hệ thống bảo toàn tuyệt đối biên lãi ròng (Net Profit Margin) và lãi đóng góp (Contribution Margin) thông qua cơ chế kiểm soát giá sàn tự động trên máy chủ, ngăn chặn việc AI tự ý chiết khấu lạm vào lợi nhuận tối thiểu $L$.
 
 Đầu vào phải là số hữu hạn, cùng tiền tệ và phạm vi số lượng; P_base > 0, D_cap ≥ 0, L ≥ 0, số lượng > 0. Chi phí âm bất thường hoặc khoản chưa xác định cần người kiểm tra, không tự coi bằng 0.
 

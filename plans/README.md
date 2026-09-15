@@ -41,15 +41,29 @@ Lõi dùng chung gồm điều phối, hồ sơ khách hàng hợp nhất Custom
 | [Dữ liệu và kiến thức](platform/data-and-knowledge.md) | Danh tính, đồng ý liên hệ, nguồn gốc bằng chứng, danh mục sản phẩm | 11, 12, 18 |
 | [Quy trình và bàn giao](platform/workflows-and-handoffs.md) | Trạng thái bền vững, nhắc lại, người duyệt, dừng và phục hồi | 13, 14 |
 | [API và tích hợp](platform/api-and-integrations.md) | Hợp đồng kết nối, thanh toán, bảo mật và vận hành | 15, 16 |
-| [Đo lường](delivery/analytics.md) | Chỉ số, công thức kinh tế, thử nghiệm đối chứng và chất lượng dữ liệu | 20 |
-| [Bản đầu và lộ trình](delivery/mvp-and-roadmap.md) | Phạm vi bật/tắt, gói công việc, nghiệm thu và điều kiện mở rộng | 21, 22, 23 |
+| [Đo lường](delivery/analytics.md) | Hệ thống KPI 5 nhóm theo SRS Mục 20, công thức kinh tế, thử nghiệm đối chứng và chất lượng dữ liệu | 20 |
+| [Bản đầu và lộ trình](delivery/mvp-and-roadmap.md) | Phạm vi bật/tắt, tiêu chuẩn hoàn thành (DoD), giả định (ASM-001..005), kiểm thử E2E (TC-E2E-001..009) và cổng kỹ thuật P0–P5 | 21, 22, 23, 26, 27 |
 
 Mỗi quy định có một nơi chịu trách nhiệm; tài liệu khác chỉ tóm tắt và liên kết. Giữ đường dẫn tệp và các mốc `section-N` để hạn chế làm hỏng tham chiếu cũ. Tên tệp, tên sản phẩm, API và mã trạng thái giữ nguyên khi cần tương thích; toàn bộ phần diễn giải được viết bằng tiếng Việt.
 
-## 4. Đã hợp nhất ba nguồn như thế nào?
+## 4. Ma trận đối chiếu mục tiêu và nghiệm thu (Traceability Matrix theo SRS Mục 25)
+
+Bảng đối chiếu tổng thể giữa các Mục tiêu kinh doanh (Business Objectives), nhóm yêu cầu kỹ thuật, tài liệu module phụ trách và bộ ca kiểm thử nghiệm thu E2E:
+
+| Mục tiêu kinh doanh (Business Objective) | Nhóm yêu cầu SRS | Module / Tài liệu đảm nhiệm | Tiêu chí kiểm chứng chính (Validation & E2E Tests) |
+|---|---|---|---|
+| **OBJ-001 — Tiếp thị (Marketing):** Tự động phát hiện cơ hội, lập kế hoạch, tạo nội dung, vận hành chiến dịch và tối ưu marketing. | MKT-001..005, FR-MKT-* | [Tiếp thị](modules/marketing.md) | **PILOT-01** (Marketing → Sales), **TC-E2E-002** (Marketing không publish nếu thiếu human approval). |
+| **OBJ-002 — Bán hàng (Sales):** Nhận diện nhu cầu, tư vấn thông minh, chấm điểm cơ hội, gợi ý sản phẩm, cross-sell/upsell, phục hồi giỏ hàng. | FR-SAL-001..007 | [Bán hàng](modules/sales.md) | **PILOT-02** (Cart Recovery), **TC-E2E-003** (Toàn vẹn giá sàn ERP), **TC-E2E-005** (Chống tạo đơn trùng - Idempotency). |
+| **OBJ-003 — Chăm sóc khách hàng (Customer Care):** Tiếp nhận yêu cầu, tra cứu dữ liệu thực, hỗ trợ đơn hàng, khiếu nại, chuyển người kịp thời. | FR-CS-001..002 | [Chăm sóc khách hàng](modules/customer-support.md) | **PILOT-03** (Tra cứu đơn hàng), **PILOT-04** (Xử lý khiếu nại), **TC-E2E-004** (Xác minh danh tính khách hàng). |
+| **OBJ-004 — Khách hàng thành công & Giữ chân (Retention):** Phát hiện nguy cơ mất khách, kích hoạt chu kỳ mua lại, chăm sóc khách hàng thân thiết. | FR-CS-003 | [Chăm sóc khách hàng](modules/customer-support.md), [Hành trình](customer-lifecycle.md) | Quy trình giữ chân (Retention Workflow), Vòng lặp tích điểm kích hoạt đơn 2 (Loyalty Loop), Phân tích rủi ro rời bỏ (Churn). |
+| **OBJ-005 — Điều phối đa Agent (Revenue Orchestration):** Phối hợp liền mạch giữa Marketing, Sales và CSKH dùng chung Customer360. | FR-ORC-001..004 | [Kiến trúc](platform/architecture.md), [Quy trình](platform/workflows-and-handoffs.md) | **TC-E2E-001** (Luồng tín hiệu khép kín E2E), **TC-E2E-009** (Truy vết ngược 100% từ Trigger đến Outcome). |
+| **OBJ-006 — Quản trị & Tuân thủ (Governance & Policy):** Ranh giới thẩm quyền nghiêm ngặt, chính sách an toàn, ghi vết kiểm toán toàn diện. | BR-001..008, NFR-001..010 | [API & Tích hợp](platform/api-and-integrations.md), [Dữ liệu](platform/data-and-knowledge.md), [Lộ trình](delivery/mvp-and-roadmap.md) | **TC-E2E-006** (Chặn vượt quyền - DENY), **TC-E2E-007** (Triệt tiêu liên hệ thiếu consent), **TC-E2E-008** (Báo lỗi connector trung thực). |
+
+## 5. Đã hợp nhất các nguồn như thế nào?
 
 | Nguồn | Ý được giữ | Cách điều chỉnh |
 |---|---|---|
+| Đề bài SRS v0.1 (`AI-REV-SRS-001`) | 6 Business Objectives (OBJ-001..006), 6 Cổng Gate (P0–P5), Bộ kiểm thử TC-E2E-001..009, 5 Giả định ASM-001..005, DoD 10 thành tố thực tế | Chuẩn hóa toàn bộ cấu trúc quy hoạch, ma trận đối chiếu và điều kiện nghiệm thu |
 | Bộ `plans/` trước lần hợp nhất này | Ba mô-đun độc lập; API hai chiều; dữ liệu riêng từng doanh nghiệp; người duyệt; chống xử lý trùng; xác nhận từ hệ thống gốc | Gộp phần lặp, dịch phần tiếng Anh, giữ ràng buộc kỹ thuật và tiêu chí kiểm chứng |
 | [Báo cáo PDF](../BAO_CAO_DE_AN_AI_ECOMMERCE_3_MODULE.pdf), trang 1–2 | Giảm thao tác, giảm bị làm phiền, tư vấn theo nhu cầu, tạo niềm tin | Dùng ba nhóm động cơ mua làm giả thuyết nghiên cứu; không coi tuổi hay tỷ lệ trong báo cáo là dữ liệu khảo sát |
 | PDF, trang 2–4 | Ưu đãi từ chi phí thực sự tiết kiệm; máy chủ kiểm soát giá sàn | Bổ sung chi phí AI, đối tác, vận hành và rủi ro; không cam kết lợi nhuận hay an toàn tuyệt đối |
@@ -74,7 +88,7 @@ Mỗi quy định có một nơi chịu trách nhiệm; tài liệu khác chỉ 
 7. **Không coi dẫn chiếu pháp lý cũ là chứng nhận tuân thủ.** Phần [API và bảo vệ dữ liệu](platform/api-and-integrations.md#section-16) bổ sung nguồn chính thức và bước rà soát trước vận hành.
 8. Bỏ liên kết Atlas khỏi mục lục này vì không có tệp `atlas/index.html` trong thư mục làm việc đã kiểm tra. Không sửa hay xóa tài liệu ngoài `plans/`.
 
-## 5. Cách cập nhật về sau
+## 6. Cách cập nhật về sau
 
 1. Đổi phạm vi tại [bản đầu và lộ trình](delivery/mvp-and-roadmap.md), ghi lý do và người duyệt.
 2. Đổi quy định tại tài liệu chịu trách nhiệm; đối chiếu dữ liệu, quyền, API và chỉ số liên quan.

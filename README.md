@@ -40,8 +40,8 @@ agent_solution/
 │   │   ├── workflows-and-handoffs.md          # Luồng công việc, trạng thái bền vững và bàn giao người
 │   │   └── api-and-integrations.md            # Hợp đồng API, cổng kết nối và chính sách bảo mật
 │   └── delivery/                              # Kế hoạch bàn giao và kiểm chứng
-│       ├── mvp-and-roadmap.md                 # Phạm vi MVP P0-P3, tiêu chí nghiệm thu và mở rộng
-│       └── analytics.md                       # Chỉ số kinh tế đơn vị, công thức đo lường và A/B testing
+│       ├── mvp-and-roadmap.md                 # Lộ trình 6 cổng kỹ thuật P0-P5, tiêu chuẩn hoàn thành DoD và bộ test TC-E2E-001..009
+│       └── analytics.md                       # Hệ thống KPI 5 nhóm theo SRS Mục 20, ngân sách AI 0,5-1 TWD và bảo toàn biên lãi
 └── reports/                                   # Nhật ký làm việc và báo cáo thẩm định định kỳ
     ├── 09-09-2026/
     │   └── daily-report.md                    # Báo cáo tiến độ và thống nhất định hướng ngày 09/09/2026
@@ -62,9 +62,22 @@ agent_solution/
 | Nghiên Cứu Thị Trường | [research/market_research.md](research/market_research.md) | Markdown | 28 mục chiến lược sản phẩm, khách hàng mục tiêu và thị trường |
 | Gói Sản Phẩm & Định Giá | [plans/product-and-packaging.md](plans/product-and-packaging.md) | Markdown | Chiến lược B2B SaaS, gói sản phẩm Mobility & FMCG, mô hình doanh thu |
 | Kiến Trúc Kỹ Thuật | [plans/platform/architecture.md](plans/platform/architecture.md) | Markdown | Thiết kế kiến trúc tổng thể, cơ chế Adapter và giao diện nhúng |
-| Lộ Trình & Tiêu Chí Nghiệm Thu | [plans/delivery/mvp-and-roadmap.md](plans/delivery/mvp-and-roadmap.md) | Markdown | Các pha triển khai P0-P3 và tiêu chí hoàn thành kiểm thử |
-| Kinh Tế Đơn Vị & Đo Lường | [plans/delivery/analytics.md](plans/delivery/analytics.md) | Markdown | Công thức tính CAC, LTV, đóng góp biên và chi phí API AI/đơn |
+| Lộ Trình & Tiêu Chí Nghiệm Thu | [plans/delivery/mvp-and-roadmap.md](plans/delivery/mvp-and-roadmap.md) | Markdown | 6 Cổng kỹ thuật P0–P5, DoD 10 thành tố và bộ kiểm thử E2E (TC-E2E-001..009) |
+| Kinh Tế Đơn Vị & Đo Lường | [plans/delivery/analytics.md](plans/delivery/analytics.md) | Markdown | Hệ thống KPI SRS Mục 20, ngân sách AI 0,5–1 TWD/phiên và bảo toàn biên lãi |
 | Báo Cáo Thẩm Định Định Kỳ | [reports/09-09-2026/daily-report.md](reports/09-09-2026/daily-report.md) | Markdown | Nhật ký làm việc và báo cáo tiến độ định kỳ |
+
+---
+
+## Ma Trận Đối Chiếu Mục Tiêu & Nghiệm Thu (Traceability Matrix theo SRS Mục 25)
+
+| Mục Tiêu Kinh Doanh | Nhóm Yêu Cầu SRS | Tài Liệu Phụ Trách | Tiêu Chí Kiểm Chứng Chính |
+|---|---|---|---|
+| **OBJ-001 — Tiếp thị (Marketing)** | MKT-001..005, FR-MKT-* | [plans/modules/marketing.md](plans/modules/marketing.md) | **PILOT-01** (Marketing → Sales), **TC-E2E-002** (Kiểm soát phê duyệt Human Approval) |
+| **OBJ-002 — Bán hàng (Sales)** | FR-SAL-001..007 | [plans/modules/sales.md](plans/modules/sales.md) | **PILOT-02** (Phục hồi giỏ hàng), **TC-E2E-003** (Toàn vẹn giá sàn ERP), **TC-E2E-005** (Chống tạo đơn trùng - Idempotency) |
+| **OBJ-003 — Chăm sóc khách hàng (Customer Care)** | FR-CS-001..002 | [plans/modules/customer-support.md](plans/modules/customer-support.md) | **PILOT-03** (Tra cứu đơn ERP), **PILOT-04** (Xử lý khiếu nại), **TC-E2E-004** (Xác minh danh tính) |
+| **OBJ-004 — Khách hàng thành công & Giữ chân (Retention)** | FR-CS-003 | [plans/modules/customer-support.md](plans/modules/customer-support.md), [plans/customer-lifecycle.md](plans/customer-lifecycle.md) | Quy trình giữ chân (Retention Workflow), Vòng lặp tích điểm đơn 2, Phân tích nguy cơ rời bỏ |
+| **OBJ-005 — Điều phối đa Agent (Revenue Orchestration)** | FR-ORC-001..004 | [plans/platform/architecture.md](plans/platform/architecture.md), [plans/platform/workflows-and-handoffs.md](plans/platform/workflows-and-handoffs.md) | **TC-E2E-001** (Luồng tín hiệu khép kín E2E), **TC-E2E-009** (Truy vết ngược 100%) |
+| **OBJ-006 — Quản trị & Tuân thủ (Governance & Policy)** | BR-001..008, NFR-001..010 | [plans/platform/api-and-integrations.md](plans/platform/api-and-integrations.md), [plans/delivery/mvp-and-roadmap.md](plans/delivery/mvp-and-roadmap.md) | **TC-E2E-006** (Chặn vượt quyền - DENY), **TC-E2E-007** (Triệt tiêu liên hệ thiếu consent), **TC-E2E-008** (Báo lỗi connector trung thực) |
 
 ---
 
@@ -93,14 +106,14 @@ agent_solution/
   2. [plans/platform/data-and-knowledge.md](plans/platform/data-and-knowledge.md): Lược đồ dữ liệu Customer360, quyền riêng tư và RAG.
   3. [plans/platform/workflows-and-handoffs.md](plans/platform/workflows-and-handoffs.md): Quản lý phiên hội thoại, trạng thái và bàn giao nhân viên.
   4. [plans/platform/api-and-integrations.md](plans/platform/api-and-integrations.md): Đặc tả API hai chiều, bảo mật và kết nối kênh chat/thanh toán.
-  5. [plans/delivery/mvp-and-roadmap.md](plans/delivery/mvp-and-roadmap.md): Tiêu chuẩn kỹ thuật nghiệm thu và kế hoạch chạy thử nghiệm.
+  5. [plans/delivery/mvp-and-roadmap.md](plans/delivery/mvp-and-roadmap.md): 6 Cổng kỹ thuật P0–P5, tiêu chuẩn hoàn thành DoD và bộ test TC-E2E-001..009.
 
 ### 4. Dành Cho Nhà Đầu Tư & Tài Chính (Investors, Finance & CFO)
 - Mục tiêu: Thẩm định tính khả thi tài chính, hiệu quả đầu tư và lộ trình hoàn vốn.
 - Trình tự đọc đề xuất:
   1. [plans/delivery/analytics.md](plans/delivery/analytics.md): Phân tích kinh tế đơn vị (Unit Economics), chi phí vận hành AI trên mỗi đơn hàng.
   2. [plans/product-and-packaging.md](plans/product-and-packaging.md): Cơ cấu doanh thu từ phí triển khai và phí thuê bao định kỳ.
-  3. [plans/delivery/mvp-and-roadmap.md](plans/delivery/mvp-and-roadmap.md): Lộ trình mở rộng 4 pha từ mỏ neo Đài Loan đến phát hành toàn cầu.
+  3. [plans/delivery/mvp-and-roadmap.md](plans/delivery/mvp-and-roadmap.md): Lộ trình 6 cổng kỹ thuật P0–P5 từ mỏ neo Đài Loan đến phát hành toàn cầu.
 
 ---
 

@@ -6,9 +6,9 @@ Trạng thái: thiết kế đề xuất. P1 tập trung tư vấn và chuyển 
 
 <a id=section-7></a>
 
-## 1. Mục tiêu
+## 1. Mục tiêu và ranh giới
 
-Giúp khách chọn giải pháp đủ dùng và đi đến bước mua phù hợp, với giá và điều kiện có căn cứ. Không tối ưu số đơn bằng cách bán sai nhu cầu hoặc giảm giá làm mất hiệu quả kinh tế.
+Giúp khách chọn giải pháp đủ dùng và đi đến bước mua phù hợp, với giá và điều kiện có căn cứ (khớp mục tiêu **OBJ-002** trong SRS). Không tối ưu số đơn bằng cách bán sai nhu cầu hoặc giảm giá làm mất hiệu quả kinh tế.
 
 | Bối cảnh | Hỏi tối thiểu | Bước tiếp theo |
 |---|---|---|
@@ -16,27 +16,50 @@ Giúp khách chọn giải pháp đủ dùng và đi đến bước mua phù h�
 | Bán hàng B2B cần tư vấn | Nhu cầu, ngân sách, người quyết định, thời điểm, quy mô | Đặt lịch, chuẩn bị thông tin báo giá, theo dõi cơ hội |
 | Khách cũ | Nhu cầu mới và sản phẩm hiện dùng đã xác minh nếu cần | Giữ sản phẩm cũ, mua bổ sung hoặc nâng cấp có lý do |
 
-Không bắt người mua lẻ khai chức vụ hay người phê duyệt. Không ép khách tiết lộ dữ liệu không cần thiết. Trường chưa biết được ghi rõ, không suy đoán.
+Không bắt người mua lẻ khai chức vụ hay người phê duyệt. Không ép khách tiết lộ dữ liệu không cần thiết. Trường chưa biết được ghi rõ, không suy đoán. Mọi hành động đều tuân thủ nguyên tắc không vượt quyền (**BR-008**) và không tự nâng quyền từ dữ liệu do khách cung cấp (**BR-009**).
 
-## 2. Hợp đồng đầu vào và đầu ra
+## 2. Hệ thống 5 Sales Agent chuẩn theo SRS (SAL-01 đến SAL-05)
 
-Đầu vào gồm khách/phiên, cuộc trao đổi, nguồn, quyền liên hệ, người phụ trách; nhu cầu; danh mục với mã sản phẩm/phiên bản, giá, đơn vị tiền, thuế/phí, tồn kho/điều kiện; quy tắc và hệ thống xác nhận kết quả. Lịch/CRM/đơn hàng chỉ được dùng khi kết nối cho phép.
+Mô-đun Bán hàng vận hành với cấu trúc 5 Agent chuyên trách theo chuẩn SRS, phối hợp qua Revenue Orchestrator:
 
-Đầu ra gồm lựa chọn, lý do và nguồn; phần chưa rõ; yêu cầu/cơ hội/lịch đã xác nhận khi có; người phụ trách, trạng thái và bước tiếp theo. Một câu tư vấn hoàn thành không có nghĩa đã bán hàng.
+| Mã Agent | Tên Agent | Nhiệm vụ cốt lõi & Tiêu chuẩn SRS | Quyền hạn (Authority) | Đầu vào chính | Đầu ra chuẩn (Reason + Evidence) |
+|---|---|---|---|---|---|
+| **SAL-01** | Lead Qualification Agent | **FR-SAL-001 - MUST:** Xác định khách mới/cũ, nhu cầu, sản phẩm quan tâm, mức độ sẵn sàng mua, hành vi gần nhất, lịch sử mua và cơ hội bán | AUTH-1 (Recommend) | Sự kiện Web/App, lịch sử tương tác Marketing, hồ sơ Customer 360 | Điểm sẵn sàng mua, lý do (Reason), bằng chứng (Evidence) |
+| **SAL-02** | AI Sales Advisor | **FR-SAL-002 - MUST:** Hỏi nhu cầu, tìm/so sánh sản phẩm, kiểm tra tồn, kiểm tra giá, giải thích chính sách, đề xuất sản phẩm chính và sản phẩm bổ sung | AUTH-3 (trong phạm vi dữ liệu đã duyệt) | Câu hỏi của khách, danh mục ERP/POS, tồn kho WMS, bảng giá | Lời tư vấn kèm căn cứ kỹ thuật/chính sách, so sánh tùy chọn |
+| **SAL-03** | Recommendation Agent | **FR-SAL-003 - MUST:** Sinh đề xuất sản phẩm, cross-sell, upsell, sản phẩm thay thế (substitute), mua bổ sung (replenishment) và combo (bundle) | AUTH-1 (Recommend) | Giỏ hàng hiện tại, hồ sơ khách, mức độ tương thích sản phẩm | Đề xuất gồm: Customer, Product, Reason, Evidence, Eligibility, Confidence, Expected Outcome |
+| **SAL-04** | Cart Recovery Agent | Phát hiện giỏ hàng bỏ quên (abandoned cart), kiểm tra customer context, consent, tồn kho, giá, áp dụng quy tắc suppression, chọn kênh và tạo thông điệp | AUTH-3 (nhắc giỏ theo lịch) / AUTH-4 (kèm trợ cấp giá) | Sự kiện giỏ hàng bỏ quên, tồn kho khả dụng, trạng thái consent | Thông điệp nhắc giỏ cá nhân hóa, đo lường conversion |
+| **SAL-05** | Reorder / Replenishment Agent | Phân tích chu kỳ tiêu dùng thực tế để phát hiện nhu cầu mua lại. Chặn gửi nếu khách từ chối marketing, sản phẩm ngừng bán, hết hàng, khách vừa mua lại hoặc bị suppression | AUTH-1 (Recommend) / AUTH-3 (gửi nhắc định kỳ) | Chu kỳ mua quá khứ, mức tiêu hao ước tính, trạng thái tồn kho | Thông báo nhắc tái đặt hàng 1-chạm, liên kết giỏ hàng định kỳ |
 
-Luồng chung:
+### 2.1. Quy trình phối hợp xử lý bán hàng chuẩn (Sales Coordination Flow)
 
-1. Kiểm tra quyền, mô-đun bật và người đang trả lời; nhận bàn giao nếu có.
-2. Dùng thông tin đã có, xác minh khách trước khi đọc dữ liệu riêng.
-3. Hỏi phần thiếu theo hành trình đã chọn.
-4. Tra sản phẩm và điều kiện hiện hành, lọc nhu cầu, ngân sách, khả năng dùng và tồn kho.
-5. Đưa lựa chọn có bằng chứng, nêu đánh đổi; không có món phù hợp thì nói rõ.
-6. Khách tự xác nhận bước mua/hẹn; chỉ thực hiện hành động trong danh sách cho phép.
-7. Ghi kết quả được hệ thống gốc xác nhận; lỗi chưa rõ phải đối soát trước thử lại.
+1. **Tiếp nhận & Xác thực:** Kiểm tra quyền, mô-đun bật, xác minh định danh khách trước khi truy cập dữ liệu mua hàng riêng biệt.
+2. **Định chuẩn nhu cầu (SAL-01):** Khai thác thông tin tối thiểu theo hành trình, ghi nhận bằng chứng hành vi, không gán nhãn suy diễn.
+3. **Tra cứu thời gian thực (SAL-02):** Gọi các Skill kiểm tra giá và tồn kho trực tiếp từ System of Record (ERP/POS); tuyệt đối không bịa thông số hoặc giá bán (**BR-001**, **BR-003**).
+4. **Cá nhân hóa đề xuất (SAL-03):** Đề xuất giải pháp đủ dùng, nêu rõ đánh đổi; chỉ đưa gợi ý kèm đầy đủ 7 trường thông tin bắt buộc (Reason + Evidence + Confidence).
+5. **Chốt giao dịch & Bàn giao:** Khách tự xác nhận bước mua hoặc hẹn lịch tư vấn B2B; ghi nhận kết quả xác thực qua máy chủ trước khi bàn giao khâu tiếp theo.
 
-Với B2B, chuỗi cơ hội tham khảo là mới → đủ điều kiện → tư vấn/trình diễn → đề xuất → thương lượng → thành công/thất bại. Có thể bỏ bước theo cấu hình; chưa phản hồi là đang chờ, không tự ghi thất bại hay thành công.
+## 3. Hệ thống Kỹ năng bán hàng (Sales Skill System)
 
-## 3. Trải nghiệm tư vấn có bằng chứng
+Theo Mục 11 của SRS, Agent (lớp nhận thức/hội thoại) và Skill (lớp thực thi tác vụ) được tách biệt hoàn toàn. Các Sales Agent gọi các Skill thông qua Orchestrator với hợp đồng kiểm soát nghiêm ngặt:
+
+| Mã Skill (Skill ID) | Mục đích (Purpose) | Agent được phép dùng | Quyền hạn yêu cầu | Tool / Connector | Quy tắc kiểm tra (Validation) & Audit |
+|---|---|---|---|---|---|
+| `search-product` | Tra cứu danh mục, thông số, biến thể theo từ khóa/nhu cầu | SAL-02, SAL-03 | AUTH-0 (Observe) | Catalog Search API / Vector DB | Lọc theo trạng thái đang bán (Active SKU); ghi log truy vấn |
+| `check-stock` | Kiểm tra tồn kho khả dụng theo SKU và vị trí kho gần nhất | SAL-02, SAL-03, SAL-04, SAL-05 | AUTH-0 (Observe) | WMS / ERP Inventory API | Xác thực SKU tồn tại; fail closed nếu hệ thống kho mất kết nối |
+| `check-price` | Tra cứu bảng giá niêm yết, chính sách giá và thuế/phí chính thức | SAL-02, SAL-03, SAL-04 | AUTH-0 (Observe) | ERP Pricing Engine | Bắt buộc đọc từ System of Record; không cho phép AI tự tạo giá (**BR-001**) |
+| `retrieve-customer` | Đọc Customer 360: lịch sử mua, giỏ hàng, điểm tín nhiệm, consent | SAL-01, SAL-03, SAL-04, SAL-05 | AUTH-0 (Observe) | Customer 360 Ingestion Layer | Bắt buộc xác minh định danh (Customer Verification); cô lập dữ liệu khách (**NFR-006**) |
+| `recommend-product` | Sinh danh sách đề xuất (cross/up/substitute/bundle) | SAL-03 | AUTH-1 (Recommend) | Recommendation Engine | Đủ 7 trường dữ liệu bắt buộc (Reason, Evidence, Eligibility...); kiểm tra tương thích |
+| `create-cart` | Khởi tạo giỏ hàng hoặc thêm SKU vào phiên mua sắm của khách | SAL-02, SAL-04 | AUTH-3 (Bounded Execute) | E-commerce Core Cart API | Kiểm tra tồn kho trước khi thêm; chống trùng thao tác bằng idempotency key |
+| `create-order` | Tạo đơn hàng nháp hoặc đơn đặt cọc chính thức vào ERP | SAL-02 | AUTH-4 (Approval / Server Verified) | ERP / POS Order API | Yêu cầu chữ ký xác thực giá máy chủ; gắn Unique Execution ID (**BR-005**) |
+| `send-message` | Gửi tin tư vấn, nhắc giỏ qua Web, App, Zalo, LINE OA | SAL-02, SAL-04, SAL-05 | AUTH-3 (Bounded Execute) | Communication Gateway | Kiểm tra trạng thái Consent và quy tắc Suppression (**BR-004**); chống spam |
+
+### 3.1. Hợp đồng Kỹ năng chuẩn (Skill Contract Schema)
+
+Mỗi Skill khi được kích hoạt phải tuân thủ schema tối thiểu:
+`Skill_Call = { skill_id, run_id, caller_agent, customer_id, input_payload, required_authority, idempotency_key, timeout_ms, retry_policy }`.
+Mọi lượt gọi Skill đều được ghi vết vào Audit Log phục vụ đối soát và đo lường chi phí/độ trễ (**NFR-002**, **NFR-010**).
+
+## 4. Trải nghiệm tư vấn có bằng chứng
 
 | Năng lực | Quy tắc |
 |---|---|
@@ -50,9 +73,9 @@ Với B2B, chuỗi cơ hội tham khảo là mới → đủ điều kiện → 
 
 Không chuyển “10.000 mAh” thành số lần sạc cụ thể chỉ bằng suy đoán; không hứa thời gian đun nước, tiền điện, độ yên tĩnh hoặc kết quả sức khỏe từ một thông số đơn lẻ. Ví dụ trong PDF phải được kiểm chứng theo sản phẩm và điều kiện thử trước khi dùng với khách.
 
-## 4. Giá ưu đãi: AI đề xuất, máy chủ quyết định
+## 5. Giá ưu đãi: AI đề xuất, máy chủ quyết định
 
-### 4.1. Phân luồng ý định & Tái định vị trợ cấp giá (Selective Subsidy Discovery)
+### 5.1. Phân luồng ý định & Tái định vị trợ cấp giá (Selective Subsidy Discovery)
 - **Tuyệt đối im lặng với khách sẵn sàng mua giá gốc**: Nếu khách chỉ hỏi về thông số, công năng, độ bền, bảo hành hoặc thời gian giao hàng, AI tập trung tư vấn chốt đơn theo giá niêm yết, tuyệt đối KHÔNG chủ động đề cập hoặc gợi ý giảm giá.
 - **Tái định vị thuật ngữ cho thị trường Đài Loan (Chống nghi ngờ lừa đảo - 詐騙)**:
   - Người tiêu dùng Đài Loan đặc biệt cảnh giác với website lừa đảo (詐騙網站); việc cho khách "trả giá tay đôi với bot" sẽ làm mất uy tín thương hiệu chính hãng.
@@ -62,7 +85,7 @@ Không chuyển “10.000 mAh” thành số lần sạc cụ thể chỉ bằng
 - **Mở lời có điều kiện**: AI mở gói trợ cấp giới hạn: *"Hệ thống vừa mở thêm 3 suất trợ cấp độc quyền 150 TWD cho đơn hàng xác nhận qua LINE Pay hoặc nhận tại 7-Eleven hôm nay, bạn có muốn nhận suất này không?"*.
 - **Nút tương tác động**: Giao diện xuất hiện nút nhanh `[Nhận trợ cấp ngay]` để khách kích hoạt mức giảm sàn mà không cần giằng co.
 
-### 4.2. Nguyên tắc và quy trình duyệt giá sàn
+### 5.2. Nguyên tắc và quy trình duyệt giá sàn
 Năng lực mặc cả nằm sau P1. Lớp hội thoại chỉ chuyển nhu cầu và giá khách đề nghị; **không nhận quyền quyết định tiền, không được truy cập hay tiết lộ giá vốn nội bộ, không tự ghi đè giá sàn**. Dữ liệu chi phí chỉ đi tới bộ tính giá máy chủ và vai trò được cấp quyền.
 
 Công thức ngân sách, giá sàn và ví dụ được định nghĩa duy nhất tại [kinh tế đơn hàng](../delivery/analytics.md#unit-economics).
@@ -78,7 +101,7 @@ Báo giá có thể dùng mã ngẫu nhiên tra phía máy chủ hoặc mã xác
 
 Thời hạn 10 phút là lựa chọn thử nghiệm từ PDF, cần nêu thật với khách. Không tạo khan hiếm giả, giả vờ “lỗ vốn” hoặc “xin sếp” để gây áp lực. Hết hạn báo giá không bảo đảm ngân hàng từ chối tiền chuyển muộn.
 
-### 4.3. Luồng xác nhận đơn & Hạ tầng giao nhận siêu thị tiện lợi (CVS COD)
+### 5.3. Luồng xác nhận đơn & Hạ tầng giao nhận siêu thị tiện lợi (CVS COD)
 1. **Nút chốt giá kèm đếm ngược (CTA Timer)**: Sau khi máy chủ duyệt mức giá hợp lệ, giao diện chat bung nút hành động: `[Khóa đơn nhận trợ cấp trong X phút]` (TTL 10 phút).
 2. **Thu thập thông tin & Chọn điểm nhận hàng siêu thị tiện lợi (7-Eleven / FamilyMart)**:
    - Tại Đài Loan, hơn 60% giao dịch B2C dùng hình thức nhận hàng trả tiền tại siêu thị (超商取貨付款 - CVS COD).
@@ -88,7 +111,7 @@ Thời hạn 10 phút là lựa chọn thử nghiệm từ PDF, cần nêu thậ
    - Nếu khách chọn thanh toán trực tuyến: Hỗ trợ chuyển tiếp sang **LINE Pay**, **JKOPAY (街口支付)** hoặc thẻ tín dụng qua cổng **ECPay (綠界科技)** / **NewebPay (藍新金流)**.
    - Nếu khách chọn CVS COD: Khách có 7 ngày để ra cửa hàng tiện lợi nhận hàng và trả tiền mặt. Khách bùng hàng quá 7 ngày sẽ bị hệ thống Customer360 hạ điểm uy tín và khóa quyền nhận ưu đãi lần sau.
 
-### 4.4. Quy trình chuyên biệt theo ngành hàng tại thị trường Đài Loan
+### 5.4. Quy trình chuyên biệt theo ngành hàng tại thị trường Đài Loan
 
 #### A. Phân hệ Xe máy điện (High-Ticket EV Scooter O2O)
 - **Module tính trợ cấp chính phủ theo hộ khẩu (政府補助試算器)**:
@@ -101,7 +124,7 @@ Thời hạn 10 phút là lựa chọn thử nghiệm từ PDF, cần nêu thậ
 - **Mô hình Giao định kỳ (定期購 / Subscription)**: Cho phép khách hàng thiết lập chu kỳ giao tự động 30 hoặc 60 ngày đến siêu thị 7-Eleven quen thuộc; đơn giao định kỳ tự động áp dụng mức giá sàn $P_{floor}$ rẻ hơn 15% mà không cần đàm phán từng lần.
 - **Tích điểm LINE Points**: Điểm thưởng quy đổi trực tiếp thành LINE Points để khách có thể chi tiêu trong hệ sinh thái bán lẻ tại Đài Loan. Kèm Basket Cap (tối đa 1.000–2.000 TWD) để chặn con buôn gom hàng sỉ.
 
-## 5. Hỗ trợ thanh toán, giao hàng và hóa đơn
+## 6. Hỗ trợ thanh toán, giao hàng và hóa đơn
 
 P1 dùng trang thanh toán/quy trình hiện có; AI không tự tạo mã thanh toán hoặc đánh dấu đã trả tiền.
 
@@ -113,7 +136,7 @@ Thanh toán chỉ xác nhận bằng nguồn tin cậy, không bằng ảnh ch�
 
 Khung giờ giao và yêu cầu hóa đơn chỉ được chuyển tới hệ thống có năng lực tương ứng. Thu mã số thuế không có nghĩa hóa đơn đã phát hành; chọn khung giờ không có nghĩa đã được đơn vị vận chuyển chấp nhận.
 
-## 6. Ranh giới bản đầu
+## 7. Ranh giới bản đầu
 
 | Cho phép trong P1 | Chưa cho phép trong P1 |
 |---|---|
@@ -124,18 +147,32 @@ Khung giờ giao và yêu cầu hóa đơn chỉ được chuyển tới hệ th
 | Chuẩn bị thông tin để nhân viên báo giá | Tự phát hành báo giá thương mại |
 | Một chuỗi nhắc tối đa hai tin khi đủ điều kiện | Nhắc vô hạn, gửi sau khi khách trả lời/từ chối hoặc người tiếp quản |
 
-## 7. Ngoại lệ và nghiệm thu
+## 8. Ngoại lệ và tiêu chí nghiệm thu
 
-| Tình huống | Kết quả bắt buộc |
-|---|---|
-| Sản phẩm/giá cũ hoặc thiếu | Không đưa giá cuối; làm mới hoặc chuyển người |
-| Không có sản phẩm phù hợp | Nêu giới hạn và lựa chọn tiếp theo; không bịa sản phẩm |
-| Chưa xác minh khách | Chỉ dùng thông tin công khai/phiên hợp lệ |
-| Ghi CRM hoặc đặt lịch bị hết thời gian chờ | Tra kết quả bằng mã đối soát; không tạo trùng |
-| Đơn lớn, giá ngoại lệ hoặc khách muốn gặp người | Bàn giao có người chịu trách nhiệm, AI tạm dừng |
-| Mô-đun Bán hàng chưa bật | Từ chối rõ hoặc hàng đợi người xử lý |
-| Yêu cầu giá 0, sửa giỏ/báo giá/tiền tệ từ trình duyệt | Máy chủ từ chối; không thể lách bằng nội dung nhắc AI |
-| Báo giá/đơn hết hạn nhưng có tiền tới | Trạng thái cần đối soát, không bỏ tiền hoặc giao hàng tự động |
-| Tư vấn xong nhưng chưa có giao dịch nguồn | Hoàn thành tư vấn, không tính doanh thu |
+### 8.1. Bảng kiểm tra nghiệm thu Bán hàng (Acceptance Criteria)
+
+| Tình huống | Kết quả bắt buộc | Mã kiểm thử SRS |
+|---|---|---|
+| Sản phẩm/giá cũ hoặc thiếu | Không đưa giá cuối; làm mới hoặc chuyển người | TC-E2E-003, BR-003 |
+| AI đưa giá không có trong nguồn ERP/POS | Bị chốt chặn chối bỏ (Fail Closed); ghi audit violation | TC-E2E-003, BR-001 |
+| Không có sản phẩm phù hợp | Nêu giới hạn và lựa chọn tiếp theo; không bịa sản phẩm | FR-SAL-002 |
+| Chưa xác minh khách | Chỉ dùng thông tin công khai/phiên hợp lệ; cô lập dữ liệu | NFR-006 |
+| Ghi CRM hoặc đặt lịch bị hết thời gian chờ | Tra kết quả bằng mã đối soát idempotency; không tạo trùng | NFR-003, BR-006 |
+| Bỏ quên giỏ hàng (Cart Recovery) | Kiểm tra consent → Tồn kho → Giá → Suppression → Tin nhắc cá nhân hóa | PILOT-02, SAL-04 |
+| Đơn lớn, giá ngoại lệ hoặc khách muốn gặp người | Bàn giao có người chịu trách nhiệm, AI tạm dừng | NFR-007 |
+| Mô-đun Bán hàng chưa bật | Từ chối rõ hoặc chuyển hàng đợi người xử lý | Lộ trình P1 |
+| Yêu cầu giá 0, sửa giỏ/báo giá/tiền tệ từ trình duyệt | Máy chủ từ chối; không thể lách bằng nội dung nhắc AI | BR-002, BR-009 |
+| Báo giá/đơn hết hạn nhưng có tiền tới | Trạng thái cần đối soát, không bỏ tiền hoặc giao hàng tự động | Đối soát thanh toán |
+| Tư vấn xong nhưng chưa có giao dịch nguồn | Hoàn thành tư vấn, không tính doanh thu | Đo lường bằng chứng |
+
+### 8.2. Hệ chỉ số KPI Bán hàng theo SRS
+
+Hiệu quả của hệ thống 5 Sales Agent được đo lường qua các chỉ số:
+- **Lead-to-Order Conversion:** Tỷ lệ đầu mối chuyển đổi thành đơn hàng thành công có xác thực qua ERP.
+- **Cart Recovery Rate:** Tỷ lệ giỏ hàng bỏ quên được phục hồi thành công qua SAL-04.
+- **Recommendation Conversion:** Tỷ lệ khách hàng mua sản phẩm từ đề xuất cross-sell/upsell/bundle của SAL-03.
+- **Upsell & Cross-sell Revenue:** Doanh thu gia tăng từ việc bán thêm/bán chéo giải pháp.
+- **Average Order Value (AOV):** Giá trị đơn hàng trung bình sau khi áp dụng gợi ý và gói bundle.
+- **Sales Cycle:** Thời gian từ lúc phát sinh nhu cầu đến khi hoàn tất thanh toán hoặc đặt cọc giữ chỗ.
 
 Mỗi kết quả cần nguồn, phiên bản, mã truy vết và người phụ trách. Bộ thử ưu đãi/QR chỉ áp dụng khi bật năng lực tương ứng, không được coi là đã vượt qua trong P1.
