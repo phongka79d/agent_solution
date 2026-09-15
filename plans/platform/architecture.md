@@ -23,7 +23,31 @@ Yêu cầu chỉ đích danh mô-đun và yêu cầu tự điều phối `auto` 
 
 <a id=section-10></a>
 
-## 2. Các lớp trách nhiệm
+## 2. Kiến trúc hai tầng: Core Engine & Plug-and-Play Adapters
+
+Toàn bộ hệ thống được phân tách nghiêm ngặt thành hai tầng độc lập để phục vụ mở rộng B2B SaaS toàn cầu:
+
+### Tầng 1: Lõi thông minh đa doanh nghiệp (Core Engine - Multi-tenant)
+Giữ nguyên 100% khi mở rộng sang bất kỳ quốc gia nào:
+- **Bộ điều phối AI (Orchestrator)**: Phân loại ý định, hội thoại đa vòng, hiểu tâm lý mua sắm.
+- **Máy chủ tính giá sàn toán học ($P_{floor}$)**: Kiểm soát chiết khấu tự động, trích lập ngân sách từ hoa hồng sales tiết kiệm được, bảo vệ 100% biên lãi ròng.
+- **Hồ sơ khách hàng hợp nhất (Customer360 Profile)**: Lưu vết hành vi, sở thích, nguồn gốc và lịch sử giao dịch.
+- **Công cụ tích điểm & lòng trung thành (Endowed Progress Engine)**: Quy tắc tích điểm, cấp tiến độ ảo, quản lý ưu đãi.
+- **Máy trạng thái quy trình & Bàn giao**: Hàng đợi nhân viên, quy tắc tiếp quản, nhật ký kiểm toán bất biến.
+
+### Tầng 2: Cơ chế phích cắm bản địa hóa (Plug-and-Play Adapters)
+Khi phục vụ khách hàng mỏ neo tại Đài Loan hoặc mở rộng sang các quốc gia khác, chỉ hoán đổi 3 cổng kết nối cắm-rút:
+1. **Cổng giao tiếp (Communication Adapter)**:
+   - *Đài Loan*: LINE Messaging API (LINE Official Account) + Web Widget nhúng.
+   - *Quốc tế*: WhatsApp Business API, Telegram Bot, hoặc Web Widget đa ngôn ngữ.
+2. **Cổng thanh toán & hoàn tất đơn (Payment & Settlement Adapter)**:
+   - *Đài Loan*: ECPay, NewebPay, LINE Pay và hạ tầng nhận hàng siêu thị 7-Eleven/FamilyMart (CVS COD E-Map API).
+   - *Quốc tế*: Stripe, PayPal, Apple Pay, Google Pay hoặc bưu cục địa phương.
+3. **Cổng pháp lý & hạ tầng lưu trữ (Compliance & Data Residency Adapter)**:
+   - *Đài Loan*: Cụm máy chủ GCP Changhua / AWS Taipei tuân thủ Taiwan PDPA.
+   - *Quốc tế*: Triển khai theo vùng dữ liệu GDPR (Châu Âu), CCPA (Mỹ), PDPA (Singapore) với module quản lý cookie và thu thập đồng ý.
+
+## 3. Các lớp trách nhiệm
 
 | Lớp | Trách nhiệm | Không được làm |
 |---|---|---|
@@ -31,7 +55,7 @@ Yêu cầu chỉ đích danh mô-đun và yêu cầu tự điều phối `auto` 
 | Cổng API và sự kiện | Xác thực bên gọi, gắn phạm vi doanh nghiệp, kiểm tra quyền, chống trùng | Tin mã doanh nghiệp/khách chỉ vì có trong nội dung gửi lên |
 | Điều phối và mô-đun | Hiểu nhu cầu, tạo câu trả lời/đề xuất từ nguồn cho phép | Cấp quyền hoặc xác nhận hành động chưa xảy ra |
 | Quy trình và quy tắc máy chủ | Phê duyệt, giá sàn, trạng thái, hẹn giờ, giới hạn, người phụ trách | Giao quyết định rủi ro chỉ cho lời hướng dẫn AI |
-| Bộ kết nối | Đọc/ghi đúng API, ánh xạ trường, xử lý lỗi, trả bằng chứng | Cho AI truy cập cơ sở dữ liệu doanh nghiệp không giới hạn |
+| Bộ kết nối Adapter | Đọc/ghi đúng API bản địa, ánh xạ trường, xử lý lỗi, trả bằng chứng | Cho AI truy cập cơ sở dữ liệu doanh nghiệp không giới hạn |
 | Dữ liệu dùng chung | Liên kết khách, hội thoại, quy trình, bằng chứng và nhật ký | Thay nguồn gốc của giá, đơn hoặc thanh toán |
 | Bảng điều khiển | Cấu hình, hàng đợi, duyệt, tiếp quản, tra lỗi và báo cáo | Cho người không có vai trò duyệt thao tác rủi ro |
 
@@ -39,7 +63,7 @@ Luồng thực thi: ngữ cảnh được phép → AI đề xuất → máy ch�
 
 Customer360 chứa ngữ cảnh và liên kết khách. Kho kiến thức chứa tài liệu đã duyệt. Chúng khác nhau; AI không sửa tài liệu trong lúc trả lời. Dữ liệu giá/đơn/thanh toán có nguồn nghiệp vụ riêng.
 
-## 3. Cách triển khai nhỏ nhất
+## 4. Cách triển khai nhỏ nhất
 
 Bắt đầu bằng **một ứng dụng chia phần chức năng và một tiến trình nền lưu trạng thái bền vững**. Không cần một dịch vụ riêng cho mỗi trợ lý, một bản phần mềm riêng cho mỗi khách hay hệ thống thông điệp phức tạp ngay từ đầu.
 
@@ -53,7 +77,7 @@ Bắt đầu bằng **một ứng dụng chia phần chức năng và một ti�
 
 Dùng bộ kết nối có sẵn hoặc API doanh nghiệp trước. Không có API phù hợp thì chốt nhập dữ liệu có kiểm soát hoặc cầu nối do doanh nghiệp quản lý; không hứa cắm vào mọi hệ thống là chạy.
 
-## 4. Điều phối giao diện khác điều phối nghiệp vụ
+## 5. Điều phối giao diện khác điều phối nghiệp vụ
 
 Bộ giao diện nhúng đề xuất trong PDF chỉ quản lý trải nghiệm: phần hỏi nhanh, chat, gợi ý và trạng thái. Quyền dữ liệu, AI, giá sàn, thanh toán và nhật ký phải ở máy chủ.
 
@@ -70,7 +94,7 @@ Các mục tiêu dung lượng dưới 6/7/7 KB từng phần và dưới 20 KB 
 
 P1 ưu tiên giao diện đang có; chưa xây bộ mã nhúng đầy đủ chỉ để thỏa tên tệp trong PDF.
 
-## 5. Một yêu cầu qua hệ thống
+## 6. Một yêu cầu qua hệ thống
 
 1. Website gửi yêu cầu qua máy chủ doanh nghiệp hoặc bộ kết nối kênh đã xác thực.
 2. API lưu công việc bền vững, trả mã theo dõi; chưa báo kết quả kinh doanh.
@@ -81,7 +105,7 @@ P1 ưu tiên giao diện đang có; chưa xây bộ mã nhúng đầy đủ ch�
 7. Bộ kết nối trả đã xác nhận, bị từ chối hoặc chưa rõ; chưa rõ phải đối soát.
 8. Gửi kết quả qua API/kênh được chỉ định, ghi nhật ký và ngữ cảnh cần cho lần tiếp theo.
 
-## 6. Điều kiện nghiệm thu kiến trúc
+## 7. Điều kiện nghiệm thu kiến trúc
 
 1. Cùng bản phần mềm chạy được với hai doanh nghiệp thử tách biệt; không rò dữ liệu, tìm kiếm, tệp, hàng đợi hay báo cáo.
 2. Tham số yêu cầu không thể mở mô-đun chưa bật hay truy cập công việc của doanh nghiệp khác.

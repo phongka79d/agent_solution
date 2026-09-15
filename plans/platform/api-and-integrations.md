@@ -118,6 +118,19 @@ Bên nhận lưu khóa sự kiện, bỏ cập nhật phiên bản cũ và chấ
 3. **Cổng thanh toán & Giao nhận siêu thị tiện lợi (CVS)**: **ECPay (綠界科技)** và **NewebPay (藍新金流)**, hỗ trợ trọn gói thẻ nội địa, **LINE Pay**, **JKOPAY (街口支付)** và API bản đồ chọn siêu thị tiện lợi (**7-Eleven / FamilyMart E-Map**) phục vụ hình thức nhận hàng trả tiền mặt (**超商取貨付款 - CVS COD**).
 4. **Hạ tầng lưu trữ tuân thủ Taiwan PDPA**: Đặt cụm máy chủ và cơ sở dữ liệu tại **GCP Changhua (Đài Loan)** hoặc **AWS Region Taipei** đảm bảo tốc độ phản hồi < 50ms và đáp ứng yêu cầu lưu trữ dữ liệu cá nhân tại chỗ theo Đạo luật Bảo vệ Dữ liệu Cá nhân Đài Loan.
 
+### Bộ kết nối mở rộng toàn cầu (Global Multi-Tenant Adapters)
+Để mở rộng sang $N$ doanh nghiệp quốc tế theo cơ chế Plug-and-Play:
+1. **Nền tảng TMĐT toàn cầu (Global App Stores)**:
+   - **Shopify GraphQL Admin API & App Bridge**: Đóng gói thành Shopify App cài đặt 1-chạm; tự động đồng bộ Webhook đơn hàng, giỏ hàng bỏ quên và danh mục sản phẩm.
+   - **WooCommerce REST API**: Đóng gói thành plugin WordPress/WooCommerce chuẩn hóa.
+2. **Kênh tương tác quốc tế**:
+   - **WhatsApp Business Cloud API**: Hỗ trợ hội thoại B2C cho thị trường Châu Âu, Châu Mỹ Latinh, Ấn Độ và Đông Nam Á.
+   - **Web Widget đa ngôn ngữ**: Nhúng linh hoạt với bộ dịch thuật tự động theo locale của người mua (`en-US`, `ja-JP`, `zh-TW`, `vi-VN`).
+3. **Cổng thanh toán quốc tế**:
+   - **Stripe & PayPal Commerce Platform**: Hỗ trợ thẻ tín dụng quốc tế, Apple Pay, Google Pay, Klarna (Buy Now Pay Later) và đối soát đa tiền tệ tự động (USD, EUR, JPY, GBP).
+4. **Hạ tầng pháp lý toàn cầu**:
+   - Tùy chọn lưu trữ phân vùng theo khu vực (Multi-region Data Residency): AWS Frankfurt (EU GDPR), AWS US East (CCPA), AWS Singapore (APAC PDPA).
+
 Mỗi bộ kết nối chịu trách nhiệm xác thực, ánh xạ trường, giới hạn tốc độ, thời gian chờ, loại lỗi, khóa đối soát và kiểm thử. Quyền đọc và ghi cấu hình độc lập; ngoài danh sách phải từ chối.
 
 Kết quả hành động chung gồm `operation_id`, `effect_key`, `operation`, `source_record`, `status`, `provider_reference`, `reconciliation_key`, `correlation_id`. Trạng thái hành động là `confirmed` (xác nhận), `rejected` (từ chối) hoặc `uncertain` (chưa rõ). Mã HTTP 200/202 không tự thay kết quả nghiệp vụ.

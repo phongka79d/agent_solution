@@ -21,7 +21,32 @@ Hệ thống được thiết kế theo mô hình **B2B SaaS đa doanh nghiệp 
 1. **Hàng tiêu dùng (FMCG)**: Tối ưu cho tốc độ, giảm giá theo combo/định kỳ (定期購 / Subscription), tích điểm LINE Points và nhận hàng qua chuỗi siêu thị tiện lợi (7-Eleven / FamilyMart CVS COD).
 2. **Xe máy điện (High-Ticket EV)**: Tối ưu cho mô hình O2O (Online-to-Offline), tích hợp bộ tính trợ cấp chính phủ theo hộ khẩu (政府補助), bản đồ mạng lưới trạm đổi pin (Gogoro/Ionex), và đặt lịch lái thử tại showroom (預約試乘) kèm cọc giữ chỗ có hoàn lại.
 
-Toàn bộ giải pháp vận hành theo nguyên tắc tách rời: **Lõi thông minh dùng chung (Core Engine)** và **Tầng kết nối địa phương hóa (Taiwan Localization Adapter)**. Khi mở rộng sang khách hàng ở quốc gia khác, chỉ cần thay đổi tầng Adapter mà không phải lập trình lại nghiệp vụ cốt lõi.
+Toàn bộ giải pháp vận hành theo nguyên tắc tách rời: **Lõi thông minh dùng chung (Core Engine)** và **Tầng kết nối địa phương hóa (Taiwan Localization Adapter)**.
+
+### Chiến lược 4 bước nhân rộng B2B SaaS ra toàn cầu
+
+Để nhân rộng giải pháp từ mô hình khách hàng mỏ neo Đài Loan ra $N$ doanh nghiệp toàn cầu, hệ thống triển khai 4 bước chiến lược chuẩn hóa:
+
+1. **Cơ chế Phích cắm bản địa (Plug-and-Play Adapters)**:
+   - Giữ nguyên 100% Lõi AI (Core AI Engine), Customer360, máy chủ tính giá sàn toán học ($P_{floor}$) và máy trạng thái quy trình.
+   - Chỉ hoán đổi 3 cổng kết nối địa phương hóa theo từng thị trường mục tiêu:
+     - *Cổng giao tiếp (Communication Port)*: Đài Loan dùng LINE Official Account (LINE OA) + Web Widget; Thị trường quốc tế hoán đổi sang WhatsApp Business API, Telegram hoặc Web Widget đa ngôn ngữ.
+     - *Cổng thanh toán & đối soát (Payment Port)*: Đài Loan dùng ECPay, NewebPay, LINE Pay và 7-Eleven/FamilyMart CVS COD; Thị trường quốc tế hoán đổi sang Stripe, PayPal, Apple Pay, Google Pay hoặc COD bưu điện nội địa.
+     - *Cổng pháp lý & hạ tầng dữ liệu (Compliance & Residency Port)*: Đài Loan tuân thủ Taiwan PDPA lưu trữ tại cụm máy chủ GCP Changhua / AWS Taipei; Thị trường quốc tế chuyển sang GDPR (Châu Âu), CCPA (Mỹ), PDPA (Singapore) với các module quản lý cookie và thu thập đồng ý (Consent Management).
+
+2. **Đóng gói thành 2 sản phẩm chuyên ngành (Vertical SaaS Packaging)**:
+   - Thay vì bán nền tảng chung chung, giải pháp được đóng gói thành 2 sản phẩm chuyên biệt:
+     - **AgentOS Mobility**: Chuyên biệt cho ngành xe điện và phương tiện giao thông giá trị cao. Tích hợp sẵn luồng O2O (Online-to-Offline), bộ tính trợ cấp chính phủ / bang, bản đồ trạm sạc & đổi pin thời gian thực, luồng đặt lịch lái thử tại showroom với cọc giữ chỗ hoàn lại và thẩm định sơ bộ hồ sơ mua trả góp.
+     - **AgentOS FMCG**: Chuyên biệt cho thương mại điện tử hàng tiêu dùng nhanh. Tối ưu thuật toán giỏ hàng thông minh, tư vấn combo tương thích, cơ chế mua hàng định kỳ (Subscription / 定期購) tự động áp mức giá sàn ưu đãi theo chu kỳ, cơ chế tích điểm tiến độ (Endowed Progress) và bộ lọc chống bùng hàng siêu thị.
+
+3. **Phân phối quy mô qua Shopify & WooCommerce App Store**:
+   - Đóng gói giải pháp thành ứng dụng cài đặt 1-chạm (1-click install app) trên hai kho ứng dụng thương mại điện tử lớn nhất toàn cầu: **Shopify App Store** và **WooCommerce Marketplace**.
+   - Tự động đồng bộ sản phẩm, bảng giá sàn, đơn hàng và tồn kho qua Shopify GraphQL Admin API và WooCommerce REST API.
+   - Tiếp cận hàng trăm nghìn nhà bán lẻ trực tuyến toàn cầu (Global Merchants) theo mô hình Tăng trưởng dựa trên sản phẩm (Product-Led Growth - PLG) với chi phí thu hút khách hàng (CAC) tối thiểu, không cần đội ngũ kinh doanh bán hàng trực tiếp (sales tay).
+
+4. **Tận dụng Case Study thực nghiệm Đài Loan làm đòn bẩy thương mại**:
+   - Sử dụng bộ chỉ số thực tế đo lường được từ đối tác mỏ neo Đài Loan (được định nghĩa và theo dõi tại [analytics.md](delivery/analytics.md)): tỷ lệ tăng chuyển đổi (+25%–40%), độ trễ phản hồi (< 1.5 giây), chi phí AI đơn vị (0.5–1 TWD / phiên tư vấn), tỷ lệ tự động hóa CSKH (> 65%) và bảo toàn 100% biên lợi nhuận ròng.
+   - Xuất bản dữ liệu thực nghiệm thành Case Study và Whitepaper định lượng làm bằng chứng xã hội (Social Proof) và cam kết ROI để chào bán cho các doanh nghiệp quốc tế tiếp theo.
 
 <a id=section-2></a>
 
@@ -57,9 +82,17 @@ Mục tiêu tái sử dụng 80–90% của bản cũ được giữ như **gi�
 
 ## 4. Đóng gói và triển khai
 
-Bán từng mô-đun hoặc gói cả ba. Gói cả ba không phải mô-đun thứ tư. Giá thương mại đề xuất gồm phí nền tảng, mô-đun/kết nối được chọn, mức sử dụng AI và công triển khai; chưa chốt số tiền.
+Bán theo hai hình thức đóng gói chính:
+1. **Theo mô-đun chức năng**: Từng mô-đun (Tiếp thị, Bán hàng, Chăm sóc) hoặc trọn bộ cả ba. Gói cả ba không phải mô-đun thứ tư.
+2. **Theo giải pháp ngành dọc (Vertical SaaS)**:
+   - **AgentOS Mobility Edition**: Đóng gói sẵn toàn bộ nghiệp vụ xe điện (O2O, tính trợ cấp chính phủ/bang, bản đồ trạm sạc/pin, cọc lái thử và thẩm định trả góp).
+   - **AgentOS FMCG Edition**: Đóng gói sẵn toàn bộ nghiệp vụ bán lẻ tiêu dùng (giỏ hàng thông minh, giao định kỳ Subscription, tích điểm tiến độ và chống bùng hàng).
 
-Bộ mã nhúng website là cách tích hợp tùy chọn cho B2C, không phải toàn bộ sản phẩm. Doanh nghiệp có thể gọi API từ máy chủ và giữ giao diện riêng. Các tên `nexus-mkt.min.js`, `nexus-sales.min.js`, `nexus-cskh.min.js`, `nexus-sdk.min.js` trong PDF là tên dự kiến, chưa phải tệp hay sản phẩm đã xây.
+Hình thức triển khai và phân phối:
+- **Tùy biến cho doanh nghiệp lớn (Custom Enterprise)**: Nhúng mã website (`nexus-sales.min.js`), tích hợp API trực tiếp từ máy chủ doanh nghiệp, kết nối LINE OA / WhatsApp Business.
+- **Phân phối tự động 1-chạm (Shopify & WooCommerce App Store)**: Cài đặt trực tiếp từ kho ứng dụng cho hàng trăm nghìn nhà bán lẻ trực tuyến toàn cầu, tự động kích hoạt Core Engine và Plug-and-Play Adapter tương ứng theo quốc gia của merchant.
+
+Giá thương mại đề xuất gồm phí nền tảng theo tháng (Subscription Tier), mức sử dụng AI và công triển khai (nếu là khách hàng tùy biến doanh nghiệp lớn); chưa chốt số tiền cụ thể.
 
 Hai loại hoa hồng phải tách biệt: hoa hồng nhân viên bán hàng có thể giảm ở một số đơn, còn hoa hồng đối tác giới thiệu vẫn là chi phí thật. Không hứa “không hoa hồng” nếu đơn hàng còn phải trả đối tác.
 

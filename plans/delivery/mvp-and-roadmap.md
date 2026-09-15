@@ -135,12 +135,12 @@ Lưu phiên bản phần mềm/cấu hình/tài liệu, vết yêu cầu–kết
 
 | Giai đoạn | Mục tiêu | Phạm vi | Điều kiện ra |
 |---|---|---|---|
-| P0 — Hiểu nhu cầu | Chọn đúng thử nghiệm | Nghiên cứu thủ công có AI soạn nháp; phiếu cơ hội; phỏng vấn/đối tác do người thực hiện theo quyền; chọn dữ liệu và hành trình | Có vấn đề thật, giải pháp khả thi, người chịu trách nhiệm, dữ liệu và phép thử |
-| P1 — Bán hàng và Chăm sóc cơ bản | Chứng minh nền tảng dùng được | Phạm vi tại mục 1, một website và nguồn cần thiết | Qua bộ thử, nhân viên tiếp quản được, báo cáo kiểm được, chủ doanh nghiệp duyệt |
-| P2 — Thử cải tiến có kiểm soát | Tìm tính năng tạo giá trị | Chọn từng thử nghiệm: Tiếp thị/đối tác theo quy tắc, giao diện chọn nhanh/lưu món, hỗ trợ đơn, QR, so giỏ/nâng cấp, ưu đãi tính thử hoặc phiếu có người duyệt | Có nguồn, chi phí, người duyệt, kết quả thử và không vi phạm điều kiện dừng |
-| P3 — Mở rộng có căn cứ | Nhân rộng phần đã chứng minh | Mặc cả/phát phiếu có hạn mức, nhiều kênh/đối tác, mua lại/giới thiệu và tự động hóa sâu theo quy tắc | Hiệu quả và chất lượng ổn định, ngân sách phù hợp, vận hành/phục hồi được nghiệm thu |
+| P0 — Hiểu nhu cầu & Cấu hình | Chọn đúng bài toán & chuẩn bị hạ tầng | Nghiên cứu thủ công có AI soạn nháp; phiếu cơ hội; chuẩn bị môi trường Multi-tenant; thiết lập tài liệu và bộ quy tắc giá sàn | Có vấn đề thật, giải pháp khả thi, người chịu trách nhiệm, dữ liệu và phép thử |
+| P1 — Thí điểm mỏ neo Đài Loan (Taiwan Anchor Pilot) | Chứng minh hiệu quả thực tế trên thị trường nội địa | Triển khai B2C cho đối tác Đài Loan (FMCG & Xe máy điện); kết nối LINE OA, ECPay, 7-Eleven CVS COD, bộ tính trợ cấp xe điện O2O | Qua bộ kiểm thử, nhân viên tiếp quản trơn tru, thu thập đầy đủ bộ chỉ số thực nghiệm tại [analytics.md](analytics.md) |
+| P2 — Chuẩn hóa Vertical SaaS & Plug-and-Play Adapters | Tách rời lõi và cơ chế phích cắm đa quốc gia | Đóng gói 2 gói ngành dọc (**AgentOS Mobility** & **AgentOS FMCG**); xây dựng 3 cổng kết nối cắm-rút (WhatsApp Business API, Stripe/PayPal, GDPR/CCPA) | Hoán đổi thành công cổng kết nối mà không sửa Core Engine; vượt qua kiểm thử bảo mật và phân tách schema đa doanh nghiệp |
+| P3 — Tăng trưởng toàn cầu qua App Store & Social Proof | Nhân rộng quy mô cho $N$ doanh nghiệp quốc tế | Đóng gói ứng dụng 1-chạm trên **Shopify App Store** và **WooCommerce Marketplace**; xuất bản Case Study Đài Loan làm đòn bẩy bán hàng B2B | Tự động hóa onboarding merchant toàn cầu, vận hành ổn định trên quy mô lớn, chi phí AI/đơn tối ưu |
 
-P2 là danh sách lựa chọn, **không phải phải làm hết cùng lúc**. Chọn một tính năng theo vấn đề lớn nhất đã đo. Ví dụ giải thích sản phẩm hiệu quả hơn có thể được ưu tiên trước thanh toán mới.
+Lộ trình được dẫn dắt bằng dữ liệu thực nghiệm: kết quả đo lường định lượng từ P1 tại Đài Loan là điều kiện tiên quyết để đóng gói và mở rộng thương mại sang P2 và P3.
 
 ### Cổng riêng cho tính năng rủi ro
 

@@ -61,8 +61,12 @@ Mỗi quy định có một nơi chịu trách nhiệm; tài liệu khác chỉ 
 
 ### Những thay đổi có chủ ý so với kế hoạch cũ
 
-1. **Mô hình kinh doanh B2B SaaS & Khách hàng mỏ neo đầu tiên**: Hệ thống được kiến trúc theo dạng B2B SaaS đa doanh nghiệp (Multi-tenant) để mở rộng cho $N$ khách hàng. Doanh nghiệp thử nghiệm đầu tiên (Anchor Client) là đối tác tại Đài Loan kinh doanh B2C hai ngành hàng: Hàng tiêu dùng (FMCG) và Xe máy điện.
-2. **Kiến trúc tách tầng Core Engine và Localization Adapter**: Lõi trí tuệ và kiểm soát giá sàn dùng chung; tầng kết nối địa phương hóa riêng cho Đài Loan (LINE OA, LINE Pay, ECPay/NewebPay, nhận hàng siêu thị 7-Eleven/FamilyMart CVS COD, tính trợ cấp xe điện nội địa và tuân thủ Taiwan PDPA). Khi mở rộng sang quốc gia khác chỉ cần thay thế tầng Adapter.
+1. **Mô hình kinh doanh B2B SaaS & Khách hàng mỏ neo đầu tiên**: Hệ thống được kiến trúc theo dạng B2B SaaS đa doanh nghiệp (Multi-tenant) để mở rộng cho $N$ khách hàng. Thí điểm mỏ neo (Anchor Pilot) đầu tiên là doanh nghiệp B2C tại Đài Loan kinh doanh Hàng tiêu dùng (FMCG) và Xe máy điện thông minh.
+2. **Chiến lược 4 bước mở rộng B2B SaaS toàn cầu**:
+   - *Cơ chế Phích cắm bản địa (Plug-and-Play Adapters)*: Giữ 100% Core AI Engine & máy chủ tính giá sàn; chỉ hoán đổi 3 cổng kết nối (Chat: LINE sang WhatsApp/Widget; Thanh toán: ECPay/CVS sang Stripe/PayPal; Pháp lý: Taiwan PDPA sang GDPR/CCPA).
+   - *Đóng gói 2 sản phẩm chuyên ngành (Vertical SaaS)*: Tách thành **AgentOS Mobility** (tối ưu O2O xe điện, trợ cấp, trạm pin, cọc lái thử) và **AgentOS FMCG** (tối ưu giỏ hàng, định kỳ Subscription, tích điểm, chống bùng hàng).
+   - *Phân phối quy mô qua Shopify & WooCommerce App Store*: Đóng gói ứng dụng 1-chạm tiếp cận hàng trăm nghìn nhà bán lẻ quốc tế không cần sales tay.
+   - *Đòn bẩy Case Study thực nghiệm Đài Loan*: Dùng trực tiếp số liệu định lượng (CAC, chuyển đổi, độ trễ, chi phí AI/đơn tại [analytics.md](delivery/analytics.md)) làm bằng chứng ROI để chào bán ra toàn cầu.
 3. **Giữ Bán hàng trước, kèm Chăm sóc cơ bản**, nhưng đưa nghiên cứu thị trường thủ công lên giai đoạn chuẩn bị; chưa bật tự động Tiếp thị trong bản đầu.
 4. **Thanh toán tự động, trợ cấp giá chốt nhanh và phiếu ưu đãi không vào P1.** Khách mua qua quy trình hiện tại; các tính năng này có điều kiện kiểm chứng riêng theo từng ngành hàng.
 5. **Giữ phương án bán hàng B2B cần tư vấn** như cấu hình thay thế: nhu cầu, ngân sách, người quyết định, thời điểm, lịch hẹn và báo giá. Không ép bộ câu hỏi B2B lên người mua lẻ.
