@@ -38,6 +38,7 @@ Mỗi sự kiện gồm doanh nghiệp, nguồn, mã bất biến, thời điể
 | `order.confirmed`, `payment.confirmed` | Đơn và thanh toán là hai sự kiện nguồn riêng |
 | `order.returned`, `payment.refunded` | Điều chỉnh theo nguồn được phép, không suy từ lời khách |
 | `partner.attributed`, `voucher.issued`, `voucher.redeemed` | Ghi nhận nguồn đối tác/cấp/dùng phiếu sau khi bật năng lực |
+| `loyalty.points_awarded`, `loyalty.points_redeemed`, `loyalty.points_revoked`, `loyalty.points_expired` | Sự kiện tích điểm (đơn 1 tặng lớn), đổi phiếu ưu đãi, thu hồi điểm (do hoàn/hủy) và hết hạn điểm |
 | `ai.usage.recorded` | Lượng dùng và chi phí AI thực, tiền tệ và độ bao phủ |
 
 Chống trùng theo doanh nghiệp + nguồn + mã sự kiện; đếm đơn/vụ việc/cơ hội theo mã chuẩn, không theo số lần thông báo. Sửa dữ liệu phải có bản điều chỉnh truy vết, không xóa lịch sử sự kiện để làm đẹp số.
@@ -63,6 +64,7 @@ Chốt múi giờ, khoảng báo cáo dạng [bắt đầu, kết thúc), nhóm 
 | Hiệu suất chi quảng cáo (ROAS) | Doanh thu quy thuộc / chi quảng cáo; không phải lợi nhuận hoặc tác động nhân quả |
 | Giá trị đơn trung bình (AOV) | Doanh thu đơn theo cách tính đã chốt / số đơn hợp lệ; nêu điều chỉnh hủy/hoàn |
 | Mua lại | Khách có lần mua hợp lệ tiếp theo trong cửa sổ / khách của nhóm đã có đủ thời gian quan sát |
+| Chuyển đổi đơn 2 nhờ tích điểm | Tỷ lệ khách mua đơn thứ 2 sau khi nhận điểm thưởng lớn từ đơn đầu; tỷ lệ đổi điểm thành phiếu mua hàng (Points Burn Rate) |
 | Giới thiệu | Khách mua mới hợp lệ từ giới thiệu / lượt giới thiệu hợp lệ, hoặc trên khách được mời; ghi rõ mẫu số |
 | Giá trị vòng đời (LTV) | Giá trị thực nhận theo nhóm; dự báo phải gắn nhãn ước tính, kỳ và giả định |
 | Doanh thu có AI tham gia | Tổng đơn hợp lệ có tương tác AI đủ điều kiện trước mua trong cửa sổ đã chốt; loại trùng và điều chỉnh theo chính sách |

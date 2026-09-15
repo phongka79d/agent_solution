@@ -46,11 +46,23 @@ Với B2B, chuỗi cơ hội tham khảo là mới → đủ điều kiện → 
 | Khuyên không mua đắt hơn | Nêu phương án đủ dùng hoặc chưa cần mua; không dựng lý do để ép nâng cấp |
 | Soát giỏ hàng | Gợi ý sản phẩm trùng/không tương thích dựa dữ liệu; khách xác nhận trước khi sửa |
 | Gợi ý đạt miễn phí giao hàng | Hiển thị tổng tiền trước/sau và điều kiện thật; không tự thêm món |
+| Kích hoạt mở đầu (First-Touch) | Chờ khách dừng xem > 6–8s hoặc cuộn > 50%; hiển thị bong bóng nhỏ (micro-pill) cạnh nút Mua kèm nút 1-chạm; không bung che màn hình, không đòi SĐT/đăng nhập |
 
 Không chuyển “10.000 mAh” thành số lần sạc cụ thể chỉ bằng suy đoán; không hứa thời gian đun nước, tiền điện, độ yên tĩnh hoặc kết quả sức khỏe từ một thông số đơn lẻ. Ví dụ trong PDF phải được kiểm chứng theo sản phẩm và điều kiện thử trước khi dùng với khách.
 
 ## 4. Giá ưu đãi: AI đề xuất, máy chủ quyết định
 
+### 4.1. Phân luồng ý định & Tái định vị trợ cấp giá (Selective Subsidy Discovery)
+- **Tuyệt đối im lặng với khách sẵn sàng mua giá gốc**: Nếu khách chỉ hỏi về thông số, công năng, độ bền, bảo hành hoặc thời gian giao hàng, AI tập trung tư vấn chốt đơn theo giá niêm yết, tuyệt đối KHÔNG chủ động đề cập hoặc gợi ý giảm giá.
+- **Tái định vị thuật ngữ cho thị trường Đài Loan (Chống nghi ngờ lừa đảo - 詐騙)**:
+  - Người tiêu dùng Đài Loan đặc biệt cảnh giác với website lừa đảo (詐騙網站); việc cho khách "trả giá tay đôi với bot" sẽ làm mất uy tín thương hiệu chính hãng.
+  - Tuyệt đối không dùng từ "Mặc cả" (討價還價). Thay thế bằng các thuật ngữ thương mại bản địa: **"Trợ cấp chốt đơn tự động" (AI 智能即時補貼)**, **"Đặc quyền thành viên LINE" (LINE 專屬快閃折抵)** hoặc **"Tặng thêm điểm thưởng LINE Points" (加碼送 LINE Points)**.
+  - Hiển thị bảo chứng uy tín trong khung chat: **Mã số thuế doanh nghiệp Đài Loan (統一編號 - Tongyi Bianhao)** và chứng nhận tài khoản **LINE Official Account tick xanh/xám**.
+- **Bắt tín hiệu nhạy cảm về giá (Price-Sensitivity Triggers)**: Ưu đãi chỉ được kích hoạt khi khách ngần ngại về chi phí (ví dụ: *"giá hơi cao/đắt"*, *"vượt ngân sách"*, *"có mã ưu đãi không"*, *"bên khác rẻ hơn"*).
+- **Mở lời có điều kiện**: AI mở gói trợ cấp giới hạn: *"Hệ thống vừa mở thêm 3 suất trợ cấp độc quyền 150 TWD cho đơn hàng xác nhận qua LINE Pay hoặc nhận tại 7-Eleven hôm nay, bạn có muốn nhận suất này không?"*.
+- **Nút tương tác động**: Giao diện xuất hiện nút nhanh `[Nhận trợ cấp ngay]` để khách kích hoạt mức giảm sàn mà không cần giằng co.
+
+### 4.2. Nguyên tắc và quy trình duyệt giá sàn
 Năng lực mặc cả nằm sau P1. Lớp hội thoại chỉ chuyển nhu cầu và giá khách đề nghị; **không nhận quyền quyết định tiền, không được truy cập hay tiết lộ giá vốn nội bộ, không tự ghi đè giá sàn**. Dữ liệu chi phí chỉ đi tới bộ tính giá máy chủ và vai trò được cấp quyền.
 
 Công thức ngân sách, giá sàn và ví dụ được định nghĩa duy nhất tại [kinh tế đơn hàng](../delivery/analytics.md#unit-economics).
@@ -65,6 +77,29 @@ Công thức ngân sách, giá sàn và ví dụ được định nghĩa duy nh�
 Báo giá có thể dùng mã ngẫu nhiên tra phía máy chủ hoặc mã xác thực thông điệp HMAC để kiểm tra tính toàn vẹn. Đây không phải chứng nhận ngân hàng, không tự bảo vệ mọi đường mua hàng; trang thanh toán và API tạo đơn cũng phải áp dụng cùng kiểm tra giá.
 
 Thời hạn 10 phút là lựa chọn thử nghiệm từ PDF, cần nêu thật với khách. Không tạo khan hiếm giả, giả vờ “lỗ vốn” hoặc “xin sếp” để gây áp lực. Hết hạn báo giá không bảo đảm ngân hàng từ chối tiền chuyển muộn.
+
+### 4.3. Luồng xác nhận đơn & Hạ tầng giao nhận siêu thị tiện lợi (CVS COD)
+1. **Nút chốt giá kèm đếm ngược (CTA Timer)**: Sau khi máy chủ duyệt mức giá hợp lệ, giao diện chat bung nút hành động: `[Khóa đơn nhận trợ cấp trong X phút]` (TTL 10 phút).
+2. **Thu thập thông tin & Chọn điểm nhận hàng siêu thị tiện lợi (7-Eleven / FamilyMart)**:
+   - Tại Đài Loan, hơn 60% giao dịch B2C dùng hình thức nhận hàng trả tiền tại siêu thị (超商取貨付款 - CVS COD).
+   - Khung thời gian 10 phút áp dụng cho việc **Hoàn tất chọn cửa hàng tiện lợi và khóa đơn (Store Selection TTL)**. Khách mở bản đồ E-Map (tích hợp qua API ECPay/NewebPay), chọn chi nhánh 7-Eleven hoặc FamilyMart gần nhà và điền SĐT nhận thông báo SMS/LINE.
+   - Tuân thủ Đạo luật Bảo vệ Dữ liệu Cá nhân Đài Loan (**Taiwan PDPA**): Có hộp kiểm đồng thuận riêng biệt, không tick sẵn.
+3. **Thanh toán tức thời & Cổng thanh toán nội địa Đài Loan**:
+   - Nếu khách chọn thanh toán trực tuyến: Hỗ trợ chuyển tiếp sang **LINE Pay**, **JKOPAY (街口支付)** hoặc thẻ tín dụng qua cổng **ECPay (綠界科技)** / **NewebPay (藍新金流)**.
+   - Nếu khách chọn CVS COD: Khách có 7 ngày để ra cửa hàng tiện lợi nhận hàng và trả tiền mặt. Khách bùng hàng quá 7 ngày sẽ bị hệ thống Customer360 hạ điểm uy tín và khóa quyền nhận ưu đãi lần sau.
+
+### 4.4. Quy trình chuyên biệt theo ngành hàng tại thị trường Đài Loan
+
+#### A. Phân hệ Xe máy điện (High-Ticket EV Scooter O2O)
+- **Module tính trợ cấp chính phủ theo hộ khẩu (政府補助試算器)**:
+  - Khách mua xe điện tại Đài Loan được hưởng 3 tầng trợ cấp: Trợ cấp Bộ Kinh tế (經濟部), Trợ cấp Cục Môi trường (環保署), và Trợ cấp của chính quyền thành phố (Đài Bắc, Tân Bắc, Đào Viên, Cao Hùng...) kèm chính sách đổi xe xăng cũ (汰舊換新).
+  - AI hỏi hộ khẩu và tình trạng xe cũ của khách để máy chủ tự động khấu trừ tiền trợ cấp (thường từ 10.000–20.000 TWD) và đưa ra mức giá lăn bánh thực tế.
+- **Tích hợp bản đồ mạng lưới trạm đổi pin (Gogoro Network / Kymco Ionex)**: AI định vị trạm đổi pin gần nhà khách trong bán kính 1km để giải tỏa triệt để nỗi lo hết điện.
+- **Phễu O2O (Online-to-Offline)**: AI không chốt bán đứt xe trực tuyến mà hướng tới **Đặt lịch lái thử tại Showroom (預約門市試乘)** và nhận cọc giữ chỗ 1.000–2.000 TWD có hoàn lại. Hồ sơ sau đó được bàn giao cho đại lý hỗ trợ khách làm thủ tục đăng kiểm và bấm biển số tại Trạm Đăng kiểm (監理所).
+
+#### B. Phân hệ Hàng tiêu dùng (FMCG D2C)
+- **Mô hình Giao định kỳ (定期購 / Subscription)**: Cho phép khách hàng thiết lập chu kỳ giao tự động 30 hoặc 60 ngày đến siêu thị 7-Eleven quen thuộc; đơn giao định kỳ tự động áp dụng mức giá sàn $P_{floor}$ rẻ hơn 15% mà không cần đàm phán từng lần.
+- **Tích điểm LINE Points**: Điểm thưởng quy đổi trực tiếp thành LINE Points để khách có thể chi tiêu trong hệ sinh thái bán lẻ tại Đài Loan. Kèm Basket Cap (tối đa 1.000–2.000 TWD) để chặn con buôn gom hàng sỉ.
 
 ## 5. Hỗ trợ thanh toán, giao hàng và hóa đơn
 

@@ -14,18 +14,14 @@ AgentOS Customer360 giúp doanh nghiệp không bỏ sót nhu cầu, tư vấn n
 
 Ba nguồn bổ sung cho nhau: kế hoạch cũ cung cấp nền tảng vận hành; PDF bổ sung trải nghiệm B2C và kinh tế ưu đãi; tài liệu thị trường bổ sung cách tìm nhu cầu, đối tác và tăng trưởng sau mua. Giá trị không nằm ở việc có nhiều trợ lý AI, mà ở kết quả được xác nhận và khả năng triển khai lại.
 
-### Chọn thị trường đầu tiên
+### Thị trường mỏ neo đầu tiên và Định hướng B2B SaaS
+Hệ thống được thiết kế theo mô hình **B2B SaaS đa doanh nghiệp (Multi-tenant)**, giải quyết bài toán tư vấn, bán hàng và chăm sóc khách hàng tự động để bán cho $N$ doanh nghiệp trong tương lai.
 
-Ưu tiên một doanh nghiệp có sản phẩm dễ giải thích, câu hỏi lặp lại, dữ liệu sản phẩm đáng tin, nhân viên tiếp quản và kết quả đo được. Đánh giá thêm biên lợi nhuận, mua lại, chi phí thu hút, cạnh tranh, kênh phân phối và rào cản vận hành.
+**Khách hàng mỏ neo đầu tiên (Anchor Client)**: Doanh nghiệp tại **Đài Loan** kinh doanh bán lẻ B2C trực tiếp cho người tiêu dùng Đài Loan, tập trung vào hai nhóm ngành:
+1. **Hàng tiêu dùng (FMCG)**: Tối ưu cho tốc độ, giảm giá theo combo/định kỳ (定期購 / Subscription), tích điểm LINE Points và nhận hàng qua chuỗi siêu thị tiện lợi (7-Eleven / FamilyMart CVS COD).
+2. **Xe máy điện (High-Ticket EV)**: Tối ưu cho mô hình O2O (Online-to-Offline), tích hợp bộ tính trợ cấp chính phủ theo hộ khẩu (政府補助), bản đồ mạng lưới trạm đổi pin (Gogoro/Ionex), và đặt lịch lái thử tại showroom (預約試乘) kèm cọc giữ chỗ có hoàn lại.
 
-| Ứng viên từ nguồn | Vấn đề cần kiểm chứng | Dữ liệu quyết định |
-|---|---|---|
-| Hàng tiêu dùng | Khó chọn món phù hợp, lo chất lượng hoặc mua hớ | Danh mục, công dụng có bằng chứng, đổi trả, mua lại |
-| SIM/thẻ | Muốn kết nối thuận tiện khi đến nơi | Thiết bị, nơi dùng, thời hạn, kích hoạt, chính sách nhà cung cấp |
-| Vận chuyển | Cần biết giá, thời gian, trạng thái và cách xử lý sự cố | Tuyến, báo giá, trạng thái giao nhận, ngoại lệ |
-| Xe điện | Cần hiểu tổng chi phí và hành trình sử dụng | Sản phẩm, tài chính, sạc, bảo dưỡng, nhân viên tư vấn |
-
-Đây là danh sách nghiên cứu, không phải bốn ngành sẽ triển khai đồng thời. Phần mềm dịch vụ, phân phối B2B, ô tô, bất động sản và hành chính phòng khám từ kế hoạch cũ được giữ như hướng cấu hình về sau; quyết định chuyên môn y tế không giao cho AI.
+Toàn bộ giải pháp vận hành theo nguyên tắc tách rời: **Lõi thông minh dùng chung (Core Engine)** và **Tầng kết nối địa phương hóa (Taiwan Localization Adapter)**. Khi mở rộng sang khách hàng ở quốc gia khác, chỉ cần thay đổi tầng Adapter mà không phải lập trình lại nghiệp vụ cốt lõi.
 
 <a id=section-2></a>
 

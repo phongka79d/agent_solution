@@ -1,4 +1,4 @@
-# AgentOS Customer360 — Kế hoạch hợp nhất
+# AgentOS Customer360 — Kế hoạch
 
 Đọc [bản tổng quan dễ hiểu](plan-easy-read-flow.md) trước, khoảng 5 phút. Muốn bắt đầu triển khai, mở [phạm vi bản đầu và điều kiện nghiệm thu](delivery/mvp-and-roadmap.md).
 
@@ -61,10 +61,10 @@ Mỗi quy định có một nơi chịu trách nhiệm; tài liệu khác chỉ 
 
 ### Những thay đổi có chủ ý so với kế hoạch cũ
 
-1. **Trọng tâm thử nghiệm đề xuất là B2C trên website hiện có**, phù hợp PDF. SIM/thẻ, hàng tiêu dùng, vận chuyển và xe điện là các ứng viên nghiên cứu, chưa phải ngành đã chọn. Không triển khai tất cả cùng lúc.
-2. **Giữ Bán hàng trước, kèm Chăm sóc cơ bản**, nhưng đưa nghiên cứu thị trường thủ công lên giai đoạn chuẩn bị; chưa bật tự động Tiếp thị trong bản đầu.
-3. **Lịch hẹn và LINE không còn bắt buộc với mọi dự án.** B2C dùng một nguồn sản phẩm và hệ thống lưu khách/yêu cầu hiện có; chỉ thêm lịch cho hành trình cần đặt hẹn. Chọn kênh bổ sung theo doanh nghiệp, không tự thay LINE bằng Zalo.
-4. **Thanh toán tự động, mặc cả và phiếu bù giá không vào bản đầu.** Khách mua qua quy trình hiện tại; các tính năng này có điều kiện kiểm chứng riêng.
+1. **Mô hình kinh doanh B2B SaaS & Khách hàng mỏ neo đầu tiên**: Hệ thống được kiến trúc theo dạng B2B SaaS đa doanh nghiệp (Multi-tenant) để mở rộng cho $N$ khách hàng. Doanh nghiệp thử nghiệm đầu tiên (Anchor Client) là đối tác tại Đài Loan kinh doanh B2C hai ngành hàng: Hàng tiêu dùng (FMCG) và Xe máy điện.
+2. **Kiến trúc tách tầng Core Engine và Localization Adapter**: Lõi trí tuệ và kiểm soát giá sàn dùng chung; tầng kết nối địa phương hóa riêng cho Đài Loan (LINE OA, LINE Pay, ECPay/NewebPay, nhận hàng siêu thị 7-Eleven/FamilyMart CVS COD, tính trợ cấp xe điện nội địa và tuân thủ Taiwan PDPA). Khi mở rộng sang quốc gia khác chỉ cần thay thế tầng Adapter.
+3. **Giữ Bán hàng trước, kèm Chăm sóc cơ bản**, nhưng đưa nghiên cứu thị trường thủ công lên giai đoạn chuẩn bị; chưa bật tự động Tiếp thị trong bản đầu.
+4. **Thanh toán tự động, trợ cấp giá chốt nhanh và phiếu ưu đãi không vào P1.** Khách mua qua quy trình hiện tại; các tính năng này có điều kiện kiểm chứng riêng theo từng ngành hàng.
 5. **Giữ phương án bán hàng B2B cần tư vấn** như cấu hình thay thế: nhu cầu, ngân sách, người quyết định, thời điểm, lịch hẹn và báo giá. Không ép bộ câu hỏi B2B lên người mua lẻ.
 6. **Không dùng lại các kết luận tuyệt đối của PDF.** “Độc bản”, “100% lợi nhuận”, “100% chống hack”, “phiếu mua hàng không tốn tiền” đều chưa có bằng chứng để khẳng định.
 7. **Không coi dẫn chiếu pháp lý cũ là chứng nhận tuân thủ.** Phần [API và bảo vệ dữ liệu](platform/api-and-integrations.md#section-16) bổ sung nguồn chính thức và bước rà soát trước vận hành.

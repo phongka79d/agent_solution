@@ -147,12 +147,13 @@ P2 là danh sách lựa chọn, **không phải phải làm hết cùng lúc**. 
 | Tính năng | Chưa được bật cho tới khi |
 |---|---|
 | Mặc cả/giá ưu đãi | Tài chính duyệt chi phí/sàn/ngân sách; tính thử đúng; không lách qua API, giỏ hoặc mã ưu đãi; có hạn mức và ngắt |
-| Thanh toán QR | Có hợp đồng/năng lực kết nối, đối soát nguồn, nhánh trùng/muộn/thiếu/thừa và người xử lý |
+| Thanh toán tức thời & Cổng quốc tế | Có hợp đồng kết nối (Stripe, PayPal, Apple/Google Pay, QR nội địa), đối soát nguồn, nhánh trùng/muộn/thiếu/thừa và người xử lý |
 | Phiếu bù giá | Có chính sách công khai, chi phí, điều kiện đơn, chống cấp vượt/trùng và xử lý đơn trả |
 | Đối tác | Quy tắc nguồn/hoa hồng, quyền dữ liệu, đối soát và chống gian lận được duyệt |
 | Gợi ý tự bật/mã nhúng | Đo tương thích/tốc độ/khả năng tiếp cận và tần suất; không che thao tác mua |
 | Tra vận chuyển/hóa đơn | Nguồn xác nhận được năng lực cụ thể; không hứa ngoài dữ liệu |
 | Phân tích ảnh/video | Có dữ liệu đánh giá, quyền lưu/xóa, quy trình người duyệt; không tự quyết quyền lợi khách |
+| Điểm thưởng & phiếu thân thiết | Tài chính duyệt tỷ lệ trích quỹ điểm; có quy tắc Min Spend, trần Basket Cap/Cap tiền mặt; bộ tứ định danh chống clone tài khoản (OTP kênh quốc tế, thiết bị, hash phương thức thanh toán, địa chỉ); cấm giảm % với xe máy điện |
 
 <a id=section-23></a>
 

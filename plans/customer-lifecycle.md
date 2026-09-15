@@ -38,9 +38,10 @@ Một khách có thể có nhiều đơn, cơ hội và vụ hỗ trợ cùng l�
 | 5. Khách muốn mua thêm | Ghi nhu cầu và nguồn tín hiệu → Bán hàng xác nhận → đề xuất mới | Không bật Bán hàng thì chuyển nhân viên; không dùng sự cố để ép mua | P1: ghi nhận và chuyển; P2/P3: quy trình mở rộng có điều kiện |
 | 6. Đơn lớn / điều khoản riêng | Tư vấn → gói thông tin → người có thẩm quyền duyệt | Im lặng không phải phê duyệt; hết hạn thì dừng hoặc phân công lại | P1: bàn giao; không tự gửi giá ngoại lệ |
 | 7. Khách từ đối tác trước nhu cầu | Đối tác giới thiệu → khách tự vào → lưu nguồn → tư vấn theo thời điểm | Có mã đối tác không đồng nghĩa có quyền nhận dữ liệu khách | P0: thử thủ công; P1: lưu nguồn có sẵn; P2: công cụ hỗ trợ đối tác |
-| 8. Mặc cả và thanh toán | Khách đề xuất → máy chủ duyệt giá → xác nhận đơn → thanh toán → đối soát | Giá thấp, hết hiệu lực, thiếu hàng, trả thiếu/thừa/muộn đều có nhánh riêng | P2 tính thử, P3 tự động có giới hạn; ngoài P1 |
+| 8. Trợ cấp giá chốt nhanh & Thanh toán / Siêu thị tiện lợi | Khách ngần ngại giá → AI kích hoạt gói trợ cấp có điều kiện → máy chủ duyệt giá sàn → hiện nút [Khóa đơn nhận trợ cấp trong 10 phút] → chọn chi nhánh 7-Eleven/FamilyMart (CVS COD) hoặc LINE Pay/thẻ → đối soát | Khách không băn khoăn giá thì giữ nguyên giá gốc; giá dưới sàn, quá 10 phút chưa khóa điểm nhận hoặc khách bùng hàng có nhánh xử lý riêng | P2 tính thử, P3 tự động có giới hạn; ngoài P1 |
 | 9. Bù giá sau mua | Sự kiện giảm giá → kiểm tra đơn đủ điều kiện → duyệt/cấp phiếu một lần | Đơn trả/hủy, khác biến thể, ưu đãi không tương đương hoặc vượt ngân sách thì loại | P2 có người duyệt; không báo đã bù trước khi hệ thống cấp phiếu xác nhận |
 | 10. Khách cần tư vấn B2B | Nhu cầu → ngân sách/người quyết định/thời điểm → sản phẩm → lịch hoặc báo giá | Thiếu trường thì để chưa biết; lịch hết chỗ hoặc lỗi thì không báo đã đặt | Cấu hình thay thế nếu chọn thử B2B; không bắt người mua lẻ đi qua chuỗi này |
+| 11. Tích điểm thưởng đổi phiếu ưu đãi | Đơn hoàn tất → tích điểm (tặng lớn đơn đầu) → theo dõi tiến độ mốc thưởng → đổi phiếu → áp dụng đơn sau | Đơn hủy/trả thì thu hồi điểm; đơn giá trị dưới mức sàn hoặc gian lận thì không cấp điểm | P2 thử nghiệm có kiểm soát ngân sách; P3 tự động hóa gắn Customer360 |
 
 ### Ví dụ A — Người mua lẻ bận rộn
 

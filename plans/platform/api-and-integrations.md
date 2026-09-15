@@ -111,7 +111,12 @@ Bên nhận lưu khóa sự kiện, bỏ cập nhật phiên bản cũ và chấ
 | Phiếu hỗ trợ / phiếu mua hàng | Trạng thái, người nhận, điều kiện | Tạo/cập nhật/cấp theo chính sách | Sau P1 |
 | Quảng cáo / đối tác | Nguồn, chi phí và kết quả được phép | Không tự xuất bản, chi ngân sách hoặc trả hoa hồng | Sau P1 theo thử nghiệm |
 
-GHN, GHTK, Viettel Post, LINE, Zalo, Facebook, WhatsApp, email, ngân hàng và ví trong tài liệu nguồn chỉ là ứng viên kết nối. Cần xác nhận quyền truy cập và năng lực từng nhà cung cấp; không cam kết thông tin vị trí trực tiếp, số người giao hay mở ứng dụng nếu API không hỗ trợ.
+### Bộ kết nối bản địa hóa Đài Loan (Taiwan Localization Adapters)
+Đối với khách hàng mỏ neo tại Đài Loan, hệ thống tích hợp sẵn các bộ kết nối đặc thù của thị trường nội địa:
+1. **Nền tảng TMĐT Đài Loan**: Connectors cho **91APP**, **SHOPLINE**, **Cyberbiz** qua Open API và Webhook (đồng bộ tồn kho, danh mục sản phẩm và trạng thái đơn hàng thời gian thực).
+2. **Kênh tương tác & Định danh**: **LINE Messaging API** (tương tác trực tiếp trên LINE Official Account), **LINE Login** (xác thực danh tính 1-chạm không cần tạo tài khoản mới).
+3. **Cổng thanh toán & Giao nhận siêu thị tiện lợi (CVS)**: **ECPay (綠界科技)** và **NewebPay (藍新金流)**, hỗ trợ trọn gói thẻ nội địa, **LINE Pay**, **JKOPAY (街口支付)** và API bản đồ chọn siêu thị tiện lợi (**7-Eleven / FamilyMart E-Map**) phục vụ hình thức nhận hàng trả tiền mặt (**超商取貨付款 - CVS COD**).
+4. **Hạ tầng lưu trữ tuân thủ Taiwan PDPA**: Đặt cụm máy chủ và cơ sở dữ liệu tại **GCP Changhua (Đài Loan)** hoặc **AWS Region Taipei** đảm bảo tốc độ phản hồi < 50ms và đáp ứng yêu cầu lưu trữ dữ liệu cá nhân tại chỗ theo Đạo luật Bảo vệ Dữ liệu Cá nhân Đài Loan.
 
 Mỗi bộ kết nối chịu trách nhiệm xác thực, ánh xạ trường, giới hạn tốc độ, thời gian chờ, loại lỗi, khóa đối soát và kiểm thử. Quyền đọc và ghi cấu hình độc lập; ngoài danh sách phải từ chối.
 
@@ -119,9 +124,9 @@ Kết quả hành động chung gồm `operation_id`, `effect_key`, `operation`,
 
 <a id=payments></a>
 
-## 6. Thanh toán và báo giá có thời hạn
+## 6. Thanh toán và báo giá có thời hạn (Áp dụng cho Thanh toán số & Siêu thị CVS)
 
-NAPAS mô tả VietQR giúp giảm thao tác nhập thông tin; khách vẫn kiểm tra người nhận và xác nhận chuyển khoản trong ứng dụng ngân hàng. Không suy ra khả năng mở mọi ngân hàng, thời gian ba giây hoặc phí bằng 0 từ mô tả này. [Nguồn NAPAS](https://www.napas.com.vn/dich-vu-chuyen-tien-nhanh-napas-247).
+Hệ thống hỗ trợ cả luồng thanh toán tức thời (LINE Pay/Thẻ) và luồng nhận hàng trả tiền tại siêu thị (CVS COD). Khách vẫn kiểm tra thông tin và xác nhận theo chuẩn của đơn vị trung gian thanh toán. Không suy ra khả năng mở mọi ngân hàng, thời gian ba giây hoặc phí bằng 0 từ mô tả PDF.
 
 Thiết kế sau P1 phải phân biệt:
 
@@ -160,7 +165,7 @@ Hạn báo giá 10 phút từ PDF được thi hành ở máy chủ. Mã xác th
 | Vòng đời dữ liệu | Có người chịu trách nhiệm về lưu, xuất, xóa, bản sao lưu, sự cố và thu hồi quyền |
 | Nhật ký | Chủ thể, doanh nghiệp, khách/cuộc trao đổi, hành động, phiên bản, phê duyệt, kết quả, thời gian, truy vết; che dữ liệu nhạy cảm |
 
-Về căn cứ pháp lý: Luật Bảo vệ dữ liệu cá nhân số 91/2025/QH15 có hiệu lực từ 01/01/2026. Vì vậy, kế hoạch tại thời điểm 10/09/2026 không thể chỉ viện dẫn Nghị định 13/2023/NĐ-CP như PDF để tự tuyên bố tuân thủ. [Cổng văn bản Chính phủ](https://vanban.chinhphu.vn/?classid=1&docid=214590&pageid=27160&typegroup=).
+Về căn cứ pháp lý: Với doanh nghiệp quốc tế hoặc triển khai đa thị trường, hệ thống phải tuân thủ các khung pháp lý bảo vệ dữ liệu cá nhân quốc tế tương ứng như **GDPR (Châu Âu)**, **CCPA/CPRA (Hoa Kỳ)**, **PDPA (Singapore & Đông Nam Á)** song song với luật dữ liệu tại quốc gia sở tại của doanh nghiệp (ví dụ tại Việt Nam gồm Luật Bảo vệ dữ liệu cá nhân số 91/2025/QH15 có hiệu lực từ 01/01/2026 và Nghị định 13/2023/NĐ-CP). Tuyệt đối không tự động tuyên bố tuân thủ chỉ dựa trên cấu hình mã hóa hay ô chọn đồng thuận đơn lẻ.
 
 Đây là lưu ý cần rà soát, không phải kết luận pháp lý đầy đủ. Trước vận hành, người phụ trách pháp lý/bảo vệ dữ liệu cần xác định quy định đang áp dụng, mục đích/căn cứ xử lý, quyền chủ thể dữ liệu, vai trò các bên, hồ sơ/thỏa thuận cần thiết, chuyển dữ liệu khi có, thông báo sự cố và chính sách ưu đãi/đổi trả. Đánh giá thêm quy định ngành và điều khoản nền tảng được chọn; không lấy mã hóa hoặc ô đồng ý làm bằng chứng đã hoàn tất mọi nghĩa vụ.
 
