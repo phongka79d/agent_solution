@@ -6,7 +6,11 @@ Trạng thái: hành trình đích đề xuất. [Bản đầu](delivery/mvp-and
 
 <a id=section-3></a>
 
-## 1. Hành trình từ nhu cầu đến giới thiệu
+## 1. Hành trình Vòng đời & Chuỗi sự kiện Khách hàng
+
+### 1.1. 10 Chặng tổ chức nội bộ của Doanh nghiệp (Internal Business Operational Stages)
+
+Đây là các giai đoạn quản trị và quy trình phối hợp nghiệp vụ nội bộ giữa các bộ phận (Chiến lược, Tiếp thị, Bán hàng, Chăm sóc khách hàng, Vận hành và Sản phẩm):
 
 | Chặng | Bên phụ trách | Đầu vào | Kết quả có thể kiểm chứng |
 |---|---|---|---|
@@ -20,6 +24,33 @@ Trạng thái: hành trình đích đề xuất. [Bản đầu](delivery/mvp-and
 | Sử dụng và hỗ trợ | Chăm sóc hoặc nhân viên | Sản phẩm, tài liệu và khách đã xác minh khi cần | Hướng dẫn, vụ việc, giải quyết có xác nhận |
 | Mua lại / nâng cấp / giới thiệu | Bán hàng, Tiếp thị, Chăm sóc theo phân công | Nhu cầu thật, trải nghiệm và quyền liên hệ | Cơ hội mới, đơn hợp lệ hoặc giới thiệu tự nguyện |
 | Cải tiến | Chủ sản phẩm và Tiếp thị | Lý do từ chối, sự cố, đổi trả, kết quả thử | Đề xuất sửa có bằng chứng, chờ duyệt |
+
+### 1.2. Chuỗi sự kiện hành vi chuẩn hóa FR-C360-002 Customer 360 Timeline
+
+Theo yêu cầu bắt buộc **FR-C360-002 - MUST**, hệ thống Customer Intelligence 360 ghi nhận dòng thời gian khách hàng thông qua chuỗi 10 sự kiện hành vi khách quan có thể truy vết:
+
+```text
+View ──► Search ──► Click ──► Chat ──► Add to cart ──► Purchase ──► Delivery ──► Support ──► Review ──► Repurchase
+```
+
+**Phân định ranh giới cốt lõi:**
+- **10 chặng tổ chức nội bộ (Mục 1.1):** Phản ánh góc nhìn quản trị, quy trình và phân công trách nhiệm của các bộ phận bên trong doanh nghiệp.
+- **10 sự kiện hành vi Timeline (Mục 1.2):** Phản ánh góc nhìn khách quan từ hành vi tương tác thực tế của khách hàng trên hệ thống, được ghi nhận liên tục và bất biến vào Customer 360 Timeline.
+
+**Bảng ánh xạ đối ứng giữa Hành vi khách hàng (FR-C360-002) và Chặng tổ chức nội bộ:**
+
+| STT | Sự kiện hành vi (FR-C360-002) | Hành vi khách quan của khách hàng | Chặng tổ chức nội bộ tương ứng | Đơn vị / Agent phụ trách ghi nhận | Bằng chứng & Dữ liệu truy vết (Evidence) |
+|---|---|---|---|---|---|
+| 1 | `View` | Xem trang đích, danh mục, bài viết tiếp thị | Định vị và phân phối | Web/App Tracking (API-002), MKT-02 | `session_id`, `page_url`, `referrer`, `view_duration` |
+| 2 | `Search` | Tìm kiếm từ khóa, sản phẩm hoặc giải pháp | Tiếp nhận | Search Engine, MKT-02 / SAL-01 | `query_string`, `search_filters`, `result_count` |
+| 3 | `Click` | Bấm vào quảng cáo, banner, nút kêu gọi hành động (CTA) | Định vị và phân phối / Tiếp nhận | Tracking Gateway, MKT-05 | `element_id`, `campaign_id`, `utm_source` |
+| 4 | `Chat` | Mở cuộc hội thoại tư vấn mua sắm hoặc hỏi đáp | Tìm hiểu và tư vấn / Sử dụng và hỗ trợ | Conversation Console, SAL-02 / CS-01 | `conversation_id`, `channel`, `initial_intent` |
+| 5 | `Add to cart` | Chọn SKU và đưa sản phẩm vào giỏ hàng | Tìm hiểu và tư vấn | E-commerce Core Cart API, SAL-02 | `cart_id`, `sku`, `quantity`, `price_at_addition` |
+| 6 | `Purchase` | Xác nhận đơn hàng, đặt cọc hoặc thanh toán thành công | Mua / đặt hẹn / báo giá & Xác nhận thương mại | ERP / POS / Payment Gateway, SAL-02 | `order_id`, `transaction_id`, `amount`, `payment_method` |
+| 7 | `Delivery` | Nhận hàng tại địa chỉ hoặc tại siêu thị 7-Eleven/FamilyMart | Xác nhận thương mại / Vận hành | Logistics Connector / CVS Adapter (ADPT-TW-001) | `waybill_id`, `delivery_status`, `delivered_timestamp` |
+| 8 | `Support` | Gửi yêu cầu trợ giúp kỹ thuật, khiếu nại, đổi trả | Sử dụng và hỗ trợ | CS-01, Case Management Store | `case_id`, `intent`, `priority`, `resolution_summary` |
+| 9 | `Review` | Gửi đánh giá, nhận xét sản phẩm hoặc điểm số hài lòng CSAT | Cải tiến / Hậu mãi | Feedback Store, CS-01 / MKT-06 | `rating_score`, `feedback_text`, `verified_buyer_flag` |
+| 10 | `Repurchase` | Tái đặt hàng, kích hoạt gói giao định kỳ hoặc mua thêm | Mua lại / nâng cấp / giới thiệu | SAL-05, CS-02, Retention Engine | `reorder_id`, `cycle_days`, `replenishment_source` |
 
 Đối tác, quảng cáo, tìm kiếm, truy cập trực tiếp và khách cũ đều là điểm vào hợp lệ. Khách được vào thẳng Bán hàng hoặc Chăm sóc. Khi mô-đun đích chưa bật, chuyển công cụ/nhân viên đã cấu hình; không gọi vòng để lách quyền.
 
@@ -69,26 +100,34 @@ Một khách có thể có nhiều đơn, cơ hội và vụ hỗ trợ cùng l�
 
 <a id=section-9></a>
 
-## 3. Bàn giao giữ ngữ cảnh và trách nhiệm
+## 3. Điều phối Bàn giao tập trung qua Revenue Orchestrator (Centralized Handoff Bus)
 
-Gói bàn giao tối thiểu:
+Theo Mục 3 và Mục 9 của SRS (**OBJ-005 - Orchestration** và **FR-ORC-001/002**), **Revenue Orchestrator là lớp điều phối trung tâm duy nhất**. Mọi luồng bàn giao (handoff) giữa các bộ phận, giữa các AI Agent (Tiếp thị, Bán hàng, Chăm sóc khách hàng) và giữa AI với nhân viên con người (Human Takeover SCR-005) **bắt buộc phải thực hiện tập trung qua Orchestrator Event Bus; tuyệt đối loại bỏ mọi hình thức bàn giao trực tiếp dạng điểm-sang-điểm (Peer-to-Peer) giữa các Agent**.
+
+Mô hình điều phối tập trung đảm bảo:
+- **Triệt tiêu nguy cơ xung đột thẩm quyền (Authority Collision) và vòng lặp vô hạn (Infinite Loops)** do các Agent tự gọi chéo lẫn nhau.
+- **Bảo toàn toàn vẹn ngữ cảnh Customer 360 và Timeline thống nhất**, chống phân mảnh dữ liệu khách hàng.
+- **Thực thi chốt chặn chính sách tập trung (Centralized Policy Engine)** và thẩm định quyền hạn (AUTH-0 đến AUTH-5) trước khi điều phối tác vụ.
+- **Ghi vết kiểm toán thống nhất (Unified Audit Trail - NFR-002)** cho 100% quyết định và hành động bàn giao.
+
+Gói ngữ cảnh bàn giao chuẩn qua Orchestrator (Orchestrator Context Handoff Package):
 
 | Nhóm | Nội dung |
 |---|---|
-| Liên kết | Doanh nghiệp, khách/phiên, cuộc trao đổi, yêu cầu, sự kiện và mã truy vết |
+| Liên kết | Doanh nghiệp, khách/phiên, cuộc trao đổi, yêu cầu, sự kiện và mã truy vết (Trace ID / Run ID) |
 | Nghiệp vụ | Nguồn khách, nhu cầu, sản phẩm, đơn/cơ hội/vụ việc liên quan |
-| Bằng chứng | Thông tin đã xác minh, nguồn, phiên bản, thời điểm và phần chưa rõ |
-| Xử lý trước đó | Câu trả lời, bước đã thử, kết quả, đề xuất hoặc phê duyệt đang chờ |
-| Trách nhiệm | Bên hiện phụ trách, bên được đề nghị nhận, mức ưu tiên, hạn phản hồi và bước tiếp theo |
-| Liên hệ | Kênh được phép, trạng thái đồng ý, yêu cầu ngừng hoặc gặp nhân viên |
+| Bằng chứng | Thông tin đã xác minh (FACT), nguồn, phiên bản, thời điểm và phần chưa rõ |
+| Xử lý trước đó | Câu trả lời, bước đã thử, kết quả, đề xuất hoặc phê duyệt đang chờ (Pending Approval) |
+| Trách nhiệm | Bên hiện phụ trách, bên được Orchestrator điều phối nhận việc, mức ưu tiên, hạn phản hồi (SLA) và bước tiếp theo |
+| Liên hệ | Kênh được phép, trạng thái đồng ý (Consent), yêu cầu ngừng hoặc gặp nhân viên |
 
-Quy tắc vận hành:
+Quy tắc vận hành bàn giao tập trung:
 
-1. Gửi yêu cầu bàn giao chưa phải hoàn thành bàn giao; bên nhận phải chấp nhận.
-2. Trong lúc chờ người, tạm dừng AI trả lời nghiệp vụ; giữ hàng đợi chịu trách nhiệm và thông báo trạng thái trung thực.
-3. Mỗi cuộc trao đổi chỉ có một bên được phát trả lời tại một thời điểm.
-4. Nhân viên tiếp quản thì hủy các lịch nhắc liên quan; chỉ bật lại AI bằng quyết định rõ ràng.
-5. Giữ thông tin đã biết để không hỏi lại vô ích; vẫn xác minh lại khi cần bảo vệ dữ liệu hoặc thông tin đã cũ.
-6. Bàn giao thất bại không làm mất cuộc trao đổi. Giữ người/nhóm chịu trách nhiệm xử lý tiếp.
+1. **Bàn giao qua Bus:** Agent phát sự kiện bàn giao kèm gói ngữ cảnh gửi tới Revenue Orchestrator; Orchestrator kiểm tra chính sách, quyền hạn và định tuyến tới Agent đích hoặc hàng đợi nhân viên phù hợp. Gửi yêu cầu chưa phải hoàn thành bàn giao; bên nhận phải xác nhận tiếp nhận.
+2. Trong lúc chờ người tiếp quản (Human Queue), Orchestrator kích hoạt khóa phiên (Session Mutex Lock) tạm dừng AI trả lời nghiệp vụ; hàng đợi có người chịu trách nhiệm và thông báo trạng thái trung thực cho khách hàng.
+3. Mỗi cuộc trao đổi chỉ có một bên được quyền phát ngôn/trả lời tại một thời điểm dưới sự cấp quyền (Token) của Orchestrator.
+4. Nhân viên tiếp quản (Human Takeover) thì Orchestrator tự động hủy các lịch nhắc tự động liên quan; chỉ kích hoạt lại AI khi nhân viên chủ động trả lại quyền qua Console (SCR-005).
+5. Giữ thông tin và bằng chứng đã biết trong Customer 360 để không hỏi lại khách vô ích; vẫn xác minh lại khi cần bảo vệ dữ liệu hoặc thông tin đã cũ.
+6. Bàn giao thất bại hoặc hết thời gian chờ (timeout) không làm mất cuộc trao đổi. Orchestrator kích hoạt cơ chế an toàn dự phòng (Fail-Safe), chuyển ngay sang người/nhóm chịu trách nhiệm xử lý tiếp (Fallback Owner).
 
 Chi tiết trạng thái và thử lại do [quy trình](platform/workflows-and-handoffs.md) quy định; quyền truy cập do [API](platform/api-and-integrations.md) và [dữ liệu](platform/data-and-knowledge.md) quy định.

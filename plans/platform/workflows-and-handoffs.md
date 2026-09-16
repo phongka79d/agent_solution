@@ -22,29 +22,30 @@ Mô hình ngôn ngữ lớn (LLM) chỉ đóng vai trò hiểu ngữ cảnh và 
 
 Phiên bản cấu hình bảo đảm khả năng truy vết lịch sử. Trước mỗi bước thực thi, hệ thống bắt buộc phải kiểm tra lại quyền hạn, trạng thái kích hoạt của mô-đun, sự đồng ý (consent), dữ liệu giá sàn và trạng thái khách hàng thời gian thực. Ảnh chụp dữ liệu cũ tuyệt đối không được phép ghi đè các chính sách an toàn mới.
 
-### Cấu trúc Nhật ký Kiểm toán Lần chạy Agent (Agent Run Log Schema — 17 Trường bắt buộc theo Mục 17 SRS)
+### Cấu trúc Nhật ký Kiểm toán Lần chạy Agent (Agent Run Log Schema — Chuẩn hóa theo Mục 17 SRS & NFR-006)
 
-Tuân thủ Mục 17 của SRS (AI-REV-SRS-001), mỗi lần chạy của bất kỳ AI Agent nào trong hệ thống (Agent Run) bắt buộc phải ghi lại đầy đủ 17 trường thông tin vào Audit Store phục vụ giám sát thời gian thực tại SCR-002 và truy vết hồi tố (TC-E2E-009):
+Tuân thủ Mục 17 của SRS (AI-REV-SRS-001) và tiêu chuẩn cô lập dữ liệu đa doanh nghiệp (NFR-006), mỗi lần chạy của bất kỳ AI Agent nào trong hệ thống (Agent Run) bắt buộc phải ghi lại đầy đủ các trường thông tin vào Audit Store phục vụ giám sát thời gian thực tại SCR-002 và truy vết hồi tố (TC-E2E-009):
 
 | STT | Trường dữ liệu (Field) | Kiểu dữ liệu | Ý nghĩa & Quy cách chuẩn hóa |
 |---|---|---|---|
 | 1 | `run_id` | `UUID v4` | Mã định danh duy nhất của phiên chạy Agent; không trùng lặp |
-| 2 | `agent_id` | `String` | Mã định danh Agent thực thi (ví dụ: `MKT-05`, `SAL-02`, `CS-01`) |
-| 3 | `customer_or_entity_id` | `String` | Khách hàng hoặc thực thể chịu tác động (`customer_id`, `lead_id`, `case_id`) |
-| 4 | `trigger` | `String` | Sự kiện hoặc tín hiệu kích hoạt (`cart.abandoned`, `message.received`, `lead.qualified`) |
-| 5 | `context` | `JSON Object` | Ảnh chụp ngữ cảnh đầu vào: lát cắt Customer 360, trạng thái consent, phiên hội thoại |
-| 6 | `skill` | `String` | Mã kỹ năng được kích hoạt (ví dụ: `skill.sales.check_stock`, `skill.care.lookup_order`) |
-| 7 | `tool` | `String` | Cổng kết nối Adapter hoặc công cụ thực thi liên kết (API-001, API-002, ADPT-TW-001) |
-| 8 | `decision` | `JSON Object` | Quyết định logic được Orchestrator xác lập kèm lý do (Reason) |
-| 9 | `authority` | `Enum` | Cấp độ thẩm quyền áp dụng (`AUTH-0` đến `AUTH-5`) |
-| 10 | `approval` | `JSON Object \| null` | Bản ghi duyệt của con người nếu là `AUTH-4` (`{approver_id, decision, timestamp, reason}`) |
-| 11 | `action` | `JSON Object` | Payload chi tiết của hành động gửi ra ngoài kèm mã chống trùng `effect_key` (BR-005) |
-| 12 | `execution_status` | `Enum` | Trạng thái thực thi (`pending`, `executing`, `success`, `failed`, `denied`, `aborted`) |
-| 13 | `evidence` | `JSON Object` | Bản ghi bằng chứng xác thực từ hệ thống nguồn (mã vận đơn, mã đơn ERP, message ID) |
-| 14 | `outcome` | `JSON Object \| null` | Kết quả kinh doanh thực tế sau đó (`order_created`, `cart_recovered`, `case_resolved`) |
-| 15 | `latency_ms` | `Integer` | Tổng thời gian thực thi của lần chạy tính bằng mili-giây (ms) |
-| 16 | `cost` | `JSON Object` | Chi phí vận hành: Token input/output, chi phí API mô hình, phí kết nối Adapter quy đổi |
-| 17 | `error` | `JSON Object \| null` | Chi tiết mã lỗi, nhật ký lỗi (error stack) và nguyên nhân thất bại (nếu có) |
+| 2 | `tenant_id` | `UUID v4 / String` | Mã định danh doanh nghiệp; bắt buộc ở mọi bản ghi kiểm toán bảo đảm cách ly dữ liệu đa doanh nghiệp (NFR-006) |
+| 3 | `agent_id` | `String` | Mã định danh Agent thực thi (ví dụ: `MKT-05`, `SAL-02`, `CS-01`) |
+| 4 | `customer_or_entity_id` | `String` | Khách hàng hoặc thực thể chịu tác động (`customer_id`, `lead_id`, `case_id`) |
+| 5 | `trigger` | `String` | Sự kiện hoặc tín hiệu kích hoạt (`cart.abandoned`, `message.received`, `lead.qualified`) |
+| 6 | `context` | `JSON Object` | Ảnh chụp ngữ cảnh đầu vào: lát cắt Customer 360, trạng thái consent, phiên hội thoại |
+| 7 | `skill` | `String` | Mã kỹ năng được kích hoạt (ví dụ: `skill.sales.check_stock`, `skill.care.lookup_order`) |
+| 8 | `tool` | `String` | Cổng kết nối Adapter hoặc công cụ thực thi liên kết (API-001, API-002, ADPT-TW-001) |
+| 9 | `decision` | `JSON Object` | Quyết định logic được Orchestrator xác lập kèm lý do (Reason) |
+| 10 | `authority` | `Enum` | Cấp độ thẩm quyền áp dụng (`AUTH-0` đến `AUTH-5`) |
+| 11 | `approval` | `JSON Object \| null` | Bản ghi duyệt của con người nếu là `AUTH-4` (`{approver_id, decision, timestamp, reason}`) |
+| 12 | `action` | `JSON Object` | Payload chi tiết của hành động gửi ra ngoài kèm mã chống trùng `effect_key` (BR-005) |
+| 13 | `execution_status` | `Enum` | Trạng thái thực thi (`pending`, `executing`, `success`, `failed`, `denied`, `aborted`) |
+| 14 | `evidence` | `JSON Object` | Bản ghi bằng chứng xác thực từ hệ thống nguồn (mã vận đơn, mã đơn ERP, message ID) |
+| 15 | `outcome` | `JSON Object \| null` | Kết quả kinh doanh thực tế sau đó (`order_created`, `cart_recovered`, `case_resolved`) |
+| 16 | `latency_ms` | `Integer` | Tổng thời gian thực thi của lần chạy tính bằng mili-giây (ms) |
+| 17 | `cost` | `JSON Object` | Chi phí vận hành: Token input/output, chi phí API mô hình, phí kết nối Adapter quy đổi |
+| 18 | `error` | `JSON Object \| null` | Chi tiết mã lỗi, nhật ký lỗi (error stack) và nguyên nhân thất bại (nếu có) |
 | * | `timestamp` | `ISO 8601 UTC` | Mốc thời gian bắt đầu và kết thúc lượt chạy (`started_at`, `completed_at`) |
 
 ## 2. Mô hình phân quyền (Authority Model) và Quy tắc nghiệp vụ (Business Rules)
@@ -61,6 +62,17 @@ Hệ thống quản trị mọi hành động của AI theo 6 cấp bậc thẩm
 | `AUTH-3` | Bounded Execute | Tự thực thi các tác vụ rủi ro thấp trong hạn mức và tần suất được cấu hình trước | Trả lời FAQ từ tài liệu đã duyệt, tra cứu trạng thái đơn, gửi tin nhắc giỏ trong hạn mức tần suất |
 | `AUTH-4` | Approval Required | Chuẩn bị đầy đủ payload hành động nhưng bắt buộc dừng chờ con người phê duyệt tại SCR-003 | Phát động chiến dịch diện rộng, chiết khấu vượt trần, bồi thường, hoàn tiền, thay đổi chính sách |
 | `AUTH-5` | Prohibited | Tuyệt đối cấm; hệ thống chặn cứng ở tầng máy chủ (Hard Lock) | Tự tạo giá sản phẩm mới, truy cập dữ liệu chéo tenant, xuất dữ liệu khách hàng thô, tự nâng quyền |
+
+### Bảng giá trị ngưỡng an toàn mặc định (Default Fallback Thresholds cho quyền AUTH-4)
+
+Khi cấu hình riêng của từng doanh nghiệp chưa được thiết lập hoặc trong trạng thái khởi tạo hệ thống, máy chủ tự động kích hoạt các giá trị ngưỡng an toàn mặc định (Default Fallback Thresholds) nhằm bắt buộc dừng chờ con người phê duyệt tại SCR-003 (`AUTH-4`):
+
+| Tham số kiểm soát rủi ro | Ngưỡng kích hoạt AUTH-4 mặc định | Hành vi khi vượt ngưỡng | Ranh giới an toàn tuyệt đối |
+|---|---|---|---|
+| **Tỷ lệ chiết khấu (Discount Rate)** | `> 15%` | Dừng phát ưu đãi tự động, chuyển yêu cầu phê duyệt sang SCR-003 kèm bằng chứng biên lợi nhuận | Tuyệt đối không cho phép giá sau giảm vi phạm giá sàn toán học $P_{floor}$ (BR-001, BR-002) |
+| **Bồi thường / Hoàn tiền (Compensation / Refund)** | `> 500 TWD` (hoặc tương đương ngoại tệ) | Khóa quyền tự động của CS Agent, bắt buộc nhân viên quản lý phê duyệt trước khi phát lệnh | Phải đối soát khớp với mã đơn hàng và bằng chứng sự cố (BR-007) |
+| **Quy mô tệp nhận tin chiến dịch (Campaign Audience)** | `> 5.000 khách hàng` | Yêu cầu phê duyệt ngân sách và nội dung thông điệp tại SCR-003 trước khi phát động | Kiểm soát chi phí phát sinh và chống gửi tin tiếp thị hàng loạt không mong muốn (BR-004) |
+| **Thay đổi chính sách / Điều khoản (Terms Modification)** | Mọi sửa đổi chính sách bảo hành, đổi trả, cam kết thương mại | Chuyển trạng thái sang `awaiting_human`, cấm AI tự ý cam kết vượt thẩm quyền | Bảo vệ tính toàn vẹn của Second Brain (`/policy/authority.md`) |
 
 ### 10 Quy tắc nghiệp vụ cốt lõi (Core Business Rules)
 
@@ -144,6 +156,39 @@ Agent và Skill được phân tách hoàn toàn độc lập. Một Agent có t
 10. **Audit & Evidence Specification**: Cấu hình ghi nhật ký kiểm toán, danh sách trường nhạy cảm cần ẩn danh (PII masking) và định dạng thẻ bằng chứng.
 11. **Automated Test Cases**: Bộ kiểm thử tự động gồm ca thành công, lỗi mạng, quá hạn thời gian, vi phạm phân quyền và dữ liệu sai cấu trúc.
 
+### Danh mục Chuẩn hóa 23 Kỹ năng Nền tảng (Platform 23-Skill Registry)
+
+Toàn bộ 23 kỹ năng của hệ thống bắt buộc phải tuân thủ nghiêm ngặt Hợp đồng kỹ năng 11 trường nêu trên, phân định rạch ròi theo 3 miền nghiệp vụ:
+
+| STT | Mã kỹ năng (`skill_id`) | Mục đích nghiệp vụ (`purpose`) | Agent được phép | Quyền hạn | Cổng kết nối (`tool_binding`) | Timeout / Retry | Mã Test Suite |
+|---|---|---|---|---|---|---|---|
+| **I** | **Miền Tiếp Thị (Marketing - 7 Kỹ năng)** | | | | | | |
+| 1 | `skill.mkt.analyze_market_signal` | Phân tích tín hiệu thị trường và xu hướng từ dữ liệu số | `MKT-01`, `MKT-02` | `AUTH-1` | API-002 Event Ingestion | 3000ms / 2 retries | `TC-SKILL-MKT-001` |
+| 2 | `skill.mkt.segment_audience` | Phân nhóm khách hàng và tạo tập đối tượng theo RFM | `MKT-02`, `MKT-05` | `AUTH-1` | Customer 360 Store | 2500ms / 2 retries | `TC-SKILL-MKT-002` |
+| 3 | `skill.mkt.check_consent` | Kiểm tra trạng thái đồng thuận liên lạc tiếp thị (BR-004) | `MKT-02`, `MKT-05`, `SAL-04` | `AUTH-3` | Consent Store (API-002) | 1000ms / 3 retries | `TC-SKILL-MKT-003` |
+| 4 | `skill.mkt.generate_content` | Sinh nội dung tiếp thị đa kênh tuân thủ brand voice | `MKT-03` | `AUTH-2` | LLM Content Engine | 5000ms / 1 retry | `TC-SKILL-MKT-004` |
+| 5 | `skill.mkt.audit_brand_compliance` | Kiểm duyệt tuân thủ thương hiệu, từ cấm và claim | `MKT-04` | `AUTH-1` | Second Brain (`/brand/`) | 2000ms / 2 retries | `TC-SKILL-MKT-005` |
+| 6 | `skill.mkt.dispatch_campaign` | Phát động chiến dịch gửi tin tiếp thị đa kênh | `MKT-05` | `AUTH-4` | API-003 Communication | 5000ms / 0 retry | `TC-SKILL-MKT-006` |
+| 7 | `skill.mkt.evaluate_attribution` | Đánh giá hiệu quả chiến dịch, tính CAC và ROAS | `MKT-06` | `AUTH-1` | Analytics Store | 4000ms / 2 retries | `TC-SKILL-MKT-007` |
+| **II** | **Miền Bán Hàng (Sales - 8 Kỹ năng)** | | | | | | |
+| 8 | `skill.sales.search_product` | Tra cứu sản phẩm trong danh mục theo nhu cầu khách | `SAL-01`, `SAL-02` | `AUTH-0` | API-001 CatalogConnector | 1500ms / 3 retries | `TC-SKILL-SAL-001` |
+| 9 | `skill.sales.check_stock` | Tra cứu tồn kho thực tế theo kho hàng/khu vực | `SAL-01`, `SAL-02`, `CS-01` | `AUTH-3` | API-001 InventoryConnector | 3000ms / 3 retries | `TC-SKILL-SAL-002` |
+| 10 | `skill.sales.check_price` | Tra cứu giá niêm yết và kiểm tra ràng buộc giá sàn $P_{floor}$ | `SAL-02`, `SAL-04` | `AUTH-3` | API-001 PricingEngine | 2000ms / 3 retries | `TC-SKILL-SAL-003` |
+| 11 | `skill.sales.retrieve_customer` | Truy xuất hồ sơ Customer 360 và lịch sử mua sắm | `SAL-01`, `SAL-02`, `SAL-05` | `AUTH-0` | Customer 360 Store | 1500ms / 3 retries | `TC-SKILL-SAL-004` |
+| 12 | `skill.sales.recommend_product` | Đề xuất sản phẩm, combo, upsell kèm Reason + Evidence | `SAL-02`, `SAL-03` | `AUTH-1` | Recommendation Engine | 2500ms / 2 retries | `TC-SKILL-SAL-005` |
+| 13 | `skill.sales.create_cart` | Tạo hoặc cập nhật giỏ hàng cho phiên tương tác | `SAL-02`, `SAL-04` | `AUTH-3` | API-002 / Commerce API | 2000ms / 2 retries | `TC-SKILL-SAL-006` |
+| 14 | `skill.sales.create_order` | Khởi tạo đơn hàng draft hoặc liên kết thanh toán an toàn | `SAL-02`, `SAL-04`, `SAL-05` | `AUTH-3` | API-001 OrderConnector | 4000ms / 1 retry | `TC-SKILL-SAL-007` |
+| 15 | `skill.sales.send_message` | Gửi tin nhắn tư vấn hoặc nhắc giỏ hàng kèm `effect_key` | `SAL-02`, `SAL-04`, `SAL-05` | `AUTH-3` | API-003 Communication | 3000ms / 2 retries | `TC-SKILL-SAL-008` |
+| **III** | **Miền Chăm Sóc Khách Hàng (Customer Care - 8 Kỹ năng)** | | | | | | |
+| 16 | `skill.care.search_faq` | Tra cứu câu hỏi - đáp đã phê duyệt trong Second Brain | `CS-01` | `AUTH-3` | Second Brain (`/customer-care/faq.md`) | 1500ms / 3 retries | `TC-SKILL-CARE-001` |
+| 17 | `skill.care.lookup_order` | Tra cứu trạng thái đơn hàng, hóa đơn và lịch sử mua | `CS-01` | `AUTH-3` | API-001 OrderConnector | 2000ms / 3 retries | `TC-SKILL-CARE-002` |
+| 18 | `skill.care.track_shipping` | Tra cứu hành trình vận đơn bưu cục và siêu thị CVS | `CS-01` | `AUTH-3` | ADPT-TW-001 Logistics API | 2500ms / 3 retries | `TC-SKILL-CARE-003` |
+| 19 | `skill.care.manage_case` | Tạo, cập nhật trạng thái và lưu vết vụ việc CSKH | `CS-01` | `AUTH-3` | Case Management Store | 2000ms / 3 retries | `TC-SKILL-CARE-004` |
+| 20 | `skill.care.initiate_return` | Tiếp nhận yêu cầu đổi trả hàng và tạo phiếu thu hồi | `CS-01` | `AUTH-4` | Reverse Logistics Adapter | 3500ms / 1 retry | `TC-SKILL-CARE-005` |
+| 21 | `skill.care.escalate_to_human` | Bàn giao vụ việc cho nhân viên con người (SCR-005) | `CS-01`, `CS-02` | `AUTH-3` | Orchestrator Handoff Bus | 1000ms / 2 retries | `TC-SKILL-CARE-006` |
+| 22 | `skill.care.analyze_churn_risk` | Phân tích cảm xúc tiêu cực và nguy cơ rời bỏ | `CS-02` | `AUTH-1` | Customer Intelligence | 2500ms / 2 retries | `TC-SKILL-CARE-007` |
+| 23 | `skill.care.issue_retention_offer` | Cấp voucher/ưu đãi giữ chân trong hạn mức quy định | `CS-02` | `AUTH-3` | Promotion Engine ($P_{floor}$) | 3000ms / 1 retry | `TC-SKILL-CARE-008` |
+
 ## 4. Máy trạng thái tác vụ thống nhất (Task State Machine)
 
 | Trạng thái máy | Ý nghĩa vận hành | Điều kiện chuyển tiếp |
@@ -187,6 +232,29 @@ Tổng giới hạn của một chuỗi nhắc là tối đa 2 tin nhắn, khôn
 | Nhân viên tiếp quản (`takeover`) | Khóa cứng quyền phát tin của AI lập tức; chuyển quyền kiểm soát cho nhân viên |
 | Chạm giới hạn tần suất / Ngoài giờ | Tạm dừng chuỗi; việc kích hoạt lại bắt buộc phải qua quyết định điều phối mới |
 | Quá số lần thử lại thất bại | Chuyển sang `failed` và thông báo cho nhân viên vận hành tại SCR-002 |
+
+### Kiểm soát chi phí kênh tương tác và bảo vệ tài chính (Messaging Cost Guard & FX Safeguards)
+
+Nhằm tối ưu chi phí vận hành kênh theo NFR-010 và bảo vệ an toàn biên lợi nhuận giao dịch (BR-001, BR-002), hệ thống thiết lập 3 cơ chế kiểm soát tự động:
+
+1. **Phân biệt tin nhắn WhatsApp (< 24h Session vs > 24h Template có tính phí)**:
+   - *Cửa sổ hội thoại 24 giờ (< 24h Session Window)*: Bắt đầu tính từ tin nhắn gần nhất khách hàng gửi đến doanh nghiệp. Trong cửa sổ 24 giờ này, AI Agent được phép gửi tin nhắn tự do (Session Messages / Free-form text) phục vụ tư vấn bán hàng hoặc CSKH với mức phí dịch vụ cơ sở thấp (hoặc miễn phí theo định mức Meta).
+   - *Ngoài cửa sổ 24 giờ (> 24h Template Window)*: Sau khi hết 24 giờ kể từ tương tác cuối của khách hàng, hệ thống khóa cứng việc gửi tin tự do (`AUTH-5` cho free-form text). AI Agent chỉ được phép gửi các mẫu tin nhắn đã được Meta tiền phê duyệt (Pre-approved Message Templates) thuộc danh mục Utility hoặc Marketing có tính phí phát sinh theo biểu giá nhà mạng. Mọi chiến dịch gửi tin mẫu diện rộng bắt buộc phải qua phê duyệt tại SCR-003 (`AUTH-4`).
+
+2. **Kiểm soát trần phí tin LINE OA (LINE OA Messaging Cost Guard)**:
+   - LINE Official Account áp dụng định mức tin nhắn miễn phí hàng tháng (Free Message Quota) và tính phí lũy tiến trên từng tin nhắn đẩy (Pay-as-you-go Push Fee).
+   - *Cơ chế Messaging Cost Guard*:
+     - Giám sát thời gian thực số lượng tin nhắn đẩy đã tiêu thụ trong chu kỳ thanh toán của từng tenant.
+     - Khi số tin gửi đạt ngưỡng cảnh báo (80% định mức miễn phí hoặc chạm trần ngân sách tin nhắn tháng do tenant cấu hình), hệ thống tự động:
+       a) Ngăn chặn việc gửi tin nhắn tiếp thị broadcast không cấp thiết (`AUTH-4` hoặc chuyển cấm `AUTH-5`),
+       b) Ưu tiên chuyển hướng tương tác sang kênh miễn phí (Web Chat Widget / In-app notification) hoặc lưu vào hàng đợi chờ người dùng chủ động tương tác trước để trả lời bằng tin nhắn phản hồi miễn phí (Reply Message API thay vì Push Message API).
+
+3. **Khóa tỷ giá có thời hạn (FX Rate Buffer) bảo vệ giá sàn toán học $P_{floor}$ khi giao dịch ngoại tệ**:
+   - Khi xử lý giao dịch ngoại tệ hoặc thương mại xuyên biên giới (TWD, USD, EUR, JPY, VND), biến động tỷ giá hối đoái tức thời có thể làm suy giảm biên lợi nhuận thực tế và vi phạm giá sàn an toàn toán học $P_{floor}$ (vi phạm BR-001, BR-002).
+   - *Cơ chế FX Rate Buffer*:
+     - **Ảnh chụp tỷ giá có thời hạn (Time-locked FX Snapshot)**: Khi tạo báo giá hoặc phiên tư vấn giỏ hàng, Core Engine khóa tỷ giá quy đổi trong một cửa sổ thời gian hữu hạn (mặc định 15 - 30 phút).
+     - **Biên độ dự phòng tỷ giá (FX Safety Buffer)**: Tích hợp biên độ an toàn từ 1.5% đến 2.0% vào công thức tính giá bán khả dụng (cộng thêm vào giá vốn quy đổi hoặc trừ trực tiếp khỏi hạn mức chiết khấu $D_{cap}$), bảo đảm rằng ngay cả trong kịch bản tỷ giá biến động bất lợi nhất trong phiên, giá bán của AI luôn $\ge P_{floor}$.
+     - **Kiểm tra lại khi hết hạn (Quote Expiration Guard)**: Nếu khách hàng tiến hành thanh toán sau khi khóa tỷ giá hết hạn (`quote_expired`), hệ thống bắt buộc phải cập nhật tỷ giá hối đoái mới nhất từ cổng thanh toán (API-001 / ADPT-GL-002) và tái thẩm định điều kiện an toàn $P_{floor}$ trước khi cho phép tạo đơn hàng chính thức.
 
 <a id=section-14></a>
 

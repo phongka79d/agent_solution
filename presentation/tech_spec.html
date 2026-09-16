@@ -825,12 +825,12 @@
         </ul>
       </div>
       <div class="card">
-        <h3>Cấu Trúc Second Brain (8 Thư Mục Chuẩn)</h3>
-        <p style="font-size: 7.5px; font-family: monospace; color: #1e40af; line-height: 1.3;">
+        <h3>Cấu Trúc Second Brain (20 Tệp Chuẩn / 8 Thư Mục theo Mục 10 SRS)</h3>
+        <p style="font-size: 7.2px; font-family: monospace; color: #1e40af; line-height: 1.35;">
           /company (company.md, positioning.md) | /customer (customer.md, segmentation.md)<br>
-          /product (products.md, pricing.md) | /brand (voice.md, prohibited-claims.md)<br>
-          /marketing (playbook.md, rules.md) | /sales (sales-playbook.md, objection.md)<br>
-          /customer-care (faq.md, escalation.md) | /policy (authority.md, approval.md)
+          /product (products.md, pricing.md, promotion-policy.md) | /brand (voice.md, terminology.md, prohibited-claims.md)<br>
+          /marketing (playbook.md, content-guidelines.md, campaign-rules.md) | /sales (sales-playbook.md, qualification.md, objection-handling.md)<br>
+          /customer-care (faq.md, support-policy.md, escalation.md) | /policy (authority.md, approval.md)
         </p>
       </div>
     </div>
@@ -961,7 +961,7 @@
   </div>
 
   <div class="content">
-    <h2>1. Lược Đồ Nhật Ký Kiểm Toán Lần Chạy (Agent Run Log Schema — 17 Trường Chuẩn)</h2>
+    <h2>1. Lược Đồ Nhật Ký Kiểm Toán Lần Chạy (Agent Run Log Schema — Chuẩn Mục 17 SRS & NFR-006)</h2>
     <table>
       <thead>
         <tr>
@@ -973,22 +973,23 @@
       </thead>
       <tbody>
         <tr><td>1</td><td><code>run_id</code></td><td>UUID v4</td><td>Mã định danh duy nhất của phiên chạy Agent; bất biến và chống trùng lặp.</td></tr>
-        <tr><td>2</td><td><code>agent_id</code></td><td>String</td><td>Mã Agent thực thi (ví dụ: MKT-05, SAL-02, CS-01) đã đăng ký trong Platform Registry.</td></tr>
-        <tr><td>3</td><td><code>customer_or_entity_id</code></td><td>String</td><td>Mã định danh khách hàng hoặc thực thể nghiệp vụ chịu tác động (customer_id, lead_id, case_id).</td></tr>
-        <tr><td>4</td><td><code>trigger</code></td><td>String</td><td>Sự kiện hoặc tín hiệu kích hoạt lượt chạy (cart.abandoned, message.received, lead.qualified).</td></tr>
-        <tr><td>5</td><td><code>context</code></td><td>JSON Object</td><td>Ảnh chụp ngữ cảnh đầu vào: lát cắt Customer 360, trạng thái consent, phiên hội thoại.</td></tr>
-        <tr><td>6</td><td><code>skill</code></td><td>String</td><td>Mã kỹ năng chuẩn được kích hoạt (ví dụ: skill.sales.check_stock, skill.care.lookup_order).</td></tr>
-        <tr><td>7</td><td><code>tool</code></td><td>String</td><td>Cổng kết nối Adapter hoặc API liên kết (API-001 ERP Connector, ADPT-TW-001 LINE).</td></tr>
-        <tr><td>8</td><td><code>decision</code></td><td>JSON Object</td><td>Quyết định nghiệp vụ logic được Orchestrator xác lập kèm lý do (Reason + Evidence).</td></tr>
-        <tr><td>9</td><td><code>authority</code></td><td>Enum</td><td>Cấp độ thẩm quyền được áp dụng cho hành động này (AUTH-0 đến AUTH-5).</td></tr>
-        <tr><td>10</td><td><code>approval</code></td><td>JSON / null</td><td>Bản ghi phê duyệt của con người nếu là AUTH-4: {approver_id, decision, timestamp, reason}.</td></tr>
-        <tr><td>11</td><td><code>action</code></td><td>JSON Object</td><td>Payload chi tiết của lệnh hành động gửi ra ngoài kèm mã duy nhất effect_key (BR-005).</td></tr>
-        <tr><td>12</td><td><code>execution_status</code></td><td>Enum</td><td>Trạng thái thực thi: pending, executing, success, failed, denied, aborted.</td></tr>
-        <tr><td>13</td><td><code>evidence</code></td><td>JSON Object</td><td>Bằng chứng xác thực từ hệ thống nguồn (mã vận đơn, mã đơn ERP, message ID).</td></tr>
-        <tr><td>14</td><td><code>outcome</code></td><td>JSON / null</td><td>Kết quả kinh doanh thực tế đối soát: order_created, cart_recovered, case_resolved.</td></tr>
-        <tr><td>15</td><td><code>latency_ms</code></td><td>Integer</td><td>Tổng thời gian thực thi của phiên chạy tính bằng mili-giây (ms).</td></tr>
-        <tr><td>16</td><td><code>cost</code></td><td>JSON Object</td><td>Chi phí vận hành: Token input/output, chi phí API mô hình, phí kết nối Adapter quy đổi.</td></tr>
-        <tr><td>17</td><td><code>error</code></td><td>JSON / null</td><td>Chi tiết mã lỗi, nhật ký lỗi (error stack trace) và nguyên nhân thất bại nếu có.</td></tr>
+        <tr><td>2</td><td><code>tenant_id</code></td><td>UUID v4 / String</td><td>Mã định danh doanh nghiệp; bắt buộc tại mọi bản ghi kiểm toán bảo đảm cách ly đa khách hàng (NFR-006).</td></tr>
+        <tr><td>3</td><td><code>agent_id</code></td><td>String</td><td>Mã Agent thực thi (ví dụ: MKT-05, SAL-02, CS-01) đã đăng ký trong Platform Registry.</td></tr>
+        <tr><td>4</td><td><code>customer_or_entity_id</code></td><td>String</td><td>Mã định danh khách hàng hoặc thực thể nghiệp vụ chịu tác động (customer_id, lead_id, case_id).</td></tr>
+        <tr><td>5</td><td><code>trigger</code></td><td>String</td><td>Sự kiện hoặc tín hiệu kích hoạt lượt chạy (cart.abandoned, message.received, lead.qualified).</td></tr>
+        <tr><td>6</td><td><code>context</code></td><td>JSON Object</td><td>Ảnh chụp ngữ cảnh đầu vào: lát cắt Customer 360, trạng thái consent, phiên hội thoại.</td></tr>
+        <tr><td>7</td><td><code>skill</code></td><td>String</td><td>Mã kỹ năng chuẩn được kích hoạt (ví dụ: skill.sales.check_stock, skill.care.lookup_order).</td></tr>
+        <tr><td>8</td><td><code>tool</code></td><td>String</td><td>Cổng kết nối Adapter hoặc API liên kết (API-001 ERP Connector, ADPT-TW-001 LINE).</td></tr>
+        <tr><td>9</td><td><code>decision</code></td><td>JSON Object</td><td>Quyết định nghiệp vụ logic được Orchestrator xác lập kèm lý do (Reason + Evidence).</td></tr>
+        <tr><td>10</td><td><code>authority</code></td><td>Enum</td><td>Cấp độ thẩm quyền được áp dụng cho hành động này (AUTH-0 đến AUTH-5).</td></tr>
+        <tr><td>11</td><td><code>approval</code></td><td>JSON / null</td><td>Bản ghi phê duyệt của con người nếu là AUTH-4: {approver_id, decision, timestamp, reason}.</td></tr>
+        <tr><td>12</td><td><code>action</code></td><td>JSON Object</td><td>Payload chi tiết của lệnh hành động gửi ra ngoài kèm mã duy nhất effect_key (BR-005).</td></tr>
+        <tr><td>13</td><td><code>execution_status</code></td><td>Enum</td><td>Trạng thái thực thi: pending, executing, success, failed, denied, aborted.</td></tr>
+        <tr><td>14</td><td><code>evidence</code></td><td>JSON Object</td><td>Bằng chứng xác thực từ hệ thống nguồn (mã vận đơn, mã đơn ERP, message ID).</td></tr>
+        <tr><td>15</td><td><code>outcome</code></td><td>JSON / null</td><td>Kết quả kinh doanh thực tế đối soát: order_created, cart_recovered, case_resolved.</td></tr>
+        <tr><td>16</td><td><code>latency_ms</code></td><td>Integer</td><td>Tổng thời gian thực thi của phiên chạy tính bằng mili-giây (ms).</td></tr>
+        <tr><td>17</td><td><code>cost</code></td><td>JSON Object</td><td>Chi phí vận hành: Token input/output, chi phí API mô hình, phí kết nối Adapter quy đổi.</td></tr>
+        <tr><td>18</td><td><code>error</code></td><td>JSON / null</td><td>Chi tiết mã lỗi, nhật ký lỗi (error stack trace) và nguyên nhân thất bại nếu có.</td></tr>
       </tbody>
     </table>
 
@@ -1056,7 +1057,7 @@
       </div>
       <div class="card">
         <h3>API-003 - Communication Bus</h3>
-        <p>Cổng phân phối tin nhắn đa kênh thống nhất kết nối với các Adapter nhà cung cấp (LINE, WhatsApp, Web Widget).</p>
+        <p>Cổng phân phối tin nhắn đa kênh kết nối Adapter (LINE, WhatsApp, TikTok, Web Widget, Zalo, Messenger).</p>
       </div>
     </div>
 
@@ -1080,7 +1081,7 @@
         <tr>
           <td><span class="badge badge-blue">ADPT-GL-001</span></td>
           <td>Global Communication Adapter</td>
-          <td>WhatsApp Business Cloud API, Meta Webhooks (Messenger, Instagram Direct), Web Chat Widget đa ngôn ngữ (i18n: EN, JA, ZH, VI).</td>
+          <td>WhatsApp Business Cloud API, TikTok Messaging, Meta Webhooks (Messenger, Instagram Direct), Web Chat Widget đa ngôn ngữ (i18n: EN, JA, ZH, VI).</td>
           <td>Bảo mật đường truyền mTLS, chữ ký số Webhook HMAC-SHA256.</td>
         </tr>
         <tr>

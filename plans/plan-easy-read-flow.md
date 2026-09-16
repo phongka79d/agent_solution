@@ -6,31 +6,33 @@ Bắt đầu bằng câu hỏi: **Doanh nghiệp nào sẽ thử nghiệm, trên
 
 Đây là kế hoạch đề xuất, chưa phải hệ thống đã hoạt động. Các ví dụ là giả thuyết để thử, không phải cam kết kết quả.
 
-## 1. Sản phẩm làm gì?
+## 1. Sản phẩm làm gì? [OBJ-001 đến OBJ-004]
 
 Ba trợ lý AI gắn vào ứng dụng đang có của doanh nghiệp:
 
-| Trợ lý | Việc chính | Không được tự làm |
-|---|---|---|
-| Tiếp thị | Tìm hiểu thị trường, phát hiện nhu cầu sớm, tìm đối tác, tiếp nhận khách quan tâm | Thu gom dữ liệu cá nhân hoặc gửi quảng cáo khi chưa đủ điều kiện |
-| Bán hàng | Hỏi đúng nhu cầu, giải thích sản phẩm, gợi ý lựa chọn và hỗ trợ mua | Bịa công dụng, sửa giá, hứa đã thanh toán |
-| Chăm sóc khách hàng | Hướng dẫn, giải quyết câu hỏi, theo dõi vấn đề và chuyển nhân viên | Tự duyệt hoàn tiền, đổi trả hay bỏ qua xác minh khách |
+| Trợ lý | Mã mục tiêu SRS | Việc chính | Không được tự làm |
+|---|---|---|---|
+| Tiếp thị | **OBJ-001** (Marketing) | Tìm hiểu thị trường, phát hiện nhu cầu sớm, tìm đối tác, tiếp nhận khách quan tâm (MKT-01..06) | Thu gom dữ liệu cá nhân hoặc gửi quảng cáo khi chưa đủ điều kiện (BR-004) |
+| Bán hàng | **OBJ-002** (Sales) | Hỏi đúng nhu cầu, giải thích sản phẩm, gợi ý lựa chọn và hỗ trợ mua (SAL-01..05) | Bịa công dụng, sửa giá, hứa đã thanh toán (BR-001, BR-003) |
+| Chăm sóc khách hàng | **OBJ-003** (Care) & **OBJ-004** (Retention) | Hướng dẫn, giải quyết câu hỏi, theo dõi vấn đề, giữ chân và chuyển nhân viên (CS-01, CS-02) | Tự duyệt hoàn tiền, đổi trả hay bỏ qua xác minh khách (AUTH-4, NFR-006) |
+
+> **Chú thích kiến trúc bắt buộc (OBJ-005, OBJ-006):** Ba trợ lý Tiếp thị, Bán hàng và Chăm sóc khách hàng không phải là 3 chatbot độc lập. Toàn bộ hệ thống là một lực lượng lao động AI thống nhất (**AI Revenue Workforce**) gồm **13 AI Agent chuyên trách** (MKT-01 đến MKT-06, SAL-01 đến SAL-05, CS-01 và CS-02) phối hợp đa tác vụ qua trung tâm điều phối **Revenue Orchestrator [OBJ-005]**, sử dụng chung nền tảng dữ liệu Customer Intelligence 360, kho tri thức (Knowledge Base) và tuân thủ nghiêm ngặt khung chính sách, phân quyền và lưu vết bằng chứng **[OBJ-006]**.
 
 Doanh nghiệp có thể bật một, hai hoặc cả ba mô-đun. Khi mô-đun cần dùng chưa bật, chuyển nhân viên hoặc công cụ hiện có; không tự mở thêm mô-đun.
 
-## 2. Hành trình hợp nhất
+## 2. Hành trình hợp nhất [OBJ-001 đến OBJ-005]
 
 ```text
-Hiểu vấn đề khách đang hoặc sắp gặp
-→ Tìm tín hiệu sớm và nơi khách tập trung
-→ Kiểm chứng giải pháp, thông điệp và đối tác
+Hiểu vấn đề khách đang hoặc sắp gặp [OBJ-001]
+→ Tìm tín hiệu sớm và nơi khách tập trung [OBJ-001]
+→ Kiểm chứng giải pháp, thông điệp và đối tác [OBJ-001]
 → Khách đến website từ đối tác / tìm kiếm / quảng cáo / giới thiệu
-→ Tư vấn theo nhu cầu, kèm bằng chứng
-→ Khách mua qua quy trình của doanh nghiệp
+→ Tư vấn theo nhu cầu, kèm bằng chứng [OBJ-002]
+→ Khách mua qua quy trình của doanh nghiệp [OBJ-002]
 → Hệ thống gốc xác nhận giao dịch
-→ Hướng dẫn và chăm sóc
-→ Khách dùng tốt, có thể mua lại hoặc giới thiệu
-→ Kết quả thực tế quay về cải thiện nghiên cứu và sản phẩm
+→ Hướng dẫn và chăm sóc [OBJ-003]
+→ Khách dùng tốt, có thể mua lại hoặc giới thiệu [OBJ-004]
+→ Kết quả thực tế quay về cải thiện nghiên cứu và sản phẩm [OBJ-005, OBJ-006]
 ```
 
 Đây không phải chuỗi bắt buộc: khách muốn mua có thể vào thẳng Bán hàng; khách gặp sự cố vào thẳng Chăm sóc.
@@ -71,7 +73,7 @@ Không khẳng định những ý này chưa từng có trên thị trường. L
 
 Số điện thoại giao hàng **không tự trở thành quyền gửi quảng cáo**. Khách từ chối nhận tin thì chuỗi liên hệ phù hợp phải dừng.
 
-## 5. Vì sao khách không cần kể lại từ đầu?
+## 5. Vì sao khách không cần kể lại từ đầu? [OBJ-005, OBJ-006]
 
 Customer360 là bản tổng hợp phần thông tin được phép: khách đã hỏi gì, nguồn nào giới thiệu, sản phẩm quan tâm, đơn hàng đã xác nhận và vấn đề chưa xử lý.
 
@@ -92,7 +94,7 @@ Dữ liệu công ty A không được dùng để trả lời khách công ty B
 
 Lịch hẹn chỉ thêm nếu doanh nghiệp bán theo lịch tư vấn. LINE, Zalo và các kênh khác cần chọn, kiểm tra kết nối riêng; không bắt buộc đồng thời.
 
-## 7. Đánh giá thành công bằng gì?
+## 7. Đánh giá thành công bằng gì? [OBJ-006]
 
 Không chỉ nhìn số tin nhắn hoặc số đơn. Theo dõi khách chọn đúng hơn không, có người nhận bàn giao không, chi phí phục vụ có giảm không và **lãi đóng góp sau chi phí có tốt hơn không**.
 

@@ -40,6 +40,20 @@ Mô-đun Bán hàng vận hành với cấu trúc 5 Agent chuyên trách theo ch
 4. **Cá nhân hóa đề xuất (SAL-03):** Đề xuất giải pháp đủ dùng, nêu rõ đánh đổi; chỉ đưa gợi ý kèm đầy đủ 7 trường thông tin bắt buộc (Reason + Evidence + Confidence).
 5. **Chốt giao dịch & Bàn giao:** Khách tự xác nhận bước mua hoặc hẹn lịch tư vấn B2B; ghi nhận kết quả xác thực qua máy chủ trước khi bàn giao khâu tiếp theo.
 
+### 2.2. Hợp đồng dữ liệu Đề xuất sản phẩm chuẩn FR-SAL-003 (Recommendation Data Contract)
+
+Theo yêu cầu bắt buộc **FR-SAL-003 - MUST**, mọi đề xuất sản phẩm (product recommendation, cross-sell, upsell, substitute, replenishment, bundle) từ SAL-03 hoặc hệ thống bán hàng đều phải đóng gói đầy đủ 7 trường dữ liệu có cấu trúc:
+
+| STT | Trường dữ liệu (Field) | Kiểu dữ liệu (Type) | Bắt buộc | Mô tả chi tiết & Quy tắc kiểm tra (Validation Rule) | Ví dụ dữ liệu thực tế |
+|---|---|---|---|---|---|
+| 1 | `customer` | Object / String | MUST | Định danh khách hàng (`customer_id`, mã định danh phiên hợp lệ hoặc ID hồ sơ Customer 360). Không để trống. | `"CUST-88291"` |
+| 2 | `product` | Object | MUST | Chi tiết sản phẩm đề xuất trích xuất từ System of Record ERP/Catalog: `product_id`, `sku`, tên sản phẩm, biến thể và giá niêm yết chính thức. | `{"sku": "SKU-EV-BATT-01", "name": "Pin dự phòng Gogoro", "price": 2500}` |
+| 3 | `reason` | String | MUST | Lý do nghiệp vụ gợi ý; diễn giải rõ ràng vì sao sản phẩm phù hợp với nhu cầu, bối cảnh hoặc giải quyết vấn đề của khách. | `"Khách sở hữu xe Gogoro S2 di chuyển > 40km/ngày, phụ kiện pin phụ giúp mở rộng tầm hoạt động"` |
+| 4 | `evidence` | Array / Object | MUST | Bằng chứng đối soát xác thực: liên kết sự kiện Timeline C360 (FR-C360-002), lịch sử mua hàng, sản phẩm tương thích trong giỏ. Không suy diễn. | `{"events": ["view_sku_gogoro_s2", "commute_survey_40km"], "verified_model": "Gogoro S2"}` |
+| 5 | `eligibility` | Object / Boolean | MUST | Kết quả thẩm định điều kiện: tồn kho WMS > 0, có consent nhận đề xuất (BR-004), không thuộc danh sách suppression, thỏa mãn chính sách bán. | `{"stock_available": true, "consent_verified": true, "suppression_cleared": true}` |
+| 6 | `confidence` | Float (0.0 .. 1.0) | MUST | Điểm tin cậy của thuật toán/mô hình AI biểu diễn dưới dạng số thực từ `0.0` đến `1.0`. Dưới ngưỡng tối thiểu quy định sẽ không kích hoạt gợi ý. | `0.87` |
+| 7 | `expected_outcome` | Object | MUST | Dự báo kết quả kỳ vọng gồm 2 chỉ số bắt buộc: xác suất chuyển đổi (`conversion_probability`: Float 0.0..1.0) và doanh thu dự kiến (`expected_revenue`: Number). | `{"conversion_probability": 0.42, "expected_revenue": 2500, "currency": "TWD"}` |
+
 ## 3. Hệ thống Kỹ năng bán hàng (Sales Skill System)
 
 Theo Mục 11 của SRS, Agent (lớp nhận thức/hội thoại) và Skill (lớp thực thi tác vụ) được tách biệt hoàn toàn. Các Sales Agent gọi 8 Skill chuẩn thông qua Orchestrator với hợp đồng kiểm soát nghiêm ngặt:
@@ -219,7 +233,7 @@ Hạ tầng tiếp nhận và xử lý giao vận đặc thù cho thị trườn
    - Nếu khách không nhận hàng dẫn đến bị hoàn trả (未取貨退回), hệ thống Customer 360 tự động:
      * Ghi nhận cờ cảnh báo rủi ro vận chuyển (Delivery Default Flag).
      * Hạ điểm tín nhiệm khách hàng (Trust Score).
-     * Khóa quyền sử dụng phương thức thanh toán CVS COD và tước quyền nhận trợ cấp giá ECN-003 trong vòng 90–180 ngày tiếp theo.
+     * Khóa quyền sử dụng phương thức thanh toán CVS COD và tước quyền nhận trợ cấp giá ECN-001 (Instant Dynamic Subsidy) trong vòng 90–180 ngày tiếp theo.
 
 ## DOM-MOB-001: Government Subsidy Calculator — Bộ tính trợ cấp chính phủ 3 tầng
 

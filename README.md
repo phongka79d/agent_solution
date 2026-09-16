@@ -108,7 +108,7 @@ Hệ thống phân định rành mạch giữa 2 nhóm mã hiệu: Nhóm SRS (qu
 | **TC-E2E-001..009**| Kiểm thử chấp nhận hệ thống | 9 Ca kiểm thử E2E: Luồng tín hiệu khép kín, kiểm soát phê duyệt, toàn vẹn giá sàn, bảo mật danh tính, chống trùng lặp, chặn vượt quyền... | [plans/delivery/mvp-and-roadmap.md](plans/delivery/mvp-and-roadmap.md) |
 | **ASM-001..005** | Giả định khóa trước Production | 5 Giả định bắt buộc: Cổng kết nối, KPI baseline, ngưỡng discount, duyệt hoàn tiền, chính sách lưu trữ Customer360 | [plans/delivery/mvp-and-roadmap.md](plans/delivery/mvp-and-roadmap.md) |
 | **P0..P5** | Cổng kỹ thuật lộ trình | 6 Cổng nghiêm ngặt: P0 (Foundation), P1 (Care), P2 (Sales), P3 (Marketing), P4 (Cross-domain), P5 (Controlled Autonomy) | [plans/delivery/mvp-and-roadmap.md](plans/delivery/mvp-and-roadmap.md) |
-| **KPI-*** (5 nhóm) | Bộ chỉ số đo lường hiệu quả | MKT-KPI-01..07 (Tiếp thị), SAL-KPI-01..08 (Bán hàng), CS-KPI-01..06 (CSKH), SUC-KPI-01..07 (Giữ chân), AI-SYS-KPI-01..08 (Hệ thống AI) | [plans/delivery/analytics.md](plans/delivery/analytics.md) |
+| **KPI-*** (5 nhóm) | Bộ chỉ số đo lường hiệu quả | MKT-KPI-01..07 (Tiếp thị), SAL-KPI-01..08 (Bán hàng), CS-KPI-01..06 (CSKH), SUC-KPI-01..07 (Giữ chân), AI-SYS-KPI-01..10 (Hệ thống AI) | [plans/delivery/analytics.md](plans/delivery/analytics.md) |
 
 ### 2. Nhóm Proprietary (Commercial, Economics & Domain Playbooks — Độc quyền)
 
@@ -146,12 +146,12 @@ Hệ thống phân định rành mạch giữa 2 nhóm mã hiệu: Nhóm SRS (qu
 
 | Mục Tiêu Kinh Doanh | Nhóm Yêu Cầu SRS | Tài Liệu Phụ Trách | Tiêu Chí Kiểm Chứng Chính |
 |---|---|---|---|
-| **OBJ-001 — Tiếp thị (Marketing)** | MKT-001..005, FR-MKT-* | [plans/modules/marketing.md](plans/modules/marketing.md) | **PILOT-01** (Marketing → Sales), **TC-E2E-002** (Kiểm soát phê duyệt Human Approval) |
-| **OBJ-002 — Bán hàng (Sales)** | FR-SAL-001..007 | [plans/modules/sales.md](plans/modules/sales.md) | **PILOT-02** (Phục hồi giỏ hàng), **TC-E2E-003** (Toàn vẹn giá sàn ERP), **TC-E2E-005** (Chống tạo đơn trùng - Idempotency) |
-| **OBJ-003 — Chăm sóc khách hàng (Customer Care)** | FR-CS-001..002 | [plans/modules/customer-support.md](plans/modules/customer-support.md) | **PILOT-03** (Tra cứu đơn ERP), **PILOT-04** (Xử lý khiếu nại), **TC-E2E-004** (Xác minh danh tính) |
+| **OBJ-001 — Tiếp thị (Marketing)** | MKT-01..06 | [plans/modules/marketing.md](plans/modules/marketing.md) | **PILOT-01** (Marketing → Sales), **TC-E2E-002** (Kiểm soát phê duyệt Human Approval) |
+| **OBJ-002 — Bán hàng (Sales)** | FR-SAL-001..003, SAL-01..05 | [plans/modules/sales.md](plans/modules/sales.md) | **PILOT-02** (Phục hồi giỏ hàng), **TC-E2E-003** (Toàn vẹn giá sàn ERP), **TC-E2E-005** (Chống tạo đơn trùng - Idempotency) |
+| **OBJ-003 — Chăm sóc khách hàng (Customer Care)** | FR-CS-001..003, CS-01..02 | [plans/modules/customer-support.md](plans/modules/customer-support.md) | **PILOT-03** (Tra cứu đơn ERP), **PILOT-04** (Xử lý khiếu nại & Chuyển cấp), **TC-E2E-004** (Xác minh danh tính) |
 | **OBJ-004 — Khách hàng thành công & Giữ chân (Retention)** | FR-CS-003 | [plans/modules/customer-support.md](plans/modules/customer-support.md), [plans/customer-lifecycle.md](plans/customer-lifecycle.md) | Quy trình giữ chân (Retention Workflow), Vòng lặp tích điểm đơn 2, Phân tích nguy cơ rời bỏ |
-| **OBJ-005 — Điều phối đa Agent (Revenue Orchestration)** | FR-ORC-001..004 | [plans/platform/architecture.md](plans/platform/architecture.md), [plans/platform/workflows-and-handoffs.md](plans/platform/workflows-and-handoffs.md) | **TC-E2E-001** (Luồng tín hiệu khép kín E2E), **TC-E2E-009** (Truy vết ngược 100%) |
-| **OBJ-006 — Quản trị & Tuân thủ (Governance & Policy)** | BR-001..008, NFR-001..010 | [plans/platform/api-and-integrations.md](plans/platform/api-and-integrations.md), [plans/delivery/mvp-and-roadmap.md](plans/delivery/mvp-and-roadmap.md) | **TC-E2E-006** (Chặn vượt quyền - DENY), **TC-E2E-007** (Triệt tiêu liên hệ thiếu consent), **TC-E2E-008** (Báo lỗi connector trung thực) |
+| **OBJ-005 — Điều phối đa Agent (Revenue Orchestration)** | FR-ORC-001..002 | [plans/platform/architecture.md](plans/platform/architecture.md), [plans/platform/workflows-and-handoffs.md](plans/platform/workflows-and-handoffs.md) | **TC-E2E-001** (Luồng tín hiệu khép kín E2E), **TC-E2E-009** (Truy vết ngược 100%) |
+| **OBJ-006 — Quản trị & Tuân thủ (Governance & Policy)** | BR-001..010, NFR-001..010 | [plans/platform/api-and-integrations.md](plans/platform/api-and-integrations.md), [plans/delivery/mvp-and-roadmap.md](plans/delivery/mvp-and-roadmap.md) | **TC-E2E-002..009** (Kiểm soát phê duyệt, toàn vẹn giá sàn, bảo mật danh tính, chống trùng Idempotency, chặn vượt quyền DENY, triệt tiêu thiếu consent, báo lỗi connector trung thực, truy vết ngược 100%) |
 
 ---
 

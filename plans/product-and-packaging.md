@@ -45,8 +45,9 @@ Toàn bộ giải pháp vận hành theo nguyên tắc tách rời: **Lõi thôn
    - Tiếp cận hàng trăm nghìn nhà bán lẻ trực tuyến toàn cầu (Global Merchants) theo mô hình Tăng trưởng dựa trên sản phẩm (Product-Led Growth - PLG) với chi phí thu hút khách hàng (CAC) tối thiểu, không cần đội ngũ kinh doanh bán hàng trực tiếp (sales tay).
 
 4. **GTM-003: Đòn bẩy số liệu thực nghiệm Đài Loan để bán toàn cầu (Empirical Social Proof Leverage)**:
-   - Sử dụng bộ chỉ số thực tế đo lường được từ đối tác mỏ neo Đài Loan (được định nghĩa và theo dõi tại [analytics.md](delivery/analytics.md)): tỷ lệ tăng chuyển đổi (+25%–40%), độ trễ phản hồi (< 1.5 giây), chi phí AI đơn vị (0.5–1 TWD / phiên tư vấn ECN-003), tỷ lệ tự động hóa CSKH (> 65%) và bảo toàn 100% biên lợi nhuận ròng (ECN-002).
-   - Xuất bản dữ liệu thực nghiệm thành Case Study và Whitepaper định lượng làm bằng chứng xã hội (Social Proof) và cam kết ROI để chào bán cho các doanh nghiệp quốc tế tiếp theo.
+   - Sử dụng bộ **Mục tiêu thiết kế giả thuyết (Design Targets)** được định nghĩa và theo dõi tại [analytics.md](delivery/analytics.md): mục tiêu chuyển đổi tăng +25%–40%, độ trễ phản hồi mục tiêu < 1.5 giây, chi phí AI đơn vị định mức 0.5–1 TWD / phiên tư vấn (ECN-003), tỷ lệ tự động hóa CSKH mục tiêu > 65% và bảo toàn 100% biên lợi nhuận ròng (ECN-002).
+   - **Ghi chú bắt buộc theo ASM-002**: Toàn bộ các chỉ số định lượng trên chỉ đóng vai trò là mục tiêu thiết kế giả thuyết ban đầu. Các chỉ số cam kết chính thức sẽ được đo lường, kiểm chứng và khóa lại sau khi thu thập đầy đủ dữ liệu đường cơ sở (Baseline) thực tế từ đối tác mỏ neo Đài Loan.
+   - Xuất bản dữ liệu thực nghiệm sau khi khóa baseline thành Case Study và Whitepaper định lượng làm bằng chứng xã hội (Social Proof) để chào bán cho các doanh nghiệp quốc tế tiếp theo.
 
 <a id=section-2></a>
 
@@ -91,7 +92,7 @@ Bán theo hai hình thức đóng gói chính:
 Hình thức triển khai và phân phối:
 - **Tùy biến cho doanh nghiệp lớn (Custom Enterprise)**: Nhúng mã website (`nexus-sales.min.js`), tích hợp API trực tiếp từ máy chủ doanh nghiệp, kết nối LINE OA (ADPT-TW-001) hoặc WhatsApp Business (ADPT-GL-001).
 - **GTM-002: Phân phối tự động 1-chạm (Shopify & WooCommerce 1-Click App Store Integration)**: Cài đặt trực tiếp từ kho ứng dụng cho hàng trăm nghìn nhà bán lẻ trực tuyến toàn cầu, tự động kích hoạt Core Engine và Plug-and-Play Adapter tương ứng theo quốc gia của merchant.
-- **GTM-003: Đòn bẩy số liệu thực nghiệm Đài Loan để bán toàn cầu (Empirical Social Proof Leverage)**: Cam kết ROI dựa trên bộ số liệu vận hành thực tế đã kiểm chứng từ đối tác mỏ neo Đài Loan (tỷ lệ chuyển đổi, chi phí AI 0.5–1 TWD/phiên ECN-003, bảo toàn biên lãi ECN-002).
+- **GTM-003: Đòn bẩy số liệu thực nghiệm Đài Loan để bán toàn cầu (Empirical Social Proof Leverage)**: Đòn bẩy kết quả đo lường thực tế từ đối tác mỏ neo Đài Loan sau khi khóa đường cơ sở (Baseline theo ASM-002) và kiểm chứng các mục tiêu thiết kế giả thuyết (tỷ lệ chuyển đổi, độ trễ, tỷ lệ tự động hóa CSKH, chi phí AI 0.5–1 TWD/phiên ECN-003, bảo toàn biên lãi ECN-002).
 
 Giá thương mại đề xuất gồm phí nền tảng theo tháng (Subscription Tier), mức sử dụng AI và công triển khai (nếu là khách hàng tùy biến doanh nghiệp lớn); chưa chốt số tiền cụ thể.
 

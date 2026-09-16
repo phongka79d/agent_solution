@@ -2,7 +2,7 @@
 
 [Mục lục](../README.md) · [Hành trình](../customer-lifecycle.md) · [Thuật ngữ](../glossary.md)
 
-Trạng thái: thiết kế đề xuất. P1 có hỏi đáp cơ bản, hướng dẫn giới hạn và bàn giao; các tác vụ đơn hàng, vận chuyển, phiếu bù giá và đổi trả cần kết nối/nghiệm thu sau.
+Trạng thái: thiết kế đề xuất. P1 bao gồm hỏi đáp FAQ, tra cứu trạng thái đơn hàng qua ERP có evidence (lookup-order - PILOT-03), hướng dẫn giới hạn và bàn giao (escalation); các tác vụ phiếu bù giá, đổi trả và tích hợp logistics chuyên sâu cần kết nối/nghiệm thu sau.
 
 <a id=section-8></a>
 
@@ -65,17 +65,25 @@ Chủ động phát hiện các nguy cơ rời bỏ hoặc cơ hội mở rộng
 [Outcome] (Đo lường phản hồi của khách, tỷ lệ giữ chân và ghi nhận vào Learning Memory)
 ```
 
+**Ranh giới trách nhiệm giữa CS-02 và SAL-05 (Replenishment Boundary & Conflict Prevention):**
+- **CS-02 (Retention Sensor):** Đóng vai trò cảm biến vòng đời, chỉ phát hiện tín hiệu mua lại (Replenishment Signal) từ chu kỳ tiêu dùng thực tế hoặc tương tác CSKH và đẩy sự kiện sang Revenue Orchestrator. **CS-02 tuyệt đối không tự ý phát lệnh gửi tin nhắn reorder độc lập** đến khách hàng nhằm tránh xung đột thông điệp và ngăn ngừa vi phạm BR-006.
+- **Revenue Orchestrator & SAL-05 (Reorder Execution):** Revenue Orchestrator đóng vai trò điều phối tập trung, tiếp nhận tín hiệu từ CS-02, giải quyết xung đột đa kênh rồi giao việc cho SAL-05. SAL-05 thực hiện kiểm tra toàn diện: đồng thuận khách hàng (BR-004), tồn kho và giá niêm yết (BR-001, BR-003), quy tắc chống làm phiền (suppression rules) và chống gửi lặp (BR-006) trước khi tạo và gửi thông điệp mời tái đặt hàng.
+
 ## 3. Hệ thống Quản lý Vụ việc (Case Management State Machine)
 
-Mọi yêu cầu hỗ trợ hoặc khiếu nại đều được theo dõi dưới dạng Case có cấu trúc, vận hành theo State Machine 7 trạng thái chuẩn:
+Mọi yêu cầu hỗ trợ hoặc khiếu nại đều được theo dõi dưới dạng Case có cấu trúc, vận hành theo State Machine chuẩn bao gồm đường chuyển tiếp mở lại vụ việc (REOPENED):
+`NEW → CLASSIFIED → ASSIGNED → IN_PROGRESS → WAITING_CUSTOMER → RESOLVED → CLOSED / REOPENED`
 
 ```text
 [NEW] ──► [CLASSIFIED] ──► [ASSIGNED] ──► [IN_PROGRESS] ──► [WAITING_CUSTOMER] ──► [RESOLVED] ──► [CLOSED]
-                                │               ▲                    │
-                                └───────────────┴────────────────────┘
+                                │               ▲                    │                 │             │
+                                └───────────────┴────────────────────┘                 │             │
+                                                ▲                                      │             │
+                                                └─────────────── [REOPENED] ◄──────────┴─────────────┘
+                                                      (Khách khiếu nại tiếp / chưa thỏa mãn)
 ```
 
-### 3.1. Đặc tả 7 trạng thái vòng đời Case
+### 3.1. Đặc tả các trạng thái vòng đời Case
 1. **NEW:** Vụ việc mới được khởi tạo từ tin nhắn/yêu cầu của khách qua kênh bất kỳ.
 2. **CLASSIFIED:** CS-01 đã phân loại Intent, gắn nhãn mức độ ưu tiên (P1-Khẩn cấp đến P4-Thấp) và liên kết hồ sơ khách hàng.
 3. **ASSIGNED:** Hệ thống phân bổ quyền xử lý cho Agent (CS-01/CS-02) hoặc nhân viên hỗ trợ chuyên trách.
@@ -83,6 +91,7 @@ Mọi yêu cầu hỗ trợ hoặc khiếu nại đều được theo dõi dư�
 5. **WAITING_CUSTOMER:** Tạm dừng tính SLA chờ phản hồi hoặc cung cấp thêm thông tin từ phía khách hàng.
 6. **RESOLVED:** Đã cung cấp giải pháp hoặc hoàn tất xử lý; chờ xác nhận hài lòng từ khách hàng.
 7. **CLOSED:** Khách hàng xác nhận hài lòng hoặc quá thời gian quy định sau giải quyết mà không có khiếu nại thêm.
+8. **REOPENED:** Vụ việc được mở lại khi khách hàng tiếp tục khiếu nại, phản hồi chưa hài lòng hoặc phát sinh vấn đề liên quan từ trạng thái RESOLVED hoặc CLOSED. Hệ thống chuyển tiếp Case quay lại IN_PROGRESS/ASSIGNED, giữ nguyên mã Case ID cũ và bảo toàn toàn bộ lịch sử bằng chứng (Evidence).
 
 ### 3.2. Cấu trúc dữ liệu Case bắt buộc
 Mỗi Case phải lưu trữ tối thiểu các trường dữ liệu:
@@ -98,7 +107,7 @@ Theo Mục 11 của SRS, các Agent CS-01 và CS-02 gọi các Skill chuyên tr�
 | `search-faq` | Tra cứu FAQ và chính sách bảo hành, đổi trả đã được duyệt từ Second Brain | CS-01 | AUTH-0 (Observe) | Knowledge Base (/customer-care) | Chỉ trích dẫn tài liệu trạng thái `approved`; không bịa chính sách |
 | `lookup-order` | Tra cứu thông tin đơn hàng, trạng thái xử lý và thanh toán từ ERP/OMS | CS-01 | AUTH-0 (Observe) | ERP Connector (API-001) | Bắt buộc xác minh danh tính khách hàng (Customer Verification - TC-E2E-004) |
 | `track-shipping` | Tra cứu hành trình vận chuyển thực tế và mã bưu gửi siêu thị CVS | CS-01 | AUTH-0 (Observe) | Logistics / CVS Adapter (ADPT-TW-001) | Trả về dữ liệu hành trình vật lý từ nhà vận chuyển; ghi log tra cứu |
-| `manage-case` | Khởi tạo, cập nhật trạng thái hoặc đóng vụ việc theo State Machine 7 trạng thái | CS-01 | AUTH-3 (Bounded Execute) | Case Management Store | Tuân thủ nghiêm ngặt chuyển tiếp trạng thái; không đóng case đơn phương |
+| `manage-case` | Khởi tạo, cập nhật trạng thái hoặc đóng/mở lại vụ việc theo State Machine chuẩn (kèm REOPENED) | CS-01 | AUTH-3 (Bounded Execute) | Case Management Store | Tuân thủ nghiêm ngặt chuyển tiếp trạng thái; không đóng case đơn phương |
 | `initiate-return` | Khởi tạo yêu cầu đổi/trả hàng nháp, thu thập hình ảnh và lý do khiếu nại | CS-01 | AUTH-2 (Draft) / AUTH-4 (Refund) | Returns API / Core Engine | Kiểm tra điều kiện thời hạn đổi trả; hoàn tiền bắt buộc người duyệt (AUTH-4) |
 | `escalate-to-human` | Bàn giao phiên chat và vụ việc sang hàng đợi nhân viên tại SCR-005 | CS-01 | AUTH-3 (Bounded Execute) | Conversation Console (SCR-005) | Kích hoạt khóa phiên (Session Mutex Lock); AI ngừng trả lời nghiệp vụ |
 | `analyze-churn-risk` | Nhận diện tín hiệu bất thường (ngừng mua, giảm tần suất) trên Customer 360 | CS-02 | AUTH-1 (Recommend) | Customer 360 Analytics Layer | Ghi nhận dưới dạng HYPOTHESIS; không ghi đè thành FACT (FR-C360-003) |
@@ -110,7 +119,7 @@ Theo Mục 11 của SRS, các Agent CS-01 và CS-02 gọi các Skill chuyên tr�
 |---|---|---|
 | Hỏi đáp và hướng dẫn | Tìm tài liệu đã duyệt, giải thích có nguồn | P1 |
 | Gợi ý câu hỏi theo ngữ cảnh | Vài câu ngắn dựa trên trang/sản phẩm hợp lệ; dữ liệu riêng cần xác minh | P1 nếu giao diện hỗ trợ |
-| Tra trạng thái đơn/giao hàng | Kết nối từng hệ thống, hiển thị thời điểm cập nhật | P2 |
+| Tra cứu trạng thái đơn/giao hàng qua ERP (lookup-order) | Kết nối ERP/OMS (API-001), xác minh danh tính khách hàng (TC-E2E-004), hiển thị trạng thái thực tế và thời điểm đối soát có evidence | P1 (PILOT-03) |
 | Nút liên hệ người giao | Chỉ hiển thị thông tin nguồn cho phép và người mua có quyền xem | P2 |
 | Phiếu hỗ trợ và ưu tiên thời gian | Tạo/cập nhật có xác nhận, bàn giao người nhận | P2 |
 | Bù giá bằng phiếu mua lần sau | Chính sách, ngân sách, kiểm tra điều kiện, duyệt/cấp một lần | P2 thử có người duyệt; P3 tự động giới hạn |
@@ -193,7 +202,7 @@ Thay vì phát phiếu giảm giá tự động liên tục (dễ gây lờn gi�
 6. **Tích hợp kênh liên lạc & Dự báo mua lại (Predictive Replenishment):**
    - Tại Đài Loan: Điểm thưởng có thể quy đổi trực tiếp thành **LINE Points** (tiêu dùng được trong mạng lưới bán lẻ toàn Đài Loan).
    - Tại Việt Nam: Đồng bộ thông báo điểm thưởng và ưu đãi qua Zalo OA.
-   - AI CS-02 dựa trên chu kỳ tiêu dùng thực tế để tự động gửi thông điệp chăm sóc kèm lời mời tái đặt hàng 1-chạm khi khách sắp hết sản phẩm.
+   - AI CS-02 dựa trên chu kỳ tiêu dùng thực tế để phát hiện tín hiệu mua lại (Replenishment Signal) và gửi tới Revenue Orchestrator; Orchestrator điều phối SAL-05 kiểm tra chính sách và điều kiện (BR-004, BR-006, tồn kho BR-003) trước khi gửi thông điệp mời tái đặt hàng 1-chạm qua LINE/Zalo.
 
 ## DOM-FMCG-005: 4-Layer Anti-Sybil Defense — Bộ tứ định danh chống clone tài khoản & bùng hàng CVS
 

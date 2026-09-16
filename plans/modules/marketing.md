@@ -25,7 +25,7 @@ Mô-đun Tiếp thị vận hành với cấu trúc 6 Agent chuyên trách theo 
 | **MKT-03** | Content Agent | Sáng tạo nội dung đa kênh: social post, video script (TikTok/Reels), mẫu quảng cáo, email, landing page, tin nhắn Zalo/LINE | AUTH-2 (Draft) | Bản tóm tắt chiến dịch (Brief), hướng dẫn thương hiệu, USP sản phẩm | Bản thảo nội dung đa biến thể, tiêu đề, lời kêu gọi hành động (CTA) |
 | **MKT-04** | Brand Guardian | Kiểm soát tone of voice, thuật ngữ, thông tin thương hiệu, tính chuẩn xác của tuyên bố (claim), giá niêm yết, ưu đãi và nội dung bị cấm | AUTH-1 (Review/Verify) | Bản thảo nội dung từ MKT-03, chính sách thương hiệu, danh mục giá ERP | Báo cáo thẩm định (Pass/Flag/Reject), lý do và đề xuất sửa |
 | **MKT-05** | Campaign Agent | Điều phối và vận hành vòng đời chiến dịch tiếp thị xuyên suốt từ khởi tạo đến thực thi và tối ưu | AUTH-3 (trong hạn mức) / AUTH-4 (ngân sách/xuất bản) | Kế hoạch từ MKT-01, nội dung đã duyệt, phân khúc từ MKT-02 | Lịch phát hành, trạng thái thực thi chiến dịch |
-| **MKT-06** | Marketing Analyst | Theo dõi đo lường impressions, reach, click, lead, conversion, CAC, ROAS, doanh thu thực tế và phân bổ đóng góp (attribution) | AUTH-0 (Observe) / AUTH-1 (Recommend) | Nhật ký sự kiện, chi phí quảng cáo, đơn hàng ERP đối soát | Báo cáo hiệu quả chiến dịch, phân tích ROAS/CAC, đề xuất tối ưu |
+| **MKT-06** | Marketing Analyst | Theo dõi đo lường impressions, reach, click, lead, conversion, CAC, ROAS, doanh thu thực tế, mua lại định kỳ (repeat purchase) và phân bổ đóng góp (attribution) | AUTH-0 (Observe) / AUTH-1 (Recommend) | Nhật ký sự kiện, chi phí quảng cáo, đơn hàng ERP đối soát | Báo cáo hiệu quả chiến dịch, phân tích ROAS/CAC, đề xuất tối ưu |
 
 ### 2.1. Quy trình điều phối Chiến dịch chuẩn (Campaign Lifecycle Workflow)
 
@@ -127,6 +127,7 @@ Các kênh phân phối Zalo, LINE, Facebook, Email chỉ kích hoạt khi bộ 
 Hiệu quả hoạt động của hệ thống Agent Tiếp thị (MKT-01 đến MKT-06) được đo lường qua các chỉ số cốt lõi:
 - **Campaign Revenue:** Doanh thu gán cho chiến dịch có đối soát đơn hàng thực tế qua ERP.
 - **Lead Conversion & Qualified Lead Rate:** Tỷ lệ chuyển đổi đầu mối và tỷ lệ khách đủ chuẩn bàn giao sang Bán hàng kèm reason + evidence.
+- **Repeat Purchase:** Tỷ lệ và số lượng khách hàng mua lại định kỳ gắn với các chiến dịch tiếp thị vòng đời, nuôi dưỡng khách hàng và mô hình phân bổ doanh thu (theo nhiệm vụ của MKT-06 tại Mục 6 SRS).
 - **CAC (Customer Acquisition Cost):** Chi phí thu hút một khách hàng mới, tính đủ media spend, đối tác và ưu đãi.
 - **ROAS (Return on Ad Spend):** Doanh thu thu về trên mỗi đồng ngân sách quảng cáo được duyệt.
 - **Cost per Lead:** Chi phí trung bình trên mỗi đầu mối tiếp thị hợp lệ.
@@ -144,7 +145,7 @@ Quy trình nghiên cứu nhu cầu khách hàng bài bản, tập trung tìm đ�
    - Đi ngược hành trình khách hàng để tìm kiếm hành động phát sinh trước khi nhu cầu mua sắm hình thành; kiểm chứng thứ tự thực tế thay vì suy đoán cảm tính.
    - Xác định nơi khách hàng tập trung và các tổ chức/đối tác có khả năng giới thiệu giải pháp tự nhiên.
    - Đánh giá sản phẩm của doanh nghiệp dựa trên: lợi ích thực tế, giới hạn kỹ thuật, sự khác biệt, điều kiện vận hành và bằng chứng kiểm định.
-   - Phân biệt rạch ròi ba cấp độ thông tin: **Sự kiện có nguồn (Fact)**, **Suy luận logic (Inference)** và **Giả thuyết chưa kiểm chứng (Hypothesis)**. Không tự tạo quy mô thị trường khi chưa có số liệu đo lường.
+   - Phân định bằng chứng chuẩn theo 5 cấp độ của **FR-C360-003**: **FACT** (dữ liệu đã xác minh có nguồn), **SIGNAL** (dấu hiệu quan sát được), **HYPOTHESIS** (giả thuyết do AI đề xuất; tuyệt đối không ghi ngược thành Customer Fact), **DECISION** (quyết định đã được hệ thống tạo) và **ACTION** (hành động dự kiến hoặc đã thực thi). Không tự tạo quy mô thị trường khi chưa có số liệu đo lường.
 2. **Cấu trúc Phiếu cơ hội thị trường chuẩn (Market Opportunity Canvas - 9 trường bắt buộc):**
 
 | Trường dữ liệu | Nội dung bắt buộc ghi nhận |

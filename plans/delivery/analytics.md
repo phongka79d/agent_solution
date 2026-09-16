@@ -109,13 +109,52 @@ Chốt múi giờ, khoảng báo cáo dạng [bắt đầu, kết thúc), nhóm 
 | **AI-SYS-KPI-06** | Tỷ lệ thực thi thất bại | Failed Execution Rate | Số lượt gọi công cụ/kết nối bên ngoài bị thất bại hoặc lỗi hệ thống / Tổng số lượt thực thi (Target < 0.1%). |
 | **AI-SYS-KPI-07** | Tỷ lệ thực thi trùng lặp | Duplicate Execution Rate | Số hành động gửi tin hoặc tạo đơn bị trùng lặp do lỗi Idempotency (Mục tiêu bắt buộc = 0%). |
 | **AI-SYS-KPI-08** | Ngân sách AI trên mỗi phiên | AI Cost per Session | Chi phí token và API model thực tế trên mỗi phiên tư vấn đầy đủ (Định mức mục tiêu: **0,5–1 TWD/phiên**). |
+| **AI-SYS-KPI-09** | Chi phí trên mỗi lượt chạy | Cost per Run | Tổng chi phí token mô hình, chi phí gọi API và tài nguyên connector trong một Agent Run đơn lẻ theo NFR-010. |
+| **AI-SYS-KPI-10** | Chi phí trên mỗi khách hàng | Cost per Customer | Tổng chi phí AI tích lũy phân bổ cho một khách hàng định danh (Customer ID) trong toàn bộ chu kỳ tương tác theo NFR-010. |
 
-### 3.6. Quy tắc hợp nhất dữ liệu và quy thuộc doanh thu
+### 3.6. Quy tắc hợp nhất dữ liệu, Cửa sổ phân bổ và Mô hình quy thuộc đa điểm chạm (Multi-Touch Attribution)
 
-1. **Không tính hai lần**: Vụ việc mở lại chỉ tính một kết quả cuối; nếu có nhân viên can thiệp thì không được tính vào "AI tự giải quyết".
-2. **Không suy đoán doanh thu**: Doanh thu "có AI tham gia" chỉ là số liệu liên quan, **không chứng minh quan hệ nhân quả AI tạo thêm doanh thu** trừ khi có đối chứng A/B testing hợp lệ.
+#### 1. Nguyên tắc hợp nhất dữ liệu và chống suy đoán
+1. **Không tính hai lần (No Double Counting)**: Vụ việc mở lại chỉ tính một kết quả cuối; nếu có nhân viên can thiệp tiếp quản thì không được tính vào "AI tự giải quyết".
+2. **Không suy đoán doanh thu (No Speculative Attribution)**: Doanh thu "có AI tham gia" chỉ là số liệu tương quan, **không chứng minh quan hệ nhân quả AI tạo thêm doanh thu** trừ khi có đối chứng A/B testing hợp lệ.
 3. **Phân tách tiền tệ**: Không cộng gộp các khoản tiền khác loại tiền tệ (TWD, VND, USD). Báo cáo phân theo từng loại tiền hoặc quy đổi theo tỷ giá cố định tại thời điểm phát sinh sự kiện.
-4. **Quy tắc đủ điều kiện**: Tương tác AI chỉ được gắn với đơn hàng nếu tương tác có nội dung tư vấn sản phẩm và diễn ra trong cửa sổ quy thuộc (attribution window) đã chốt trước (thường 24–72 giờ). Các tin nhắn tự động mở khung chat không được tính là tương tác tư vấn.
+
+#### 2. Quy tắc Cửa sổ phân bổ doanh thu (Attribution Window Rules)
+Cửa sổ phân bổ (Attribution Window) là khoảng thời gian tối đa cho phép kể từ thời điểm khách hàng tương tác có ý nghĩa với AI Agent đến thời điểm đơn hàng được xác nhận thanh toán (`order.confirmed`):
+- **Cửa sổ mặc định theo ngành hàng:**
+  - *Hàng tiêu dùng nhanh FMCG (GTM-001B)*:
+    - Kịch bản Phục hồi giỏ hàng (Cart Recovery): Cửa sổ phân bổ là **24 giờ** tính từ lúc gửi tin nhắn nhắc giỏ có liên kết giỏ hàng.
+    - Kịch bản Chiến dịch nội dung & Ưu đãi định kỳ: Cửa sổ phân bổ là **48 giờ** tính từ lúc khách hàng nhấp vào thông điệp chiến dịch.
+  - *Xe máy điện thông minh & O2O High-Ticket (GTM-001A)*:
+    - Kịch bản Tư vấn cấu hình & Đặt lịch lái thử showroom: Cửa sổ phân bổ là **72 giờ** tính từ phiên tư vấn cuối cùng có giải đáp thông số kỹ thuật hoặc chính sách trợ cấp.
+    - Kịch bản Đặt cọc giữ chỗ hoàn lại: Cửa sổ phân bổ kéo dài tối đa **14 ngày** nếu phát sinh giao dịch đặt cọc giữ chỗ showroom trên hệ thống.
+- **Quy tắc loại trừ:** Đơn hàng phát sinh sau khi cửa sổ phân bổ kết thúc sẽ được phân loại là *Doanh thu tự nhiên (Organic Revenue)*, không được tính quy thuộc cho Agent. Tin nhắn tự động mở khung chat mà khách không tương tác phản hồi bị loại trừ 100%.
+
+#### 3. Mô hình quy thuộc đa điểm chạm (Multi-Touch Attribution - MTA) khi có nhiều Agent tham gia
+Khi một hành trình chuyển đổi đơn hàng có sự tham gia phối hợp của nhiều Agent trong chuỗi giá trị (Marketing Agent → Sales Advisor → Cart Recovery → Customer Care), hệ thống áp dụng **Mô hình quy thuộc theo vị trí trọng số (Position-Based / W-Shaped Attribution)**:
+
+```text
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│ MÔ HÌNH QUY THUỘC ĐA ĐIỂM CHẠM VỊ TRÍ TRỌNG SỐ (POSITION-BASED W-SHAPED ATTRIBUTION)    │
+├──────────────────────┬──────────────────────┬───────────────────┬──────────────────────┤
+│ ĐIỂM CHẠM ĐẦU        │ ĐIỂM CHẠM TƯ VẤN     │ ĐIỂM CHẠM ĐỆM     │ ĐIỂM CHẠM CHỐT       │
+│ (First-Touch: 30%)   │ (Lead Creation: 30%) │ (Nurturing: 10%)  │ (Last-Touch: 30%)    │
+├──────────────────────┼──────────────────────┼───────────────────┼──────────────────────┤
+│ Marketing Agent      │ AI Sales Advisor     │ Customer Care /   │ Cart Recovery Agent  │
+│ (MKT-01..05):        │ (SAL-01..03):        │ Content Agent:    │ (SAL-04) hoặc        │
+│ Tiếp cận, khơi gợi   │ Xác định nhu cầu,    │ Giải đáp thắc mắc │ Checkout Assistant:  │
+│ nhu cầu, click ad    │ tư vấn cấu hình,     │ phụ, chăm sóc     │ Kích hoạt ưu đãi giá │
+│ hoặc mở tin chiến dịch│ so sánh sản phẩm     │ chính sách        │ sàn, chốt đơn cuối   │
+└──────────────────────┴──────────────────────┴───────────────────┴──────────────────────┘
+```
+
+- **Quy tắc phân bổ tỷ trọng:**
+  - **30% Doanh thu quy thuộc** gán cho Marketing Agent (MKT-01..05) phụ trách điểm chạm khởi tạo đầu tiên đưa khách vào phễu.
+  - **30% Doanh thu quy thuộc** gán cho Sales Agent tư vấn (SAL-01..03) trực tiếp giải đáp nhu cầu và đưa ra đề xuất sản phẩm phù hợp.
+  - **30% Doanh thu quy thuộc** gán cho Agent chốt đơn cuối cùng (Last Touch), ví dụ Cart Recovery Agent (SAL-04) kéo khách quay lại giỏ hàng.
+  - **10% Doanh thu quy thuộc** gán cho các tương tác đệm ở giữa (Middle Touches), ví dụ Customer Care Agent (CS-01) trả lời về chính sách đổi trả/vận chuyển trong quá trình cân nhắc.
+- **Nếu chỉ có một Agent tham gia duy nhất:** 100% doanh thu quy thuộc được ghi nhận cho Agent đó nếu thỏa mãn quy tắc cửa sổ phân bổ.
+- **Nếu có con người can thiệp (Human Takeover):** Toàn bộ tỷ trọng phân bổ của chặng tương ứng được chuyển sang ghi nhận cho Nhân viên CSKH/Telesales con người; AI chỉ nhận tỷ trọng của các chặng hoàn toàn tự động trước đó.
 
 <a id=unit-economics></a>
 

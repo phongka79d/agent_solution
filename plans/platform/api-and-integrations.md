@@ -86,6 +86,10 @@ Kết quả hoàn tất sau khi xử lý qua chu trình 11 bước (chỉ đọc
 
 Khóa chống trùng (Idempotency Key) áp dụng cho mọi yêu cầu theo công thức `tenant_id` + `operation` + `unique_key`. Khi nhận cùng khóa nhưng khác nội dung payload, hệ thống trả mã lỗi xung đột `IDEMPOTENCY_CONFLICT`, tuyệt đối không tạo hành động mới hoặc trả kết quả cũ sai lệch.
 
+**Quy định thời gian lưu trữ (TTL) của Idempotency Key (`effect_key`)**:
+- *Bộ nhớ đệm thời gian thực (Redis Cache)*: Thiết lập TTL **72 giờ** phục vụ kiểm tra chống trùng lặp tức thời với tốc độ sub-millisecond, ngăn chặn các luồng thử lại dồn dập (retries) hoặc sự cố gửi lặp mạng trong cửa sổ giao dịch.
+- *Lưu trữ bất biến vĩnh viễn (PostgreSQL)*: Toàn bộ bản ghi `effect_key` kèm mã lần chạy `run_id`, trạng thái thực thi và bằng chứng (Evidence) được ghi nhận và **lưu trữ vĩnh viễn** trong cơ sở dữ liệu quan hệ PostgreSQL (bảng `agent_run_log` / `idempotency_audit`) phục vụ đối soát tài chính, kiểm toán hồi tố (NFR-002, NFR-003) và giải quyết tranh chấp khiếu nại.
+
 Các sự kiện can thiệp từ người vận hành tại Command Center gồm: `human.approval`, `human.reject`, `human.modify`, `human.takeover`, `human.resume`, kèm định danh nhân viên, quyết định, lý do giải trình và khóa chống trùng. Máy chủ kiểm tra quyền hạn của người ký tại thời điểm xử lý.
 
 ## 4. Cổng kết nối cốt lõi của nền tảng (Core Connectors)
@@ -108,7 +112,7 @@ Các sự kiện can thiệp từ người vận hành tại Command Center gồ
 
 ### API-003 - Communication Connectors (Cổng kết nối đa kênh tương tác)
 - **Chức năng**: Kiến trúc kết nối đa kênh hợp nhất phục vụ gửi và nhận tin nhắn hai chiều giữa khách hàng với AI Agent hoặc Nhân viên.
-- **Phạm vi kênh hỗ trợ**: LINE Official Account, WhatsApp Business, Web Chat Widget nhúng, Facebook Messenger, Instagram Direct, Zalo OA/ZNS, Email và SMS giao dịch.
+- **Phạm vi kênh hỗ trợ**: LINE Official Account, WhatsApp Business, Web Chat Widget nhúng, Facebook Messenger, Instagram Direct, TikTok (TikTok Messaging & Webhooks theo SRS Mục 15), Zalo OA/ZNS, Email và SMS giao dịch.
 - **Quy tắc an toàn**: Độc quyền phát tin qua Session Mutex Lock; khi nhân viên tiếp quản (Takeover), quyền gửi tin của AI bị ngắt lập tức. Tin nhắn tiếp thị chỉ được gửi khi có consent hợp lệ (BR-004).
 
 ## 5. Đặc tả mã chuẩn hóa cho các Plug-and-Play Adapters
@@ -136,6 +140,7 @@ Phục vụ thị trường Đài Loan với hệ sinh thái thương mại nộ
 3. **Cổng thanh toán & Nhận hàng tại siêu thị tiện lợi (CVS COD)**:
    - Tích hợp cổng thanh toán **ECPay (綠界科技)** và **NewebPay (藍新金流)**, hỗ trợ thẻ tín dụng nội địa, LINE Pay, JKOPAY (街口支付).
    - Tích hợp **CVS COD E-Map API**: Gọi API bản đồ chọn siêu thị tiện lợi (**7-Eleven / FamilyMart**) phục vụ hình thức nhận hàng trả tiền mặt tại quầy (**超商取貨付款 - CVS COD**), tự động lưu mã cửa hàng (`cvs_store_id`) vào đơn hàng.
+   - **Cơ chế truyền tin liên miền an toàn (Safe Cross-Origin `postMessage`)**: Storefront Widget chạy trong Shadow DOM siêu nhẹ (< 20 KB) khi mở giao diện bản đồ chọn siêu thị của bên thứ ba (ECPay/NewebPay/siêu thị) dưới dạng iframe hoặc popup cửa sổ sẽ nhận dữ liệu phản hồi (`cvs_store_id`, `cvs_store_name`, `cvs_address`) qua giao thức `window.postMessage`. Cơ chế này cấu hình listener nghiêm ngặt: kiểm tra chặt chẽ miền gốc `event.origin` theo danh sách whitelist domain đối tác đã cấp phép, xác thực tính toàn vẹn của token đi kèm nhằm bảo đảm widget không bị chính sách Same-Origin Policy chặn và triệt tiêu nguy cơ tấn công giả mạo nguồn gốc thông điệp (Cross-Origin Message Spoofing).
 4. **Hạ tầng lưu trữ tuân thủ Taiwan PDPA**:
    - Triển khai cụm máy chủ và cơ sở dữ liệu tại **GCP Changhua (Đài Loan)** hoặc **AWS Region Taipei**, bảo đảm tốc độ phản hồi < 50ms và tuân thủ yêu cầu lưu trữ dữ liệu cá nhân tại chỗ theo Đạo luật Bảo vệ Dữ liệu Cá nhân Đài Loan.
 
@@ -191,7 +196,7 @@ Hệ thống hỗ trợ cả luồng thanh toán số tức thời (Thẻ tín d
 
 ## 7. Bảo mật, Quản trị và Yêu cầu phi chức năng (NFR)
 
-Hệ thống bắt buộc phải đáp ứng 6 yêu cầu phi chức năng (NFR) nền tảng sau:
+Hệ thống bắt buộc phải đáp ứng đầy đủ 10 yêu cầu phi chức năng (NFR) nền tảng theo Mục 19 SRS:
 
 - **NFR-001 - Security (Bảo mật & Ranh giới phân quyền) - MUST**:
   Agent chỉ được hoạt động nghiêm ngặt trong cấp độ thẩm quyền được cấp (`AUTH-0` đến `AUTH-3`). Bất kỳ hành vi nào cố tình vượt quyền, kể cả do kỹ thuật tấn công chèn chỉ dẫn (Prompt Injection - BR-009) từ người dùng, đều bị hệ thống từ chối (DENY) ở tầng máy chủ.
@@ -199,10 +204,18 @@ Hệ thống bắt buộc phải đáp ứng 6 yêu cầu phi chức năng (NFR)
   100% các hành động tạo tác động bên ngoài (External Actions) và các quyết định phê duyệt đều phải sinh bản ghi bằng chứng (Evidence Record) gắn liền với mã lần chạy `run_id`, `tenant_id`, timestamp, độ trễ (latency), mức tiêu thụ token, chi phí ước tính và định danh Agent/nhân viên thực hiện.
 - **NFR-003 - Idempotency (Chống trùng lặp tác vụ) - MUST**:
   Mọi thao tác thay đổi dữ liệu hoặc phát thông điệp ra ngoài đều phải gắn mã định danh cố định `effect_key`. Việc thực hiện lại nhiều lần với cùng một `effect_key` tuyệt đối không được tạo ra đơn hàng, giao dịch tài chính hoặc tin nhắn trùng lặp.
+- **NFR-004 - Availability (Tính sẵn sàng & Phục hồi tự động)**:
+  Toàn bộ các quy trình nghiệp vụ quan trọng (Durable Workflows) bắt buộc phải tích hợp cơ chế thử lại hữu hạn theo lũy tiến thời gian (exponential backoff), thời gian chờ tối đa (timeout) và kịch bản phục hồi tự động (recovery) khi tiến trình gặp sự cố; không để tác vụ bị treo vô hạn làm nghẽn hàng đợi.
+- **NFR-005 - Explainability (Tính giải trình & Minh bạch quyết định)**:
+  100% các quyết định quan trọng (chấm điểm phân loại lead, đề xuất sản phẩm, áp dụng ưu đãi, phân luồng case CSKH) bắt buộc phải lưu trữ đầy đủ lý do logic (`reason`) kèm bằng chứng xác thực (`evidence`) trích xuất từ dữ liệu nguồn.
 - **NFR-006 - Data Isolation (Cô lập dữ liệu đa doanh nghiệp) - MUST**:
   Dữ liệu của doanh nghiệp này tuyệt đối không xuất hiện trong ngữ cảnh của doanh nghiệp khác ở bất kỳ tầng kiến trúc nào: DB Schema / Row-Level Security, Redis cache keys, Vector Database Namespaces và Runtime Memory.
+- **NFR-007 - Human Override (Quyền can thiệp & Tiếp quản của con người)**:
+  Con người luôn có toàn quyền tạm dừng (Pause), hủy bỏ (Cancel) hoặc hiệu chỉnh tham số (Modify) bất kỳ quy trình nào đang chờ duyệt tại SCR-003, cũng như kích hoạt quyền tiếp quản tức thì (Takeover) tại SCR-005 để khóa quyền bot và trực tiếp trao đổi với khách hàng.
 - **NFR-008 - Failure Safety - Fail Closed (An toàn khi sự cố) - MUST**:
   Khi không thể xác minh được giá niêm yết, tồn kho thực tế, ranh giới quyền hạn (authority) hoặc sự đồng ý của khách hàng (consent), hệ thống bắt buộc phải **Fail Closed**: Chặn đứng việc thực thi, giữ nguyên trạng thái an toàn, ghi nhận cảnh báo và chuyển giao cho nhân viên xử lý tại SCR-003 / SCR-005.
+- **NFR-009 - Performance (Hiệu năng phản hồi & Tải)**:
+  Hội thoại tương tác thông thường được thiết kế để phản hồi gần thời gian thực (độ trễ p95 < 1.5s đối với các luồng tư vấn tiêu chuẩn); gói mã nhúng Storefront Widget tối ưu siêu nhẹ (< 20 KB) không làm ảnh hưởng tốc độ tải trang; các chỉ số SLA chính thức được khóa sau vòng kiểm thử benchmark tải.
 - **NFR-010 - Cost Observability (Giám sát chi phí vận hành) - MUST**:
   Đo lường chi tiết mức tiêu hao token (input, output, cached tokens), tên mô hình LLM, chi phí gọi tool và cổng Adapter theo thời gian thực. Tính toán chính xác các chỉ số chi phí: cost per run, cost per customer, cost per conversion hiển thị trực tiếp trên SCR-001 và SCR-002.
 

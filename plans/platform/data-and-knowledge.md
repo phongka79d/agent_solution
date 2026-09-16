@@ -63,6 +63,102 @@ Tuân thủ Mục 14 của SRS (AI-REV-SRS-001), hệ thống chuẩn hóa 28 th
 | 27 | **Outcome** | Governance & Intelligence | Analytics Engine (API-001 đối soát) | Kết quả kinh doanh thực tế định lượng (doanh thu, chuyển đổi, CSAT) |
 | 28 | **Learning** | Governance & Intelligence | Learning Memory | Trọng số tối ưu hóa, bài học rút ra cập nhật vào tri thức dài hạn |
 
+### Đặc tả lược đồ (Schema) và chỉ mục chính cho các thực thể động cốt lõi
+
+Bên cạnh các thực thể giao dịch tĩnh từ SoR (Product, Order, Inventory), nền tảng quản trị 4 thực thể động then chốt phục vụ chu trình tiếp thị, điều phối bán hàng và cá nhân hóa:
+
+#### 1. Thực thể Lead (Khách hàng tiềm năng — Chuẩn FR-SAL-001)
+Thẩm định và theo dõi đầu mối kinh doanh với đầy đủ cấu trúc phân loại, lý do và bằng chứng:
+- **Lược đồ trường dữ liệu (Schema)**:
+  - `lead_id` (`UUID v4`, Primary Key): Định danh duy nhất của đầu mối tiềm năng.
+  - `tenant_id` (`UUID v4 / String`, Not Null): Định danh doanh nghiệp phục vụ cô lập đa khách hàng (NFR-006).
+  - `customer_id` (`UUID v4 / String`, Nullable): Khóa ngoại liên kết tới Customer nếu là khách hàng đã từng phát sinh giao dịch.
+  - `customer_type` (`Enum: 'new' | 'returning'`): Phân loại khách mới hoặc khách quay lại theo chuẩn FR-SAL-001.
+  - `needs_summary` (`Text`): Tóm tắt nhu cầu sản phẩm/giải pháp được AI trích xuất từ cuộc trò chuyện.
+  - `interested_products` (`JSON Array`): Danh sách mã sản phẩm (`product_id`) hoặc SKU khách quan tâm.
+  - `readiness_score` (`Integer`, 0 - 100): Điểm số đánh giá mức độ sẵn sàng mua hàng (Warm / Hot / Cold).
+  - `recent_behavior` (`JSON Object`): Ảnh chụp sự kiện số gần nhất từ API-002 (lần xem cuối, sản phẩm xem lặp, thời lượng phiên).
+  - `purchase_history_summary` (`JSON Object`): Tóm tắt lịch sử mua hàng từ API-001 (tổng chi tiêu, số đơn, đơn gần nhất).
+  - `opportunity_potential` (`Decimal`): Giá trị doanh số tiềm năng dự kiến.
+  - `qualification_status` (`Enum: 'unqualified' | 'nurturing' | 'qualified' | 'converted' | 'disqualified'`).
+  - `reason` (`Text`, Not Null): Lý do logic của Agent SAL-01 khi thẩm định phân loại lead (Reason).
+  - `evidence` (`JSON Object`, Not Null): Thẻ bằng chứng xác thực từ Timeline sự kiện (Evidence) chứng minh cho nhận định.
+  - `assigned_agent` (`String`): Mã Agent phụ trách trực tiếp (`SAL-01`, `SAL-02`).
+  - `created_at`, `updated_at` (`ISO 8601 UTC`).
+- **Chỉ mục chính (Indexes)**:
+  - `PRIMARY KEY (tenant_id, lead_id)`
+  - `INDEX idx_lead_customer (tenant_id, customer_id)`
+  - `INDEX idx_lead_qualification (tenant_id, qualification_status, readiness_score DESC)`
+  - `INDEX idx_lead_updated (tenant_id, updated_at DESC)`
+
+#### 2. Thực thể Campaign (Chiến dịch tiếp thị — Chuẩn MKT-05)
+Quản trị chiến dịch đa kênh từ khâu lập kế hoạch đến phát động có kiểm soát phê duyệt:
+- **Lược đồ trường dữ liệu (Schema)**:
+  - `campaign_id` (`UUID v4`, Primary Key): Định danh duy nhất của chiến dịch tiếp thị.
+  - `tenant_id` (`UUID v4 / String`, Not Null): Khóa định danh doanh nghiệp (NFR-006).
+  - `name` (`String`, Max 255): Tên chiến dịch tiếp thị.
+  - `objective` (`Enum: 'lead_generation' | 'cart_recovery' | 'retention' | 'promotion' | 'cross_sell'`).
+  - `segment_id` (`UUID v4`, Foreign Key): Khóa ngoại liên kết tới tập phân khúc mục tiêu (`Segment`).
+  - `channels` (`JSON Array`): Danh sách kênh phát động (`['line', 'whatsapp', 'tiktok', 'email', 'sms', 'web']`).
+  - `content_bundle` (`JSON Object`): Tập biến thể thông điệp từ MKT-03 đã được MKT-04 duyệt brand compliance.
+  - `budget_limit` (`Decimal`): Ngân sách tối đa được phân bổ cho chiến dịch (chi phí kênh + token).
+  - `spent_budget` (`Decimal`): Ngân sách thực tế đã tiêu hao cập nhật thời gian thực.
+  - `authority_level` (`Enum: 'AUTH-4'`): Chiến dịch phát động diện rộng (> 5.000 khách) bắt buộc gắn cờ AUTH-4.
+  - `approval_id` (`UUID v4`, Nullable): Khóa ngoại liên kết bản ghi phê duyệt từ SCR-003.
+  - `status` (`Enum: 'draft' | 'awaiting_approval' | 'approved' | 'running' | 'paused' | 'completed' | 'cancelled'`).
+  - `schedule` (`JSON Object`): Cấu hình lịch phát `{ "start_time": ISO8601, "end_time": ISO8601, "rate_limit_per_min": 100 }`.
+  - `metrics` (`JSON Object`): Chỉ số hiệu quả `{ "reach": 0, "clicks": 0, "conversions": 0, "revenue": 0.0, "roas": 0.0 }`.
+  - `created_at`, `updated_at` (`ISO 8601 UTC`).
+- **Chỉ mục chính (Indexes)**:
+  - `PRIMARY KEY (tenant_id, campaign_id)`
+  - `INDEX idx_campaign_status_schedule (tenant_id, status, (schedule->>'start_time'))`
+  - `INDEX idx_campaign_segment (tenant_id, segment_id)`
+
+#### 3. Thực thể Offer (Chính sách ưu đãi / Voucher — Chuẩn BR-001, BR-002)
+Quản lý hạn mức ưu đãi và khóa cứng giá sàn kinh tế bảo vệ biên lợi nhuận:
+- **Lược đồ trường dữ liệu (Schema)**:
+  - `offer_id` (`UUID v4`, Primary Key): Định danh duy nhất của chương trình ưu đãi hoặc voucher.
+  - `tenant_id` (`UUID v4 / String`, Not Null): Khóa định danh doanh nghiệp (NFR-006).
+  - `name` (`String`, Max 255): Tên chương trình khuyến mãi.
+  - `offer_type` (`Enum: 'percentage_discount' | 'fixed_amount' | 'free_shipping' | 'bundle_deal'`).
+  - `discount_value` (`Decimal`): Mức giảm giá trị (% hoặc số tiền quy đổi).
+  - `max_discount_cap` (`Decimal`): Hạn mức giảm giá trần tuyệt đối ($D_{cap}$) được phép áp dụng.
+  - `min_order_value` (`Decimal`): Giá trị đơn hàng tối thiểu để được hưởng ưu đãi.
+  - `p_floor_constraint` (`Decimal`): Ngưỡng giá sàn toán học $P_{floor}$; cấm AI giảm giá vi phạm ngưỡng này (BR-001, BR-002).
+  - `applicable_skus` (`JSON Array`): Danh sách các SKU sản phẩm đủ điều kiện áp dụng ưu đãi.
+  - `total_quota` (`Integer`): Tổng số lượng voucher/suất ưu đãi phát hành.
+  - `claimed_count` (`Integer`): Số lượng đã được khách hàng nhận hoặc sử dụng thành công.
+  - `status` (`Enum: 'active' | 'paused' | 'exhausted' | 'expired'`).
+  - `valid_from`, `valid_to` (`ISO 8601 UTC`): Khoảng thời gian có hiệu lực của ưu đãi.
+  - `created_at`, `updated_at` (`ISO 8601 UTC`).
+- **Chỉ mục chính (Indexes)**:
+  - `PRIMARY KEY (tenant_id, offer_id)`
+  - `INDEX idx_offer_validity (tenant_id, status, valid_from, valid_to)`
+  - `INDEX idx_offer_type (tenant_id, offer_type)`
+
+#### 4. Thực thể Recommendation (Đề xuất sản phẩm thông minh — Chuẩn FR-SAL-003)
+Đặc tả đầy đủ 7 trường thông tin bắt buộc theo Mục 7 SRS phục vụ cá nhân hóa bán hàng:
+- **Lược đồ trường dữ liệu (Schema)**:
+  - `recommendation_id` (`UUID v4`, Primary Key): Định danh duy nhất của lượt đề xuất sản phẩm.
+  - `tenant_id` (`UUID v4 / String`, Not Null): Khóa định danh doanh nghiệp (NFR-006).
+  - `customer_id` (`UUID v4 / String`, Not Null): Định danh khách hàng nhận đề xuất (Trường 1: customer).
+  - `product_id` / `sku_id` (`String`, Not Null): Mã sản phẩm hoặc biến thể được đề xuất (Trường 2: product).
+  - `recommendation_type` (`Enum: 'cross_sell' | 'upsell' | 'substitute' | 'replenishment' | 'bundle'`): Loại hình gợi ý.
+  - `reason` (`Text`, Not Null): Lý do đề xuất giải thích rõ tính tương thích và nhu cầu khách (Trường 3: reason).
+  - `evidence` (`JSON Object`, Not Null): Thẻ bằng chứng xác thực trích xuất từ giỏ hàng, lịch sử mua hoặc tồn kho (Trường 4: evidence).
+  - `eligibility` (`JSON Object`, Not Null): Tiêu chí đủ điều kiện: ngân sách, tương thích kỹ thuật, tồn kho khả dụng > 0 (Trường 5: eligibility).
+  - `confidence` (`Float`, 0.00 - 1.00, Not Null): Độ tin cậy thuật toán của lượt đề xuất (Trường 6: confidence).
+  - `expected_outcome` (`JSON Object`, Not Null): Kết quả kỳ vọng: xác suất mua, AOV uplift, biên lãi ròng (Trường 7: expected outcome).
+  - `status` (`Enum: 'proposed' | 'accepted' | 'dismissed' | 'converted' | 'expired'`).
+  - `presented_at` (`ISO 8601 UTC`, Nullable): Thời điểm đề xuất được gửi hoặc hiển thị tới khách hàng.
+  - `converted_order_id` (`UUID v4 / String`, Nullable): Mã đơn hàng đối soát nếu khách chuyển đổi thành công.
+  - `created_at`, `expires_at` (`ISO 8601 UTC`).
+- **Chỉ mục chính (Indexes)**:
+  - `PRIMARY KEY (tenant_id, recommendation_id)`
+  - `INDEX idx_rec_customer_created (tenant_id, customer_id, created_at DESC)`
+  - `INDEX idx_rec_product_type (tenant_id, product_id, recommendation_type)`
+  - `INDEX idx_rec_status (tenant_id, status)`
+
 <a id=evidence-separation></a>
 
 ## 2. Cơ chế phân định bằng chứng (FR-C360-003 - Evidence Separation)
@@ -105,7 +201,7 @@ Hệ thống phân định nghiêm ngặt 5 tầng bộ nhớ để bảo đảm
 
 ## 4. Kho kiến thức doanh nghiệp (Second Brain Knowledge Base)
 
-AI Agent không được hoạt động dựa trên tri thức nội tại thiếu kiểm chứng của mô hình LLM mà phải truy xuất từ cấu trúc phân cấp chuẩn hóa gồm 8 thư mục:
+AI Agent không được hoạt động dựa trên tri thức nội tại thiếu kiểm chứng của mô hình LLM mà phải truy xuất từ cấu trúc phân cấp chuẩn hóa gồm đúng 20 tệp markdown phân bổ trong 8 thư mục nghiệp vụ (khớp 100% Mục 10 SRS):
 
 ```text
 /company
