@@ -74,15 +74,15 @@ agent-solution/
 │   │   │   ├── client.ts             # Connection pool with automatic tenant RLS session hooks
 │   │   │   ├── schema/               # Drizzle/Prisma schema for 28 canonical entities
 │   │   │   ├── repositories/         # Type-safe repository methods with mandatory tenant_id
-│   │   │   └── rls.ts                # RLS context binder: SET LOCAL app.current_tenant_id
+│   │   │   └── rls.ts                # RLS context binder: SELECT set_config('app.current_tenant_id', ...)
 │   │   ├── migrations/               # Raw SQL migration files
 │   │   ├── seeds/                    # Seed scripts for base system registries
-│   │   │   ├── 01_agents.seed.ts     # Preloads 13 canonical agents (MKT-01..05, SAL-01..05, CS-01..02, SUPERVISOR)
-│   │   │   ├── 02_skills.seed.ts     # Preloads 20 canonical skills with 11-field contracts
+│   │   │   ├── 01_agents.seed.ts     # Preloads 13 specialized agents (MKT-01..06, SAL-01..05, CS-01..02)
+│   │   │   ├── 02_skills.seed.ts     # Preloads 23 canonical skills with 11-field contracts
 │   │   │   └── 03_tenants.seed.ts    # Default tenant policies, margin floors, and approval thresholds
 │   │   ├── package.json
 │   │   └── tsconfig.json
-│   ├── second-brain/                 # Ground-truth organizational knowledge base (8 folders, 20 markdown files)
+│   ├── second-brain/                 # Ground-truth organizational knowledge base (8 folders, 21 markdown files)
 │   │   ├── company/
 │   │   │   ├── company.md            # Enterprise overview, vision, operating model
 │   │   │   └── positioning.md        # Brand positioning & target market segments
@@ -358,21 +358,24 @@ packages:
  * Pure function: No side effects, no database calls, no mutable arguments.
  *
  * @param basePrice - Officially listed catalog price from API-001 (SoR)
- * @param costOfGoods - Unit landed inventory cost
- * @param minimumMarginRate - Mandatory profit margin percentage (e.g. 0.15 = 15%)
+ * @param costOfGoods - Unit landed inventory cost (C)
+ * @param platformCommissionRate - Platform commission or target margin percentage (r)
  * @param proposedDiscount - Requested discount amount
+ * @param logisticsCost - Fulfilment / delivery cost (L, default 0)
+ * @param basketCapPoints - Point reward / subsidy cap (D_cap, default 0)
  * @returns Object indicating validity, allowed floor price, and computed discount
  */
 export function evaluatePriceFloorConstraint(
   basePrice: number,
   costOfGoods: number,
-  minimumMarginRate: number,
-  proposedDiscount: number
+  platformCommissionRate: number,
+  proposedDiscount: number,
+  logisticsCost: number = 0,
+  basketCapPoints: number = 0
 ): { isValid: boolean; allowedPrice: number; appliedDiscount: number; violationReason?: string } {
-  // P_floor = Cost / (1 - minimum_margin_rate)
-  const priceFloor = Math.ceil(costOfGoods / (1 - minimumMarginRate));
+  // P_floor = Math.ceil((C + L + D_cap) / (1 - r))
+  const priceFloor = Math.ceil((costOfGoods + logisticsCost + basketCapPoints) / (1 - platformCommissionRate));
   const proposedFinalPrice = basePrice - proposedDiscount;
-
   if (proposedFinalPrice < priceFloor) {
     const maximumAllowedDiscount = Math.max(0, basePrice - priceFloor);
     return {

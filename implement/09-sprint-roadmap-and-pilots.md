@@ -2,7 +2,7 @@
 
 ## 1. Engineering Roadmap Across 6 Technical Gates (P0 to P5)
 
-The platform engineering roadmap spans 24 weeks organized into 12 two-week sprints. Progression is governed strictly by the 6 technical gates (Gate P0 through Gate P5). No gate may be bypassed or closed without satisfying its automated test harness and Definition of Done (DoD).
+The platform engineering roadmap is expressed as a **pilot-driven timeline baseline**: the binding unit of progression is the 6 technical gates (Gate P0 through Gate P5), which are mapped indicatively onto 24 weeks organized into 12 two-week sprints. The week bands are a planning baseline only — they are re-baselined gate by gate against pilot evidence and never constitute a committed fixed release calendar. Progression is governed strictly by the gates: no gate may be bypassed or closed without satisfying its exit criteria, its automated test harness and the applicable Definition of Done stage (see §5). As recorded in `plans/delivery/mvp-and-roadmap.md`, no implementation week commitment holds until the ASM-001 connector inventory and the ASM-002 KPI baseline are locked.
 
 ```
 ========================================================================================
@@ -26,6 +26,8 @@ The platform engineering roadmap spans 24 weeks organized into 12 two-week sprin
    Gate P0 Exit       Gate P1 Exit       Gate P2 Exit       Gate P3 Exit       Gate P4 Exit       Gate P5 Exit
    Review & Sign      Review & Sign      Review & Sign      Review & Sign      Review & Sign      Review & Sign
 ```
+
+> **Pilot-driven timeline baseline.** The week bands and sprint numbers above are an indicative baseline, not a fixed calendar. Gate P(n+1) work may only start once the Gate Pn exit review is signed and its pilot evidence (PILOT-xx / TC-E2E-xxx) is attached; each band is then re-baselined. Per `plans/delivery/mvp-and-roadmap.md`, no number of implementation weeks is committed before the input APIs/data (ASM-001) and the KPI baselines (ASM-002) are locked, so sprint durations must never be read as contractual delivery dates.
 
 ---
 
@@ -756,21 +758,23 @@ jobs:
 
 A technical gate cannot be closed, and an agent capability cannot be promoted to production, unless all 10 pillars of the System Definition of Done are verified and attested.
 
-```
 ========================================================================================
-                     SYSTEM DEFINITION OF DONE (10-PILLAR CHECKLIST)
+            SYSTEM DEFINITION OF DONE (BLUEPRINT vs RUNTIME IMPLEMENTATION)
 ========================================================================================
 
- [X] 1. REAL DATA:       Authoritative schemas verified; mock data eliminated.
- [X] 2. REAL AGENT:      Designated agent identity bound; no rogue LLM calls.
- [X] 3. REAL SKILL:      11-field skill contract schema compliant; strict typing.
- [X] 4. REAL TOOL:       Direct connection to verified adapter or API-001/002/003.
- [X] 5. REAL POLICY:     Deterministic evaluation via PEP; BR-001..010 satisfied.
- [X] 6. REAL APPROVAL:   AUTH-4 triggers SCR-003 queue; signed token required.
- [X] 7. REAL EXECUTION:  Dispatched with unique effect_key; idempotency guaranteed.
- [X] 8. REAL EVIDENCE:   Authoritative system receipt attached to Evidence Record.
- [X] 9. REAL OUTCOME:    Measurable business metric captured (conversion, CSAT).
- [X] 10. REAL TEST:      Passed automated CI test suite (PILOT-xx and TC-E2E-xxx).
+Specification & Blueprint Sign-Off (Current Phase):
+ [X] 1. CANONICAL SCHEMAS:   28 canonical entities, RLS policies, C360 view defined.
+ [X] 2. AGENT IDENTITIES:    13 specialized agent roles strictly bound (MKT/SAL/CS).
+ [X] 3. SKILL CONTRACTS:     23 platform skills defined with strict 11-field schema.
+ [X] 4. ADAPTER SPECS:       API-001/002/003 contracts & channel adapters specified.
+ [X] 5. POLICY & SECURITY:   PEP interceptor, AUTH-0..5 hierarchy, BR-001..010 specified.
+ [X] 6. APPROVAL ROUTING:    AUTH-4 high-risk gate, SCR-003 queue & signed tokens specified.
+
+Runtime Execution Acceptance (Gated by Sprint CI Pipeline & Pilots):
+ [ ] 7. LIVE EXECUTION:      Dispatched with unique effect_key against live adapters.
+ [ ] 8. LIVE EVIDENCE:       Upstream SoR transaction receipts verified in production.
+ [ ] 9. OUTCOME CAPTURE:     Empirical business metrics measured on pilot traffic.
+ [ ] 10. AUTOMATED CI PASS:  Automated CI pipeline and full E2E suite executed on code.
 ========================================================================================
 ```
 
@@ -810,67 +814,67 @@ The platform defines and continuously tracks 32 canonical Key Performance Indica
 ========================================================================================
                      CANONICAL 32-KPI PLATFORM MEASUREMENT SPECTRUM
 ========================================================================================
- [ MARKETING: 7 KPIs ]    [ SALES: 7 KPIs ]        [ CUSTOMER CARE: 6 KPIs ]
- - MKT-01: CPL            - SAL-01: Conversion    - CS-01: First Response Time
- - MKT-02: Lead-to-MQL    - SAL-02: Cart Recovery  - CS-02: Auto-Resolution Rate
- - MKT-03: Attributed Rev - SAL-03: AOV            - CS-03: Escalation Ratio
- - MKT-04: Campaign ROAS  - SAL-04: Reco Conv      - CS-04: CSAT Score
- - MKT-05: Engagement     - SAL-05: Upsell Lift    - CS-05: Average Handling Time
- - MKT-06: Brand Safety   - SAL-06: Floor Comply   - CS-06: Verification Success
- - MKT-07: Organic Lift   - SAL-07: Sales Cycle
+ [ MARKETING: 7 KPIs ]            [ SALES: 7 KPIs ]                [ CUSTOMER CARE: 6 KPIs ]
+- MKT-KPI-01: CPL                - SAL-KPI-01: Conversion        - CS-KPI-01: First Response Time
+- MKT-KPI-02: Lead-to-MQL        - SAL-KPI-02: Cart Recovery      - CS-KPI-02: Auto-Resolution Rate
+- MKT-KPI-03: Attributed Rev     - SAL-KPI-03: AOV                - CS-KPI-03: Escalation Ratio
+- MKT-KPI-04: Campaign ROAS      - SAL-KPI-04: Reco Conv          - CS-KPI-04: CSAT Score
+- MKT-KPI-05: Engagement         - SAL-KPI-05: Upsell Lift        - CS-KPI-05: Average Handling Time
+- MKT-KPI-06: Brand Safety       - SAL-KPI-06: Floor Comply       - CS-KPI-06: Verification Success
+- MKT-KPI-07: Organic Lift       - SAL-KPI-07: Sales Cycle
 ----------------------------------------------------------------------------------------
  [ RETENTION & SUCCESS: 5 KPIs ]                 [ AI SYSTEM & GOVERNANCE: 7 KPIs ]
- - SUC-01: 30/60/90d Repeat Purchase             - AI-SYS-01: Turn Latency (p50/p95)
- - SUC-02: Churn Rate (Negative Cohort)          - AI-SYS-02: Token Cost per Dialogue
- - SUC-03: Subscription Retention (定期購)       - AI-SYS-03: Policy Violation Rate (0%)
- - SUC-04: Net Promoter Score (NPS)              - AI-SYS-04: Idempotency Collision (0%)
- - SUC-05: Customer Lifetime Value (LTV) Lift    - AI-SYS-05: System Uptime (99.9%)
-                                                 - AI-SYS-06: Verified Hallucination (0%)
-                                                 - AI-SYS-07: Takeover Mutex Duration
+- SUC-KPI-01: 30/60/90d Repeat Purchase         - AI-SYS-KPI-01: Turn Latency (p50/p95)
+- SUC-KPI-02: Churn Rate (Negative Cohort)      - AI-SYS-KPI-02: Token Cost per Dialogue
+- SUC-KPI-03: Subscription Retention (定期購)   - AI-SYS-KPI-03: Policy Violation Rate (0%)
+- SUC-KPI-04: Net Promoter Score (NPS)          - AI-SYS-KPI-04: Idempotency Collision (0%)
+- SUC-KPI-05: Customer Lifetime Value Lift      - AI-SYS-KPI-05: System Uptime (99.9%)
+                                                 - AI-SYS-KPI-06: Verified Hallucination (0%)
+                                                 - AI-SYS-KPI-07: Takeover Mutex Duration
 ========================================================================================
 ```
 
 ### 6.1 Domain Breakdown & Contract Specifications
 
 #### Domain I: Marketing Intelligence (7 KPIs)
-1. **MKT-01: Cost per Lead (CPL)**: $\text{Total Campaign Ad Spend} / \text{Captured Qualified Leads}$. Baseline tracked against historical non-AI campaigns.
-2. **MKT-02: Lead-to-MQL Conversion Rate**: Percentage of raw inbound web/LINE visitors converted into marketing qualified leads via MKT-02 scoring.
-3. **MKT-03: Marketing Attributed Revenue**: Aggregate currency revenue tied directly to campaign tracking IDs through first-touch and multi-touch models.
-4. **MKT-04: Campaign ROAS (Return on Ad Spend)**: $\text{Attributed Revenue} / \text{Direct Ad Spend}$. Target: $> 3.5\times$ on anchor pilot.
-5. **MKT-05: Audience Engagement Rate**: Open and click-through rates across LINE OA and WhatsApp broadcast campaigns.
-6. **MKT-06: Brand Safety Compliance Rate**: Percentage of AI-generated messages cleared by MKT-04 brand auditor without rule violations (Mandatory: 100%).
-7. **MKT-07: Organic vs. Paid Lift Ratio**: Measurement of organic brand search lift resulting from targeted AI nurture campaigns.
+1. **MKT-KPI-01: Cost per Lead (CPL)**: $\text{Total Campaign Ad Spend} / \text{Captured Qualified Leads}$. Baseline tracked against historical non-AI campaigns.
+2. **MKT-KPI-02: Lead-to-MQL Conversion Rate**: Percentage of raw inbound web/LINE visitors converted into marketing qualified leads via MKT-02 scoring.
+3. **MKT-KPI-03: Marketing Attributed Revenue**: Aggregate currency revenue tied directly to campaign tracking IDs through first-touch and multi-touch models.
+4. **MKT-KPI-04: Campaign ROAS (Return on Ad Spend)**: $\text{Attributed Revenue} / \text{Direct Ad Spend}$. Target: $> 3.5\times$ on anchor pilot.
+5. **MKT-KPI-05: Audience Engagement Rate**: Open and click-through rates across LINE OA and WhatsApp broadcast campaigns.
+6. **MKT-KPI-06: Brand Safety Compliance Rate**: Percentage of AI-generated messages cleared by MKT-04 brand auditor without rule violations (Mandatory: 100%).
+7. **MKT-KPI-07: Organic vs. Paid Lift Ratio**: Measurement of organic brand search lift resulting from targeted AI nurture campaigns.
 
 #### Domain II: Sales & Revenue Operations (7 KPIs)
-8. **SAL-01: Lead-to-Order Conversion Rate**: Percentage of qualified sales conversations resulting in confirmed ERP orders.
-9. **SAL-02: Cart Recovery Rate**: Percentage of abandoned cart sessions converted into orders within 24 hours of SAL-04 reminder sequence.
-10. **SAL-03: Average Order Value (AOV)**: Mean monetary value per completed transaction post AI bundle recommendations.
-11. **SAL-04: Recommendation Conversion Rate**: Percentage of SAL-03 product recommendations clicked and purchased by the customer.
-12. **SAL-05: Upsell & Cross-Sell Contribution Lift**: Monetary delta in order value directly attributed to AI add-on suggestions.
-13. **SAL-06: Floor Price Compliance Rate ($P \ge P_{floor}$)**: Percentage of quotes strictly obeying mathematical floor prices (Mandatory: 100.00%).
-14. **SAL-07: Sales Consultation Cycle Time**: Elapsed duration from initial customer product inquiry to checkout quote signing.
+8. **SAL-KPI-01: Lead-to-Order Conversion Rate**: Percentage of qualified sales conversations resulting in confirmed ERP orders.
+9. **SAL-KPI-02: Cart Recovery Rate**: Percentage of abandoned cart sessions converted into orders within 24 hours of SAL-04 reminder sequence.
+10. **SAL-KPI-03: Average Order Value (AOV)**: Mean monetary value per completed transaction post AI bundle recommendations.
+11. **SAL-KPI-04: Recommendation Conversion Rate**: Percentage of SAL-03 product recommendations clicked and purchased by the customer.
+12. **SAL-KPI-05: Upsell & Cross-Sell Contribution Lift**: Monetary delta in order value directly attributed to AI add-on suggestions.
+13. **SAL-KPI-06: Floor Price Compliance Rate ($P \ge P_{floor}$)**: Percentage of quotes strictly obeying mathematical floor prices (Mandatory: 100.00%).
+14. **SAL-KPI-07: Sales Consultation Cycle Time**: Elapsed duration from initial customer product inquiry to checkout quote signing.
 
 #### Domain III: Customer Care & Support (6 KPIs)
-15. **CS-01: First Response Time (FRT)**: Time from customer message receipt to first AI response (Target: median < 2.0s, p95 < 3.0s).
-16. **CS-02: Autonomous Resolution Rate (First Contact Resolution)**: Percentage of support cases fully resolved by CS-01 without human escalation.
-17. **CS-03: Escalation to Human Ratio**: Percentage of dialogues transitioned to SCR-005 operator queue via CS-02.
-18. **CS-04: Customer Satisfaction Score (CSAT)**: Average 1-5 rating collected in post-resolution surveys (Target: $> 4.2 / 5.0$).
-19. **CS-05: Average Handling Time (AHT)**: Total dialogue duration required to resolve an order tracking or FAQ ticket.
-20. **CS-06: Identity Verification Success Rate**: Percentage of customers successfully authenticated (Tier 2) via LINE Login or OTP.
+15. **CS-KPI-01: First Response Time (FRT)**: Time from customer message receipt to first AI response (Target: median < 2.0s, p95 < 3.0s).
+16. **CS-KPI-02: Autonomous Resolution Rate (First Contact Resolution)**: Percentage of support cases fully resolved by CS-01 without human escalation.
+17. **CS-KPI-03: Escalation to Human Ratio**: Percentage of dialogues transitioned to SCR-005 operator queue via CS-02.
+18. **CS-KPI-04: Customer Satisfaction Score (CSAT)**: Average 1-5 rating collected in post-resolution surveys (Target: $> 4.2 / 5.0$).
+19. **CS-KPI-05: Average Handling Time (AHT)**: Total dialogue duration required to resolve an order tracking or FAQ ticket.
+20. **CS-KPI-06: Identity Verification Success Rate**: Percentage of customers successfully authenticated (Tier 2) via LINE Login or OTP.
 
 #### Domain IV: Customer Success & Retention Economics (5 KPIs)
-21. **SUC-01: Repeat Purchase Rate (30d / 60d / 90d)**: Percentage of customers making a second or subsequent order within target time horizons.
-22. **SUC-02: Churn Rate (Negative Sentiment Cohort)**: Defection rate among customers flagged with negative sentiment by CS-02.
-23. **SUC-03: Subscription & Reorder Retention Rate (定期購)**: Active retention curve across monthly FMCG automated subscription cycles.
-24. **SUC-04: Net Promoter Score (NPS)**: Quarterly customer relationship sentiment measurement.
-25. **SUC-05: Customer Lifetime Value (LTV) Lift**: Cohort-based lifetime gross margin comparison between AI-assisted vs. control groups.
+21. **SUC-KPI-01: Repeat Purchase Rate (30d / 60d / 90d)**: Percentage of customers making a second or subsequent order within target time horizons.
+22. **SUC-KPI-02: Churn Rate (Negative Sentiment Cohort)**: Defection rate among customers flagged with negative sentiment by CS-02.
+23. **SUC-KPI-03: Subscription & Reorder Retention Rate (定期購)**: Active retention curve across monthly FMCG automated subscription cycles.
+24. **SUC-KPI-04: Net Promoter Score (NPS)**: Quarterly customer relationship sentiment measurement.
+25. **SUC-KPI-05: Customer Lifetime Value (LTV) Lift**: Cohort-based lifetime gross margin comparison between AI-assisted vs. control groups.
 
 #### Domain V: AI Systems, Governance & Telemetry (7 KPIs)
-26. **AI-SYS-01: Conversational Turn Latency**: End-to-end token generation latency (Prometheus SLA: median < 1,800ms, p95 < 2,800ms).
-27. **AI-SYS-02: Token Unit Cost per Dialogue**: Total compute cost for complete multi-turn dialogue (Target: $< 1.00\text{ TWD}$ / $800\text{ VND}$).
-28. **AI-SYS-03: Policy Violation Rate**: Frequency of unauthorized tool calls or prompt injection escapes (Strict Mandatory Target: 0.00%).
-29. **AI-SYS-04: External Action Idempotency Collision Rate**: Percentage of retries blocked by duplicate `effect_key` receipts (Ensures zero duplicate sends).
-30. **AI-SYS-05: System Availability & Uptime**: API gateway and storefront widget uptime excluding planned maintenance (SLA: 99.9%).
-31. **AI-SYS-06: Hallucination Rate on Verified Catalog Data**: Percentage of inaccurate product specifications or prices returned (Strict Mandatory Target: 0.00%).
-32. **AI-SYS-07: Human Takeover Session Duration**: Mean time human operators spend managing sessions in SCR-005 before clicking "Resume AI".
+26. **AI-SYS-KPI-01: Conversational Turn Latency**: End-to-end token generation latency (Prometheus SLA: median < 1,800ms, p95 < 2,800ms).
+27. **AI-SYS-KPI-02: Token Unit Cost per Dialogue**: Total compute cost for complete multi-turn dialogue (Target: $< 1.00\text{ TWD}$ / $800\text{ VND}$).
+28. **AI-SYS-KPI-03: Policy Violation Rate**: Frequency of unauthorized tool calls or prompt injection escapes (Strict Mandatory Target: 0.00%).
+29. **AI-SYS-KPI-04: External Action Idempotency Collision Rate**: Percentage of retries blocked by duplicate `effect_key` receipts (Ensures zero duplicate sends).
+30. **AI-SYS-KPI-05: System Availability & Uptime**: API gateway and storefront widget uptime excluding planned maintenance (SLA: 99.9%).
+31. **AI-SYS-KPI-06: Hallucination Rate on Verified Catalog Data**: Percentage of inaccurate product specifications or prices returned (Strict Mandatory Target: 0.00%).
+32. **AI-SYS-KPI-07: Human Takeover Session Duration**: Mean time human operators spend managing sessions in SCR-005 before clicking "Resume AI".
 

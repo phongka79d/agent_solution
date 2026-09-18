@@ -83,11 +83,13 @@ Dữ liệu công ty A không được dùng để trả lời khách công ty B
 
 ## 6. Bản đầu làm đến đâu?
 
+Thứ tự cổng nghiệm thu theo lộ trình: **P1 — Chăm sóc khách hàng (Care)** trước, **P2 — Bán hàng (Sales)** tiếp theo, rồi mới tới Tiếp thị và các giai đoạn mở rộng.
+
 | Làm trước | Chờ giai đoạn sau |
 |---|---|
+| **P1 — Chăm sóc khách hàng:** trả lời câu hỏi phổ biến, tra cứu đơn hàng, chuyển nhân viên | Vận chuyển, phiếu bù giá, đổi trả chuyên sâu |
+| **P2 — Bán hàng:** hỏi nhu cầu, tra sản phẩm, giải thích có nguồn | Mặc cả tự động, ưu đãi kết hợp, thanh toán QR mới |
 | Một doanh nghiệp, một hành trình, website hiện có | Nhiều ngành, nhiều kênh và giao diện nhúng đầy đủ |
-| Bán hàng hỏi nhu cầu, tra sản phẩm, giải thích có nguồn | Mặc cả tự động, ưu đãi kết hợp, thanh toán QR mới |
-| Chăm sóc trả lời câu hỏi phổ biến, chuyển nhân viên | Vận chuyển, phiếu bù giá, đổi trả chuyên sâu |
 | Hồ sơ khách hợp nhất, quyền riêng, nhật ký, báo cáo | Nhiều kênh, trình kéo-thả quy trình và tự động hóa nâng cao |
 | Tối đa một chuỗi nhắc với hai tin, chỉ khi đủ điều kiện liên hệ | Chăm sóc Tiếp thị theo chiến dịch |
 | Nghiên cứu thị trường thủ công có AI hỗ trợ soạn nháp | Tự động tìm kiếm và quản lý mạng lưới đối tác |

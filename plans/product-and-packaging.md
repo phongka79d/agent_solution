@@ -111,7 +111,7 @@ Bảng điều khiển ban đầu chỉ cần cấu hình, tài liệu, kết n�
 
 ## 5. Danh mục ý tưởng đã chọn lọc
 
-P0 là chuẩn bị; P1 là bản đầu; P2 là thử nghiệm sau bản đầu; P3 là mở rộng sau khi có dữ liệu. Đây là thứ tự ưu tiên, không phải cam kết lịch phát hành.
+*Lưu ý phân biệt:* Bảng dưới sử dụng P0–P3 theo nghĩa **mức độ ưu tiên xem xét tính năng** (Feature Priority), khác với các **Cổng kỹ thuật lộ trình** (Gate P0: Foundation, Gate P1: Customer Care, Gate P2: Sales, Gate P3: Marketing theo [Lộ trình](delivery/mvp-and-roadmap.md)). Đây là thứ tự ưu tiên xem xét nghiệp vụ, không phải cam kết lịch phát hành.
 
 | Ý tưởng | Nguồn | Ưu tiên | Điều kiện / cách đo |
 |---|---|---|---|

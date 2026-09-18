@@ -33,7 +33,7 @@ Dùng từ tiếng Việt trong diễn giải. Giữ tên viết tắt, tên ri�
 | Mua lại / giới thiệu | Khách mua lần sau / tự nguyện giới thiệu người khác |
 | Mua bổ sung / nâng cấp (cross-sell / upsell) | Mua sản phẩm liên quan / chuyển lựa chọn cao hơn khi phù hợp |
 | Phiếu mua hàng (voucher) | Quyền hưởng ưu đãi theo điều kiện; có chi phí, không mặc nhiên tương đương tiền hoàn |
-| Bản đầu tối thiểu (MVP) | Phạm vi nhỏ đủ chạy thử và kiểm chứng, gọi là P1 trong lộ trình |
+| Bản đầu tối thiểu (MVP) | Phạm vi nhỏ đủ chạy thử và kiểm chứng tại mỏ neo (Gate P1 — Customer Care) |
 | Đường cơ sở (baseline) | Số liệu trước thử hoặc nhóm so sánh được chốt để đánh giá thay đổi |
 | Nhóm quan sát (cohort) | Nhóm khách/phiên/đơn cùng tiêu chí và thời điểm để theo dõi kết quả |
 

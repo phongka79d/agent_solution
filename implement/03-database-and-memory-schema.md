@@ -1,10 +1,22 @@
 # Database & Memory Schema Specification
 
-## 1. PostgreSQL DDL Schema (All 28 Canonical Entities)
+## 1. PostgreSQL DDL Schema (28 Canonical Entities + 1 Child Entity + 4 Audit/Runtime Tables + Customer360 View)
 
-The data layer implements the 28 canonical entities defined in Section 14 of the SRS across 4 functional domains. To guarantee total multi-tenant data isolation (NFR-006), **every single table includes a mandatory `tenant_id UUID NOT NULL` column**. 
+The data layer implements the 28 canonical entities defined in Section 14 of the SRS across 4 functional domains, plus the child, runtime, and projection objects consumed by the Core Engine:
 
-All primary keys use UUID v4. Foreign keys enforce referential integrity within tenant boundaries.
+| Object Class | Count | Where |
+|---|---|---|
+| Canonical entities (SRS §14, Entities 1 - 28) | 28 | §1 DDL — DOMAIN 1 - DOMAIN 4 |
+| Child entity (`conversation_messages`, Entity 11.1) | 1 | §1 DDL — DOMAIN 3 |
+| Audit / runtime tables (`audit_records`, `evidence_records`, `approval_queue`, `agent_run_logs`) | 4 | §1 DDL — DOMAIN 5 |
+| Customer 360 projection view (`customer_360_profiles`) | 1 | §1 DDL — DOMAIN 5 |
+| Composite tenant-scoped FK convention + negative tests | — | §1.1 |
+
+To guarantee total multi-tenant data isolation (NFR-006), **every single table — canonical, child, runtime, and audit — includes a mandatory `tenant_id UUID NOT NULL` column**, typed exactly as `UUID` everywhere. `tenant_id` is never a slug, integer, or free-form string, and it is never nullable.
+
+**Identifier convention.** Surrogate primary keys are **UUID v7 (RFC 9562, time-ordered)**, produced by `agentos.uuid_generate_v7()` (defined below). UUID v7 keeps the high 48 bits as a Unix-millisecond timestamp, so B-tree inserts stay append-mostly and `ORDER BY id` is also `ORDER BY created_at`. Tables whose identity is a natural composite business key (for example `agent_run_logs`) instead declare `tenant_id` as the **leading** column of the primary key, so every key is tenant-scoped by construction.
+
+Foreign keys enforce referential integrity within tenant boundaries — see §1.1 for the composite `(tenant_id, id)` convention that makes cross-tenant references structurally impossible.
 
 ```sql
 -- ============================================================================
@@ -21,12 +33,40 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 CREATE EXTENSION IF NOT EXISTS "vector";
 
 -- ----------------------------------------------------------------------------
+-- UUID v7 IDENTITY FACTORY (RFC 9562, time-ordered)
+-- ----------------------------------------------------------------------------
+-- PostgreSQL 16 ships no native uuidv7(), so this helper composes one from a
+-- 48-bit Unix-millisecond timestamp plus 74 bits of CSPRNG entropy: bytes 0-5
+-- carry the big-endian timestamp, the high nibble of byte 6 is the version (7),
+-- and byte 8 is masked to the RFC 4122 variant (10xxxxxx). The timestamp prefix
+-- keeps primary-key inserts append-mostly and makes `ORDER BY id` equivalent to
+-- `ORDER BY created_at`. `tenant_id` values are UUID v7 issued at tenant
+-- provisioning and are never generated per row.
+CREATE OR REPLACE FUNCTION agentos.uuid_generate_v7()
+RETURNS UUID AS $$
+DECLARE
+    ts_ms BIGINT := (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::BIGINT;
+    b BYTEA := gen_random_bytes(16);
+BEGIN
+    b := SET_BYTE(b, 0, ((ts_ms >> 40) & 255)::INT);
+    b := SET_BYTE(b, 1, ((ts_ms >> 32) & 255)::INT);
+    b := SET_BYTE(b, 2, ((ts_ms >> 24) & 255)::INT);
+    b := SET_BYTE(b, 3, ((ts_ms >> 16) & 255)::INT);
+    b := SET_BYTE(b, 4, ((ts_ms >>  8) & 255)::INT);
+    b := SET_BYTE(b, 5, ( ts_ms        & 255)::INT);
+    b := SET_BYTE(b, 6, (7 << 4) | (GET_BYTE(b, 6) & 15));   -- version  7
+    b := SET_BYTE(b, 8, (GET_BYTE(b, 8) & 63) | 128);        -- variant  RFC 4122
+    RETURN ENCODE(b, 'hex')::UUID;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+-- ----------------------------------------------------------------------------
 -- DOMAIN 1: CUSTOMER & IDENTITY (Entities 1 - 4)
 -- ----------------------------------------------------------------------------
 
 -- Entity 1: Customer (Master customer record across channels)
 CREATE TABLE customers (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
     tenant_id UUID NOT NULL,
     external_crm_id VARCHAR(128),
     primary_phone VARCHAR(64),
@@ -46,10 +86,10 @@ CREATE INDEX idx_customers_tenant_search ON customers (tenant_id, primary_phone,
 
 -- Entity 2: Customer Identity (Channel identifier mappings: LINE UID, WhatsApp, Web UUID)
 CREATE TABLE customer_identities (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
     tenant_id UUID NOT NULL,
     customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
-    channel_type VARCHAR(32) NOT NULL, -- 'line', 'whatsapp', 'web', 'zalo', 'phone'
+    channel_type VARCHAR(32) NOT NULL, -- 'line', 'whatsapp', 'web', 'zalo', 'phone', 'email'
     channel_identifier VARCHAR(255) NOT NULL, -- Platform specific UID
     identifier_hash VARCHAR(128) NOT NULL,
     is_primary BOOLEAN NOT NULL DEFAULT FALSE,
@@ -61,7 +101,7 @@ CREATE INDEX idx_identities_customer ON customer_identities (tenant_id, customer
 
 -- Entity 3: Consent (Legal tracking for marketing, contact & data retention - BR-004)
 CREATE TABLE consents (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
     tenant_id UUID NOT NULL,
     customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
     consent_type VARCHAR(64) NOT NULL, -- 'marketing_messaging', 'order_updates', 'analytics'
@@ -79,7 +119,7 @@ CREATE INDEX idx_consents_status ON consents (tenant_id, customer_id, is_granted
 
 -- Entity 4: Customer Event (Real-time behavioral stream: view, cart, click - API-002)
 CREATE TABLE customer_events (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
     tenant_id UUID NOT NULL,
     customer_id UUID REFERENCES customers(id) ON DELETE SET NULL,
     session_id VARCHAR(128) NOT NULL,
@@ -98,7 +138,7 @@ CREATE INDEX idx_customer_events_session ON customer_events (tenant_id, session_
 
 -- Entity 5: Product (Canonical catalog synced from ERP/PIM API-001)
 CREATE TABLE products (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
     tenant_id UUID NOT NULL,
     external_product_code VARCHAR(64) NOT NULL,
     name VARCHAR(255) NOT NULL,
@@ -115,7 +155,7 @@ CREATE INDEX idx_products_tenant_active ON products (tenant_id, is_active);
 
 -- Entity 6: SKU (Stock Keeping Units for product variants)
 CREATE TABLE skus (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
     tenant_id UUID NOT NULL,
     product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
     sku_code VARCHAR(64) NOT NULL,
@@ -131,7 +171,7 @@ CREATE INDEX idx_skus_product ON skus (tenant_id, product_id);
 
 -- Entity 7: Price (Official ERP pricing & strict P_floor parameters - BR-001)
 CREATE TABLE prices (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
     tenant_id UUID NOT NULL,
     sku_id UUID NOT NULL REFERENCES skus(id) ON DELETE CASCADE,
     currency VARCHAR(8) NOT NULL DEFAULT 'TWD',
@@ -148,7 +188,7 @@ CREATE INDEX idx_prices_sku ON prices (tenant_id, sku_id);
 
 -- Entity 8: Inventory (Authoritative real-time warehouse inventory)
 CREATE TABLE inventories (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
     tenant_id UUID NOT NULL,
     sku_id UUID NOT NULL REFERENCES skus(id) ON DELETE CASCADE,
     warehouse_code VARCHAR(64) NOT NULL DEFAULT 'DEFAULT',
@@ -162,7 +202,7 @@ CREATE INDEX idx_inventories_available ON inventories (tenant_id, sku_id, quanti
 
 -- Entity 9: Order (Draft and confirmed transaction records)
 CREATE TABLE orders (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
     tenant_id UUID NOT NULL,
     customer_id UUID NOT NULL REFERENCES customers(id),
     order_number VARCHAR(64) NOT NULL,
@@ -186,7 +226,7 @@ CREATE INDEX idx_orders_status ON orders (tenant_id, status);
 
 -- Entity 10: Invoice (Tax invoice and accounting ledger synchronization)
 CREATE TABLE invoices (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
     tenant_id UUID NOT NULL,
     order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
     invoice_number VARCHAR(64) NOT NULL,
@@ -206,7 +246,7 @@ CREATE INDEX idx_invoices_order ON invoices (tenant_id, order_id);
 
 -- Entity 11: Conversation (Omnichannel chat session root)
 CREATE TABLE conversations (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
     tenant_id UUID NOT NULL,
     customer_id UUID REFERENCES customers(id),
     channel VARCHAR(32) NOT NULL,
@@ -222,7 +262,7 @@ CREATE INDEX idx_conversations_active ON conversations (tenant_id, state, last_m
 
 -- Entity 11.1: Conversation Message (Child entity storing individual turn dialogues, token usage & metadata)
 CREATE TABLE conversation_messages (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
     tenant_id UUID NOT NULL,
     conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     sender_type VARCHAR(32) NOT NULL CHECK (sender_type IN ('customer', 'agent', 'operator', 'system')),
@@ -238,7 +278,7 @@ CREATE INDEX idx_conversation_messages_turn ON conversation_messages (tenant_id,
 
 -- Entity 12: Lead (Prospect qualification with Reason & Evidence - FR-SAL-001)
 CREATE TABLE leads (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
     tenant_id UUID NOT NULL,
     customer_id UUID REFERENCES customers(id),
     customer_type VARCHAR(32) NOT NULL DEFAULT 'new', -- 'new', 'returning'
@@ -259,7 +299,7 @@ CREATE INDEX idx_leads_qualification ON leads (tenant_id, qualification_status, 
 
 -- Entity 13: Opportunity (High-probability deal pipeline)
 CREATE TABLE opportunities (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
     tenant_id UUID NOT NULL,
     lead_id UUID REFERENCES leads(id) ON DELETE SET NULL,
     customer_id UUID NOT NULL REFERENCES customers(id),
@@ -274,7 +314,7 @@ CREATE INDEX idx_opportunities_stage ON opportunities (tenant_id, stage);
 
 -- Entity 14: Segment (Behavioral and RFM audience cohorts)
 CREATE TABLE segments (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
     tenant_id UUID NOT NULL,
     name VARCHAR(128) NOT NULL,
     description TEXT,
@@ -288,7 +328,7 @@ CREATE INDEX idx_segments_tenant ON segments (tenant_id, name);
 
 -- Entity 15: Campaign (Marketing outreach lifecycle - MKT-05, AUTH-4)
 CREATE TABLE campaigns (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
     tenant_id UUID NOT NULL,
     segment_id UUID REFERENCES segments(id) ON DELETE SET NULL,
     name VARCHAR(255) NOT NULL,
@@ -311,7 +351,7 @@ CREATE INDEX idx_campaigns_segment ON campaigns (tenant_id, segment_id);
 
 -- Entity 16: Offer (Discount policies, capped coupons - BR-001, BR-002)
 CREATE TABLE offers (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
     tenant_id UUID NOT NULL,
     code VARCHAR(64) NOT NULL,
     name VARCHAR(255) NOT NULL,
@@ -334,7 +374,7 @@ CREATE INDEX idx_offers_validity ON offers (tenant_id, status, valid_from, valid
 
 -- Entity 17: Recommendation (Product recommendation with 7 mandatory fields - FR-SAL-003)
 CREATE TABLE recommendations (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
     tenant_id UUID NOT NULL,
     customer_id UUID NOT NULL REFERENCES customers(id),
     product_id UUID NOT NULL REFERENCES products(id),
@@ -355,7 +395,7 @@ CREATE INDEX idx_recommendations_cust ON recommendations (tenant_id, customer_id
 
 -- Entity 18: Service Case (Customer support ticket with 7-state machine - CS-01)
 CREATE TABLE service_cases (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
     tenant_id UUID NOT NULL,
     customer_id UUID NOT NULL REFERENCES customers(id),
     conversation_id UUID REFERENCES conversations(id) ON DELETE SET NULL,
@@ -384,7 +424,7 @@ CREATE INDEX idx_service_cases_state ON service_cases (tenant_id, state, priorit
 
 -- Entity 19: Agent (Registry of 13 system agents)
 CREATE TABLE agents (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
     tenant_id UUID NOT NULL,
     code VARCHAR(32) NOT NULL, -- 'SAL-01', 'MKT-01', 'CS-01', 'SUPERVISOR'
     name VARCHAR(128) NOT NULL,
@@ -398,7 +438,7 @@ CREATE TABLE agents (
 
 -- Entity 20: Skill (Executable atomic tool contract registry - 11 fields)
 CREATE TABLE skills (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
     tenant_id UUID NOT NULL,
     name VARCHAR(64) NOT NULL, -- 'retrieve-customer', 'check-inventory', 'calculate-price'
     description TEXT NOT NULL,
@@ -418,7 +458,7 @@ CREATE TABLE skills (
 
 -- Entity 21: Workflow (Durable multi-step orchestrations)
 CREATE TABLE workflows (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
     tenant_id UUID NOT NULL,
     workflow_name VARCHAR(128) NOT NULL,
     correlation_id VARCHAR(128) NOT NULL,
@@ -432,7 +472,7 @@ CREATE INDEX idx_workflows_correlation ON workflows (tenant_id, correlation_id);
 
 -- Entity 22: Decision (Algorithmic choices logged with reasoning)
 CREATE TABLE decisions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
     tenant_id UUID NOT NULL,
     workflow_id UUID REFERENCES workflows(id) ON DELETE CASCADE,
     agent_id UUID NOT NULL REFERENCES agents(id),
@@ -447,7 +487,7 @@ CREATE INDEX idx_decisions_workflow ON decisions (tenant_id, workflow_id);
 
 -- Entity 23: Action (Prepared outgoing commands awaiting dispatch)
 CREATE TABLE actions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
     tenant_id UUID NOT NULL,
     decision_id UUID REFERENCES decisions(id) ON DELETE CASCADE,
     skill_name VARCHAR(64) NOT NULL,
@@ -463,7 +503,7 @@ CREATE INDEX idx_actions_decision ON actions (tenant_id, decision_id);
 
 -- Entity 24: Approval (Human authorization records - SCR-003, AUTH-4)
 CREATE TABLE approvals (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
     tenant_id UUID NOT NULL,
     action_id UUID NOT NULL REFERENCES actions(id) ON DELETE CASCADE,
     campaign_id UUID REFERENCES campaigns(id),
@@ -479,7 +519,7 @@ CREATE INDEX idx_approvals_action ON approvals (tenant_id, action_id);
 
 -- Entity 25: Execution (Physical external network dispatches with 72h permanent audit)
 CREATE TABLE executions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
     tenant_id UUID NOT NULL,
     action_id UUID REFERENCES actions(id) ON DELETE SET NULL,
     effect_key VARCHAR(128) NOT NULL,
@@ -501,7 +541,7 @@ CREATE INDEX idx_executions_action ON executions (tenant_id, action_id);
 
 -- Entity 26: Evidence (Audit trail for grounding facts, signals & hypotheses - FR-C360-003)
 CREATE TABLE evidences (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
     tenant_id UUID NOT NULL,
     customer_id UUID REFERENCES customers(id),
     run_id VARCHAR(128) NOT NULL,
@@ -517,7 +557,7 @@ CREATE INDEX idx_evidences_taxonomy ON evidences (tenant_id, customer_id, taxono
 
 -- Entity 27: Outcome (Real quantitative business metrics reconciled with SoR)
 CREATE TABLE outcomes (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
     tenant_id UUID NOT NULL,
     campaign_id UUID REFERENCES campaigns(id),
     order_id UUID REFERENCES orders(id),
@@ -532,7 +572,7 @@ CREATE INDEX idx_outcomes_tenant_type ON outcomes (tenant_id, conversion_type, r
 
 -- Entity 28: Learning (Model weight adjustments, prompt optimizations, and lessons learned)
 CREATE TABLE learnings (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
     tenant_id UUID NOT NULL,
     agent_code VARCHAR(32) NOT NULL,
     topic VARCHAR(128) NOT NULL,
@@ -548,6 +588,178 @@ CREATE INDEX idx_learnings_agent ON learnings (tenant_id, agent_code, is_active)
 ALTER TABLE service_cases 
     ADD CONSTRAINT fk_cases_evidence FOREIGN KEY (evidence_id) REFERENCES evidences(id) ON DELETE SET NULL,
     ADD CONSTRAINT fk_cases_outcome FOREIGN KEY (outcome_id) REFERENCES outcomes(id) ON DELETE SET NULL;
+
+-- ----------------------------------------------------------------------------
+-- DOMAIN 5: CUSTOMER360 PROJECTION VIEW, AUDIT & RUNTIME TABLES
+-- These objects are the persistence contract of the Core Engine (§04): the
+-- 11-step pipeline reads the projection view at step [2. CONTEXT] and writes the
+-- three append-only chains plus the mutable SCR-003 approval queue.
+-- RLS is not declared inline: the §2 auto-policy DO block enables and FORCEs
+-- `tenant_isolation_policy` on every table of the `agentos` schema, so the four
+-- tables below are covered by construction (the view is not a table and instead
+-- inherits isolation from its base tables - see the view definition).
+-- ----------------------------------------------------------------------------
+
+-- Customer 360 Projection: Entity 1 (`customers`) + Entity 2 (`customer_identities`)
+-- + Entity 3 (`consents`) consolidated into the single FACT read model consumed by
+-- orchestrator context hydration (FR-C360-001, §04 5.1).
+--   * FACT semantics: only VERIFIED contact handles are released. `verified_phone`
+--     and `verified_email` stay NULL unless an identity row is verified, or the
+--     customer carries `verification_status IN ('verified','vip')`. An unverified
+--     handle can therefore never be promoted into a FACT by this projection.
+--   * `line_user_id` is exposed for channel identity resolution only (the
+--     orchestrator binds it as its 4th lookup predicate); it is an identifier,
+--     never a contactable channel.
+--   * `consent_marketing` defaults to FALSE when no marketing consent row exists
+--     (fail-closed, BR-004) and `suppression_active` flips TRUE on the first
+--     revocation, so the orchestrator can refuse outreach deterministically.
+CREATE OR REPLACE VIEW agentos.customer_360_profiles
+WITH (security_invoker = true) AS
+SELECT
+    c.id          AS customer_id,
+    c.tenant_id   AS tenant_id,
+    COALESCE(ident.verified_phone, CASE WHEN c.verification_status IN ('verified', 'vip') THEN c.primary_phone END) AS verified_phone,
+    COALESCE(ident.verified_email, CASE WHEN c.verification_status IN ('verified', 'vip') THEN c.primary_email END) AS verified_email,
+    c.total_spent AS total_spent,
+    c.order_count AS order_count,
+    CASE
+        WHEN c.order_count = 0 OR c.last_interaction_at IS NULL              THEN 'NEW'
+        WHEN c.last_interaction_at >= NOW() - INTERVAL '30 days'
+             AND c.order_count >= 3 AND c.total_spent >= 10000               THEN 'CHAMPION'
+        WHEN c.last_interaction_at >= NOW() - INTERVAL '30 days'             THEN 'PROMISING'
+        WHEN c.order_count >= 3 AND c.total_spent >= 10000                   THEN 'AT_RISK'
+        ELSE 'HIBERNATING'
+    END           AS rfm_segment,
+    COALESCE(consent.consent_marketing, FALSE)   AS consent_marketing,
+    consent.consent_updated_at                   AS consent_updated_at,
+    COALESCE(consent.suppression_active, FALSE)  AS suppression_active,
+    ident.line_user_id AS line_user_id,
+    c.created_at  AS created_at
+FROM agentos.customers c
+LEFT JOIN LATERAL (
+    SELECT
+        MAX(ci.channel_identifier) FILTER (WHERE ci.channel_type = 'phone' AND ci.verified_at IS NOT NULL) AS verified_phone,
+        MAX(ci.channel_identifier) FILTER (WHERE ci.channel_type = 'email' AND ci.verified_at IS NOT NULL) AS verified_email,
+        MAX(ci.channel_identifier) FILTER (WHERE ci.channel_type = 'line')                                  AS line_user_id
+    FROM agentos.customer_identities ci
+    WHERE ci.tenant_id = c.tenant_id
+      AND ci.customer_id = c.id
+) ident ON TRUE
+LEFT JOIN LATERAL (
+    SELECT
+        BOOL_OR(cons.is_granted)     AS consent_marketing,
+        MAX(cons.updated_at)         AS consent_updated_at,
+        BOOL_OR(NOT cons.is_granted) AS suppression_active
+    FROM agentos.consents cons
+    WHERE cons.tenant_id = c.tenant_id
+      AND cons.customer_id = c.id
+      AND cons.consent_type = 'marketing_messaging'
+) consent ON TRUE;
+
+-- Runtime Table 1: Agent Run Log (18-field execution audit contract, §04 6.1).
+-- One row per executed pipeline step, appended when the step completes. `tenant_id`
+-- leads the primary key so the key is tenant-scoped and index-local.
+CREATE TABLE agent_run_logs (
+    tenant_id UUID NOT NULL,
+    run_id VARCHAR(64) NOT NULL,
+    agent_id VARCHAR(32) NOT NULL,
+    customer_or_entity_id VARCHAR(64) NOT NULL,
+    trigger VARCHAR(128) NOT NULL,
+    context JSONB NOT NULL,
+    skill VARCHAR(64) NOT NULL,
+    step_index INT NOT NULL DEFAULT 1,
+    tool VARCHAR(64) NOT NULL,
+    decision JSONB NOT NULL,
+    authority VARCHAR(16) NOT NULL,
+    approval JSONB,
+    action JSONB NOT NULL,
+    execution_status VARCHAR(32) NOT NULL CHECK (execution_status IN ('pending', 'executing', 'success', 'failed', 'denied', 'aborted')),
+    evidence JSONB NOT NULL,
+    outcome JSONB,
+    latency_ms INT NOT NULL,
+    cost JSONB NOT NULL,
+    error JSONB,
+    started_at TIMESTAMPTZ NOT NULL,
+    completed_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (tenant_id, run_id, skill, step_index)
+);
+CREATE INDEX idx_agent_run_logs_tenant_agent ON agent_run_logs (tenant_id, agent_id, started_at DESC);
+CREATE INDEX idx_agent_run_logs_entity ON agent_run_logs (tenant_id, customer_or_entity_id);
+
+-- Runtime Table 2: Approval Queue (SCR-003 human-in-the-loop gate, AUTH-4).
+-- The only mutable DOMAIN 5 table: a row is created PENDING and transitions once
+-- to a terminal decision, which is what the §04 `logPendingApproval` writer and the
+-- SCR-003 console toggling `awaiting_human -> running|stopped` rely on.
+CREATE TABLE approval_queue (
+    approval_id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
+    tenant_id UUID NOT NULL,
+    run_id VARCHAR(64) NOT NULL,
+    action_id VARCHAR(64) NOT NULL,
+    effect_key VARCHAR(128) NOT NULL,
+    payload JSONB NOT NULL,
+    reason TEXT NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED', 'MODIFIED', 'EXPIRED')),
+    decided_by VARCHAR(64),
+    decided_at TIMESTAMPTZ,
+    decision_notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_approval_queue_effect UNIQUE (tenant_id, effect_key),
+    CONSTRAINT ck_approval_queue_decided CHECK ((status = 'PENDING') = (decided_at IS NULL))
+);
+CREATE INDEX idx_approval_queue_pending ON approval_queue (tenant_id, status, created_at) WHERE status = 'PENDING';
+CREATE INDEX idx_approval_queue_run ON approval_queue (tenant_id, run_id);
+
+-- Audit Table 3: Evidence Records (cryptographically chained, append-only).
+-- §04 6.1 writes one row per mutating step; `previous_evidence_hash` links each
+-- record to its predecessor within the run, forming the tamper-evident chain.
+CREATE TABLE evidence_records (
+    evidence_id VARCHAR(64) PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    run_id VARCHAR(64) NOT NULL,
+    correlation_id VARCHAR(64) NOT NULL,
+    step_index INT NOT NULL,
+    effect_key VARCHAR(128) NOT NULL,
+    previous_evidence_hash CHAR(64) NOT NULL,
+    payload_sha256 CHAR(64) NOT NULL,
+    signature CHAR(64) NOT NULL,
+    raw_payload JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_evidence_records_run ON evidence_records (tenant_id, run_id, step_index);
+
+-- Audit Table 4: Audit Records (canonical 18-field chained compliance log, §08 4.1).
+-- Deliberately distinct from `agent_run_logs`: this is the GDPR Art. 30 / Taiwan
+-- PDPA retention record, chained by `chain_hash` (§08 4.2). Column names mirror the
+-- §08 4.1 audit schema verbatim so the compliance writer's INSERT is
+-- column-compatible; `timestamp` is the audit event time.
+CREATE TABLE audit_records (
+    id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
+    run_id VARCHAR(64) NOT NULL,
+    tenant_id UUID NOT NULL,
+    agent_id VARCHAR(32) NOT NULL,
+    customer_or_entity_id VARCHAR(64) NOT NULL,
+    trigger VARCHAR(128) NOT NULL,
+    context JSONB NOT NULL,
+    skill VARCHAR(64) NOT NULL,
+    tool VARCHAR(64) NOT NULL,
+    decision JSONB NOT NULL,
+    authority VARCHAR(16) NOT NULL,
+    approval JSONB,
+    action JSONB NOT NULL,
+    execution_status VARCHAR(32) NOT NULL CHECK (execution_status IN ('pending', 'executing', 'success', 'failed', 'denied', 'aborted')),
+    evidence JSONB NOT NULL,
+    outcome JSONB,
+    latency_ms INT NOT NULL,
+    cost JSONB NOT NULL,
+    error JSONB,
+    "timestamp" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    prev_hash CHAR(64) NOT NULL,
+    chain_hash CHAR(64) NOT NULL,
+    CONSTRAINT uq_audit_records_chain UNIQUE (tenant_id, chain_hash)
+);
+CREATE INDEX idx_audit_records_tenant_run ON audit_records (tenant_id, run_id, "timestamp" DESC);
+CREATE INDEX idx_audit_records_agent ON audit_records (tenant_id, agent_id, "timestamp" DESC);
 
 -- ============================================================================
 -- IMMUTABLE AUDIT TRIGGERS (NFR-002 AUDITABILITY)
@@ -572,13 +784,76 @@ CREATE TRIGGER trg_immutable_executions
 CREATE TRIGGER trg_immutable_decisions
     BEFORE UPDATE OR DELETE ON decisions
     FOR EACH ROW EXECUTE FUNCTION agentos.prevent_immutable_table_modification();
+
+-- DOMAIN 5 append-only chains. `approval_queue` is intentionally excluded: it is
+-- the mutable SCR-003 gate whose rows must move PENDING -> decided exactly once.
+CREATE TRIGGER trg_immutable_evidence_records
+    BEFORE UPDATE OR DELETE ON evidence_records
+    FOR EACH ROW EXECUTE FUNCTION agentos.prevent_immutable_table_modification();
+
+CREATE TRIGGER trg_immutable_audit_records
+    BEFORE UPDATE OR DELETE ON audit_records
+    FOR EACH ROW EXECUTE FUNCTION agentos.prevent_immutable_table_modification();
+
+CREATE TRIGGER trg_immutable_agent_run_logs
+    BEFORE UPDATE OR DELETE ON agent_run_logs
+    FOR EACH ROW EXECUTE FUNCTION agentos.prevent_immutable_table_modification();
 ```
+
+---
+
+### 1.1. Composite Tenant-Scoped Foreign Keys (Cross-Tenant Referential Integrity)
+
+`REFERENCES parent(id)` proves only that the `id` exists somewhere in that table. It says nothing about *whose* row it is, and RLS does not close the gap: a policy filters the row being read or written, never the row being referenced. One wrong join key — or a payload carrying another tenant's `customer_id` — would silently link tenant A's order to tenant B's customer and poison the Customer 360 FACT store. The constraint below moves that guarantee into the schema, where a bug cannot bypass it.
+
+**Convention.** Every intra-tenant relationship is declared over the pair `(tenant_id, <ref>_id)` referencing the parent's `(tenant_id, id)`. Both columns must resolve to a single parent row, so a cross-tenant reference cannot satisfy the constraint and is rejected by the database itself.
+
+```sql
+-- 1. Parents expose a tenant-scoped unique key. `id` is already unique, so
+--    (tenant_id, id) is a superset key costing one extra index per parent table.
+ALTER TABLE agentos.customers     ADD CONSTRAINT uq_customers_tenant_id     UNIQUE (tenant_id, id);
+ALTER TABLE agentos.orders        ADD CONSTRAINT uq_orders_tenant_id        UNIQUE (tenant_id, id);
+ALTER TABLE agentos.skus          ADD CONSTRAINT uq_skus_tenant_id          UNIQUE (tenant_id, id);
+ALTER TABLE agentos.products      ADD CONSTRAINT uq_products_tenant_id      UNIQUE (tenant_id, id);
+ALTER TABLE agentos.conversations ADD CONSTRAINT uq_conversations_tenant_id UNIQUE (tenant_id, id);
+ALTER TABLE agentos.campaigns     ADD CONSTRAINT uq_campaigns_tenant_id     UNIQUE (tenant_id, id);
+ALTER TABLE agentos.actions       ADD CONSTRAINT uq_actions_tenant_id       UNIQUE (tenant_id, id);
+ALTER TABLE agentos.agents        ADD CONSTRAINT uq_agents_tenant_id        UNIQUE (tenant_id, id);
+ALTER TABLE agentos.workflows     ADD CONSTRAINT uq_workflows_tenant_id     UNIQUE (tenant_id, id);
+-- ... one statement per table that is the target of a composite FK.
+
+-- 2. Children reference the pair, never the bare id. The single-column FKs
+--    declared in §1 are upgraded in place.
+ALTER TABLE agentos.customer_identities
+    DROP CONSTRAINT customer_identities_customer_id_fkey,
+    ADD  CONSTRAINT fk_identities_customer FOREIGN KEY (tenant_id, customer_id)
+         REFERENCES agentos.customers (tenant_id, id) ON DELETE CASCADE;
+
+ALTER TABLE agentos.orders
+    DROP CONSTRAINT orders_customer_id_fkey,
+    ADD  CONSTRAINT fk_orders_customer FOREIGN KEY (tenant_id, customer_id)
+         REFERENCES agentos.customers (tenant_id, id);
+```
+
+The DDL in §1 declares the entity graph with single-column `REFERENCES` for readability; this tenant-scoping migration runs immediately afterwards, before the first tenant row is written. `scripts/migrations/0001_tenant_scoped_fks.sql` is its durable home and executes inside the same migration transaction that created the schema.
+
+**Negative tests are mandatory.** A green happy path proves nothing here — a *missing* foreign key also accepts every legal insert. The suite must assert each cross-tenant case below by inserting an otherwise-valid row whose tenant differs from the referenced row's tenant, and must observe SQLSTATE `23503`:
+
+| Test | Scenario | Expected Assertion |
+|---|---|---|
+| `TC-RLS-FK-001` | Insert an `orders` row with `tenant_id = B` whose `customer_id` belongs to tenant A. | `23503 foreign_key_violation`; row rejected. |
+| `TC-RLS-FK-002` | Update `customer_identities.customer_id` to a customer owned by another tenant. | `23503 foreign_key_violation`; UPDATE rejected. |
+| `TC-RLS-FK-003` | Insert a `recommendations` row referencing another tenant's `product_id`. | `23503 foreign_key_violation`; row rejected. |
+| `TC-RLS-FK-004` | Insert a `service_cases` row referencing another tenant's `conversation_id`. | `23503 foreign_key_violation`; row rejected. |
+| `TC-RLS-FK-005` | Regression control: the same insert with a same-tenant reference. | Row accepted — proves the constraint does not over-block. |
 
 ---
 
 ## 2. Row-Level Security (RLS) Policy Implementation
 
-To satisfy **NFR-006 (Zero Data Bleeding)**, Row-Level Security is strictly enabled and forced across all 28 canonical tables and child tables (such as `conversation_messages`). Queries that omit a valid tenant context return 0 rows or throw an error.
+To satisfy **NFR-006 (Zero Data Bleeding)**, Row-Level Security is strictly enabled and forced across every table in the `agentos` schema — the 28 canonical tables, the child table `conversation_messages`, and the DOMAIN 5 audit/runtime tables (`audit_records`, `evidence_records`, `approval_queue`, `agent_run_logs`). The `customer_360_profiles` view is not a table and therefore carries no policy of its own; it is declared `WITH (security_invoker = true)` so the policies of its base tables (`customers`, `customer_identities`, `consents`) are evaluated against the calling role. Queries that omit a valid tenant context return 0 rows (default deny) or throw an error.
+
+**Predicate contract.** The tenant context is a comma-separated list of UUIDs stored in `app.current_tenant_id`, parsed with `string_to_array(current_setting('app.current_tenant_id', true), ',')::uuid[]`. The explicit `::uuid[]` cast is what keeps the predicate type-correct: `tenant_id` is `UUID`, the parsed value is `UUID[]`, so PostgreSQL resolves `uuid = ANY(uuid[])` and never has to resolve `uuid = text` (which has no operator and would raise `operator does not exist: uuid = text`). An unset setting yields `NULL`, and an empty setting yields the empty array — both make `= ANY(...)` evaluate to NULL/FALSE, so the failure mode is deny, never allow.
 
 ```sql
 -- ============================================================================
@@ -602,13 +877,15 @@ BEGIN
         -- Drop existing policy if present
         EXECUTE format('DROP POLICY IF EXISTS tenant_isolation_policy ON agentos.%I;', tbl);
 
-        -- Create strictly scoped tenant policy for SELECT, INSERT, UPDATE, DELETE (PERMISSIVE model)
+        -- Create strictly scoped tenant policy for SELECT, INSERT, UPDATE, DELETE (PERMISSIVE model).
+        -- `string_to_array(...)::uuid[]` keeps the comparison uuid = uuid (never uuid = text),
+        -- and an unset/empty setting resolves to NULL/{} = default deny.
         EXECUTE format('
             CREATE POLICY tenant_isolation_policy ON agentos.%I
             AS PERMISSIVE
             FOR ALL
-            USING (tenant_id = NULLIF(current_setting(''app.current_tenant_id'', true), '''')::uuid)
-            WITH CHECK (tenant_id = NULLIF(current_setting(''app.current_tenant_id'', true), '''')::uuid);
+            USING (tenant_id = ANY (string_to_array(current_setting(''app.current_tenant_id'', true), '','')::uuid[]))
+            WITH CHECK (tenant_id = ANY (string_to_array(current_setting(''app.current_tenant_id'', true), '','')::uuid[]));
         ', tbl);
     END LOOP;
 END $$;
@@ -629,22 +906,38 @@ export const dbPool = new Pool({
  * Executes a callback within a scoped database transaction where the
  * PostgreSQL session variable `app.current_tenant_id` is guaranteed.
  *
- * @param tenantId - The authenticated UUID of the tenant
+ * This wrapper is the ONLY sanctioned way to touch tenant data. It is the
+ * canonical binder referenced by every repository, skill, and Core Engine writer
+ * (§04 5.1 / 6.1), so a query that is executed outside of it simply returns zero
+ * rows instead of leaking another tenant's rows.
+ *
+ * @param tenantId - The authenticated UUID of the tenant (UUID v7 string)
  * @param callback - Function executing queries within the scoped connection
  */
 export async function withTenantContext<T>(
   tenantId: string,
   callback: (client: PoolClient) => Promise<T>
 ): Promise<T> {
+  if (!tenantId) {
+    throw new Error('TENANT_CONTEXT_REQUIRED: refusing to open an unscoped database transaction (NFR-006).');
+  }
+
   const client = await dbPool.connect();
   try {
     await client.query('BEGIN');
-    
-    // Set transaction-local session variable for RLS enforcement
-    await client.query('SET LOCAL app.current_tenant_id = $1', [tenantId]);
-    
+
+    // Bind the transaction-local RLS context.
+    // `set_config(name, value, is_local)` is the parameterised form of `SET LOCAL`
+    // and the only way to bind the tenant UUID as a placeholder: PostgreSQL's
+    // extended query protocol rejects `SET LOCAL ... = $1` (SET accepts no
+    // parameters), so `SELECT set_config(...)` is used instead.
+    // `is_local = true` scopes the value to this transaction: PostgreSQL resets it
+    // at COMMIT/ROLLBACK, so a connection returned to the pool can never carry the
+    // previous tenant's context (the property the transaction-pooling mode relies on).
+    await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
+
     const result = await callback(client);
-    
+
     await client.query('COMMIT');
     return result;
   } catch (error) {
@@ -670,7 +963,7 @@ Redis 7.2 serves as Layer 1 (Working Memory) and the distributed concurrency coo
 | `tenant:{tid}:session:{sid}:takeover_lock` | String | 1 hour | Human operator override lock (SCR-005). Pauses all automated agent execution. |
 | `tenant:{tid}:effect:{effect_key}` | String (JSON) | 259,200s (72h) | Distributed idempotency record. Holds payload hash and execution status (NFR-003). |
 | `tenant:{tid}:ratelimit:{entity}:{window}` | Integer | Window expiry | Sliding window token counter for rate limiting (e.g. 100 req/min). |
-| `tenant:{tid}:working_memory:{cid}` | List / Hash | 2 hours | Transient prompt scratchpad and dialog turn state (Memory Layer 1). |
+| `tenant:{tid}:wm:{cid}` | List / Hash | 2 hours | Transient prompt scratchpad and dialog turn state (Memory Layer 1). The `wm` segment is the canonical short form; the Core Engine hydrator reads exactly this key (§04 5.1 `fetchWorkingMemory`). |
 
 ### Distributed Mutex Lock Acquisition & Release (Lua Scripts)
 

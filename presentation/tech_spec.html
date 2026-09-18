@@ -825,7 +825,7 @@
         </ul>
       </div>
       <div class="card">
-        <h3>Cấu Trúc Second Brain (20 Tệp Chuẩn / 8 Thư Mục theo Mục 10 SRS)</h3>
+        <h3>Cấu Trúc Second Brain (21 Tệp Chuẩn / 8 Thư Mục theo Mục 10 SRS)</h3>
         <p style="font-size: 7.2px; font-family: monospace; color: #1e40af; line-height: 1.35;">
           /company (company.md, positioning.md) | /customer (customer.md, segmentation.md)<br>
           /product (products.md, pricing.md, promotion-policy.md) | /brand (voice.md, terminology.md, prohibited-claims.md)<br>
@@ -955,7 +955,7 @@
   <div class="header">
     <div class="header-left">
       <h1>Hệ Thống Quan Sát, Kiểm Toán & Human Command Center</h1>
-      <p>Lược đồ 17 trường Agent Run Log theo Mục 17 SRS và đặc tả 5 màn hình chỉ huy quản trị nội bộ</p>
+      <p>Lược đồ 18 trường Agent Run Log theo Mục 17 SRS, kèm dấu thời gian, chuỗi băm SHA-256 và đặc tả 5 màn hình chỉ huy quản trị</p>
     </div>
     <div class="header-tag">Trang 7 / 10</div>
   </div>
@@ -990,6 +990,8 @@
         <tr><td>16</td><td><code>latency_ms</code></td><td>Integer</td><td>Tổng thời gian thực thi của phiên chạy tính bằng mili-giây (ms).</td></tr>
         <tr><td>17</td><td><code>cost</code></td><td>JSON Object</td><td>Chi phí vận hành: Token input/output, chi phí API mô hình, phí kết nối Adapter quy đổi.</td></tr>
         <tr><td>18</td><td><code>error</code></td><td>JSON / null</td><td>Chi tiết mã lỗi, nhật ký lỗi (error stack trace) và nguyên nhân thất bại nếu có.</td></tr>
+        <tr><td>*</td><td><code>timestamp</code></td><td>ISO 8601 UTC</td><td>Dấu thời gian cam kết của bản ghi kiểm toán; khóa cứng thứ tự dòng thời gian.</td></tr>
+        <tr><td>*</td><td><code>chain_hash</code></td><td>CHAR(64) Hex</td><td>Mã băm mật mã SHA-256 nối chuỗi với bản ghi trước đó (NFR-002 Chống giả mạo).</td></tr>
       </tbody>
     </table>
 

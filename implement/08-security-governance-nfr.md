@@ -109,21 +109,14 @@ export class PolicyEnforcementPoint {
     context: SecurityContext,
     proposal: ActionProposal
   ): Promise<EnforcementDecision> {
-    // 1. Immediate Privilege Escalation Defense (BR-008, NFR-001)
+    // 1. Authoritative Server-Side Authority Resolution (BR-008, NFR-001)
+    // Strictly ignore client-asserted permissions; look up authoritative authority from Skill Registry
+    const authoritativeRequiredAuthority = this.lookupSkillAuthority(proposal.skillId) ?? proposal.requiredAuthority;
     const agentLevel = AUTHORITY_HIERARCHY[context.agentAssignedAuthority] ?? 0;
-    const requiredLevel = AUTHORITY_HIERARCHY[proposal.requiredAuthority] ?? 5;
-
-    if (requiredLevel > agentLevel) {
-      await this.recordSecurityViolation(context, proposal, 'PRIVILEGE_ESCALATION_BLOCKED');
-      return {
-        authorized: false,
-        decisionCode: 'DENY_PROHIBITED',
-        rationale: `Privilege escalation blocked (BR-008): Agent ${context.agentId} has assigned authority ${context.agentAssignedAuthority} (rank ${agentLevel}) but proposed action requires ${proposal.requiredAuthority} (rank ${requiredLevel}).`,
-      };
-    }
+    const requiredLevel = AUTHORITY_HIERARCHY[authoritativeRequiredAuthority] ?? 5;
 
     // 2. Hard Lock: Prohibited operations are immediately terminated
-    if (proposal.requiredAuthority === 'AUTH-5') {
+    if (authoritativeRequiredAuthority === 'AUTH-5') {
       await this.recordSecurityViolation(context, proposal, 'HARD_LOCK_AUTH_5_PROHIBITED');
       return {
         authorized: false,
@@ -132,14 +125,26 @@ export class PolicyEnforcementPoint {
       };
     }
 
-    // 3. High-Risk Gate: Operations requiring human approval (AUTH-4)
-    if (proposal.requiredAuthority === 'AUTH-4' || this.isThresholdBreached(proposal)) {
+    // 3. High-Risk Gate: Operations requiring human approval (AUTH-4) or exceeding threshold
+    // Evaluated BEFORE autonomous rank comparison so capped agents (max AUTH-3) can submit for human sign-off
+    if (authoritativeRequiredAuthority === 'AUTH-4' || this.isThresholdBreached(proposal)) {
       const ticketId = await this.routeToApprovalQueue(context, proposal);
       return {
         authorized: false,
         decisionCode: 'REQUIRE_HUMAN_APPROVAL',
         rationale: 'Action exceeds autonomous threshold and requires human sign-off via SCR-003.',
         approvalTicketId: ticketId,
+      };
+    }
+
+    // 4. Autonomous Privilege Escalation Defense (BR-008, NFR-001)
+    // Verifies that autonomous execution (AUTH-0..3) does not exceed assigned agent rank
+    if (requiredLevel > agentLevel) {
+      await this.recordSecurityViolation(context, proposal, 'PRIVILEGE_ESCALATION_BLOCKED');
+      return {
+        authorized: false,
+        decisionCode: 'DENY_PROHIBITED',
+        rationale: `Privilege escalation blocked (BR-008): Agent ${context.agentId} has assigned authority ${context.agentAssignedAuthority} (rank ${agentLevel}) but proposed action requires ${authoritativeRequiredAuthority} (rank ${requiredLevel}).`,
       };
     }
 
@@ -271,8 +276,7 @@ Action Context ---> [ BR-001: Zero Arbitrary Pricing       ] ---> PASS
 
 #### BR-009: Prompt Injection Resilience & Privilege Isolation
 - **Specification**: User-supplied input (e.g., customer chat prompts or uploaded documents) cannot modify system policies, alter floor prices, or grant elevated privileges.
-- **Enforcement**: Customer inputs are sanitized and treated strictly as untrusted string literals. Privilege elevation requests inside prompts are detected and neutralized by the PEP.
-
+- **Enforcement**: Multi-layered defense: (1) Inputs are treated strictly as untrusted string literals within isolated data envelopes; (2) Canary token tracking detects boundary leakage; (3) System prompt instructions and tools run in separate execution contexts; (4) Privilege elevation attempts inside prompts are intercepted and neutralized by the PEP prior to tool dispatch.
 #### BR-010: Immutable Evidence Record Attachment
 - **Specification**: Every successful business transaction must produce an Evidence Record containing raw upstream API receipts, timestamps, and correlation IDs.
 - **Enforcement**: Orchestrator will not mark a task `completed` unless an Evidence Record with verified source references is committed to the audit store.
@@ -805,12 +809,28 @@ export class CryptographicAuditLogger {
   }
 
   /**
-   * Retrieves the previous hash for a given tenant, initializing to GENESIS_HASH if new.
+   * Retrieves the previous hash for a given tenant. Checks in-memory cache first,
+   * falling back to the most recent persisted audit record in PostgreSQL to guarantee continuity across restarts.
    */
-  public getPrevHashForTenant(tenantId: string): string {
-    return this.tenantLastHash.get(tenantId) ?? this.GENESIS_HASH;
-  }
+  public async getPrevHashForTenant(
+    tenantId: string,
+    pgPool?: { query: (sql: string, params: unknown[]) => Promise<{ rows: Array<{ chain_hash: string }> }> }
+  ): Promise<string> {
+    const cached = this.tenantLastHash.get(tenantId);
+    if (cached) return cached;
 
+    if (pgPool) {
+      const res = await pgPool.query(
+        'SELECT chain_hash FROM agentos.audit_records WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT 1',
+        [tenantId]
+      );
+      if (res.rows.length > 0 && res.rows[0].chain_hash) {
+        this.tenantLastHash.set(tenantId, res.rows[0].chain_hash);
+        return res.rows[0].chain_hash;
+      }
+    }
+    return this.GENESIS_HASH;
+  }
   /**
    * Sanitizes PII fields and generates a cryptographically chained audit record partitioned by tenant_id.
    */
@@ -953,13 +973,13 @@ The platform guarantees compliance with 10 mandatory Non-Functional Requirements
 | **NFR-001** | **Security & Least Privilege** | Zero privilege escalation; prompt injection resilience; hard server lock for AUTH-5. | Automated adversarial penetration tests (`TC-E2E-006`); PEP interceptor unit tests. |
 | **NFR-002** | **Auditability** | 100% of mutational operations recorded with 18-field canonical schema and SHA-256 hash chaining. | Daily cryptographic chain integrity sweep; zero unchained log entries. |
 | **NFR-003** | **Idempotency & Durability**| Network retries with identical `effect_key` produce zero duplicate messages or transactions. | Chaos network fault injection testing (`TC-E2E-005`); database unique constraints. |
-| **NFR-004** | **Latency Performance** | Conversational response latency: median < 2.0s, p95 < 3.0s; API routing < 200ms. | Real-time Prometheus/Grafana p95 latency alarms; CDN edge acceleration. |
-| **NFR-005** | **System Availability** | 99.9% uptime for core API and Storefront Widget endpoints (excluding scheduled maintenance). | Multi-zone Kubernetes deployment with auto-healing pods and health check probes. |
+| **NFR-004** | **System Availability** | 99.9% uptime for core API and Storefront Widget endpoints (excluding scheduled maintenance). | Multi-zone Kubernetes deployment with auto-healing pods and health check probes. |
+| **NFR-005** | **Explainability & Transparency** | 100% of qualification scores, recommendations, discounts, and routing decisions store logic `reason` and verified `evidence`. | Deterministic Decision audit logs; structured evidence separation contracts. |
 | **NFR-006** | **Multi-Tenant Isolation**| Absolute isolation of customer profiles, vector search indices, and queues across tenants. | Automated cross-tenant penetration test suite running in CI pipeline. |
 | **NFR-007** | **Human-in-the-Loop** | High-risk operations (AUTH-4) halt synchronously until human sign-off; Takeover mutex locks bot. | End-to-end integration tests verifying zero autonomous execution for AUTH-4. |
 | **NFR-008** | **Fail Closed Behavior** | In the event of system failure, timeout, or missing cost metrics, transactions fail safe/closed. | Mock service outage test: pricing engine blocks discount and falls back to $P_{base}$. |
-| **NFR-009** | **Data Residency & Privacy**| Strict adherence to Taiwan PDPA, GDPR, and CCPA; automated PII pseudonymization. | Automated static code analysis verifying PII regex masking before database writes. |
-| **NFR-010** | **Operational Cost Limit**| AI token compute cost strictly capped at 0.50 - 1.00 TWD per complete customer dialogue. | Token usage accounting middleware; automatic session throttling upon budget breach. |
+| **NFR-009** | **Performance & Latency** | Conversational response latency: median < 2.0s, p95 < 3.0s; API routing < 200ms. | Real-time Prometheus/Grafana p95 latency alarms; CDN edge acceleration. |
+| **NFR-010** | **Cost Observability & Resource Limits**| AI token compute cost strictly capped at 0.50 - 1.00 TWD per complete customer dialogue. | Token usage accounting middleware; automatic session throttling upon budget breach. |
 
 ---
 

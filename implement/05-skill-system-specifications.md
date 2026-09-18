@@ -282,22 +282,21 @@ export class SkillRuntimeEngine {
 
 ---
 
-## 3. Standard 11-Field Skill Contract Structure
+## 3. Standard 11-Field Skill Contract Structure (SRS §11 Aligned)
 
-Every platform skill conforms to the 11-field specification:
+Every platform skill conforms strictly to the canonical 11-field specification defined in Section 11 of the SRS:
 
 1. **Skill ID**: Canonical dot-notated identifier (`skill.<domain>.<action>`).
-2. **Purpose**: Concrete operational scope and domain boundaries.
-3. **Input Schema**: Strict JSON Schema defining parameters.
-4. **Output Schema**: Strict JSON Schema defining the returned structure.
-5. **Allowed Agents**: Array of agent IDs authorized to call this skill.
-6. **Required Authority**: Minimum security clearance (`AUTH-0` to `AUTH-4`).
-7. **Tool Binding**: Target adapter or service connector name.
-8. **Validation Rules**: Formal business validation constraints prior to invocation.
-9. **Retry Policy**: Maximum retries, backoff factor, and fatal error codes.
-10. **Timeout**: Maximum execution latency in milliseconds.
-11. **Audit Spec**: Audit logging level, PII masking keys, evidence card format.
-
+2. **Purpose**: Concrete operational scope, intent, and domain boundaries.
+3. **Input Schema**: Strict JSON Schema defining input parameters and required fields.
+4. **Output Schema**: Strict JSON Schema defining the returned execution payload.
+5. **Allowed Agents**: Array of specialized agent IDs authorized to invoke this skill.
+6. **Required Authority**: Server-side statically bound security clearance (`AUTH-0` to `AUTH-4`, verified by PEP).
+7. **Tool / Connector Dependencies**: Target adapter (API-001, API-002, API-003, or internal engine).
+8. **Validation Rules**: Formal business validation constraints evaluated prior to invocation.
+9. **Retry Policy**: Maximum retry count, backoff multiplier, and fatal error codes.
+10. **Timeout**: Execution latency deadline in milliseconds.
+11. **Test Cases & Acceptance Criteria**: Verification test cases (`TC-E2E-*` / integration scenarios) and audit trail verification requirements.
 ---
 
 ## 4. Complete Specifications for All 23 Platform Skills

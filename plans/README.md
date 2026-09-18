@@ -97,7 +97,7 @@ Hệ thống phân định rành mạch giữa 2 nhóm mã hiệu: Nhóm SRS (qu
 
 ## 5. Nơi chịu trách nhiệm cho từng nội dung
 
-| Tài liệu | Nội dung chính | Mốc tham chiếu cũ được giữ |
+| Tài liệu | Nội dung chính | Mục đề án gốc tương ứng (Neo tham chiếu) |
 |---|---|---|
 | [Sản phẩm và cách đóng gói](product-and-packaging.md) | Khách hàng mục tiêu, giá trị, bộ cấu hình, mô hình thương mại B2B SaaS, gói GTM-001A/B, phân phối GTM-002/003 | 1, 2, 17, 19 |
 | [Hành trình khách hàng](customer-lifecycle.md) | Từ tín hiệu sớm đến mua lại; tình huống B2C và bán hàng cần tư vấn | 3, 4, 9 |
@@ -111,7 +111,7 @@ Hệ thống phân định rành mạch giữa 2 nhóm mã hiệu: Nhóm SRS (qu
 | [Đo lường](delivery/analytics.md) | Hệ thống KPI 5 nhóm theo SRS Mục 20, động lực kinh tế ECN-001..004, công thức giá sàn P_floor và chi phí AI | 20 |
 | [Bản đầu và lộ trình](delivery/mvp-and-roadmap.md) | Lộ trình trục kép (Engineering P0–P5 & Commercial Phase 1–3), DoD 10 thành tố, giả định ASM-001..005, kiểm thử TC-E2E-001..009 | 21, 22, 23, 26, 27 |
 
-Mỗi quy định có một nơi chịu trách nhiệm; tài liệu khác chỉ tóm tắt và liên kết. Giữ đường dẫn tệp và các mốc `section-N` để hạn chế làm hỏng tham chiếu cũ. Tên tệp, tên sản phẩm, API và mã trạng thái giữ nguyên khi cần tương thích; toàn bộ phần diễn giải được viết bằng tiếng Việt.
+Mỗi quy định có một nơi chịu trách nhiệm; tài liệu khác chỉ tóm tắt và liên kết. Các số mục trong cột thứ ba là số thứ tự các phần của bản đề án ban đầu trước khi tách nhỏ (được neo bằng thẻ `<a id="section-N"></a>` bên trong từng tệp để giữ tương thích liên kết cũ). Tên tệp, tên sản phẩm, API và mã trạng thái giữ nguyên khi cần tương thích; toàn bộ phần diễn giải được viết bằng tiếng Việt.
 
 ## 6. Ma trận đối chiếu mục tiêu và nghiệm thu (Traceability Matrix theo SRS Mục 25)
 

@@ -966,8 +966,13 @@ export class FastContextAggregator implements IContextAggregator {
     ]);
 
     // 1. Process Customer 360 (Fact Store)
+    if (c360Result.status === 'rejected') {
+      console.error(
+        `[CRITICAL_DATA_HYDRATION_ERROR] Failed to query customer_360_profiles for tenant ${tenantId}, correlation ${correlationId}:`,
+        c360Result.reason
+      );
+    }
     const customer = c360Result.status === 'fulfilled' ? c360Result.value : null;
-
     // 2. Process Working Memory (Redis)
     const working_memory: WorkingMemoryContext =
       memoryResult.status === 'fulfilled' && memoryResult.value
@@ -1017,7 +1022,7 @@ export class FastContextAggregator implements IContextAggregator {
   }
 
   private async fetchWorkingMemory(tenantId: string, identifier: string): Promise<WorkingMemoryContext | null> {
-    const key = `wm:${tenantId}:${identifier}`;
+    const key = `tenant:${tenantId}:wm:${identifier}`;
     const raw = await this.redis.get(key);
     return raw ? JSON.parse(raw) : null;
   }

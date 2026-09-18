@@ -2,7 +2,7 @@
 
 [Mục lục](../README.md) · [Hành trình](../customer-lifecycle.md) · [Thuật ngữ](../glossary.md)
 
-Trạng thái: thiết kế đề xuất. P1 tập trung tư vấn và chuyển sang quy trình mua hiện có; ưu đãi, đơn hàng và thanh toán tự động phải được bật riêng sau nghiệm thu.
+Trạng thái: thiết kế đề xuất. Sales Agent được kích hoạt tại **Gate P2 (Sales Pilot)** theo lộ trình SRS, sau mốc **Gate P1 (Customer Care)**; P2 tập trung tư vấn và chuyển sang quy trình mua hiện có; ưu đãi, đơn hàng và thanh toán tự động phải được bật riêng sau nghiệm thu.
 
 <a id=section-7></a>
 
@@ -91,17 +91,19 @@ Không chuyển "10.000 mAh" thành số lần sạc cụ thể chỉ bằng suy
 
 ## 5. Hỗ trợ thanh toán, giao hàng và hóa đơn
 
-P1 dùng trang thanh toán/quy trình hiện có; AI không tự tạo mã thanh toán hoặc đánh dấu đã trả tiền.
+Trong Gate P2, hệ thống dùng trang thanh toán/quy trình hiện có; AI không tự tạo mã thanh toán hoặc đánh dấu đã trả tiền.
 
-Sau P1, ưu tiên kết nối nhà cung cấp/hệ thống doanh nghiệp đã dùng. Lưu lựa chọn ứng dụng thanh toán nếu khách cho phép; không lưu thông tin đăng nhập ngân hàng, mã OTP hoặc dữ liệu sinh trắc học. Có phương án QR, sao chép thông tin hay trang thanh toán thay thế nếu liên kết mở ứng dụng không hoạt động.
+Sau Gate P2, ưu tiên kết nối nhà cung cấp/hệ thống doanh nghiệp đã dùng. Lưu lựa chọn ứng dụng thanh toán nếu khách cho phép; không lưu thông tin đăng nhập ngân hàng, mã OTP hoặc dữ liệu sinh trắc học. Có phương án QR, sao chép thông tin hay trang thanh toán thay thế nếu liên kết mở ứng dụng không hoạt động.
 
 Khách vẫn kiểm tra thông tin và xác nhận trong ứng dụng ngân hàng/ví điện tử; đây là luồng bảo mật tiêu chuẩn, không phải thanh toán AI tự quyết. Thanh toán chỉ xác nhận bằng nguồn tin cậy từ webhook ngân hàng/cổng thanh toán, không bằng ảnh chụp màn hình hoặc trang quay về. Xem chi tiết tại [API và tích hợp](../platform/api-and-integrations.md#payments).
 
 Khung giờ giao và yêu cầu hóa đơn chỉ được chuyển tới hệ thống có năng lực tương ứng. Thu mã số thuế không có nghĩa hóa đơn đã phát hành; chọn khung giờ không có nghĩa đã được đơn vị vận chuyển chấp nhận.
 
-## 6. Ranh giới bản đầu (P1 Scope & Guardrails)
+## 6. Ranh giới Gate P2 — Bán hàng (P2 Scope & Guardrails)
 
-| Cho phép trong P1 | Chưa cho phép trong P1 |
+Sales Agent chỉ được kích hoạt tại **Gate P2 (Sales Pilot)** sau khi **Gate P1 (Customer Care)** đã đóng cổng nghiệm thu; trong Gate P1, mô-đun Bán hàng tắt hoàn toàn. Ranh giới dưới đây áp dụng cho phạm vi Gate P2:
+
+| Cho phép trong P2 | Chưa cho phép trong P2 |
 |---|---|
 | Hỏi nhu cầu, giải thích từ nguồn duyệt, lưu ghi chú và bước tiếp theo | Sửa giá, mã khuyến mãi, tự mặc cả hoặc phát phiếu |
 | Đọc danh mục và chuyển khách tới quy trình mua hiện có | Tạo/thu thanh toán, hoàn tiền, hủy đơn hoặc sửa tài khoản |
@@ -123,20 +125,22 @@ Khung giờ giao và yêu cầu hóa đơn chỉ được chuyển tới hệ th
 | Ghi CRM hoặc đặt lịch bị hết thời gian chờ | Tra kết quả bằng mã đối soát idempotency; không tạo trùng | NFR-003, BR-006 |
 | Bỏ quên giỏ hàng (Cart Recovery) | Kiểm tra consent → Tồn kho → Giá → Suppression → Tin nhắc cá nhân hóa | PILOT-02, SAL-04 |
 | Đơn lớn, giá ngoại lệ hoặc khách muốn gặp người | Bàn giao có người chịu trách nhiệm, AI tạm dừng | NFR-007 |
-| Mô-đun Bán hàng chưa bật | Từ chối rõ hoặc chuyển hàng đợi người xử lý | Lộ trình P1 |
+| Mô-đun Bán hàng chưa bật | Từ chối rõ hoặc chuyển hàng đợi người xử lý | Lộ trình Gate P2 |
 | Yêu cầu giá 0, sửa giỏ/báo giá/tiền tệ từ trình duyệt | Máy chủ từ chối; không thể lách bằng nội dung nhắc AI | BR-002, BR-009 |
 | Báo giá/đơn hết hạn nhưng có tiền tới | Trạng thái cần đối soát, không bỏ tiền hoặc giao hàng tự động | Đối soát thanh toán |
 | Tư vấn xong nhưng chưa có giao dịch nguồn | Hoàn thành tư vấn, không tính doanh thu | Đo lường bằng chứng |
 
 ### 7.2. Hệ chỉ số KPI Bán hàng theo SRS
 
-Hiệu quả của hệ thống 5 Sales Agent được đo lường qua các chỉ số:
-- **Lead-to-Order Conversion:** Tỷ lệ đầu mối chuyển đổi thành đơn hàng thành công có xác thực qua ERP.
-- **Cart Recovery Rate:** Tỷ lệ giỏ hàng bỏ quên được phục hồi thành công qua SAL-04.
-- **Recommendation Conversion:** Tỷ lệ khách hàng mua sản phẩm từ đề xuất cross-sell/upsell/bundle của SAL-03.
-- **Upsell & Cross-sell Revenue:** Doanh thu gia tăng từ việc bán thêm/bán chéo giải pháp.
-- **Average Order Value (AOV):** Giá trị đơn hàng trung bình sau khi áp dụng gợi ý và gói bundle.
-- **Sales Cycle:** Thời gian từ lúc phát sinh nhu cầu đến khi hoàn tất thanh toán hoặc đặt cọc giữ chỗ.
+Hiệu quả của hệ thống 5 Sales Agent được đo lường qua các chỉ số (mã chỉ số theo [từ điển KPI](../delivery/analytics.md#section-20)):
+- **SAL-KPI-01 — Lead-to-Order Conversion:** Tỷ lệ đầu mối chuyển đổi thành đơn hàng thành công có xác thực qua ERP.
+- **SAL-KPI-02 — Cart Recovery Rate:** Tỷ lệ giỏ hàng bỏ quên được phục hồi thành công qua SAL-04.
+- **SAL-KPI-03 — Recommendation Conversion:** Tỷ lệ khách hàng mua sản phẩm từ đề xuất cross-sell/upsell/bundle của SAL-03.
+- **SAL-KPI-04 — Upsell Revenue:** Doanh thu gia tăng khi khách chọn phiên bản cao hơn từ gợi ý của SAL-03.
+- **SAL-KPI-05 — Cross-sell Revenue:** Doanh thu từ phụ kiện, gói bảo hành hoặc dịch vụ kèm theo được gợi ý thêm.
+- **SAL-KPI-06 — Average Order Value (AOV):** Giá trị đơn hàng trung bình sau khi áp dụng gợi ý và gói bundle.
+- **SAL-KPI-07 — Sales Cycle:** Thời gian từ lúc phát sinh nhu cầu đến khi hoàn tất thanh toán hoặc đặt cọc giữ chỗ.
+- **SAL-KPI-08 — Booking Conversion Rate:** Tỷ lệ lịch hẹn lái thử showroom hoặc tư vấn B2B được xác nhận trên tổng số đề nghị lịch hẹn.
 
 ---
 
@@ -144,7 +148,7 @@ Hiệu quả của hệ thống 5 Sales Agent được đo lường qua các ch�
 
 ## ECN-002: Deterministic Floor Price Engine ($P_{floor}$) — Khóa cứng biên lãi ròng
 
-Năng lực mặc cả thương mại nằm sau P1. Lớp hội thoại chỉ đóng vai trò tiếp nhận nhu cầu và mức giá khách kỳ vọng; **tuyệt đối không nhận quyền quyết định tiền, không được truy cập hay tiết lộ giá vốn nội bộ, không tự ghi đè giá sàn**. Dữ liệu chi phí chỉ đi tới bộ tính giá máy chủ (Pricing Engine) và vai trò được cấp quyền.
+Năng lực mặc cả thương mại nằm sau Gate P2 (Sales Pilot). Lớp hội thoại chỉ đóng vai trò tiếp nhận nhu cầu và mức giá khách kỳ vọng; **tuyệt đối không nhận quyền quyết định tiền, không được truy cập hay tiết lộ giá vốn nội bộ, không tự ghi đè giá sàn**. Dữ liệu chi phí chỉ đi tới bộ tính giá máy chủ (Pricing Engine) và vai trò được cấp quyền.
 
 Công thức ngân sách, giá sàn và ví dụ được định nghĩa duy nhất tại [kinh tế đơn hàng](../delivery/analytics.md#unit-economics):
 
@@ -153,6 +157,7 @@ P = P_base − D; 0 ≤ D ≤ D_cap
 Lãi đóng góp = P × (1 − r) − C
 
 P_floor = max((C + L) / (1 − r), P_base − D_cap)
+Làm tròn sàn lên (Ceil) theo đơn vị tiền tệ nhỏ nhất được phép; tuyệt đối không làm tròn xuống.
 Điều kiện: 0 ≤ r < 1; dữ liệu chi phí đầy đủ và hợp lệ.
 ```
 

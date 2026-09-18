@@ -189,19 +189,19 @@ Hệ thống bắt buộc phải phân định rạch ròi 5 khái niệm dữ l
 
 Hệ thống phân định nghiêm ngặt 5 tầng bộ nhớ để bảo đảm an toàn dữ liệu, tránh rò rỉ ngữ cảnh và tối ưu chi phí vận hành:
 
-| Tầng bộ nhớ | Tên gọi kỹ thuật | Cơ chế lưu trữ & Vòng đời | Phạm vi dữ liệu |
-|---|---|---|---|
-| **Tầng 1** | **Working Memory** (Bộ nhớ tác vụ) | RAM / Redis cache; bị giải phóng hoặc đóng băng ngay sau khi kết thúc lượt hội thoại | Ngữ cảnh câu hỏi - đáp hiện tại, biến trung gian của prompt, trạng thái bước xử lý hiện hành |
-| **Tầng 2** | **Customer Context** (Ngữ cảnh khách hàng) | Cơ sở dữ liệu quan hệ (PostgreSQL); nạp động theo phiên | Hồ sơ Customer 360, lịch sử mua sắm, trạng thái consent hiện tại, ưu đãi khả dụng của khách |
-| **Tầng 3** | **Organizational Knowledge** (Tri thức tổ chức) | Second Brain Knowledge Base (Tệp Markdown phân cấp) & Vector DB Index | Tài liệu, chính sách, bảng giá niêm yết, playbook bán hàng và CSKH đã được phê duyệt (`approved`) |
-| **Tầng 4** | **Operational Memory** (Bộ nhớ vận hành Agent) | Cơ sở dữ liệu trạng thái bền vững (Stateful Workflow Store) | `run_id`, `task_id`, lịch hẹn gọi lại, số lần retry, khóa mutex phiên, nhật ký lỗi |
-| **Tầng 5** | **Learning Memory** (Bộ nhớ học tập & cải tiến) | Kho dữ liệu phân tích (Analytics Store) | Chỉ số chuyển đổi thực tế (Outcome), doanh thu đóng góp, phản hồi chấm điểm từ SCR-005, tỷ lệ giải quyết CSKH |
+| Tầng bộ nhớ | Tên gọi kỹ thuật | Cơ chế lưu trữ & Vòng đời | Hạ tầng nền tảng (Platform Implementation) | Phạm vi dữ liệu |
+|---|---|---|---|---|
+| **Tầng 1** | **Working Memory** (Bộ nhớ tác vụ) | RAM / Redis cache; giải phóng hoặc đóng băng ngay sau lượt hội thoại | Redis 7.2 (`tenant:{tenant_id}:wm:{session_id}`) | Ngữ cảnh câu hỏi - đáp hiện tại, biến trung gian của prompt, trạng thái bước xử lý hiện hành |
+| **Tầng 2** | **Customer Context** (Ngữ cảnh khách hàng) | Cơ sở dữ liệu quan hệ (PostgreSQL); nạp động theo phiên | PostgreSQL 16 (`agentos.customer_360_profiles` view & bảng `customers`, `consents`) | Hồ sơ Customer 360, lịch sử mua sắm, trạng thái consent hiện tại, ưu đãi khả dụng của khách |
+| **Tầng 3** | **Organizational Knowledge** (Tri thức tổ chức) | Second Brain Knowledge Base & Vector DB Index | Qdrant Vector Engine (`second_brain_knowledge`) & kho 21 tệp Markdown | Tài liệu, chính sách, bảng giá niêm yết, playbook bán hàng và CSKH đã được phê duyệt (`approved`) |
+| **Tầng 4** | **Operational Memory** (Bộ nhớ vận hành Agent) | Cơ sở dữ liệu trạng thái bền vững (Stateful Workflow Store) | PostgreSQL (`agentos.workflow_executions`, `agent_run_logs`) & Redis Mutex Lock | `run_id`, `task_id`, lịch hẹn gọi lại, số lần retry, khóa mutex phiên, nhật ký lỗi |
+| **Tầng 5** | **Learning Memory** (Bộ nhớ học tập & cải tiến) | Kho dữ liệu phân tích (Analytics Store) | PostgreSQL (`agentos.learnings`) & bảng tổng hợp chỉ số kinh doanh | Chỉ số chuyển đổi thực tế (Outcome), doanh thu đóng góp, phản hồi chấm điểm từ SCR-005, tỷ lệ giải quyết CSKH |
 
 **Nguyên tắc vận hành**: AI không được phép tự ý lưu nội dung hội thoại thô thành tri thức lâu dài của tổ chức. Mọi thông tin cập nhật vào Second Brain bắt buộc phải qua bộ lọc làm sạch dữ liệu và sự phê duyệt của con người.
 
 ## 4. Kho kiến thức doanh nghiệp (Second Brain Knowledge Base)
 
-AI Agent không được hoạt động dựa trên tri thức nội tại thiếu kiểm chứng của mô hình LLM mà phải truy xuất từ cấu trúc phân cấp chuẩn hóa gồm đúng 20 tệp markdown phân bổ trong 8 thư mục nghiệp vụ (khớp 100% Mục 10 SRS):
+AI Agent không được hoạt động dựa trên tri thức nội tại thiếu kiểm chứng của mô hình LLM mà phải truy xuất từ cấu trúc phân cấp chuẩn hóa gồm đúng 21 tệp markdown phân bổ trong 8 thư mục nghiệp vụ (khớp 100% Mục 10 SRS):
 
 ```text
 /company
