@@ -1,0 +1,125 @@
+{
+  "id": "E2E-LIVE-MKT",
+  "title": "TC-E2E-002 + PILOT-01: approval gate, then campaign to reconciled revenue (approved sandbox)",
+  "document": "e2e/live.md",
+  "layer": "e2e",
+  "environment": "live",
+  "priority": "critical",
+  "gate": "P3",
+  "basis": "blueprint",
+  "pair": "E2E-OFF-MKT",
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "TC-E2E-002",
+    "PILOT-01",
+    "MKT-05",
+    "MKT-06",
+    "MKT-04",
+    "MKT-02",
+    "SAL-02",
+    "SAL-03",
+    "BR-007",
+    "AUTH-4",
+    "BR-004",
+    "SRS-20"
+  ],
+  "facets": [
+    "stage:PLAN",
+    "stage:APPROVAL",
+    "stage:EXECUTION",
+    "stage:OUTCOME",
+    "stage:LEARNING",
+    "skill:skill.mkt.dispatch_campaign",
+    "skill:skill.mkt.evaluate_attribution",
+    "skill:skill.mkt.segment_audience",
+    "skill:skill.mkt.audit_brand_compliance",
+    "channel:EMAIL",
+    "kpi:Campaign Revenue",
+    "kpi:ROAS",
+    "kpi:Lead Conversion"
+  ],
+  "risk": "A campaign publishes without approval, or stops at 'sent': with no response, order and reconciled revenue there is no evidence the marketing spend worked.",
+  "preconditions": [
+    "run_id=RUN-E2E-LIVE-MKT, case_id=E2E-LIVE-MKT, worker=w-biz-e2e-live; audience size 1 (the approved sandbox recipient) with a pre-approved sandbox template",
+    "the operator approval for this run is recorded through the real approval-centre API on the sandbox; no production audience is queried"
+  ],
+  "inputs": {
+    "tenant_id": "LIVE_TENANT_ID",
+    "campaign_id": "sandbox-campaign-<run_id>",
+    "segment_id": "sandbox-segment-<run_id>-size1",
+    "channel": "EMAIL",
+    "approved_content_id": "sandbox-draft-<run_id>",
+    "effect_key_publish": "EK-E2E-LIVE-MKT-<run_id>",
+    "sandbox_recipient": "approved test mailbox only",
+    "attribution_model": "LAST_TOUCH"
+  },
+  "steps": [
+    {
+      "action": "Build the one-recipient audience and the content on the sandbox",
+      "expected": "the sandbox segment returns exactly the approved recipient and the draft is created and audited compliant"
+    },
+    {
+      "action": "Attempt to publish before approval",
+      "expected": "dispatch_campaign returns APPROVAL_REQUIRED and the provider test sink records zero calls for the effect_key; no provider reference is fabricated for the denied attempt"
+    },
+    {
+      "action": "Approve then publish",
+      "expected": "the sandbox provider returns a real message id for the single send, recipient_count is 1 and the consent row is re-verified at send time"
+    },
+    {
+      "action": "Observe the response and the sales handoff",
+      "expected": "the response is injected through the approved sandbox inbound webhook, the orchestrator routes it to Sales and the conversation trace shows the recommendation"
+    },
+    {
+      "action": "Create the sandbox order and reconcile revenue",
+      "expected": "the sandbox order id is created through the approved sandbox ordering path and evaluate_attribution reports that order id with its amount"
+    },
+    {
+      "action": "Verify receipts and clean up non-destructively",
+      "expected": "every live artefact is linked by run_id; the sent message and its receipt are retained as immutable and reported as non-deletable"
+    }
+  ],
+  "assertions": [
+    "the denied pre-approval publish produced zero provider calls (provider test sink is the oracle) and no provider id exists for it",
+    "exactly one sandbox send occurred after approval, to the single approved recipient, with a provider reference that resolves in the sandbox provider API",
+    "the attributed order id exists in the sandbox ordering system with the amount the attribution reports",
+    "the live journey reaches response -> sales -> order -> revenue evidence, so the pilot passes on the reconciled revenue loop rather than on the send"
+  ],
+  "forbidden": [
+    "sending to any address outside the approved sandbox allowlist",
+    "claiming send or revenue success from a queue acknowledgement or a campaign dashboard without the provider receipt"
+  ],
+  "evidence": [
+    "sandbox provider message id + delivery receipt (immutable, retained)",
+    "approval row plus the zero-call test-sink log for the denied attempt",
+    "sandbox order record and the attribution report for the run"
+  ],
+  "cleanup": [
+    "Retire the sandbox artefacts created by this run through the supported sandbox APIs (cancel/withdraw the created cart, campaign, case and voucher references); delete nothing immutable — sent messages, provider receipts and audit rows are retained and reported as non-deletable rather than pretending they were unsent"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. The same lifecycle runs on the sandbox with an audience of one approved recipient and real sandbox provider receipts.",
+  "prerequisites": [
+    "ASM-001 approved connector lock is present (LIVE_CONNECTORS_LOCK points at the approved connector list) — without it this case is SKIP_ASM_001, never PASS",
+    "Per-case sandbox authorization: the run_id of this case is registered in the approved sandbox allowlist with its sandbox tenant/customer/SKU mapping before execution; credentials live outside the repository (env.local) and are never printed in evidence",
+    "The sandbox campaign/audience feature is enabled for the tenant; if it is unsupported the case is BLOCKED_PREREQUISITE, never PASS"
+  ],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/05-skill-system-specifications.md",
+    "plans/modules/marketing.md",
+    "implement/09-sprint-roadmap-and-pilots.md",
+    "plans/delivery/analytics.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/catalog.json",
+    "fixtures/offline/customers.json",
+    "fixtures/offline/consents.json",
+    "fixtures/offline/events.json",
+    "fixtures/offline/orders.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

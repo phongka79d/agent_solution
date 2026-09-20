@@ -1,0 +1,88 @@
+{
+  "id": "GOV-APV-ROLE-DENIED",
+  "title": "Role control: an operator without the approver role cannot decide or see the payload",
+  "document": "governance/approval.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SCR-003",
+    "NFR-001",
+    "AUTH-4"
+  ],
+  "facets": [
+    "entity:Approval"
+  ],
+  "risk": "Any authenticated user of the tenant can approve high-risk financial actions, so the approval gate becomes decorative.",
+  "preconditions": [
+    "Namespace gov-apv-<case_id>-<worker_id>; approval queue seeded from fixtures/offline/governance.json.",
+    "Operator identities and roles resolved from the fixture operator registry; every decision goes through POST /api/v1/approvals/{id}/decision, the only approval route.",
+    "OP-VIEWER-T1 holds role VIEWER with an empty decisions list; APV-CAMP-15 is pending in the same tenant."
+  ],
+  "inputs": {
+    "viewer_read": {
+      "method": "GET",
+      "path": "/api/v1/approvals/APV-CAMP-15",
+      "operator_id": "OP-VIEWER-T1"
+    },
+    "viewer_decide": {
+      "method": "POST",
+      "path": "/api/v1/approvals/APV-CAMP-15/decision",
+      "body": {
+        "decision": "APPROVE",
+        "operator_id": "OP-VIEWER-T1",
+        "reason": "LGTM"
+      }
+    }
+  },
+  "steps": [
+    {
+      "action": "Read the item as the VIEWER operator",
+      "expected": "The response either omits the item or returns it without the privileged payload fields, and it never exposes the signature context."
+    },
+    {
+      "action": "Submit an APPROVE decision as the VIEWER operator",
+      "expected": "HTTP 403 with a role error; the item remains AWAITING_HUMAN and no execution occurs."
+    },
+    {
+      "action": "Submit the same decision as OP-APPROVER-T1",
+      "expected": "HTTP 200 with status APPROVED, proving the refusal was role-based and not a broken endpoint."
+    }
+  ],
+  "assertions": [
+    "The role check is enforced server-side; a VIEWER decision is refused with 403 and zero state change.",
+    "The refusal does not leak the risk payload or budget figures.",
+    "The authorized operator still succeeds, so the control blocks without breaking the workflow.",
+    "The refused attempt is audited with the operator id and the missing permission."
+  ],
+  "forbidden": [
+    "Enforcing the role only in the UI so an API call bypasses it.",
+    "Returning 200 with the decision silently ignored.",
+    "Blocking all operators including the approver role."
+  ],
+  "evidence": [
+    "403 response body for the viewer decision.",
+    "Item state before/after plus the successful authorized decision.",
+    "Audit rows for both attempts."
+  ],
+  "cleanup": [
+    "Delete the gov- approval rows; simulated send is reported as non-recallable."
+  ],
+  "automation": "Real role enforcement at the gateway and service layers; role data sourced from the fixture registry so the matrix is data-driven rather than hardcoded.",
+  "prerequisites": [],
+  "references": [
+    "implement/07-human-command-center-ui.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

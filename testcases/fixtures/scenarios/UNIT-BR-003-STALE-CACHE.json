@@ -1,0 +1,94 @@
+{
+  "id": "UNIT-BR-003-STALE-CACHE",
+  "title": "BR-003: inventory cache older than the freshness window is invalidated",
+  "document": "unit/business-rules.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "BR-003",
+    "NFR-008"
+  ],
+  "facets": [
+    "entity:Inventory",
+    "stage:DECISION"
+  ],
+  "risk": "A stale cached stock number keeps selling an item that is already gone, so orders are accepted and then cancelled.",
+  "preconditions": [
+    "Namespace gov-unit-br-<case_id>-<worker_id>; Business Rules Engine loaded with no cross-case state.",
+    "Frozen clock 2026-01-15T10:00:00Z; agent fixture context loaded from fixtures/offline/governance.json.",
+    "Catalog freshness window configured at 120 seconds (provisional design parameter, not an approved SLA)."
+  ],
+  "inputs": {
+    "cache_entries": [
+      {
+        "sku_id": "SKU-OK",
+        "cached_stock": 12,
+        "age_seconds": 119,
+        "expected": "VALID"
+      },
+      {
+        "sku_id": "SKU-OK",
+        "cached_stock": 12,
+        "age_seconds": 121,
+        "expected": "ERR_STALE_INVENTORY_CACHE"
+      },
+      {
+        "sku_id": "SKU-OK",
+        "cached_stock": 12,
+        "age_seconds": 3600,
+        "expected": "ERR_STALE_INVENTORY_CACHE"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Evaluate the cache entry that is 119 seconds old",
+      "expected": "The entry is valid and the stock value 12 is used with its age recorded."
+    },
+    {
+      "action": "Evaluate the entry 121 seconds old",
+      "expected": "Rule fails with ERR_STALE_INVENTORY_CACHE and the reason reports the age and the configured window."
+    },
+    {
+      "action": "Evaluate the entry one hour old",
+      "expected": "Same failure with a larger reported age; the system refreshes from the SoR rather than answering from cache."
+    }
+  ],
+  "assertions": [
+    "The freshness boundary is closed at the configured window: 119s valid, 121s invalid.",
+    "errorCode is exactly ERR_STALE_INVENTORY_CACHE and the message contains both ages.",
+    "A stale entry is never silently used as a fallback when the refresh fails; the failure escalates instead.",
+    "No stock number derived from a stale entry reaches a customer-facing message."
+  ],
+  "forbidden": [
+    "Extending the cache TTL implicitly when the SoR is slow.",
+    "Falling back to the stale value and labelling it as fresh.",
+    "Using wall-clock time instead of the frozen test clock, which would make the case flaky."
+  ],
+  "evidence": [
+    "Cache evaluation records with entry age and verdict.",
+    "SoR refresh call log showing the refresh request was issued for the stale entries."
+  ],
+  "cleanup": [
+    "Purge the gov- cache namespace so no stale entry survives the run."
+  ],
+  "automation": "Real BusinessRulesEngine and PEP under test; only ERP/POS/connector boundaries are substituted by the offline mock whose call log and receipts are the oracle. Rules are evaluated in sequence and halt on the first failure, so each case asserts the first failing rule code rather than a bag of errors.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/catalog.json",
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

@@ -1,0 +1,92 @@
+{
+  "id": "GOV-KPI-MKT-04",
+  "title": "MKT-04 ROAS: declared formula, numerator and denominator with honest missing-data behaviour",
+  "document": "governance/kpi.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P3",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SRS-20",
+    "MKT-01",
+    "MKT-06"
+  ],
+  "facets": [
+    "kpi:ROAS",
+    "stage:OUTCOME"
+  ],
+  "risk": "The ROAS figure is produced under different accounting rules - revenue divided by a planned budget, which reports a return on money that was never spent - so the KPI is wrong in the direction that flatters the programme and every decision taken on it inherits the error.",
+  "preconditions": [
+    "Namespace gov-kpi-<case_id>-<worker_id>; the metric is computed by the real reporting code over fixtures/offline/governance.json kpi_dataset and never copied from the dashboard payload.",
+    "Frozen clock 2026-01-15T10:00:00Z with the reporting window 2026-01-01T00:00:00Z .. 2026-02-01T00:00:00Z as a half-open interval; the stored aggregate is recomputed independently from the raw counter rows.",
+    "Metric scope is fixed before measurement: numerator is attributed ad revenue; denominator is actual ad spend (planned budget excluded).",
+    "The dictionary entry for 'ROAS' (owner, unit, window, exclusion rule) is loaded read-only and is compared with the recomputation instead of being trusted."
+  ],
+  "inputs": {
+    "metric": "ROAS",
+    "code": "MKT-04",
+    "group": "Marketing",
+    "dataset": "kpi_dataset.marketing",
+    "formula": "attributed ad revenue divided by actual ad spend in the window",
+    "window": [
+      "2026-01-01T00:00:00Z",
+      "2026-02-01T00:00:00Z"
+    ],
+    "currency": "TWD",
+    "expected_value": "4.67x",
+    "wrong_value_if_buggy": "revenue divided by a planned budget, which reports a return on money that was never spent",
+    "release_blocker": false,
+    "expected_boundary_behaviour": "zero spend returns NOT_DEFINED rather than an infinite or a zero return"
+  },
+  "steps": [
+    {
+      "action": "Compute ROAS from the frozen rows in kpi_dataset.marketing",
+      "expected": "The stored aggregate reports 4.67x and records the formula, the window and the currency that produced it."
+    },
+    {
+      "action": "Recompute ROAS independently from the raw counter rows for the same tenant and window",
+      "expected": "The recomputed value equals the stored value 4.67x, and every numerator row lies inside the denominator scope."
+    },
+    {
+      "action": "Force the empty-source variant of the metric (no qualifying row in the window)",
+      "expected": "The metric reports zero spend returns NOT_DEFINED rather than an infinite or a zero return; the display distinguishes missing source data from a measured zero."
+    },
+    {
+      "action": "Read the dashboard payload and the metric dictionary entry",
+      "expected": "The dashboard renders the stored value with its window, coverage and source, and the dictionary names the owner, unit, numerator and denominator that the recomputation used."
+    }
+  ],
+  "assertions": [
+    "ROAS equals 4.67x for the frozen window, recomputed from the raw counter rows with numerator scope 'attributed ad revenue' and denominator scope 'actual ad spend (planned budget excluded)'.",
+    "A recomputation that yields revenue divided by a planned budget, which reports a return on money that was never spent is detected as wrong: the stored aggregate and the independent recomputation must agree before the figure is published.",
+    "The dashboard payload for the same tenant and window carries the stored value with its window, coverage and measurement source; it substitutes neither a design target nor another metric's value.",
+    "Boundary behaviour: zero spend returns NOT_DEFINED rather than an infinite or a zero return; missing source data is never rendered as a measured zero."
+  ],
+  "forbidden": [
+    "Using the planned budget as the denominator.",
+    "Publishing ROAS as a currency amount instead of a multiplier."
+  ],
+  "evidence": [
+    "Ad spend statement extract with the actual amounts.",
+    "Attributed revenue table used as the numerator."
+  ],
+  "cleanup": [
+    "Delete gov- aggregate, raw-counter and scenario rows for MKT-04 after exporting the recomputation table."
+  ],
+  "automation": "The reporting service and the metric dictionary run as real code under test over the frozen KPI dataset; the dashboard is a consumer whose displayed value must equal the independently recomputed value. Waits are condition-based on the stored aggregate row, metric values are never supplied as inputs, and no vendor boundary is involved in the arithmetic.",
+  "prerequisites": [],
+  "references": [
+    "plans/delivery/analytics.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

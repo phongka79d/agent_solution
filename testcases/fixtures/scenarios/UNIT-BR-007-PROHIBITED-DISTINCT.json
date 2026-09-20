@@ -1,0 +1,88 @@
+{
+  "id": "UNIT-BR-007-PROHIBITED-DISTINCT",
+  "title": "BR-007 vs AUTH-5: prohibited actions are denied, not queued for approval",
+  "document": "unit/business-rules.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "BR-007",
+    "AUTH-4",
+    "AUTH-5",
+    "BR-008",
+    "NFR-001"
+  ],
+  "facets": [
+    "entity:Approval",
+    "stage:APPROVAL"
+  ],
+  "risk": "A prohibited action is queued as if a human could approve it, turning a hard safety prohibition into an overridable ticket.",
+  "preconditions": [
+    "Namespace gov-unit-br-<case_id>-<worker_id>; Business Rules Engine loaded with no cross-case state.",
+    "Frozen clock 2026-01-15T10:00:00Z; agent fixture context loaded from fixtures/offline/governance.json."
+  ],
+  "inputs": {
+    "financial_approvable": {
+      "order_id": "ORD-A-1",
+      "refund_amount_twd": 1200,
+      "category": "refund"
+    },
+    "prohibited": {
+      "category": "raw_cross_tenant_export",
+      "target_tenant": "22222222-2222-2222-2222-222222222222"
+    },
+    "expected": {
+      "financial_approvable": "REQUIRE_HUMAN_APPROVAL",
+      "prohibited": "DENY_PROHIBITED"
+    }
+  },
+  "steps": [
+    {
+      "action": "Evaluate the refund that exceeds the (unset) autonomy limit",
+      "expected": "Verdict is REQUIRE_HUMAN_APPROVAL with an approval ticket id - a human decision can resolve it."
+    },
+    {
+      "action": "Evaluate the raw cross-tenant export",
+      "expected": "Verdict is DENY_PROHIBITED with no ticket id - no human decision can resolve it."
+    },
+    {
+      "action": "Scan the approval queue and audit rows",
+      "expected": "Exactly one new ticket exists (the refund); the prohibited action has no queue entry and instead has a security alert row."
+    }
+  ],
+  "assertions": [
+    "The two high-risk categories produce different verdicts and different queue outcomes.",
+    "Approval queue delta is exactly 1, not 2.",
+    "The prohibited action cannot be made executable by any decision value of the five SCR-003 decisions.",
+    "Both actions are audited, with distinct decision codes."
+  ],
+  "forbidden": [
+    "Routing AUTH-5 actions into the approval centre.",
+    "Allowing an APPROVE decision on a prohibited payload.",
+    "Labelling the difference in prose only while the code paths share one branch."
+  ],
+  "evidence": [
+    "Verdict JSON for both actions and the approval queue snapshot.",
+    "Audit rows plus the security alert record for the prohibited action."
+  ],
+  "cleanup": [
+    "Cancel the refund ticket and delete gov- rows."
+  ],
+  "automation": "Real BusinessRulesEngine and PEP under test; only ERP/POS/connector boundaries are substituted by the offline mock whose call log and receipts are the oracle. Rules are evaluated in sequence and halt on the first failure, so each case asserts the first failing rule code rather than a bag of errors.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

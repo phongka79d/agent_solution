@@ -1,0 +1,88 @@
+{
+  "id": "INT-CASE-ASSIGNED-to-IN_PROGRESS",
+  "title": "An assigned case starts work and records the resolution attempt",
+  "document": "integration/case-fsm.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "CS-01",
+    "FR-CS-002",
+    "FR-CS-001"
+  ],
+  "facets": [
+    "entity:Service Case",
+    "intent:order_status",
+    "stage:ACTION"
+  ],
+  "risk": "Work begins without any recorded attempt, so a later escalation has no history and the customer repeats the same problem.",
+  "preconditions": [
+    "An ASSIGNED order-status case CASE-T1-0003 for cust-a linked to ORD-A-1 in namespace cd-progress-*",
+    "Order lookup available through the stubbed ERP fixture"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "case_number": "CASE-T1-0003",
+    "transition": {
+      "event": "start_work",
+      "actor": "CS-01"
+    },
+    "evidence": {
+      "source": "ORD-A-1",
+      "skill": "skill.care.lookup_order"
+    }
+  },
+  "steps": [
+    {
+      "action": "Start work on the assigned case",
+      "expected": "state becomes IN_PROGRESS with a start timestamp and the owner unchanged"
+    },
+    {
+      "action": "Record the lookup attempt against ORD-A-1 with its source reference",
+      "expected": "the case links an evidence record that references ORD-A-1 and the skill id used"
+    },
+    {
+      "action": "Attempt to start work on a case that is still CLASSIFIED",
+      "expected": "the transition is refused as an invalid state transition and the case state is unchanged"
+    },
+    {
+      "action": "Read the case timeline",
+      "expected": "the IN_PROGRESS transition and the evidence link appear once each in chronological order"
+    }
+  ],
+  "assertions": [
+    "The case reports IN_PROGRESS with exactly one evidence link to ORD-A-1",
+    "Starting work from CLASSIFIED is refused with an invalid-transition error",
+    "The case timeline shows the transition and the evidence link exactly once each"
+  ],
+  "forbidden": [
+    "Report IN_PROGRESS without any recorded resolution attempt",
+    "Overwrite the assigned owner while starting work"
+  ],
+  "evidence": [
+    "Case projection and evidence link (source reference, skill id)",
+    "Invalid-transition audit entry from the CLASSIFIED attempt"
+  ],
+  "cleanup": [
+    "Delete the run-scoped case and evidence link for cd-progress-*; keep the audit entries"
+  ],
+  "automation": "Call the real manage_case skill with the ERP adapter stubbed by fixtures/offline/orders.json; assert on the evidence linkage rather than on the state string alone.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/03-database-and-memory-schema.md",
+    "implement/05-skill-system-specifications.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/orders.json",
+    "fixtures/offline/platform.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

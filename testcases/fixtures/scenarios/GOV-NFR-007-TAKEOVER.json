@@ -1,0 +1,84 @@
+{
+  "id": "GOV-NFR-007-TAKEOVER",
+  "title": "NFR-007 takeover: the human mutex blocks the agent in every workflow state",
+  "document": "governance/nfr.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "NFR-007",
+    "SCR-005",
+    "NFR-006"
+  ],
+  "facets": [
+    "entity:Conversation",
+    "stage:ACTION"
+  ],
+  "risk": "Takeover works in the chat screen but a background campaign or a cart-recovery workflow keeps messaging the same customer, so the human's answer is contradicted by the platform.",
+  "preconditions": [
+    "Namespace gov-nfr-<case_id>-<worker_id>; NFR verification runs against the offline gateway with mock SoR and channel boundaries.",
+    "Frozen clock 2026-01-15T10:00:00Z; failure, outage and crash injections are scripted at the substituted boundary, never faked inside the assertion.",
+    "Conversation conv-nfr-7 has a cart-recovery reminder scheduled to fire after the takeover."
+  ],
+  "inputs": {
+    "takeover": {
+      "operator_id": "OP-SUPERVISOR-T1",
+      "conversation_id": "conv-nfr-7"
+    },
+    "background_task": {
+      "kind": "cart_recovery_reminder",
+      "customer_id": "cust-a",
+      "fire_at": "after takeover"
+    }
+  },
+  "steps": [
+    {
+      "action": "Acquire the takeover lease for the customer conversation",
+      "expected": "Status becomes HUMAN_TAKEOVER and the mutex key exists for the conversation."
+    },
+    {
+      "action": "Let the scheduled background reminder fire",
+      "expected": "The reminder is blocked by the mutex with a 409 and no message is delivered to the customer."
+    },
+    {
+      "action": "Send an operator reply and then resume",
+      "expected": "The operator reply is delivered once; after resume the next agent action is permitted again."
+    }
+  ],
+  "assertions": [
+    "The mutex suppresses every agent-originated send for the conversation, including background workflows - not just interactive replies.",
+    "Adapter counter shows one operator message and zero agent messages during the takeover.",
+    "Resume restores agent messaging without sending an accumulated backlog of blocked reminders.",
+    "The blocked reminder is recorded with the mutex reason rather than being silently dropped."
+  ],
+  "forbidden": [
+    "Applying the takeover only to the interactive reply path.",
+    "Delivering the blocked reminders in a burst immediately after resume.",
+    "Treating resume as a new authority grant."
+  ],
+  "evidence": [
+    "Mutex key lifecycle and conversation status history.",
+    "Adapter message log with sender attribution and counts.",
+    "Blocked reminder records with the 409 reason."
+  ],
+  "cleanup": [
+    "Resume if needed and delete gov- conversation and reminder rows."
+  ],
+  "automation": "Core PEP, rules engine, audit writer, idempotency store and worker lease logic run as real code under test; only ERP/WMS, channel gateways, Redis and the model provider are substituted. Faults are injected at those boundaries and waits are condition-based on persisted state.",
+  "prerequisites": [],
+  "references": [
+    "implement/07-human-command-center-ui.md",
+    "implement/08-security-governance-nfr.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

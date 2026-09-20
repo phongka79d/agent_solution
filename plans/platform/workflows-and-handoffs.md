@@ -22,20 +22,20 @@ Mô hình ngôn ngữ lớn (LLM) chỉ đóng vai trò hiểu ngữ cảnh và 
 
 Phiên bản cấu hình bảo đảm khả năng truy vết lịch sử. Trước mỗi bước thực thi, hệ thống bắt buộc phải kiểm tra lại quyền hạn, trạng thái kích hoạt của mô-đun, sự đồng ý (consent), dữ liệu giá sàn và trạng thái khách hàng thời gian thực. Ảnh chụp dữ liệu cũ tuyệt đối không được phép ghi đè các chính sách an toàn mới.
 
-### Cấu trúc Nhật ký Kiểm toán Lần chạy Agent (Agent Run Log Schema — Chuẩn hóa theo Mục 17 SRS & NFR-006)
+### Cấu trúc Nhật ký Kiểm toán Lần chạy Agent (Agent Run Log Schema — Chuẩn hóa theo Mục 17 SRS, NFR-006 và lớp cô lập đa doanh nghiệp)
 
-Tuân thủ Mục 17 của SRS (AI-REV-SRS-001) và tiêu chuẩn cô lập dữ liệu đa doanh nghiệp (NFR-006), mỗi lần chạy của bất kỳ AI Agent nào trong hệ thống (Agent Run) bắt buộc phải ghi lại đầy đủ các trường thông tin vào Audit Store phục vụ giám sát thời gian thực tại SCR-002 và truy vết hồi tố (TC-E2E-009):
+Tuân thủ Mục 17 của SRS (AI-REV-SRS-001) và tiêu chuẩn cô lập ngữ cảnh khách hàng (**NFR-006**: dữ liệu khách A tuyệt đối không được xuất hiện trong ngữ cảnh khách B); cô lập đa doanh nghiệp theo `tenant_id` là lớp phòng vệ bổ sung, tách biệt với NFR-006. Mỗi lần chạy của bất kỳ AI Agent nào trong hệ thống (Agent Run) bắt buộc phải ghi lại đầy đủ các trường thông tin vào Audit Store phục vụ giám sát thời gian thực tại SCR-002 và truy vết hồi tố (TC-E2E-009). Thời hạn lưu trữ bản ghi kiểm toán do chính sách dữ liệu của tenant quy định (**[UNCONFIRMED][ASM-005]**); tài liệu này không cam kết lưu trữ vĩnh viễn:
 
 | STT | Trường dữ liệu (Field) | Kiểu dữ liệu | Ý nghĩa & Quy cách chuẩn hóa |
 |---|---|---|---|
 | 1 | `run_id` | `UUID v4` | Mã định danh duy nhất của phiên chạy Agent; không trùng lặp |
-| 2 | `tenant_id` | `UUID v4 / String` | Mã định danh doanh nghiệp; bắt buộc ở mọi bản ghi kiểm toán bảo đảm cách ly dữ liệu đa doanh nghiệp (NFR-006) |
+| 2 | `tenant_id` | `UUID v4 / String` | Mã định danh doanh nghiệp; bắt buộc ở mọi bản ghi kiểm toán để cách ly dữ liệu giữa các doanh nghiệp (lớp phòng vệ tenant bổ sung, tách biệt với NFR-006) |
 | 3 | `agent_id` | `String` | Mã định danh Agent thực thi (ví dụ: `MKT-05`, `SAL-02`, `CS-01`) |
 | 4 | `customer_or_entity_id` | `String` | Khách hàng hoặc thực thể chịu tác động (`customer_id`, `lead_id`, `case_id`) |
 | 5 | `trigger` | `String` | Sự kiện hoặc tín hiệu kích hoạt (`cart.abandoned`, `message.received`, `lead.qualified`) |
 | 6 | `context` | `JSON Object` | Ảnh chụp ngữ cảnh đầu vào: lát cắt Customer 360, trạng thái consent, phiên hội thoại |
 | 7 | `skill` | `String` | Mã kỹ năng được kích hoạt (ví dụ: `skill.sales.check_stock`, `skill.care.lookup_order`) |
-| 8 | `tool` | `String` | Cổng kết nối Adapter hoặc công cụ thực thi liên kết (API-001, API-002, ADPT-TW-001) |
+| 8 | `tool` | `String` | Interface connector hoặc công cụ thực thi liên kết (API-001, API-002, API-003 hoặc `<Domain>Connector`). Adapter cụ thể theo thị trường (ví dụ ADPT-TW-001) chỉ là hiện thực tùy chọn **[UNCONFIRMED][ASM-001]** |
 | 9 | `decision` | `JSON Object` | Quyết định logic được Orchestrator xác lập kèm lý do (Reason) |
 | 10 | `authority` | `Enum` | Cấp độ thẩm quyền áp dụng (`AUTH-0` đến `AUTH-5`) |
 | 11 | `approval` | `JSON Object \| null` | Bản ghi duyệt của con người nếu là `AUTH-4` (`{approver_id, decision, timestamp, reason}`) |
@@ -56,23 +56,25 @@ Hệ thống quản trị mọi hành động của AI theo 6 cấp bậc thẩm
 
 | Cấp độ | Tên quyền | Định nghĩa & Ranh giới hoạt động | Ví dụ áp dụng |
 |---|---|---|---|
-| `AUTH-0` | Observe | Chỉ đọc dữ liệu, quan sát hành vi, dòng sự kiện và tra cứu tài liệu công khai | Đọc Timeline Customer 360, tra cứu tài liệu Second Brain |
+| `AUTH-0` | Observe | Chỉ đọc dữ liệu, quan sát hành vi, dòng sự kiện và tra cứu tài liệu công khai (bao gồm mọi skill tra cứu chỉ đọc: giá, tồn kho, FAQ, đơn hàng, vận đơn) | Đọc Timeline Customer 360, tra cứu tài liệu Second Brain, gọi `skill.sales.check_price` / `skill.sales.check_stock` / `skill.care.lookup_order` |
 | `AUTH-1` | Recommend | Phân tích dữ liệu và đề xuất phương án cho con người hoặc Agent khác | Gợi ý sản phẩm phù hợp, chấm điểm cơ hội (lead scoring) |
 | `AUTH-2` | Draft | Tạo nội dung hoặc hành động ở dạng bản nháp nội bộ, chưa gửi ra ngoài | Soạn thảo tin nhắn, lập dàn ý chiến dịch, chuẩn bị draft order |
-| `AUTH-3` | Bounded Execute | Tự thực thi các tác vụ rủi ro thấp trong hạn mức và tần suất được cấu hình trước | Trả lời FAQ từ tài liệu đã duyệt, tra cứu trạng thái đơn, gửi tin nhắc giỏ trong hạn mức tần suất |
+| `AUTH-3` | Bounded Execute | Tự thực thi các tác vụ rủi ro thấp trong hạn mức và tần suất được cấu hình trước (hành động ghi/phát trả lời, tách biệt với skill tra cứu chỉ đọc ở `AUTH-0`) | Phát trả lời FAQ từ tài liệu đã duyệt ra kênh ngoài, gửi tin nhắc giỏ trong hạn mức tần suất |
 | `AUTH-4` | Approval Required | Chuẩn bị đầy đủ payload hành động nhưng bắt buộc dừng chờ con người phê duyệt tại SCR-003 | Phát động chiến dịch diện rộng, chiết khấu vượt trần, bồi thường, hoàn tiền, thay đổi chính sách |
 | `AUTH-5` | Prohibited | Tuyệt đối cấm; hệ thống chặn cứng ở tầng máy chủ (Hard Lock) | Tự tạo giá sản phẩm mới, truy cập dữ liệu chéo tenant, xuất dữ liệu khách hàng thô, tự nâng quyền |
 
-### Bảng giá trị ngưỡng an toàn mặc định (Default Fallback Thresholds cho quyền AUTH-4)
+### Ngưỡng kích hoạt AUTH-4 theo chính sách tenant (Tenant-Configurable Thresholds)
 
-Khi cấu hình riêng của từng doanh nghiệp chưa được thiết lập hoặc trong trạng thái khởi tạo hệ thống, máy chủ tự động kích hoạt các giá trị ngưỡng an toàn mặc định (Default Fallback Thresholds) nhằm bắt buộc dừng chờ con người phê duyệt tại SCR-003 (`AUTH-4`):
+Máy chủ bắt buộc dừng chờ con người phê duyệt tại SCR-003 (`AUTH-4`) khi hành động vượt ngưỡng do chính sách của từng tenant cấu hình. Hệ thống **không hardcode** giá trị nghiệp vụ nào; mọi ngưỡng dưới đây là tham số cấu hình theo tenant và chỉ có hiệu lực sau khi chủ sở hữu chính sách khóa giá trị:
 
-| Tham số kiểm soát rủi ro | Ngưỡng kích hoạt AUTH-4 mặc định | Hành vi khi vượt ngưỡng | Ranh giới an toàn tuyệt đối |
-|---|---|---|---|
-| **Tỷ lệ chiết khấu (Discount Rate)** | `> 15%` | Dừng phát ưu đãi tự động, chuyển yêu cầu phê duyệt sang SCR-003 kèm bằng chứng biên lợi nhuận | Tuyệt đối không cho phép giá sau giảm vi phạm giá sàn toán học $P_{floor}$ (BR-001, BR-002) |
-| **Bồi thường / Hoàn tiền (Compensation / Refund)** | `> 500 TWD` (hoặc tương đương ngoại tệ) | Khóa quyền tự động của CS Agent, bắt buộc nhân viên quản lý phê duyệt trước khi phát lệnh | Phải đối soát khớp với mã đơn hàng và bằng chứng sự cố (BR-007) |
-| **Quy mô tệp nhận tin chiến dịch (Campaign Audience)** | `> 5.000 khách hàng` | Yêu cầu phê duyệt ngân sách và nội dung thông điệp tại SCR-003 trước khi phát động | Kiểm soát chi phí phát sinh và chống gửi tin tiếp thị hàng loạt không mong muốn (BR-004) |
-| **Thay đổi chính sách / Điều khoản (Terms Modification)** | Mọi sửa đổi chính sách bảo hành, đổi trả, cam kết thương mại | Chuyển trạng thái sang `awaiting_human`, cấm AI tự ý cam kết vượt thẩm quyền | Bảo vệ tính toàn vẹn của Second Brain (`/policy/authority.md`) |
+| Tham số kiểm soát rủi ro | Ngưỡng kích hoạt AUTH-4 | Trạng thái ngưỡng | Hành vi khi vượt ngưỡng | Ranh giới an toàn tuyệt đối |
+|---|---|---|---|---|
+| **Tỷ lệ chiết khấu (Discount Rate)** | `<ngưỡng do tenant cấu hình>` | **[UNCONFIRMED][ASM-003]** — chưa chốt, không có giá trị mặc định nào được phê duyệt | Dừng phát ưu đãi tự động, chuyển yêu cầu phê duyệt sang SCR-003 kèm bằng chứng biên lợi nhuận | Tuyệt đối không cho phép giá sau giảm vi phạm giá sàn toán học $P_{floor}$ (BR-001, BR-002) |
+| **Bồi thường / Hoàn tiền (Compensation / Refund)** | `<ngưỡng do tenant cấu hình>` | **[UNCONFIRMED][ASM-004]** — chưa chốt loại giao dịch và mức tiền phải duyệt | Khóa quyền tự động của CS Agent, bắt buộc nhân viên quản lý phê duyệt trước khi phát lệnh | Phải đối soát khớp với mã đơn hàng và bằng chứng sự cố (BR-007) |
+| **Quy mô tệp nhận tin chiến dịch (Campaign Audience)** | `<ngưỡng do tenant cấu hình>` | **[UNCONFIRMED][ASM-003]** — chưa chốt quy mô tập nhận tin | Yêu cầu phê duyệt ngân sách và nội dung thông điệp tại SCR-003 trước khi phát động | Kiểm soát chi phí phát sinh và chống gửi tin tiếp thị hàng loạt không mong muốn (BR-004) |
+| **Thay đổi chính sách / Điều khoản (Terms Modification)** | Mọi sửa đổi chính sách bảo hành, đổi trả, cam kết thương mại | Quy tắc cố định, không phụ thuộc ngưỡng số | Chuyển trạng thái sang `awaiting_human`, cấm AI tự ý cam kết vượt thẩm quyền | Bảo vệ tính toàn vẹn của Second Brain (`/policy/authority.md`) |
+
+Khi tenant chưa cấu hình ngưỡng, hệ thống **fail closed** (NFR-008): mọi hành động thuộc các nhóm trên đều phải qua phê duyệt của con người tại SCR-003. Các con số từng xuất hiện trong bản nháp (tỷ lệ chiết khấu, mức tiền bồi thường, quy mô tệp nhận tin) chỉ mang tính minh họa để thử nghiệm, **không** phải giá trị đã được phê duyệt và không được dùng làm quy tắc lõi cho tới khi Business/Finance khóa ASM-003/ASM-004.
 
 ### 10 Quy tắc nghiệp vụ cốt lõi (Core Business Rules)
 
@@ -90,6 +92,8 @@ Khi cấu hình riêng của từng doanh nghiệp chưa được thiết lập 
 ## 3. Đặc tả hệ thống kỹ năng chuẩn hóa (Skill System Contract)
 
 Agent và Skill được phân tách hoàn toàn độc lập. Một Agent có thể sở hữu nhiều Skill, và một Skill có thể được tái sử dụng bởi nhiều Agent nếu được cấu hình quyền hạn. Mọi Skill bắt buộc tuân thủ hợp đồng giao tiếp chuẩn hóa gồm 11 trường dữ liệu:
+
+Mã định danh chuẩn của skill là dạng phân cấp `skill.<domain>.<action>` (ví dụ `skill.sales.check_stock`, `skill.care.lookup_order`); các tên kebab trần (ví dụ `check-stock`, `lookup-order`) chỉ là bí danh hiển thị và không được dùng làm ID trong Registry hay audit log.
 
 ```json
 {
@@ -116,7 +120,7 @@ Agent và Skill được phân tách hoàn toàn độc lập. Một Agent có t
     }
   },
   "allowed_agents": ["SAL-01", "SAL-02", "CS-01"],
-  "required_authority": "AUTH-3",
+  "required_authority": "AUTH-0",
   "tool_binding": "API-001.InventoryConnector",
   "validation_rules": [
     "sku_id must exist in active product catalog",
@@ -143,13 +147,15 @@ Agent và Skill được phân tách hoàn toàn độc lập. Một Agent có t
 }
 ```
 
+Ví dụ trên là skill **tra cứu chỉ đọc** nên `required_authority` phải là `AUTH-0`; hành động phát trả lời ra kênh ngoài hoặc thao tác ghi có hạn mức là action riêng, khai báo ở cấp `AUTH-3`.
+
 11 trường chuẩn hóa của Skill System Contract:
 1. **Skill ID**: Mã định danh duy nhất (chuẩn phân cấp: `skill.<domain>.<action>`).
 2. **Purpose**: Mô tả mục đích nghiệp vụ và phạm vi hoạt động cụ thể của skill.
 3. **Input / Output Schema**: Định nghĩa cấu trúc dữ liệu nghiêm ngặt theo JSON Schema.
 4. **Allowed Agents**: Danh sách mã định danh Agent được phép kích hoạt skill.
-5. **Required Authority**: Cấp độ quyền hạn tối thiểu để kích hoạt skill (từ `AUTH-0` đến `AUTH-4`).
-6. **Tool / Connector Binding**: Cổng kết nối Adapter hoặc công cụ thực thi tương ứng (API-001, API-002, API-003, Adapter).
+5. **Required Authority**: Cấp độ quyền hạn tối thiểu để kích hoạt skill (từ `AUTH-0` đến `AUTH-4`). Skill chỉ tra cứu khai báo `AUTH-0`; quyền `AUTH-3` chỉ áp cho hành động ghi/phát trả lời riêng, không gộp vào skill tra cứu.
+6. **Tool / Connector Binding**: Interface connector trừu tượng hoặc công cụ thực thi tương ứng (API-001, API-002, API-003, `<Domain>Connector`); adapter cụ thể theo thị trường (ví dụ ADPT-TW-001) là hiện thực tùy chọn, chỉ chốt sau khi khóa **[UNCONFIRMED][ASM-001]**.
 7. **Validation Rules**: Quy tắc kiểm tra tính hợp lệ của tham số và điều kiện tiên quyết trước khi thực thi.
 8. **Retry Policy**: Chính sách thử lại (số lần thử tối đa, hệ số lùi thời gian exponential backoff, điều kiện dừng lỗi cứng).
 9. **Timeout & Circuit Breaker**: Thời gian chờ tối đa (ms) và ngưỡng ngắt mạch bảo vệ hệ thống khi dịch vụ đích gặp sự cố.
@@ -172,22 +178,24 @@ Toàn bộ 23 kỹ năng của hệ thống bắt buộc phải tuân thủ nghi
 | 7 | `skill.mkt.evaluate_attribution` | Đánh giá hiệu quả chiến dịch, tính CAC và ROAS | `MKT-06` | `AUTH-1` | Analytics Store | 4000ms / 2 retries | `TC-SKILL-MKT-007` |
 | **II** | **Miền Bán Hàng (Sales - 8 Kỹ năng)** | | | | | | |
 | 8 | `skill.sales.search_product` | Tra cứu sản phẩm trong danh mục theo nhu cầu khách | `SAL-01`, `SAL-02` | `AUTH-0` | API-001 CatalogConnector | 1500ms / 3 retries | `TC-SKILL-SAL-001` |
-| 9 | `skill.sales.check_stock` | Tra cứu tồn kho thực tế theo kho hàng/khu vực | `SAL-01`, `SAL-02`, `CS-01` | `AUTH-3` | API-001 InventoryConnector | 3000ms / 3 retries | `TC-SKILL-SAL-002` |
-| 10 | `skill.sales.check_price` | Tra cứu giá niêm yết và kiểm tra ràng buộc giá sàn $P_{floor}$ | `SAL-02`, `SAL-04` | `AUTH-3` | API-001 PricingEngine | 2000ms / 3 retries | `TC-SKILL-SAL-003` |
-| 11 | `skill.sales.retrieve_customer` | Truy xuất hồ sơ Customer 360 và lịch sử mua sắm | `SAL-01`, `SAL-02`, `SAL-05` | `AUTH-0` | Customer 360 Store | 1500ms / 3 retries | `TC-SKILL-SAL-004` |
+| 9 | `skill.sales.check_stock` | Tra cứu tồn kho thực tế theo kho hàng/khu vực | `SAL-01`, `SAL-02`, `CS-01` | `AUTH-0` | API-001 InventoryConnector | 3000ms / 3 retries | `TC-SKILL-SAL-002` |
+| 10 | `skill.sales.check_price` | Tra cứu giá niêm yết và kiểm tra ràng buộc giá sàn $P_{floor}$ | `SAL-02`, `SAL-04` | `AUTH-0` | API-001 PricingEngine | 2000ms / 3 retries | `TC-SKILL-SAL-003` |
+| 11 | `skill.sales.retrieve_customer` | Truy xuất hồ sơ Customer 360 và lịch sử mua sắm (chỉ sau khi xác minh định danh khách hàng) | `SAL-01`, `SAL-02`, `SAL-05` | `AUTH-0` | Customer 360 Store | 1500ms / 3 retries | `TC-SKILL-SAL-004` |
 | 12 | `skill.sales.recommend_product` | Đề xuất sản phẩm, combo, upsell kèm Reason + Evidence | `SAL-02`, `SAL-03` | `AUTH-1` | Recommendation Engine | 2500ms / 2 retries | `TC-SKILL-SAL-005` |
 | 13 | `skill.sales.create_cart` | Tạo hoặc cập nhật giỏ hàng cho phiên tương tác | `SAL-02`, `SAL-04` | `AUTH-3` | API-002 / Commerce API | 2000ms / 2 retries | `TC-SKILL-SAL-006` |
-| 14 | `skill.sales.create_order` | Khởi tạo đơn hàng draft hoặc liên kết thanh toán an toàn | `SAL-02`, `SAL-04`, `SAL-05` | `AUTH-3` | API-001 OrderConnector | 4000ms / 1 retry | `TC-SKILL-SAL-007` |
+| 14 | `skill.sales.create_order` | Khởi tạo đơn hàng draft hoặc đơn đặt cọc chính thức vào ERP kèm xác thực giá phía máy chủ | `SAL-02`, `SAL-04`, `SAL-05` | `AUTH-4` | API-001 OrderConnector | 4000ms / 1 retry | `TC-SKILL-SAL-007` |
 | 15 | `skill.sales.send_message` | Gửi tin nhắn tư vấn hoặc nhắc giỏ hàng kèm `effect_key` | `SAL-02`, `SAL-04`, `SAL-05` | `AUTH-3` | API-003 Communication | 3000ms / 2 retries | `TC-SKILL-SAL-008` |
 | **III** | **Miền Chăm Sóc Khách Hàng (Customer Care - 8 Kỹ năng)** | | | | | | |
-| 16 | `skill.care.search_faq` | Tra cứu câu hỏi - đáp đã phê duyệt trong Second Brain | `CS-01` | `AUTH-3` | Second Brain (`/customer-care/faq.md`) | 1500ms / 3 retries | `TC-SKILL-CARE-001` |
-| 17 | `skill.care.lookup_order` | Tra cứu trạng thái đơn hàng, hóa đơn và lịch sử mua | `CS-01` | `AUTH-3` | API-001 OrderConnector | 2000ms / 3 retries | `TC-SKILL-CARE-002` |
-| 18 | `skill.care.track_shipping` | Tra cứu hành trình vận đơn bưu cục và siêu thị CVS | `CS-01` | `AUTH-3` | ADPT-TW-001 Logistics API | 2500ms / 3 retries | `TC-SKILL-CARE-003` |
+| 16 | `skill.care.search_faq` | Tra cứu câu hỏi - đáp đã phê duyệt trong Second Brain | `CS-01` | `AUTH-0` | Second Brain (`/customer-care/faq.md`) | 1500ms / 3 retries | `TC-SKILL-CARE-001` |
+| 17 | `skill.care.lookup_order` | Tra cứu trạng thái đơn hàng, hóa đơn và lịch sử mua (chỉ sau khi xác minh định danh khách hàng) | `CS-01` | `AUTH-0` | API-001 OrderConnector | 2000ms / 3 retries | `TC-SKILL-CARE-002` |
+| 18 | `skill.care.track_shipping` | Tra cứu hành trình vận đơn bưu cục và siêu thị CVS | `CS-01` | `AUTH-0` | Logistics Connector (interface); adapter cụ thể ví dụ ADPT-TW-001 là hiện thực tùy chọn **[UNCONFIRMED][ASM-001]** | 2500ms / 3 retries | `TC-SKILL-CARE-003` |
 | 19 | `skill.care.manage_case` | Tạo, cập nhật trạng thái và lưu vết vụ việc CSKH | `CS-01` | `AUTH-3` | Case Management Store | 2000ms / 3 retries | `TC-SKILL-CARE-004` |
-| 20 | `skill.care.initiate_return` | Tiếp nhận yêu cầu đổi trả hàng và tạo phiếu thu hồi | `CS-01` | `AUTH-4` | Reverse Logistics Adapter | 3500ms / 1 retry | `TC-SKILL-CARE-005` |
+| 20 | `skill.care.initiate_return` | Tiếp nhận yêu cầu đổi trả hàng và tạo phiếu thu hồi | `CS-01` | `AUTH-4` | Reverse Logistics Connector (interface) | 3500ms / 1 retry | `TC-SKILL-CARE-005` |
 | 21 | `skill.care.escalate_to_human` | Bàn giao vụ việc cho nhân viên con người (SCR-005) | `CS-01`, `CS-02` | `AUTH-3` | Orchestrator Handoff Bus | 1000ms / 2 retries | `TC-SKILL-CARE-006` |
 | 22 | `skill.care.analyze_churn_risk` | Phân tích cảm xúc tiêu cực và nguy cơ rời bỏ | `CS-02` | `AUTH-1` | Customer Intelligence | 2500ms / 2 retries | `TC-SKILL-CARE-007` |
 | 23 | `skill.care.issue_retention_offer` | Cấp voucher/ưu đãi giữ chân trong hạn mức quy định | `CS-02` | `AUTH-3` | Promotion Engine ($P_{floor}$) | 3000ms / 1 retry | `TC-SKILL-CARE-008` |
+
+**Phân tách quyền đọc và quyền trả lời:** các skill chỉ tra cứu trong Registry (`skill.sales.search_product`, `skill.sales.check_stock`, `skill.sales.check_price`, `skill.sales.retrieve_customer`, `skill.care.search_faq`, `skill.care.lookup_order`, `skill.care.track_shipping`) khai báo `AUTH-0` vì chỉ đọc dữ liệu. Việc phát câu trả lời ra kênh ngoài hoặc thao tác ghi có hạn mức là hành động riêng ở `AUTH-3` (ví dụ `skill.sales.send_message`, `skill.sales.create_cart`, `skill.care.manage_case`, `skill.care.escalate_to_human`), chịu kiểm tra consent, hạn mức tần suất và `effect_key` (BR-004, BR-005); thao tác tạo giao dịch vượt hạn mức như `skill.sales.create_order` vẫn thuộc `AUTH-4` và phải chờ phê duyệt tại SCR-003.
 
 ## 4. Máy trạng thái tác vụ thống nhất (Task State Machine)
 
@@ -254,7 +262,7 @@ Nhằm tối ưu chi phí vận hành kênh theo NFR-010 và bảo vệ an toàn
    - *Cơ chế FX Rate Buffer*:
      - **Ảnh chụp tỷ giá có thời hạn (Time-locked FX Snapshot)**: Khi tạo báo giá hoặc phiên tư vấn giỏ hàng, Core Engine khóa tỷ giá quy đổi trong một cửa sổ thời gian hữu hạn (mặc định 15 - 30 phút).
      - **Biên độ dự phòng tỷ giá (FX Safety Buffer)**: Tích hợp biên độ an toàn từ 1.5% đến 2.0% vào công thức tính giá bán khả dụng (cộng thêm vào giá vốn quy đổi hoặc trừ trực tiếp khỏi hạn mức chiết khấu $D_{cap}$), bảo đảm rằng ngay cả trong kịch bản tỷ giá biến động bất lợi nhất trong phiên, giá bán của AI luôn $\ge P_{floor}$.
-     - **Kiểm tra lại khi hết hạn (Quote Expiration Guard)**: Nếu khách hàng tiến hành thanh toán sau khi khóa tỷ giá hết hạn (`quote_expired`), hệ thống bắt buộc phải cập nhật tỷ giá hối đoái mới nhất từ cổng thanh toán (API-001 / ADPT-GL-002) và tái thẩm định điều kiện an toàn $P_{floor}$ trước khi cho phép tạo đơn hàng chính thức.
+     - **Kiểm tra lại khi hết hạn (Quote Expiration Guard)**: Nếu khách hàng tiến hành thanh toán sau khi khóa tỷ giá hết hạn (`quote_expired`), hệ thống bắt buộc phải cập nhật tỷ giá hối đoái mới nhất từ cổng thanh toán qua Payment Connector interface (API-001; adapter cụ thể như ADPT-GL-002 là hiện thực tùy chọn **[UNCONFIRMED][ASM-001]**) và tái thẩm định điều kiện an toàn $P_{floor}$ trước khi cho phép tạo đơn hàng chính thức.
 
 <a id=section-14></a>
 

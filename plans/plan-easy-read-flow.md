@@ -14,7 +14,7 @@ Ba trợ lý AI gắn vào ứng dụng đang có của doanh nghiệp:
 |---|---|---|---|
 | Tiếp thị | **OBJ-001** (Marketing) | Tìm hiểu thị trường, phát hiện nhu cầu sớm, tìm đối tác, tiếp nhận khách quan tâm (MKT-01..06) | Thu gom dữ liệu cá nhân hoặc gửi quảng cáo khi chưa đủ điều kiện (BR-004) |
 | Bán hàng | **OBJ-002** (Sales) | Hỏi đúng nhu cầu, giải thích sản phẩm, gợi ý lựa chọn và hỗ trợ mua (SAL-01..05) | Bịa công dụng, sửa giá, hứa đã thanh toán (BR-001, BR-003) |
-| Chăm sóc khách hàng | **OBJ-003** (Care) & **OBJ-004** (Retention) | Hướng dẫn, giải quyết câu hỏi, theo dõi vấn đề, giữ chân và chuyển nhân viên (CS-01, CS-02) | Tự duyệt hoàn tiền, đổi trả hay bỏ qua xác minh khách (AUTH-4, NFR-006) |
+| Chăm sóc khách hàng | **OBJ-003** (Care) & **OBJ-004** (Retention) | Hướng dẫn, giải quyết câu hỏi, theo dõi vấn đề, giữ chân và chuyển nhân viên (CS-01, CS-02) | Tự duyệt hoàn tiền, đổi trả (AUTH-4/BR-007) hay bỏ qua xác minh khách (NFR-006, TC-E2E-004) |
 
 > **Chú thích kiến trúc bắt buộc (OBJ-005, OBJ-006):** Ba trợ lý Tiếp thị, Bán hàng và Chăm sóc khách hàng không phải là 3 chatbot độc lập. Toàn bộ hệ thống là một lực lượng lao động AI thống nhất (**AI Revenue Workforce**) gồm **13 AI Agent chuyên trách** (MKT-01 đến MKT-06, SAL-01 đến SAL-05, CS-01 và CS-02) phối hợp đa tác vụ qua trung tâm điều phối **Revenue Orchestrator [OBJ-005]**, sử dụng chung nền tảng dữ liệu Customer Intelligence 360, kho tri thức (Knowledge Base) và tuân thủ nghiêm ngặt khung chính sách, phân quyền và lưu vết bằng chứng **[OBJ-006]**.
 
@@ -56,42 +56,43 @@ Hiểu vấn đề khách đang hoặc sắp gặp [OBJ-001]
 | Giải thích thông số bằng ngôn ngữ đời thường | Giúp khách hiểu và chọn đúng | Viết nội dung từ tài liệu đã duyệt, không bịa thời lượng hay hiệu suất |
 | Chọn nhanh bằng vài câu hỏi | Giảm nhập liệu trên điện thoại | Hỏi nhu cầu, điều kiện dùng, tầm giá; cho phép bỏ qua |
 | Gợi ý “chưa cần mua đắt hơn” | Tăng độ tin cậy, giảm mua sai | Nêu phương án đủ dùng hoặc giữ sản phẩm cũ nếu có căn cứ |
-| Ưu đãi có giới hạn kinh tế | Chia một phần chi phí thực sự tiết kiệm cho khách | Tính giá bằng máy chủ, chạy thử nội bộ trước khi cho AI đàm phán |
+| Ưu đãi có giới hạn kinh tế | Chia một phần chi phí thực sự tiết kiệm cho khách | Phép kiểm tra giá/ưu đãi tùy chọn do máy chủ tính theo chính sách được duyệt (tham số do chủ doanh nghiệp phê duyệt, chưa chốt), chạy thử nội bộ trước khi cho AI đàm phán |
 | Bảo vệ giá bằng phiếu mua lần sau | Giảm lo mua hớ và thử khả năng mua lại | Thử có người duyệt, ngân sách và điều kiện rõ ràng |
 | Phản hồi sau mua quay lại nghiên cứu | Sửa vấn đề thật thay vì chỉ tăng lượng tin nhắn | Tổng hợp lý do không mua, đổi trả và câu hỏi lặp lại để người phụ trách xem |
 
 Không khẳng định những ý này chưa từng có trên thị trường. Lợi thế cần được chứng minh qua kết quả của doanh nghiệp thử nghiệm.
 
-## 4. Khách trải nghiệm thế nào?
+## 4. Khách trải nghiệm thế nào? *(theo thiết kế đề xuất, chưa triển khai)*
 
 1. Khách vẫn dùng website quen thuộc; có thể xem và hỏi chung mà không buộc để lại số điện thoại.
 2. AI chỉ hỏi dữ liệu cần cho nhu cầu đang giải quyết. Khi khách đặt giao hàng, thu thông tin giao nhận theo quy trình hiện tại.
 3. Nút trả lời nhanh hoặc phần giải thích sản phẩm giúp giảm gõ. Không bật nhiều cửa sổ cùng lúc.
-4. Giá, tồn kho và chính sách đến từ nguồn doanh nghiệp cho phép.
+4. Giá, tồn kho và chính sách sẽ lấy từ nguồn doanh nghiệp cho phép, chưa phải dữ liệu đã kết nối.
 5. Trong bản đầu, khách thanh toán bằng trang/quy trình có sẵn; AI chưa tự tạo ưu đãi hay giao dịch.
 6. Hỗ trợ riêng về đơn hàng cần xác minh đúng khách. Muốn gặp nhân viên thì được chuyển ngay, không phải trả lời hết bộ câu hỏi.
 
 Số điện thoại giao hàng **không tự trở thành quyền gửi quảng cáo**. Khách từ chối nhận tin thì chuỗi liên hệ phù hợp phải dừng.
 
-## 5. Vì sao khách không cần kể lại từ đầu? [OBJ-005, OBJ-006]
+## 5. Vì sao khách không cần kể lại từ đầu? [OBJ-005, OBJ-006] *(theo thiết kế đề xuất, chưa triển khai)*
 
-Customer360 là bản tổng hợp phần thông tin được phép: khách đã hỏi gì, nguồn nào giới thiệu, sản phẩm quan tâm, đơn hàng đã xác nhận và vấn đề chưa xử lý.
+Theo thiết kế, Customer360 tổng hợp phần thông tin được phép: khách đã hỏi gì, nguồn giới thiệu, sản phẩm quan tâm, đơn hàng đã xác nhận và vấn đề chưa xử lý. Các trường dữ liệu cụ thể sẽ chốt theo nguồn kết nối thực tế, chưa phải danh mục đã triển khai.
 
-Mỗi cuộc trao đổi chỉ có một bên đang trả lời: một mô-đun hoặc nhân viên. Bàn giao phải có người nhận, tóm tắt và bước tiếp theo. Chưa ai nhận thì hiển thị “đang chờ”, không báo “đã xử lý”.
+Mỗi cuộc trao đổi chỉ nên có một bên được phát ngôn tại một thời điểm: một mô-đun hoặc nhân viên. Bàn giao phải có người nhận, tóm tắt và bước tiếp theo. Chưa ai nhận thì hiển thị “đang chờ”, không báo “đã xử lý”.
 
-Dữ liệu công ty A không được dùng để trả lời khách công ty B. Giá và đơn hàng vẫn thuộc hệ thống gốc; AI không thể biến câu “tôi đã chuyển khoản” thành giao dịch đã xác nhận.
+Dữ liệu khách hàng A không được xuất hiện trong ngữ cảnh khách hàng B (**cô lập ngữ cảnh khách hàng — NFR-006**); dữ liệu công ty A không được dùng để trả lời khách công ty B (lớp cô lập đa doanh nghiệp bổ sung). Giá và đơn hàng vẫn thuộc hệ thống gốc; AI không được phép biến câu “tôi đã chuyển khoản” thành giao dịch đã xác nhận.
 
 ## 6. Bản đầu làm đến đâu?
 
-Thứ tự cổng nghiệm thu theo lộ trình: **P1 — Chăm sóc khách hàng (Care)** trước, **P2 — Bán hàng (Sales)** tiếp theo, rồi mới tới Tiếp thị và các giai đoạn mở rộng.
+Thứ tự cổng nghiệm thu theo lộ trình: **P0 — Nền tảng (Foundation)** bắt buộc xong trước (hợp đồng dữ liệu chuẩn, Customer360, quyền hạn, chính sách, bằng chứng, nhật ký kiểm toán, khung kết nối); tiếp theo **P1 — Chăm sóc khách hàng (Care)**, rồi **P2 — Bán hàng (Sales)**, sau đó **P3 — Tiếp thị (Marketing)** và các giai đoạn mở rộng P4/P5.
 
 | Làm trước | Chờ giai đoạn sau |
 |---|---|
+| **P0 — Nền tảng:** hợp đồng dữ liệu chuẩn, Customer360, quyền hạn, chính sách, bằng chứng và nhật ký kiểm toán | Agent thông minh, tự động hóa nâng cao |
 | **P1 — Chăm sóc khách hàng:** trả lời câu hỏi phổ biến, tra cứu đơn hàng, chuyển nhân viên | Vận chuyển, phiếu bù giá, đổi trả chuyên sâu |
 | **P2 — Bán hàng:** hỏi nhu cầu, tra sản phẩm, giải thích có nguồn | Mặc cả tự động, ưu đãi kết hợp, thanh toán QR mới |
 | Một doanh nghiệp, một hành trình, website hiện có | Nhiều ngành, nhiều kênh và giao diện nhúng đầy đủ |
 | Hồ sơ khách hợp nhất, quyền riêng, nhật ký, báo cáo | Nhiều kênh, trình kéo-thả quy trình và tự động hóa nâng cao |
-| Tối đa một chuỗi nhắc với hai tin, chỉ khi đủ điều kiện liên hệ | Chăm sóc Tiếp thị theo chiến dịch |
+| Chỉ phản hồi theo yêu cầu khách chủ động; chưa chạy chuỗi nhắc tiếp thị ở P1 | Chuỗi nhắc/nuôi dưỡng Tiếp thị theo chiến dịch (P3); số lần nhắc do cấu hình tenant khóa, ví dụ “hai tin” chỉ là minh họa |
 | Nghiên cứu thị trường thủ công có AI hỗ trợ soạn nháp | Tự động tìm kiếm và quản lý mạng lưới đối tác |
 
 Lịch hẹn chỉ thêm nếu doanh nghiệp bán theo lịch tư vấn. LINE, Zalo và các kênh khác cần chọn, kiểm tra kết nối riêng; không bắt buộc đồng thời.

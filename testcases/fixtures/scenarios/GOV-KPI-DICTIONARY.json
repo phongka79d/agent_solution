@@ -1,0 +1,130 @@
+{
+  "id": "GOV-KPI-DICTIONARY",
+  "title": "Metric dictionary completeness: all 32 section-20 metrics have owner, unit, window and exclusions",
+  "document": "governance/kpi.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P0",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SRS-20",
+    "NFR-002"
+  ],
+  "facets": [
+    "kpi:Campaign Revenue",
+    "kpi:Lead Conversion",
+    "kpi:CAC",
+    "kpi:ROAS",
+    "kpi:Cost per Lead",
+    "kpi:Engagement",
+    "kpi:Qualified Lead Rate",
+    "kpi:Lead-to-Order Conversion",
+    "kpi:Cart Recovery Rate",
+    "kpi:Recommendation Conversion",
+    "kpi:Upsell Revenue",
+    "kpi:Cross-sell Revenue",
+    "kpi:Average Order Value",
+    "kpi:Sales Cycle",
+    "kpi:First Response Time",
+    "kpi:Resolution Time",
+    "kpi:AI Resolution Rate",
+    "kpi:Escalation Rate",
+    "kpi:Reopen Rate",
+    "kpi:Customer Satisfaction",
+    "kpi:Repeat Purchase",
+    "kpi:Retention",
+    "kpi:Reactivation",
+    "kpi:Churn",
+    "kpi:Customer Lifetime Value",
+    "kpi:Autonomous Completion Rate",
+    "kpi:Human Override Rate",
+    "kpi:Policy Violation Rate",
+    "kpi:Hallucination/Error Rate",
+    "kpi:Cost per Successful Outcome",
+    "kpi:Failed Execution",
+    "kpi:Duplicate Execution"
+  ],
+  "risk": "A metric is quoted in a gate or an investor document that the dictionary never defined, so numerator, denominator and window are decided per report and two teams publish two different numbers under one name.",
+  "preconditions": [
+    "Namespace gov-kpi-<case_id>-<worker_id>; the metric is computed by the real reporting code over fixtures/offline/governance.json kpi_dataset and never copied from the dashboard payload.",
+    "Frozen clock 2026-01-15T10:00:00Z with the reporting window 2026-01-01T00:00:00Z .. 2026-02-01T00:00:00Z as a half-open interval; the stored aggregate is recomputed independently from the raw counter rows.",
+    "The dictionary is loaded read-only together with the section-20 metric list; the case may not add, rename or merge a metric.",
+    "A metric without a covering case is treated as a coverage gap that is reported, not as an empty dashboard cell."
+  ],
+  "inputs": {
+    "expected_metric_count": 32,
+    "expected_group_counts": {
+      "Marketing": 7,
+      "Sales": 7,
+      "Customer Care": 6,
+      "Customer Success": 5,
+      "AI System": 7
+    },
+    "required_entry_fields": [
+      "name",
+      "group",
+      "owner",
+      "unit",
+      "numerator",
+      "denominator",
+      "window",
+      "exclusions"
+    ],
+    "orphan_metric_allowed": false,
+    "missing_field_defaulted": false
+  },
+  "steps": [
+    {
+      "action": "Load the section-20 metric list and the platform dictionary",
+      "expected": "The list holds 32 names in 5 groups with the counts 7 marketing, 7 sales, 6 customer care, 5 customer success and 7 AI system."
+    },
+    {
+      "action": "Match every dictionary entry against the list",
+      "expected": "Each of the 32 names resolves to exactly one entry and every entry declares owner, unit, numerator, denominator, window and exclusion rule."
+    },
+    {
+      "action": "Attempt to register a metric that is not in section 20",
+      "expected": "The registration is refused; the dictionary holds no orphan metric and an additional metric stays a labelled extension that cannot be published as an SRS KPI."
+    },
+    {
+      "action": "Attempt to compute a metric whose entry is missing its denominator",
+      "expected": "Publication is blocked and the gap is reported, instead of defaulting the denominator to the row count of the whole table."
+    }
+  ],
+  "assertions": [
+    "All 32 section-20 metric names resolve to exactly one dictionary entry each, with per-group counts 7/7/6/5/7 and no duplicate name.",
+    "Every entry declares the fields required to reproduce the value; a missing field blocks publication rather than defaulting to a plausible substitute.",
+    "No metric outside section 20 is published as an SRS KPI, and an extension metric is visibly labelled as an extension.",
+    "The reverse map is available: each metric names the cases that cover it, so an uncovered metric appears as a reported gap."
+  ],
+  "forbidden": [
+    "Publishing a metric that has no dictionary entry.",
+    "Renaming or merging a section-20 metric to fit an existing entry.",
+    "Silently defaulting a missing numerator or denominator."
+  ],
+  "evidence": [
+    "Dictionary dump with the 32 entries and all declared fields.",
+    "Coverage gap report listing metrics with no covering case (expected to be empty)."
+  ],
+  "cleanup": [
+    "Delete gov- dictionary snapshot rows after export."
+  ],
+  "automation": "The reporting service and the metric dictionary run as real code under test over the frozen KPI dataset; the dashboard is a consumer whose displayed value must equal the independently recomputed value. Waits are condition-based on the stored aggregate row, metric values are never supplied as inputs, and no vendor boundary is involved in the arithmetic.",
+  "prerequisites": [
+    "ASM-002 targets are not locked, so the dictionary carries definitions, units and windows only; no target figure is part of the dictionary."
+  ],
+  "references": [
+    "plans/delivery/analytics.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

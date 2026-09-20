@@ -1,0 +1,84 @@
+{
+  "id": "UNIT-BR-004",
+  "title": "BR-004: opt-out customer is suppressed with zero connector calls",
+  "document": "unit/business-rules.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "BR-004",
+    "TC-E2E-007",
+    "NFR-002"
+  ],
+  "facets": [
+    "entity:Consent",
+    "channel:EMAIL",
+    "stage:ACTION"
+  ],
+  "risk": "A marketing message reaches an opted-out customer, generating a privacy complaint and a regulator-facing consent breach.",
+  "preconditions": [
+    "Namespace gov-unit-br-<case_id>-<worker_id>; Business Rules Engine loaded with no cross-case state.",
+    "Frozen clock 2026-01-15T10:00:00Z; agent fixture context loaded from fixtures/offline/governance.json.",
+    "cust-b holds a wildcard marketing opt-out in fixtures/offline/consents.json."
+  ],
+  "inputs": {
+    "agent_id": "MKT-05",
+    "customer_id": "cust-b",
+    "action": {
+      "channel": "EMAIL",
+      "purpose": "marketing",
+      "template": "win_back",
+      "effect_key": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  },
+  "steps": [
+    {
+      "action": "Evaluate the marketing send for cust-b",
+      "expected": "Rule fails with ERR_CONSENT_SUPPRESSED and the evaluation names the channel and purpose that were checked."
+    },
+    {
+      "action": "Attempt to dispatch anyway through the adapter",
+      "expected": "The adapter is never called; the counter stays at 0."
+    },
+    {
+      "action": "Read the audit and consent records for the run",
+      "expected": "An audit row records the suppression with the consent state observed at evaluation time; the consent record itself is unchanged."
+    }
+  ],
+  "assertions": [
+    "errorCode is exactly ERR_CONSENT_SUPPRESSED, not a generic failure.",
+    "Adapter counter is 0 - suppression means no network call at all.",
+    "The suppression is audited with the exact consent lookup that produced it, so it is reconstructable.",
+    "Suppression does not retry: only one evaluation record exists for the action."
+  ],
+  "forbidden": [
+    "Retrying a suppressed message hoping the consent state changes.",
+    "Sending a service message through a marketing template to bypass consent.",
+    "Mutating the consent record to make the send legal."
+  ],
+  "evidence": [
+    "Rule evaluation record with the consent snapshot used.",
+    "Adapter counter log and audit row for the suppression."
+  ],
+  "cleanup": [
+    "Delete gov- rows; the consent fixture is restored to its committed state."
+  ],
+  "automation": "Real BusinessRulesEngine and PEP under test; only ERP/POS/connector boundaries are substituted by the offline mock whose call log and receipts are the oracle. Rules are evaluated in sequence and halt on the first failure, so each case asserts the first failing rule code rather than a bag of errors.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/consents.json",
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

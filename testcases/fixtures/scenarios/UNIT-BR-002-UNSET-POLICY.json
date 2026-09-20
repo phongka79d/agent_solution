@@ -1,0 +1,89 @@
+{
+  "id": "UNIT-BR-002-UNSET-POLICY",
+  "title": "BR-002 fail-closed: missing cost and margin policy inputs block all discounting",
+  "document": "unit/business-rules.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "BR-002",
+    "NFR-008",
+    "ASM-003",
+    "ASM-004"
+  ],
+  "facets": [
+    "entity:Price",
+    "stage:APPROVAL"
+  ],
+  "risk": "With the cost policy unapproved, the engine assumes a permissive default and grants a discount whose margin impact nobody approved.",
+  "preconditions": [
+    "Namespace gov-unit-br-<case_id>-<worker_id>; Business Rules Engine loaded with no cross-case state.",
+    "Frozen clock 2026-01-15T10:00:00Z; agent fixture context loaded from fixtures/offline/governance.json.",
+    "Tenant policy parameters are all undefined (T1_UNLOCKED)."
+  ],
+  "inputs": {
+    "quote": {
+      "sku_id": "SKU-OK",
+      "base_price": 1000,
+      "discount_rate": 0.05,
+      "catalog_ref_id": "ERP-SKU-OK"
+    },
+    "policy_state": {
+      "maxAutonomousDiscountRate": null,
+      "unit_cost": null,
+      "target_margin_rate": null
+    }
+  },
+  "steps": [
+    {
+      "action": "Evaluate any non-zero discount while the policy inputs are undefined",
+      "expected": "The engine raises rather than defaulting; verdict routes to human approval (REQUIRE_HUMAN_APPROVAL) and nothing is released."
+    },
+    {
+      "action": "Evaluate a zero-discount quote under the same policy state",
+      "expected": "The quote is released, because a non-discounting price needs no autonomy limit - the block is scoped to discounting, not to all pricing."
+    },
+    {
+      "action": "Read the audit rows for both evaluations",
+      "expected": "The routed row names the missing policy parameter; the released row records the authoritative base price with no discount."
+    }
+  ],
+  "assertions": [
+    "An undefined discount limit never means unlimited: the discounting action is blocked or routed.",
+    "The zero-discount quote still succeeds, proving the missing policy does not block unrelated pricing work.",
+    "The failure/routing reason identifies the specific missing parameter (discount cap or cost inputs).",
+    "No default score, margin or cap value is injected anywhere in the evaluation record."
+  ],
+  "forbidden": [
+    "Shipping a permissive default discount cap in the engine.",
+    "Blocking all pricing, including full-price reads, when only the discount policy is missing.",
+    "Recording an approval route as a successful execution."
+  ],
+  "evidence": [
+    "Rule evaluation records for both quotes with the missing-parameter reason.",
+    "Approval queue snapshot showing one new item for the discounted quote."
+  ],
+  "cleanup": [
+    "Cancel the created approval ticket; delete gov- rows."
+  ],
+  "automation": "Real BusinessRulesEngine and PEP under test; only ERP/POS/connector boundaries are substituted by the offline mock whose call log and receipts are the oracle. Rules are evaluated in sequence and halt on the first failure, so each case asserts the first failing rule code rather than a bag of errors.",
+  "prerequisites": [
+    "ASM-003/ASM-004 owner approvals are absent by design in this case; the expected behaviour is fail-closed routing, not policy acceptance."
+  ],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/catalog.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

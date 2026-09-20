@@ -1,0 +1,105 @@
+{
+  "id": "GOV-GATE-MOCK-NOT-EVIDENCE",
+  "title": "Mock coverage is specification coverage and never closes a gate",
+  "document": "governance/gates.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P0",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SRS-24",
+    "NFR-002",
+    "SRS-27"
+  ],
+  "facets": [
+    "stage:EVIDENCE",
+    "entity:Evidence"
+  ],
+  "risk": "A fully green offline suite is presented as the pilot evidence pack, so nobody notices that no real connector, real customer or upstream receipt was ever involved and the gate is passed on a substitute.",
+  "preconditions": [
+    "Namespace gov-gate-<case_id>-<worker_id>; the gate registry and the evidence registry are read from fixtures/offline/governance.json (gate_registry, gate_evidence_state) and no evidence may be created, simulated or back-dated inside the run.",
+    "Frozen clock 2026-01-15T10:00:00Z; every required evidence artifact is classified as runtime, mock or design before any status is written.",
+    "The offline suite produces receipts from substituted boundaries, while every gate in the registry requires artifacts of kind runtime.",
+    "The evidence registry classifies each artifact by kind, and mock artifacts are never promoted by the harness."
+  ],
+  "inputs": {
+    "artifacts": [
+      {
+        "artifact": "erp_lookup_receipt",
+        "produced_by": "offline mock ERP",
+        "kind": "mock"
+      },
+      {
+        "artifact": "provider_send_receipt",
+        "produced_by": "nothing",
+        "kind": "absent"
+      },
+      {
+        "artifact": "order_confirmation",
+        "produced_by": "offline mock commerce",
+        "kind": "mock"
+      }
+    ],
+    "gate_required_kind": "runtime",
+    "expected_verdict": "NOT_EVIDENCE",
+    "mock_suite_result": "all green",
+    "mock_suite_scope": "substituted boundaries only"
+  },
+  "steps": [
+    {
+      "action": "Collect the artifacts the offline suite produced",
+      "expected": "Each artifact is registered with the boundary that produced it and is classified as mock or absent, never as runtime."
+    },
+    {
+      "action": "Submit the artifact pack as evidence for a gate",
+      "expected": "The pack is rejected as gate evidence; the gate keeps its earlier status and the rejection names each artifact and its kind."
+    },
+    {
+      "action": "Re-run the offline suite to show the green result",
+      "expected": "The green result is recorded as specification coverage: it shows that the control logic matches the contract against substituted boundaries."
+    },
+    {
+      "action": "Attempt to promote a mock artifact to a runtime artifact through the registry",
+      "expected": "The promotion is refused; a kind can only change when the artifact is produced by the real boundary with its own receipt."
+    }
+  ],
+  "assertions": [
+    "Mock artifacts never satisfy a gate whose required kind is runtime, and the gate is not reported PASS on a green offline suite.",
+    "The distinction is preserved in the record: specification coverage is listed separately from gate evidence, with the substituted boundary named.",
+    "The rejection names each artifact and its kind, so a reader can see exactly what would have to be produced for real.",
+    "No registry write from the run can change an artifact's kind."
+  ],
+  "forbidden": [
+    "Reporting an all-green offline suite as pilot evidence.",
+    "Promoting a mock receipt to a runtime receipt.",
+    "Omitting the boundary identity from the artifact record."
+  ],
+  "evidence": [
+    "Artifact classification table with the producing boundary per artifact.",
+    "Gate-evidence rejection record naming each artifact and kind.",
+    "Specification-coverage report kept separate from the gate record."
+  ],
+  "cleanup": [
+    "Delete gov- artifact and rejection rows after export."
+  ],
+  "automation": "The gate-evaluation code and the run-report writer run as real code under test while the evidence registry is data. The oracle is the pair (evidence registry, run-report status): a gate that reads PASS without a real artifact fails the case, and a missing runtime is reported NOT_RUN instead of being allowed to fall through to PASS.",
+  "prerequisites": [
+    "No live adapter, provider or upstream system is reachable in this repository, so every artifact here is mock or absent and no gate can be evidenced; any claim to the contrary is BLOCKED_PREREQUISITE."
+  ],
+  "references": [
+    "implement/09-sprint-roadmap-and-pilots.md",
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/live/env.example"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

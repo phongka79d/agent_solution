@@ -1,0 +1,95 @@
+{
+  "id": "UNIT-mkt.analyze_market_signal-HAPPY",
+  "title": "skill.mkt.analyze_market_signal happy path and boundary — TW e-scooter signal window 30d",
+  "document": "unit/skills.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P3",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "MKT-01",
+    "MKT-02",
+    "SRS-11",
+    "NFR-004"
+  ],
+  "facets": [
+    "skill:skill.mkt.analyze_market_signal",
+    "kb:/marketing/playbook.md",
+    "stage:SIGNAL",
+    "memory:Working Memory"
+  ],
+  "risk": "Marketing plans a campaign against a signal the company never observed (fabricated demand).",
+  "preconditions": [
+    "isolated namespace run_id=RUN-mkt.analyze_market_signal-HAPPY, case_id=UNIT-mkt.analyze_market_signal-HAPPY, worker=w-biz-unit; no shared mutable session with any other case",
+    "skill registry row for skill.mkt.analyze_market_signal registered with test_cases TC-SKILL-01..05 plus >=1 skill-specific case and asserted registrable before the run",
+    "in-memory adapters loaded from the case fixtures for tenant T1 only; frozen clock 2026-01-15T10:00:00Z"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "market_region": "TW",
+    "category_id": "cat-ev-scooter-01",
+    "observation_window_days": 30,
+    "caller_agent": "MKT-02",
+    "granted_authority": "AUTH-1"
+  },
+  "steps": [
+    {
+      "action": "Route the call through the orchestrator",
+      "expected": "Orchestrator resolves caller MKT-01, MKT-02 -> skill.mkt.analyze_market_signal; the registry row exposes required_authority=AUTH-1, allowed_agents=[MKT-01, MKT-02], tool=API-002.EventIngestion, timeout_ms=3000, retry_policy={max_retries:2, backoff_multiplier:2.0, retry_on_timeout:True}"
+    },
+    {
+      "action": "Invoke with the case input payload",
+      "expected": "Input validator (additionalProperties:false) accepts it; adapter API-002.EventIngestion is invoked exactly once with the tenant binding 11111111-1111-1111-1111-111111111111"
+    },
+    {
+      "action": "Inspect the returned payload",
+      "expected": "signals[2] where signal-1 keyword='e-scooter-battery' search_volume_growth=0.42 price_pressure_index=0.18, trend_velocity='RAPID', analyzed_at=2026-01-15T10:00:00Z"
+    },
+    {
+      "action": "Re-run the boundary/validation probe",
+      "expected": "observation_window_days=0 then 91 -> SCHEMA_VALIDATION_ERROR before EventIngestion; window=90 accepted; no signals[]/trend_velocity emitted on either rejection"
+    },
+    {
+      "action": "Collect the evidence and audit trail",
+      "expected": "Evidence card EV_MKT_SIGNAL_ANALYSIS is written with mask=no masked fields and latency; the run record chains run_id -> skill -> tool -> decision -> execution_status (SRS-17)"
+    }
+  ],
+  "assertions": [
+    "trend_velocity is one of SLOW|STABLE|RAPID|EXPLOSIVE and is derived only from the returned signals[] rows, never from the model's prior knowledge",
+    "evidence card EV_MKT_SIGNAL_ANALYSIS records latency and zero masked fields; run record carries run_id/agent/trigger/skill/tool",
+    "adapter API-002.EventIngestion invocation count is exactly 1 for this run and the skill step ends execution_status='success' with latency recorded",
+    "the run audit ties run_id, caller MKT-01, skill skill.mkt.analyze_market_signal, decision and evidence card EV_MKT_SIGNAL_ANALYSIS into one record; no component reports success for another component's work"
+  ],
+  "forbidden": [
+    "inventing a search_volume_growth figure when the event store returns fewer than 1 row",
+    "emitting a signal for another tenant's category_id"
+  ],
+  "evidence": [
+    "run record for skill.mkt.analyze_market_signal with the 18 SRS-17 fields and the case run_id",
+    "evidence card EV_MKT_SIGNAL_ANALYSIS payload, redacted (mask: no masked fields)",
+    "adapter call log for API-002.EventIngestion: invocation count, input digest, latency"
+  ],
+  "cleanup": [
+    "release in-memory namespace RUN-mkt.analyze_market_signal-HAPPY: drop mock rows created by this case, release any effect reservation, keep audit/evidence rows required by retention"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. Adapter API-002.EventIngestion substituted; the SLA deadline is observed on the virtual clock.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/05-skill-system-specifications.md",
+    "plans/modules/marketing.md",
+    "implement/04-core-engine-and-orchestrator.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/tenants.json",
+    "fixtures/offline/events.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

@@ -1,0 +1,98 @@
+{
+  "id": "INT-SCR-005",
+  "title": "SCR-005 Conversation Console: takeover locks the bot out and resume returns control",
+  "document": "integration/command-center.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P1",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SCR-005",
+    "NFR-007",
+    "NFR-006"
+  ],
+  "facets": [
+    "entity:Conversation",
+    "stage:ACTION"
+  ],
+  "risk": "The bot keeps answering while a human is handling the conversation, so the customer receives contradictory replies and loses trust.",
+  "preconditions": [
+    "Namespace gov-scr-<case_id>-<worker_id>; the operator UI runs against the offline gateway and mock SSE/telemetry streams.",
+    "Operator session bound to tenant T1 and an explicit operator_id from fixtures/offline/governance.json; frozen clock 2026-01-15T10:00:00Z.",
+    "Conversation conv-gov-1 is ACTIVE with cust-a; the mock chat adapter counts outbound messages and exposes the lease key."
+  ],
+  "inputs": {
+    "takeover": {
+      "method": "POST",
+      "path": "/api/v1/conversations/conv-gov-1/takeover",
+      "body": {
+        "operator_id": "OP-SUPERVISOR-T1",
+        "reason": "Complaint escalation",
+        "takeover_mode": "HUMAN_ACTIVE"
+      }
+    },
+    "resume": {
+      "method": "POST",
+      "path": "/api/v1/conversations/conv-gov-1/resume",
+      "body": {
+        "operator_id": "OP-SUPERVISOR-T1",
+        "reason": "Issue resolved"
+      }
+    }
+  },
+  "steps": [
+    {
+      "action": "Submit the takeover request",
+      "expected": "HTTP 200; conversation status becomes HUMAN_TAKEOVER and the lease key tenant:T1:session:conv-gov-1:takeover_lock exists with the operator id and an expiry."
+    },
+    {
+      "action": "Dispatch an agent message-generation task for the same conversation",
+      "expected": "The task is denied with HTTP 409 Conversation Locked by Human Operator and no outbound message is produced."
+    },
+    {
+      "action": "Send an operator reply through the console",
+      "expected": "The operator message is delivered once and is attributed to the human sender."
+    },
+    {
+      "action": "Submit the resume request",
+      "expected": "HTTP 200; status returns to ACTIVE, the lease key is gone, and a subsequent agent task is permitted."
+    }
+  ],
+  "assertions": [
+    "The takeover lease exists during the takeover with a bounded TTL, and the AI outbound path is denied with 409.",
+    "Agent message attempts during takeover produce zero outbound messages at the adapter.",
+    "Resume is the only release path and it returns the conversation to ACTIVE with the agent able to reply again.",
+    "The bot continues only in AUTH-2 draft mode during takeover (draft stored internally, never sent)."
+  ],
+  "forbidden": [
+    "Letting the agent reply during takeover.",
+    "Releasing the lease with an ad-hoc delete route instead of resume.",
+    "Applying the takeover flag as an agent authority grant (AUTH-5 confusion)."
+  ],
+  "evidence": [
+    "Lease key value and TTL at takeover, plus its absence after resume.",
+    "409 response body for the blocked agent task.",
+    "Adapter message log with senders and count.",
+    "Conversation status history."
+  ],
+  "cleanup": [
+    "Call resume if the case aborted mid-way, then delete the gov- conversation rows and lease keys."
+  ],
+  "automation": "Command Center React components and the gateway routes run as real code under test; ERP, channel and telemetry providers are replaced by the offline mock sinks whose call logs are the oracle. UI assertions use accessible roles and names rather than CSS classes, and stream waits are condition-based. The Redis lease and the console state machine run as real code; the chat adapter is the substituted boundary and its message log is the oracle.",
+  "prerequisites": [],
+  "references": [
+    "implement/07-human-command-center-ui.md",
+    "implement/06-api-and-connectors-spec.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/customers.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

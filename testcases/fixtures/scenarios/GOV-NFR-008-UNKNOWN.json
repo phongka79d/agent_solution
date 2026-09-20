@@ -1,0 +1,97 @@
+{
+  "id": "GOV-NFR-008-UNKNOWN",
+  "title": "NFR-008 unknown outcome: no blind resend, reconciliation is mandatory",
+  "document": "governance/nfr.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "extension",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "NFR-008",
+    "NFR-003",
+    "TC-E2E-008",
+    "BR-006"
+  ],
+  "facets": [
+    "entity:Execution",
+    "stage:EXECUTION"
+  ],
+  "risk": "A timeout with an unknown external outcome triggers an immediate resend, so the customer receives two orders or two messages and finance sees one of them.",
+  "preconditions": [
+    "Namespace gov-nfr-<case_id>-<worker_id>; NFR verification runs against the offline gateway with mock SoR and channel boundaries.",
+    "Frozen clock 2026-01-15T10:00:00Z; failure, outage and crash injections are scripted at the substituted boundary, never faked inside the assertion.",
+    "The mock adapter is scripted to accept the request, drop the response, and record that the effect actually happened."
+  ],
+  "inputs": {
+    "action": {
+      "effect_key": "sha256:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      "channel": "EMAIL",
+      "template": "order_shipped"
+    },
+    "adapter_script": [
+      {
+        "attempt": 1,
+        "http": "CONNECTION_DROPPED_AFTER_ACCEPT",
+        "actual_effect": "OCCURRED"
+      },
+      {
+        "attempt": 2,
+        "provider_state": "RECEIPT_AVAILABLE",
+        "expected": "NO_NEW_EFFECT"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Dispatch the action and observe the dropped response",
+      "expected": "The execution is recorded as unknown or failed with the transport error preserved; the caller is not told it succeeded."
+    },
+    {
+      "action": "Attempt an immediate blind retry",
+      "expected": "The retry is gated on reconciliation: the platform queries the provider receipt for the effect_key before sending anything."
+    },
+    {
+      "action": "Complete reconciliation with the provider receipt",
+      "expected": "The provider confirms the effect occurred; the execution resolves to success with exactly one external effect."
+    },
+    {
+      "action": "Reconcile the totals",
+      "expected": "One effect, one receipt, two attempts; no second message is created."
+    }
+  ],
+  "assertions": [
+    "An unknown outcome never results in a second external effect: exactly one effect across both attempts.",
+    "The interim record does not claim success before reconciliation completes.",
+    "The transport error is preserved so the incident is diagnosable.",
+    "Reconciliation resolves the execution to a terminal state with a receipt reference."
+  ],
+  "forbidden": [
+    "Resending immediately without checking the provider.",
+    "Declaring failure and giving up, leaving the customer with no confirmation either way.",
+    "Counting the unknown attempt as a duplicate execution in the KPI."
+  ],
+  "evidence": [
+    "Both attempt records with transport errors and the reconciliation result.",
+    "Provider receipt for the single effect.",
+    "Final execution state and reconciliation log."
+  ],
+  "cleanup": [
+    "Delete gov- execution rows; the single simulated send is reported as non-recallable."
+  ],
+  "automation": "Core PEP, rules engine, audit writer, idempotency store and worker lease logic run as real code under test; only ERP/WMS, channel gateways, Redis and the model provider are substituted. Faults are injected at those boundaries and waits are condition-based on persisted state.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "implement/09-sprint-roadmap-and-pilots.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

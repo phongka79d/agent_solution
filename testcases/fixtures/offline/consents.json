@@ -1,0 +1,55 @@
+{
+  "note": "consent is per (channel, consent_type); a wildcard grant is never valid",
+  "consents": [
+    {
+      "customer_id": "cust-a",
+      "tenant_id": "11111111-1111-1111-1111-111111111111",
+      "channel": "email",
+      "consent_type": "marketing_messaging",
+      "is_granted": true,
+      "opt_in_timestamp": "2025-11-02T03:05:00Z"
+    },
+    {
+      "customer_id": "cust-a",
+      "tenant_id": "11111111-1111-1111-1111-111111111111",
+      "channel": "sms",
+      "consent_type": "marketing_messaging",
+      "is_granted": true,
+      "opt_in_timestamp": "2025-11-02T03:05:00Z"
+    },
+    {
+      "customer_id": "cust-a",
+      "tenant_id": "11111111-1111-1111-1111-111111111111",
+      "channel": "zalo",
+      "consent_type": "order_updates",
+      "is_granted": true,
+      "opt_in_timestamp": "2025-11-02T03:06:00Z"
+    },
+    {
+      "customer_id": "cust-b",
+      "tenant_id": "11111111-1111-1111-1111-111111111111",
+      "channel": "email",
+      "consent_type": "marketing_messaging",
+      "is_granted": false,
+      "opt_out_timestamp": "2025-12-15T08:00:00Z"
+    },
+    {
+      "customer_id": "cust-dormant",
+      "tenant_id": "11111111-1111-1111-1111-111111111111",
+      "channel": "email",
+      "consent_type": "marketing_messaging",
+      "is_granted": true,
+      "opt_in_timestamp": "2024-05-01T00:00:00Z",
+      "valid_to": "2025-05-01T00:00:00Z",
+      "expired": true
+    },
+    {
+      "customer_id": "cust-a",
+      "tenant_id": "11111111-1111-1111-1111-111111111111",
+      "channel": "*",
+      "consent_type": "marketing_messaging",
+      "is_granted": true,
+      "invalid_row": "wildcard scope is not a valid consent row and must be rejected"
+    }
+  ]
+}

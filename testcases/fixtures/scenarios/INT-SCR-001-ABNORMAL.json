@@ -1,0 +1,96 @@
+{
+  "id": "INT-SCR-001-ABNORMAL",
+  "title": "SCR-001 abnormal events: a spike raises a traceable alert, not a silent number",
+  "document": "integration/command-center.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "extension",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SCR-001",
+    "SRS-17",
+    "NFR-002"
+  ],
+  "facets": [
+    "stage:EVIDENCE"
+  ],
+  "risk": "An anomaly such as a policy-violation spike or a connector outage is displayed as a bare counter with no link to the runs behind it, so nobody can act.",
+  "preconditions": [
+    "Namespace gov-scr-<case_id>-<worker_id>; the operator UI runs against the offline gateway and mock SSE/telemetry streams.",
+    "Operator session bound to tenant T1 and an explicit operator_id from fixtures/offline/governance.json; frozen clock 2026-01-15T10:00:00Z.",
+    "Three abnormal events are seeded for T1: two denied authority attempts and one connector outage."
+  ],
+  "inputs": {
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/telemetry/executive",
+      "tenant": "T1"
+    },
+    "seeded_abnormal": [
+      {
+        "severity": "HIGH",
+        "kind": "AUTHORITY_DENY",
+        "run_id": "run-gov-101"
+      },
+      {
+        "severity": "HIGH",
+        "kind": "AUTHORITY_DENY",
+        "run_id": "run-gov-102"
+      },
+      {
+        "severity": "MEDIUM",
+        "kind": "CONNECTOR_OUTAGE",
+        "run_id": "run-gov-103"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Fetch the dashboard payload",
+      "expected": "abnormal_events reports 3 with severity breakdown HIGH 2 and MEDIUM 1."
+    },
+    {
+      "action": "Follow the drill-down for one HIGH event",
+      "expected": "The underlying run is opened and its audit row shows the denied authority verdict with the attempted skill."
+    },
+    {
+      "action": "Resolve the connector outage and refresh after the alert is acknowledged",
+      "expected": "The acknowledged event leaves the abnormal list while the two HIGH denials remain, and the count changes to 2."
+    }
+  ],
+  "assertions": [
+    "The abnormal counter equals the seeded count and is decomposable by severity and kind.",
+    "Each event links to a concrete run identifier that resolves to a real audit row.",
+    "Acknowledgement changes the visible abnormal count without deleting the underlying audit records.",
+    "High-severity denials are never auto-suppressed by a bulk acknowledge."
+  ],
+  "forbidden": [
+    "Counting anomalies without any route to the evidence.",
+    "Deleting audit rows to clear the alert badge.",
+    "Acknowledging all severities with one control."
+  ],
+  "evidence": [
+    "Dashboard payload with the event list.",
+    "Drill-down audit row for one HIGH event.",
+    "Before/after counts with the acknowledgement record."
+  ],
+  "cleanup": [
+    "Remove the gov- telemetry and acknowledgement rows; audit records for the seeded runs are retained."
+  ],
+  "automation": "Command Center React components and the gateway routes run as real code under test; ERP, channel and telemetry providers are replaced by the offline mock sinks whose call logs are the oracle. UI assertions use accessible roles and names rather than CSS classes, and stream waits are condition-based.",
+  "prerequisites": [],
+  "references": [
+    "implement/07-human-command-center-ui.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

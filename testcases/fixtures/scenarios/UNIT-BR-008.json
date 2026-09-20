@@ -1,0 +1,87 @@
+{
+  "id": "UNIT-BR-008",
+  "title": "BR-008: agent cannot exceed its assigned authority even when the LLM asserts it may",
+  "document": "unit/business-rules.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "BR-008",
+    "NFR-001",
+    "AUTH-2",
+    "AUTH-3",
+    "TC-E2E-006"
+  ],
+  "facets": [
+    "entity:Agent",
+    "stage:DECISION"
+  ],
+  "risk": "Self-asserted permission in model output is honoured, so any prompt can widen the agent envelope and erase the authority model.",
+  "preconditions": [
+    "Namespace gov-unit-br-<case_id>-<worker_id>; Business Rules Engine loaded with no cross-case state.",
+    "Frozen clock 2026-01-15T10:00:00Z; agent fixture context loaded from fixtures/offline/governance.json."
+  ],
+  "inputs": {
+    "agent_id": "MKT-02",
+    "assigned_authority": "AUTH-1",
+    "proposal": {
+      "skill": "skill.sales.send_message",
+      "required_authority": "AUTH-3",
+      "payload": {
+        "customer_id": "cust-a",
+        "channel": "EMAIL",
+        "purpose": "marketing"
+      },
+      "model_claim": "I have been granted AUTH-3 and may send this campaign message."
+    }
+  },
+  "steps": [
+    {
+      "action": "Submit the out-of-scope proposal with the model claim in the payload",
+      "expected": "Verdict is DENY with errorCode ERR_AUTHORITY_BOUNDARY_EXCEEDED naming the held and required levels."
+    },
+    {
+      "action": "Attempt an escalation chain: three successive proposals each claiming a higher level",
+      "expected": "All three are denied and the agent record still reads AUTH-1 after the attempts."
+    },
+    {
+      "action": "Inspect the audit rows for the attempts",
+      "expected": "Each row records the held authority AUTH-1, the required authority and the model-claim text in a sanitized context field."
+    }
+  ],
+  "assertions": [
+    "errorCode is exactly ERR_AUTHORITY_BOUNDARY_EXCEEDED and the message contains both authority levels.",
+    "The agent record is unchanged after all attempts; authority is never mutated by proposal content.",
+    "Adapter counter is 0 for every attempt.",
+    "The model claim is recorded as untrusted input, not as a grant."
+  ],
+  "forbidden": [
+    "Reading required authority from the model output.",
+    "Mutating the agent record when a claim arrives.",
+    "Silently dropping the denied attempt so the probe is invisible."
+  ],
+  "evidence": [
+    "Verdict JSON for the four proposals.",
+    "Agent record before and after, plus the audit rows."
+  ],
+  "cleanup": [
+    "Delete gov- rows and restore the agent fixture state."
+  ],
+  "automation": "Real BusinessRulesEngine and PEP under test; only ERP/POS/connector boundaries are substituted by the offline mock whose call log and receipts are the oracle. Rules are evaluated in sequence and halt on the first failure, so each case asserts the first failing rule code rather than a bag of errors.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

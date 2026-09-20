@@ -1,0 +1,131 @@
+{
+  "id": "GOV-ASM-003",
+  "title": "ASM-003 unlocked: the synthetic 0.15 discount and 5000 audience are not an approved discount policy",
+  "document": "governance/asm.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P3",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "ASM-003",
+    "NFR-008",
+    "BR-002",
+    "AUTH-4"
+  ],
+  "facets": [
+    "entity:Campaign",
+    "stage:APPROVAL",
+    "kpi:Campaign Revenue"
+  ],
+  "risk": "A number that was written down only to exercise boundary arithmetic is promoted into an autonomous discount limit, so the AI grants discounts nobody approved and margin is lost quietly at scale.",
+  "preconditions": [
+    "Namespace gov-asm-<case_id>-<worker_id>; the assumption registry is read from fixtures/offline/governance.json assumptions and no lock may be granted, forged, cached or edited inside the run.",
+    "Frozen clock 2026-01-15T10:00:00Z; the harness records exactly one outcome per dependent capability - EXECUTED, BLOCKED_PREREQUISITE or SKIP_ASM_<n> - and refuses to re-label a skip as PASS.",
+    "assumptions.ASM-003.locked is false; policy_parameters.T1_UNLOCKED has maxAutonomousDiscountRate, maxAutonomousRefundAmount and maxAutonomousAudienceSize all null.",
+    "policy_parameters.T1_SYNTHETIC_TEST_LOCK additionally holds 0.15, 5000 and a 500 TWD refund figure, and is explicitly marked 'NOT an owner approval' in the fixture."
+  ],
+  "inputs": {
+    "assumptions": {
+      "ASM-003": {
+        "locked": false,
+        "owner": "Business/Finance",
+        "locks": [
+          "max autonomous discount rate",
+          "max campaign audience"
+        ],
+        "blocks": [
+          "autonomous discount and broadcast"
+        ],
+        "does_not_block": [
+          "AUTH-0..AUTH-2 reads",
+          "FAQ replies"
+        ]
+      }
+    },
+    "policy_parameters_considered": {
+      "T1_UNLOCKED": {
+        "maxAutonomousDiscountRate": null,
+        "maxAutonomousAudienceSize": null
+      },
+      "T1_SYNTHETIC_TEST_LOCK": {
+        "maxAutonomousDiscountRate": 0.15,
+        "maxAutonomousAudienceSize": 5000
+      }
+    },
+    "requests": [
+      {
+        "label": "autonomous discount quote",
+        "discount_rate": 0.1,
+        "skill": "skill.sales.check_price",
+        "expected_status": "BLOCKED_PREREQUISITE"
+      },
+      {
+        "label": "campaign broadcast",
+        "audience_size": 5000,
+        "skill": "skill.mkt.dispatch_campaign",
+        "expected_status": "BLOCKED_PREREQUISITE"
+      },
+      {
+        "label": "price read for a customer",
+        "skill": "skill.sales.check_price",
+        "expected_status": "EXECUTED"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Resolve the discount and audience limits for tenant T1",
+      "expected": "Both limits resolve to undefined because ASM-003 is unlocked; the synthetic test values are labelled as test configuration and are not used as limits."
+    },
+    {
+      "action": "Attempt a 0.10 autonomous discount quote",
+      "expected": "The discount is refused with BLOCKED_PREREQUISITE naming ASM-003; the refusal is not silently converted into a human-approval path with the synthetic limit as the threshold."
+    },
+    {
+      "action": "Attempt a campaign broadcast to the 5000-address synthetic audience",
+      "expected": "The broadcast is refused before any audience is materialised or dispatched; the synthetic audience size is not treated as an approved ceiling."
+    },
+    {
+      "action": "Run an AUTH-0 read in the same pass",
+      "expected": "The price read executes normally, proving the missing ASM-003 lock blocks only the dependent discount and broadcast capabilities."
+    }
+  ],
+  "assertions": [
+    "With ASM-003 unlocked, zero autonomous discounts and zero campaign dispatches occur; the adapter counters are 0.",
+    "The synthetic values 0.15, 5000 and 500 TWD are never reported as approved limits, thresholds or production policy, and never appear in a customer-facing message.",
+    "The refusal is typed BLOCKED_PREREQUISITE naming ASM-003 and owner Business/Finance, so an operator can tell it apart from a policy denial under a locked limit.",
+    "Read-only AUTH-0..AUTH-2 capabilities continue to work in the same pass."
+  ],
+  "forbidden": [
+    "Promoting a synthetic fixture value into an approved policy parameter.",
+    "Treating 'no limit configured' as 'no limit applies' and granting the discount.",
+    "Falling back to the T2 tenant's configured limits for a T1 request."
+  ],
+  "evidence": [
+    "Refusal records for the discount and broadcast with the ASM-003 reason.",
+    "Policy-parameter resolution trace showing null limits and the synthetic values kept separate.",
+    "Adapter counters and the successful AUTH-0 read as the scoping contrast."
+  ],
+  "cleanup": [
+    "Delete gov- refusal rows; no audience snapshot was created and nothing was dispatched."
+  ],
+  "automation": "The policy-parameter resolver, the PEP and the run-report writer run as real code under test; the unlocked assumption is configuration, not a substituted boundary. The oracle is the run-report status plus the adapter effect counters, so a capability that executes while its assumption is unlocked fails the case instead of passing it.",
+  "prerequisites": [
+    "The discount and promotion thresholds (ASM-003, owner Business/Finance) are not locked, so autonomous discount and broadcast are BLOCKED_PREREQUISITE and the fixture's 0.15 / 5000 figures may not be used as limits."
+  ],
+  "references": [
+    "plans/delivery/analytics.md",
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

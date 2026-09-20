@@ -1,0 +1,87 @@
+{
+  "id": "GOV-NFR-007",
+  "title": "NFR-007 Human override: PAUSE and CANCEL both stop an in-flight workflow",
+  "document": "governance/nfr.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "NFR-007",
+    "SCR-003",
+    "AUTH-4"
+  ],
+  "facets": [
+    "entity:Approval",
+    "stage:APPROVAL"
+  ],
+  "risk": "Operators cannot stop a live workflow, so a wrong campaign keeps sending while everyone watches and no control exists between approval and completion.",
+  "preconditions": [
+    "Namespace gov-nfr-<case_id>-<worker_id>; NFR verification runs against the offline gateway with mock SoR and channel boundaries.",
+    "Frozen clock 2026-01-15T10:00:00Z; failure, outage and crash injections are scripted at the substituted boundary, never faked inside the assertion.",
+    "Two prepared campaigns are queued in awaiting_human with reservations held."
+  ],
+  "inputs": {
+    "pause_case": {
+      "approval_id": "APV-CAMP-15",
+      "decision": "PAUSE"
+    },
+    "cancel_case": {
+      "approval_id": "APV-REFUND-450",
+      "decision": "CANCEL"
+    }
+  },
+  "steps": [
+    {
+      "action": "Pause the first workflow",
+      "expected": "Status becomes PAUSED and the workflow timer freezes; no send occurs and the task can still be resumed."
+    },
+    {
+      "action": "Cancel the second workflow",
+      "expected": "Status becomes CANCELLED, the run is aborted and its reservations are released."
+    },
+    {
+      "action": "Advance the clock and confirm both workflows do not progress",
+      "expected": "Neither paused nor cancelled workflow produces an outbound effect after the deadline passes."
+    },
+    {
+      "action": "Resume the paused workflow and confirm control is restored",
+      "expected": "The paused workflow can be resumed and then executes exactly once, showing pause is reversible and cancel is terminal."
+    }
+  ],
+  "assertions": [
+    "Both override actions stop outbound effects: adapter counter is 0 for both while controlled.",
+    "Pause is reversible and cancel is terminal, and the two are distinguishable in the persisted state.",
+    "Cancellation releases reservations while pause holds them, so the resource position is predictable.",
+    "Both overrides are audited with the operator identity."
+  ],
+  "forbidden": [
+    "Implementing pause as a UI-only freeze so the backend keeps working.",
+    "Making cancel reversible so a cancelled run can still be revived.",
+    "Releasing reservations on pause and then executing on resume."
+  ],
+  "evidence": [
+    "State snapshots for both workflows at each phase.",
+    "Adapter counter log and reservation ledger snapshots.",
+    "Override audit rows with operator identities."
+  ],
+  "cleanup": [
+    "Delete gov- approval rows after export and restore the reservation ledger."
+  ],
+  "automation": "Core PEP, rules engine, audit writer, idempotency store and worker lease logic run as real code under test; only ERP/WMS, channel gateways, Redis and the model provider are substituted. Faults are injected at those boundaries and waits are condition-based on persisted state.",
+  "prerequisites": [],
+  "references": [
+    "implement/07-human-command-center-ui.md",
+    "implement/08-security-governance-nfr.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

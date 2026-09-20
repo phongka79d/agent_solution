@@ -1,0 +1,122 @@
+{
+  "id": "GOV-ASM-004",
+  "title": "ASM-004 unlocked: autonomous refund is blocked and 500 TWD is not an approved refund cap",
+  "document": "governance/asm.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P1",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "ASM-004",
+    "AUTH-4",
+    "FR-CS-002",
+    "NFR-008"
+  ],
+  "facets": [
+    "entity:Approval",
+    "stage:APPROVAL",
+    "entity:Service Case"
+  ],
+  "risk": "Refund types that require human approval are guessed from an illustrative amount, so money leaves the business on an AI decision nobody authorised and the loss is only visible at reconciliation.",
+  "preconditions": [
+    "Namespace gov-asm-<case_id>-<worker_id>; the assumption registry is read from fixtures/offline/governance.json assumptions and no lock may be granted, forged, cached or edited inside the run.",
+    "Frozen clock 2026-01-15T10:00:00Z; the harness records exactly one outcome per dependent capability - EXECUTED, BLOCKED_PREREQUISITE or SKIP_ASM_<n> - and refuses to re-label a skip as PASS.",
+    "assumptions.ASM-004.locked is false and the list of refund/compensation types requiring approval is empty, so the required approval set is unknown rather than empty.",
+    "The fixture carries a synthetic 500 TWD figure inside T1_SYNTHETIC_TEST_LOCK that is explicitly not an owner approval; ORD-A-1 exists in the offline order fixture."
+  ],
+  "inputs": {
+    "assumptions": {
+      "ASM-004": {
+        "locked": false,
+        "owner": "Finance/Operations",
+        "locks": [
+          "refund and compensation types requiring approval"
+        ],
+        "blocks": [
+          "autonomous refund"
+        ],
+        "does_not_block": [
+          "order status lookup",
+          "case management"
+        ]
+      }
+    },
+    "refunds": [
+      {
+        "label": "autonomous refund",
+        "order_id": "ORD-A-1",
+        "amount_twd": 450.0,
+        "skill": "skill.care.initiate_return",
+        "expected_status": "BLOCKED_PREREQUISITE"
+      },
+      {
+        "label": "order status lookup",
+        "order_id": "ORD-A-1",
+        "skill": "skill.care.lookup_order",
+        "expected_status": "EXECUTED"
+      },
+      {
+        "label": "case note",
+        "skill": "skill.care.manage_case",
+        "expected_status": "EXECUTED"
+      }
+    ],
+    "synthetic_cap_twd": 500.0
+  },
+  "steps": [
+    {
+      "action": "Resolve the refund types that require approval",
+      "expected": "The registry reports the required set as unknown because ASM-004 is unlocked; an unknown set is treated as 'all refunds require approval', not as 'none'."
+    },
+    {
+      "action": "Attempt an autonomous 450 TWD refund on ORD-A-1",
+      "expected": "The refund is refused with BLOCKED_PREREQUISITE naming ASM-004; it is not auto-approved on the grounds that 450 is below the synthetic 500 TWD figure."
+    },
+    {
+      "action": "Check the order lookup and the case note",
+      "expected": "Both execute and the case records the blocked refund attempt with its reason, so the customer conversation is not abandoned."
+    },
+    {
+      "action": "Attempt to raise the synthetic 500 TWD figure into an approved cap",
+      "expected": "The attempt is refused and the value remains labelled as synthetic test configuration in the report."
+    }
+  ],
+  "assertions": [
+    "Zero refunds and zero payment reversals execute while ASM-004 is unlocked; the payment adapter counter is 0.",
+    "An unknown approval set fails closed: the platform escalates to a human instead of inferring that no approval is needed.",
+    "The 500 TWD synthetic figure is never used as an approval threshold, a cap or a policy statement, and never appears in a customer-facing message.",
+    "Order lookup and case management continue to work, and the blocked attempt is visible in the case history with its reason."
+  ],
+  "forbidden": [
+    "Treating an empty or unknown approval list as 'no approval required'.",
+    "Auto-approving a refund below a figure taken from a synthetic fixture.",
+    "Deleting the blocked attempt from the case so the customer sees an unexplained refusal."
+  ],
+  "evidence": [
+    "Refusal record for the refund with the ASM-004 reason and the approver requirement.",
+    "Payment adapter counter showing zero reversals.",
+    "Case history excerpt showing the blocked attempt plus the successful lookup."
+  ],
+  "cleanup": [
+    "Delete gov- case and refusal rows; no money moved, so no provider reversal is needed."
+  ],
+  "automation": "The policy-parameter resolver, the PEP and the run-report writer run as real code under test; the unlocked assumption is configuration, not a substituted boundary. The oracle is the run-report status plus the adapter effect counters, so a capability that executes while its assumption is unlocked fails the case instead of passing it.",
+  "prerequisites": [
+    "The refund/compensation types requiring approval (ASM-004, owner Finance/Operations) are not locked, so autonomous refund is BLOCKED_PREREQUISITE and the synthetic 500 TWD figure is not a cap."
+  ],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/orders.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

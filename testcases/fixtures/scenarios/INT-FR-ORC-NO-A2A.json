@@ -1,0 +1,86 @@
+{
+  "id": "INT-FR-ORC-NO-A2A",
+  "title": "Agents cannot call each other directly; all handoffs go through the orchestrator",
+  "document": "integration/sales-care-orchestrator.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P1",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "FR-ORC-001",
+    "FR-ORC-002",
+    "NFR-001",
+    "OBJ-005"
+  ],
+  "facets": [
+    "stage:PLAN",
+    "entity:Agent",
+    "entity:Workflow"
+  ],
+  "risk": "Two agents call each other directly, so policy, authority and audit checks are bypassed and the run becomes untraceable.",
+  "preconditions": [
+    "Tenant T1 run orc-noa2a-* with a sales need that would benefit from a care follow-up",
+    "An instrumented agent runtime that records every outbound call attempt from an agent"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "source_agent": "SAL-02",
+    "attempted_direct_targets": [
+      "CS-01",
+      "SAL-04"
+    ],
+    "expected_route": "orchestrator"
+  },
+  "steps": [
+    {
+      "action": "Run the cross-domain scenario through the orchestrator",
+      "expected": "every agent invocation is recorded as a planned step issued by the orchestrator, with one run id for the chain"
+    },
+    {
+      "action": "Attempt a direct agent-to-agent invocation from SAL-02 to CS-01",
+      "expected": "the attempt is refused as a topology violation, is recorded, and no CS-01 run is created by it"
+    },
+    {
+      "action": "Attempt a direct invocation to a non-agent endpoint (a raw skill id)",
+      "expected": "the attempt is refused and no skill execution record is produced outside an orchestrator run"
+    },
+    {
+      "action": "Read the audit trail for the refused attempts",
+      "expected": "each refusal is attributable to the calling agent, target and timestamp"
+    }
+  ],
+  "assertions": [
+    "Zero agent-initiated invocations exist outside orchestrator-issued planned steps",
+    "Both direct-call attempts are refused and produce no downstream run or skill execution",
+    "Each refusal appears in the audit trail with caller, target and timestamp"
+  ],
+  "forbidden": [
+    "Let an agent message another agent without an orchestrator plan step",
+    "Let an agent invoke a skill directly outside a run"
+  ],
+  "evidence": [
+    "Runtime call log showing orchestrator-only invocation paths",
+    "Audit entries for both refused direct-call attempts"
+  ],
+  "cleanup": [
+    "Delete the run-scoped records for orc-noa2a-*; keep the topology-violation audit entries"
+  ],
+  "automation": "Instrument the real agent runtime with a recording channel so a direct call is observable; the oracle is the invocation log, not a configuration flag.",
+  "prerequisites": [],
+  "references": [
+    "implement/04-core-engine-and-orchestrator.md",
+    "plans/platform/architecture.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/platform.json",
+    "fixtures/offline/events.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

@@ -221,26 +221,26 @@
     <div class="card-highlight" style="margin-bottom: 12px; padding: 12px;">
       <h2 style="margin-bottom: 4px; font-size: 14px; color: #1e40af;">Tóm Tắt Điều Hành (Executive Summary)</h2>
       <p style="font-size: 11px; color: #1e3a8a; line-height: 1.6;">
-        Đề án cung cấp nền tảng <strong>B2B SaaS thế hệ mới</strong>, tích hợp 3 trợ lý AI chuyên sâu (Tiếp thị, Bán hàng, Chăm sóc sau mua) giúp doanh nghiệp giải phóng 80% thời gian nhân lực, tăng đột phá tỷ lệ chốt đơn và bảo toàn trọn vẹn lợi nhuận ròng. Khách hàng mỏ neo đầu tiên (Anchor Client) là doanh nghiệp bán lẻ tại <strong>Đài Loan</strong> phục vụ thị trường nội địa (ngành <strong>Hàng tiêu dùng FMCG</strong> và <strong>Xe máy điện thông minh</strong>), với kiến trúc lõi chuẩn hóa sẵn sàng mở rộng cho <strong>N doanh nghiệp quốc tế</strong>.
+        Đề án <strong>đề xuất</strong> nền tảng <strong>B2B SaaS</strong>, tích hợp 3 trợ lý AI chuyên sâu (Tiếp thị, Bán hàng, Chăm sóc sau mua), hướng tới giảm tải thời gian nhân lực, cải thiện tỷ lệ chốt đơn và giữ mục tiêu lợi nhuận ròng. Đây là <strong>bản thiết kế/blueprint</strong>: chưa có mã nguồn chạy thật và chưa có số liệu vận hành; mọi chỉ tiêu định lượng là mục tiêu thiết kế giả thuyết, phải khóa theo các giả định ASM-001..005 (SRS v0.1). Khách hàng mỏ neo đầu tiên (Anchor Client) là doanh nghiệp bán lẻ tại <strong>Đài Loan</strong> phục vụ thị trường nội địa (ngành <strong>Hàng tiêu dùng FMCG</strong> và <strong>Xe máy điện thông minh</strong>), với kiến trúc lõi chuẩn hóa định hướng mở rộng cho <strong>N doanh nghiệp quốc tế</strong>.
       </p>
     </div>
 
     <h2>1. Ba Mục Tiêu Chiến Lược Đột Phá</h2>
     <div class="grid-3">
       <div class="card">
-        <div class="badge badge-blue" style="margin-bottom: 6px;">TỐI ƯU 80% NHÂN LỰC</div>
+        <div class="badge badge-blue" style="margin-bottom: 6px;">HƯỚNG TỚI GIẢM TẢI NHÂN LỰC</div>
         <h3>Tự Động Hóa Khâu Nặng Nhất</h3>
-        <p>AI đảm nhận 90% công việc quét thị trường, soạn nội dung quảng cáo và tư vấn 24/7. Nhân sự chỉ đóng vai trò duyệt cuối (Human-in-the-loop) với thời gian thao tác dưới 5 phút mỗi ngày.</p>
+        <p>Mục tiêu thiết kế: AI đảm nhận phần lớn khối lượng quét thị trường, soạn nội dung quảng cáo và tư vấn 24/7. Nhân sự giữ vai trò duyệt cuối (Human-in-the-loop); thời gian thao tác thực tế sẽ được đo và khóa sau baseline (ASM-002).</p>
       </div>
       <div class="card">
-        <div class="badge badge-green" style="margin-bottom: 6px;">BẢO TOÀN 100% LỢI NHUẬN</div>
-        <h3>Khóa Cứng Giá Sàn Toán Học</h3>
-        <p>Không bao giờ giảm giá cảm tính. Mọi mức trợ cấp hoặc ưu đãi chốt nhanh bắt buộc phải qua máy chủ kiểm tra công thức giá sàn, triệt tiêu 100% rủi ro bán lỗ hoặc bị tấn công lệnh.</p>
+        <div class="badge badge-green" style="margin-bottom: 6px;">KIỂM SOÁT GIÁ THEO CHÍNH SÁCH</div>
+        <h3>Kiểm Tra Giá Sàn Trước Khi Chốt</h3>
+        <p>Không giảm giá cảm tính. Giá và discount có thẩm quyền thuộc ERP/POS/Web/App (SoR) cùng chính sách đã được chủ sở hữu phê duyệt; phép kiểm tra P_floor (nếu bật) là mục tiêu thiết kế nhằm giảm rủi ro bán dưới ngưỡng lãi đóng góp (ASM-003).</p>
       </div>
       <div class="card">
         <div class="badge badge-amber" style="margin-bottom: 6px;">VÒNG LẶP DOANH THU</div>
         <h3>Khóa Chặt Khách Hàng Thân Thiết</h3>
-        <p>Xóa bỏ việc phát voucher tràn lan gây nhờn giá. Dùng điểm thưởng tiến độ (Endowed Progress) và liên kết kênh LINE Official Account để tạo thói quen mua lại định kỳ với chi phí tiếp cận 0 đồng.</p>
+        <p>Xóa bỏ việc phát voucher tràn lan gây nhờn giá. Dùng điểm thưởng tiến độ (Endowed Progress) và liên kết kênh LINE Official Account để tạo thói quen mua lại định kỳ; chi phí kênh trên mỗi tương tác dự kiến thấp nhưng phải đo thực tế (giả định thiết kế).</p>
       </div>
     </div>
 
@@ -249,11 +249,11 @@
       <div class="flow-box" style="flex-direction: column; gap: 4px; padding: 5px;">
         <div style="width: 100%; display: flex; justify-content: space-between; align-items: center; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 4px; padding: 3px 8px;">
           <span style="font-weight: 700; color: #1e40af; font-size: 9px;">TẦNG 3: DOMAIN PLAYBOOKS & PACKAGING</span>
-          <span style="font-size: 8.5px; color: #3b82f6;">AgentOS Mobility (GTM-001A) & FMCG (GTM-001B) | Shopify App Store (GTM-002)</span>
+          <span style="font-size: 8.5px; color: #3b82f6;">AgentOS Mobility (GTM-001A) &amp; FMCG (GTM-001B) | Shopify App Store (GTM-002, đề xuất)</span>
         </div>
         <div style="width: 100%; display: flex; justify-content: space-between; align-items: center; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 4px; padding: 3px 8px;">
           <span style="font-weight: 700; color: #166534; font-size: 9px;">TẦNG 2: COMMERCIAL ENGINE & ECONOMICS</span>
-          <span style="font-size: 8.5px; color: #15803d;">Tái phân bổ hoa hồng (ECN-001) | Giá sàn P_floor (ECN-002) | Chi phí AI 0.5-1 TWD (ECN-003)</span>
+          <span style="font-size: 8.5px; color: #15803d;">Tái phân bổ hoa hồng (ECN-001) | Kiểm tra P_floor (ECN-002, đề xuất) | Chi phí AI mục tiêu 0.5-1 TWD (ECN-003)</span>
         </div>
         <div style="width: 100%; display: flex; justify-content: space-between; align-items: center; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 4px; padding: 3px 8px;">
           <span style="font-weight: 700; color: #0f172a; font-size: 9px;">TẦNG 1: SYSTEM BLUEPRINT & PLATFORM SPEC</span>
@@ -307,7 +307,7 @@
   <div class="header">
     <div class="header-left">
       <h1>Kiến Trúc B2B SaaS & Bản Địa Hóa Thị Trường Đài Loan</h1>
-      <p>Cơ chế thích ứng hoàn hảo với văn hóa tiêu dùng và thói quen mua sắm nội địa</p>
+      <p>Cơ chế thích ứng đề xuất theo văn hóa tiêu dùng và thói quen mua sắm nội địa</p>
     </div>
     <div class="header-tag">Chiến Lược Bản Địa Hóa</div>
   </div>
@@ -328,9 +328,9 @@
       </div>
       <div class="card-highlight">
         <h3 style="color: #1e40af;">Tầng Cổng Kết Nối Cắm-Rút (Plug-and-Play Adapters)</h3>
-        <p>Hoán đổi linh hoạt theo thị trường bản địa hoặc toàn cầu:</p>
+        <p>Đề xuất hoán đổi theo thị trường bản địa hoặc toàn cầu (từng cổng phải chốt theo ASM-001; chưa tích hợp thật):</p>
         <ul>
-          <li><strong>Bản địa Đài Loan (ADPT-TW-001):</strong> LINE OA, ECPay, LINE Pay, 7-Eleven CVS COD E-Map, Taiwan PDPA Changhua.</li>
+          <li><strong>Bản địa Đài Loan (ADPT-TW-001, tùy chọn):</strong> LINE OA, ECPay, LINE Pay, 7-Eleven CVS COD E-Map, Taiwan PDPA Changhua.</li>
           <li><strong>Giao tiếp toàn cầu (ADPT-GL-001):</strong> WhatsApp Business API, Meta Webhooks, Web Widget đa ngôn ngữ.</li>
           <li><strong>Thanh toán toàn cầu (ADPT-GL-002):</strong> Stripe, PayPal, Apple Pay, Google Pay.</li>
           <li><strong>Pháp lý toàn cầu (ADPT-GL-003):</strong> GDPR Frankfurt, CCPA US-East, PDPA Singapore.</li>
@@ -343,19 +343,19 @@
     <div class="card" style="margin-bottom: 8px;">
       <h3 style="color: #b91c1c;">Hóa giải vấn nạn nghi ngờ Lừa đảo (Chống tâm lý 詐騙網站)</h3>
       <p><strong>Thực tế:</strong> Người Đài Loan có mức độ cảnh giác rất cao với website lừa đảo. Nếu web chính hãng cho khách "trả giá tay đôi với bot", họ sẽ nghi ngờ là hàng giả hoặc web câu cá.</p>
-      <p><strong>Giải pháp:</strong> Xóa bỏ hoàn toàn từ "Mặc cả". Thay bằng <strong>"Trợ cấp chốt đơn tự động" (AI 即時補貼)</strong> hoặc <strong>"Tặng thêm điểm LINE Points"</strong>. Hiển thị nổi bật <strong>Mã số thuế doanh nghiệp (統一編號)</strong> và chứng nhận <strong>LINE Official Account tick xanh</strong> ngay trong khung chat để tạo niềm tin tuyệt đối.</p>
+      <p><strong>Giải pháp:</strong> Xóa bỏ hoàn toàn từ "Mặc cả". Thay bằng <strong>"Trợ cấp chốt đơn tự động" (AI 即時補貼)</strong> hoặc <strong>"Tặng thêm điểm LINE Points"</strong>. Hiển thị nổi bật <strong>Mã số thuế doanh nghiệp (統一編號)</strong> và chứng nhận <strong>LINE Official Account tick xanh</strong> ngay trong khung chat để tăng niềm tin.</p>
     </div>
 
     <div class="card" style="margin-bottom: 8px;">
       <h3 style="color: #2563eb;">Hóa giải thói quen Nhận hàng Siêu thị Tiện lợi (超商取貨付款 - CVS COD)</h3>
-      <p><strong>Thực tế:</strong> Hơn 60% giao dịch mua sắm trực tuyến tại Đài Loan chọn nhận hàng và thanh toán tiền mặt tại 7-Eleven hoặc FamilyMart gần nhà vì sự tiện lợi 24/7.</p>
+      <p><strong>Thực tế (số liệu tham khảo từ nghiên cứu thị trường, cần dẫn nguồn/xác minh):</strong> Phần lớn giao dịch mua sắm trực tuyến tại Đài Loan chọn nhận hàng và thanh toán tiền mặt tại 7-Eleven hoặc FamilyMart gần nhà vì sự tiện lợi 24/7.</p>
       <p><strong>Giải pháp:</strong> Luồng chốt ưu đãi trong 10 phút được tinh chỉnh thành <strong>"Khóa đơn và chọn siêu thị tiện lợi trong 10 phút"</strong>. Khách mở bản đồ siêu thị (E-Map API), chọn chi nhánh gần nhà và điền SĐT nhận thông báo. Khách có 7 ngày ra cửa hàng kiểm tra và trả tiền. Nếu bùng hàng (未取貨), hệ thống tự động khóa quyền nhận trợ cấp đơn sau.</p>
     </div>
 
     <div class="card">
       <h3 style="color: #059669;">Hóa giải rào cản mua Xe máy điện: Trợ cấp Chính phủ & Trạm đổi Pin</h3>
-      <p><strong>Thực tế:</strong> Khách mua xe điện Đài Loan quan tâm lớn nhất: "Tôi được nhà nước trợ cấp bao nhiêu?" và "Trạm đổi pin GoStation/Ionex có gần nhà không?". Không ai mua đứt xe chỉ bằng chat trực tuyến.</p>
-      <p><strong>Giải pháp:</strong> Tích hợp <strong>Bộ tính trợ cấp theo hộ khẩu</strong> (Bộ Kinh tế + Cục Môi trường + Chính quyền thành phố giảm 10.000–20.000 TWD) và <strong>Bản đồ trạm đổi pin trong 1km</strong>. AI chuyển đổi luồng sang mô hình <strong>O2O (Online-to-Offline)</strong>: Đặt lịch lái thử tại Showroom và nhận cọc giữ suất trợ cấp có hoàn lại.</p>
+      <p><strong>Thực tế (cần dẫn nguồn/xác minh):</strong> Khách mua xe điện Đài Loan quan tâm lớn nhất: "Tôi được nhà nước trợ cấp bao nhiêu?" và "Trạm đổi pin GoStation/Ionex có gần nhà không?". Không ai mua đứt xe chỉ bằng chat trực tuyến.</p>
+      <p><strong>Giải pháp:</strong> Đề xuất tích hợp <strong>Bộ tính trợ cấp theo hộ khẩu</strong> (Bộ Kinh tế + Cục Môi trường + Chính quyền thành phố — mức 10.000–20.000 TWD chỉ là số tham khảo, phải xác minh theo chính sách hiện hành và theo ASM-003/ASM-005) và <strong>Bản đồ trạm đổi pin trong 1km</strong> (dữ liệu trạm pin phụ thuộc API được cấp quyền theo ASM-001). AI chuyển đổi luồng sang mô hình <strong>O2O (Online-to-Offline)</strong>: Đặt lịch lái thử tại Showroom và nhận cọc giữ suất trợ cấp có hoàn lại.</p>
     </div>
   </div>
 
@@ -370,7 +370,7 @@
   <div class="header">
     <div class="header-left">
       <h1>Module 1: AI Nghiên Cứu Nhu Cầu & Trợ Lý Tiếp Thị (Marketing)</h1>
-      <p>Mô hình Human-in-the-loop: AI làm 90% việc nặng, Con người giữ 100% quyền kiểm soát ngân sách</p>
+      <p>Mô hình Human-in-the-loop: AI chuẩn bị phần lớn khối lượng, con người giữ quyền phê duyệt ngân sách</p>
     </div>
     <div class="header-tag">Phân Hệ Tiếp Thị</div>
   </div>
@@ -378,12 +378,12 @@
   <div class="content">
     <h2>1. Nguyên Tắc Cốt Lõi: AI Chuẩn Bị, Con Người Phê Duyệt</h2>
     <p style="margin-bottom: 10px;">
-      Giải pháp giải quyết triệt để nỗi lo lớn nhất của ban giám đốc: <em>"Liệu AI có tự ý tiêu tiền quảng cáo hoặc phát ngôn sai lệch làm hỏng thương hiệu?"</em>. Câu trả lời là <strong>TUYỆT ĐỐI KHÔNG</strong>. Hệ thống thiết lập rào chắn an toàn kép: AI chỉ là cỗ máy nghiên cứu và sản xuất nội dung; quyền bấm nút xuất bản và chi tiêu ngân sách hoàn toàn nằm trong tay nhân sự doanh nghiệp.
+      Thiết kế nhằm xử lý nỗi lo lớn nhất của ban giám đốc: <em>"Liệu AI có tự ý tiêu tiền quảng cáo hoặc phát ngôn sai lệch làm hỏng thương hiệu?"</em>. Câu trả lời theo thiết kế là <strong>KHÔNG</strong>: hệ thống đặt rào chắn an toàn kép — AI nghiên cứu và soạn nội dung; quyền bấm nút xuất bản và chi tiêu ngân sách thuộc nhân sự doanh nghiệp (AUTH-4 Approval Required).
     </p>
 
     <div class="grid-2">
       <div class="card">
-        <h3>AI Thực Hiện (90% Khối Lượng)</h3>
+        <h3>AI Thực Hiện (Phần Lớn Khối Lượng)</h3>
         <ul>
           <li>Quét tín hiệu thị trường, sản phẩm ngách và đối thủ cạnh tranh.</li>
           <li>Xác định thời điểm nhu cầu xuất hiện trước khi khách tìm kiếm.</li>
@@ -393,7 +393,7 @@
         </ul>
       </div>
       <div class="card-highlight">
-        <h3 style="color: #1e40af;">Con Người Quyết Định (10% Quyền Sinh Sát)</h3>
+        <h3 style="color: #1e40af;">Con Người Quyết Định (Quyền Phê Duyệt Cuối)</h3>
         <ul>
           <li>Đọc bản tóm tắt cơ hội do AI trình bày trên bảng điều khiển.</li>
           <li>Kiểm tra tính chuẩn xác của thông điệp thương hiệu.</li>
@@ -432,20 +432,20 @@
         <tr>
           <td><strong>MKT-05 & MKT-06: Điều Phối & Phân Tích</strong></td>
           <td>Vận hành chu trình chiến dịch 8 bước qua cổng duyệt SCR-003; đo lường CAC, ROAS và quy thuộc doanh thu ERP (Skill: <code>dispatch-campaign</code>, <code>evaluate-attribution</code>).</td>
-          <td>Báo cáo hiệu quả chiến dịch & doanh thu đối soát thật.</td>
+          <td>Báo cáo hiệu quả chiến dịch & doanh thu quy thuộc đối soát từ nguồn có thẩm quyền (theo thiết kế).</td>
         </tr>
       </tbody>
     </table>
 
-    <h2>3. Ứng Dụng Thực Chiến Cho Hai Ngành Hàng Đài Loan</h2>
+    <h2>3. Ứng Dụng Đề Xuất Cho Hai Ngành Hàng Đài Loan</h2>
     <div class="grid-2">
       <div class="card-success">
         <h3 style="color: #166534;">Đối với Hàng tiêu dùng (FMCG)</h3>
-        <p>AI phát hiện chu kỳ tiêu dùng gia đình (ví dụ: nước giặt, sữa hạt dùng hết sau 30 ngày). Soạn nháp chiến dịch quảng bá <strong>"Combo gia đình giao định kỳ đến 7-Eleven - Tiết kiệm 15% mỗi tháng"</strong>, giải phóng người nội trợ khỏi việc mang vác nặng.</p>
+        <p>AI phát hiện chu kỳ tiêu dùng gia đình (ví dụ: nước giặt, sữa hạt dùng hết sau 30 ngày). Soạn nháp chiến dịch quảng bá <strong>"Combo gia đình giao định kỳ đến 7-Eleven - Tiết kiệm theo mức ưu đãi đã phê duyệt"</strong> (con số 15% chỉ là ví dụ minh họa, chốt theo ASM-003), hướng tới giảm bớt việc mang vác nặng cho người nội trợ.</p>
       </div>
       <div class="card-success">
         <h3 style="color: #166534;">Đối với Xe máy điện Thông minh</h3>
-        <p>AI nhắm vào nhóm nhân viên văn phòng đi xe xăng cũ: Soạn thông điệp <strong>"Đổi xe xăng cũ lấy xe điện thông minh - Nhận trợ cấp chính phủ tới 18.000 TWD tại Đài Bắc"</strong>. Kêu gọi hành động: Đăng ký nhận bảng tính trợ cấp và lái thử 1-chạm qua LINE.</p>
+        <p>AI nhắm vào nhóm nhân viên văn phòng đi xe xăng cũ: Soạn thông điệp <strong>"Đổi xe xăng cũ lấy xe điện thông minh - Tìm hiểu khoản trợ cấp chính phủ theo hộ khẩu"</strong> (số tiền trợ cấp là ví dụ minh họa, phải kiểm tra chính sách hiện hành trước khi phát ngôn). Kêu gọi hành động: Đăng ký nhận bảng tính trợ cấp và lái thử 1-chạm qua LINE.</p>
       </div>
     </div>
   </div>
@@ -461,7 +461,7 @@
   <div class="header">
     <div class="header-left">
       <h1>Module 2: AI Bán Hàng, Trợ Cấp Chốt Nhanh & Thanh Toán Siêu Thị</h1>
-      <p>Trải nghiệm mua hàng không ma sát, bảo vệ giá sàn tuyệt đối và phân hệ O2O xe điện</p>
+      <p>Trải nghiệm mua hàng không ma sát, kiểm soát giá theo chính sách đã phê duyệt và phân hệ O2O xe điện</p>
     </div>
     <div class="header-tag">Phân Hệ Bán Hàng</div>
   </div>
@@ -483,13 +483,13 @@
       </div>
     </div>
 
-    <h2>2. Cơ Chế Trợ Cấp Giá Chốt Nhanh & Bảo Toàn Lợi Nhuận (ECN-001 & ECN-002)</h2>
+    <h2>2. Cơ Chế Trợ Cấp Giá Chốt Nhanh & Giữ Mục Tiêu Lãi Đóng Góp (ECN-001 & ECN-002 — đề xuất)</h2>
     <div class="card-highlight" style="margin-bottom: 8px;">
-      <h3 style="color: #1e40af;">Bản chất: AI Không Tự Ý Giảm Giá — Máy Chủ Khóa Cứng Giá Sàn (P_floor - ECN-002)</h3>
+      <h3 style="color: #1e40af;">Bản chất: AI Không Tự Ý Giảm Giá — Giá Do ERP/SoR &amp; Chính Sách Đã Duyệt Quyết Định; P_floor Là Phép Kiểm Tra Đề Xuất</h3>
       <p style="font-size: 10px; color: #1e3a8a; line-height: 1.45;">
-        - <strong>Bán nguyên giá với khách sẵn sàng mua:</strong> Nếu khách chỉ hỏi thông số, bảo hành, AI chốt đơn theo giá niêm yết ERP, cấm tự nhắc giảm giá.<br>
-        - <strong>Kích hoạt trợ cấp khi khách ngần ngại:</strong> Khi khách so sánh giá, AI mở gói <strong>"Trợ cấp chốt đơn tự động" (AI 即時補貼)</strong> trích từ 5–10% hoa hồng telesales tiết kiệm được (ECN-001).<br>
-        - <strong>Máy chủ khóa cứng giá sàn:</strong> Mức trợ cấp tối đa = <code>P_listed - P_floor</code> (P_floor = COGS + Vận hành + Lãi tối thiểu). Máy chủ từ chối 100% nếu giá dưới sàn, bảo toàn trọn vẹn biên lãi ròng.
+        - <strong>Bán nguyên giá với khách sẵn sàng mua:</strong> Nếu khách chỉ hỏi thông số, bảo hành, AI chốt đơn theo giá niêm yết ERP, không tự nhắc giảm giá.<br>
+        - <strong>Đề xuất trợ cấp khi khách ngần ngại:</strong> Khách so sánh giá, AI có thể đề xuất gói <strong>"Trợ cấp chốt đơn" (AI 即時補貼)</strong> trong hạn mức đã phê duyệt, dựa trên giả định tiết kiệm hoa hồng telesales 5–10% (ECN-001 — giả định kinh tế đề xuất, chưa kiểm chứng).<br>
+        - <strong>Phép kiểm tra giá sàn (nếu bật):</strong> Mức trợ cấp tối đa = <code>P_listed - P_floor</code> (P_floor = max((C+L)/(1-r), P_base - D_cap) theo mục tiêu thiết kế; định nghĩa biến tại plans/delivery/analytics.md). Hệ thống từ chối đề xuất dưới sàn và chuyển người có thẩm quyền rà soát; giá và discount cuối cùng vẫn theo ERP/SoR và chính sách đã phê duyệt (ASM-003).
       </p>
     </div>
 
@@ -521,7 +521,7 @@
       <div class="card">
         <h3 style="color: #0f172a;">Phân hệ Xe máy điện (High-Ticket EV)</h3>
         <ul>
-          <li><strong>Tính trợ cấp chính phủ:</strong> Nhập hộ khẩu -> Tự động tính khoản hỗ trợ 10.000–20.000 TWD theo chính sách mới nhất của Đài Bắc, Tân Bắc, Cao Hùng...</li>
+          <li><strong>Tính trợ cấp chính phủ (đề xuất):</strong> Nhập hộ khẩu -> tính khoản hỗ trợ theo chính sách hiện hành của Đài Bắc, Tân Bắc, Cao Hùng... Mức 10.000–20.000 TWD chỉ là ví dụ tham khảo, phải xác minh trước khi dùng.</li>
           <li><strong>Bản đồ trạm pin:</strong> Hiển thị vị trí trạm đổi pin GoStation/Ionex trong bán kính 1km quanh nhà.</li>
           <li><strong>Chốt cọc lái thử O2O:</strong> Nhận cọc giữ suất trợ cấp 1.000 TWD (hoàn lại), chuyển đại lý hỗ trợ làm biển số tại Trạm Đăng kiểm (監理所).</li>
         </ul>
@@ -529,9 +529,9 @@
       <div class="card">
         <h3 style="color: #0f172a;">Phân hệ Hàng tiêu dùng (FMCG D2C)</h3>
         <ul>
-          <li><strong>Gói mua định kỳ (定期購):</strong> Đăng ký giao tự động 30/60 ngày đến 7-Eleven -> Hưởng cố định mức giá sàn rẻ hơn 15% không cần mặc cả.</li>
+          <li><strong>Gói mua định kỳ (定期購):</strong> Đăng ký giao tự động 30/60 ngày đến 7-Eleven -> Hưởng mức giá ưu đãi định kỳ theo chính sách đã phê duyệt (ASM-003), không cần mặc cả.</li>
           <li><strong>Tặng thêm LINE Points:</strong> Tích điểm thưởng quy đổi thành tiền LINE Points chi tiêu thực tế.</li>
-          <li><strong>Trần giỏ hàng cá nhân (Basket Cap):</strong> Giới hạn ưu đãi tối đa 1.000–2.000 TWD/đơn để chặn con buôn gom hàng sỉ.</li>
+          <li><strong>Trần giỏ hàng cá nhân (Basket Cap):</strong> Giới hạn ưu đãi tối đa 1.000–2.000 TWD/đơn để chặn gom hàng sỉ — hạn mức đề xuất, chốt theo chính sách đã duyệt (ASM-003).</li>
         </ul>
       </div>
     </div>
@@ -575,7 +575,7 @@
       </div>
     </div>
 
-    <h2>3. Chiến Lược Hậu Mãi & Giữ Chân Thực Chiến Cho Hai Ngành Hàng</h2>
+    <h2>3. Chiến Lược Hậu Mãi &amp; Giữ Chân Đề Xuất Cho Hai Ngành Hàng</h2>
     <div class="grid-2">
       <div class="card">
         <h3 style="color: #059669;">Vòng lặp Xe máy điện (Mô hình Tesla Referral)</h3>
@@ -589,7 +589,7 @@
         <h3 style="color: #2563eb;">Vòng lặp Hàng tiêu dùng (FMCG D2C)</h3>
         <ul>
           <li><strong>Dự báo hết hàng 1-chạm (Replenishment):</strong> Dựa vào lượng dùng thực tế, đúng ngày thứ 25 AI nhắn tin qua LINE: <em>"Bột giặt/cà phê nhà bạn sắp hết, chạm 1 nút để giao lại gói quen thuộc đến 7-Eleven"</em>.</li>
-          <li><strong>Xử lý hàng lỗi siêu tốc:</strong> Hàng bị đổ vỡ khi vận chuyển, khách chụp ảnh gửi vào LINE, AI phân tích duyệt gửi bù hàng mới trong 30 giây mà không bắt trả hàng cũ.</li>
+          <li><strong>Xử lý hàng lỗi:</strong> Hàng bị đổ vỡ khi vận chuyển, khách chụp ảnh gửi vào LINE; AI phân tích ảnh và <strong>tạo đề xuất gửi bù ở dạng nháp</strong>, trình duyệt theo ngưỡng đã phê duyệt (ASM-004) trước khi thực thi.</li>
           <li><strong>Chế tài bùng hàng siêu thị:</strong> Khách đặt giao đến 7-Eleven nhưng quá 7 ngày không đến lấy (未取貨) sẽ bị tự động khóa quyền nhận ưu đãi lần sau.</li>
         </ul>
       </div>
@@ -606,11 +606,11 @@
       <tbody>
         <tr>
           <td>Lập nhiều tài khoản LINE/Clone</td>
-          <td>Khóa quyền theo <strong>Số điện thoại thật xác thực OTP</strong> kết hợp <strong>Vân tay thiết bị (Device Fingerprint)</strong> tuân thủ Taiwan PDPA.</td>
+          <td>Khóa quyền theo <strong>Số điện thoại thật xác thực OTP</strong>, kết hợp <strong>vân tay thiết bị (Device Fingerprint)</strong> — <em>[PENDING LEGAL REVIEW][ASM-005]</em> cơ chế này chỉ được dùng sau khi Data/Legal phê duyệt cơ sở pháp lý và luồng consent theo Taiwan PDPA.</td>
         </tr>
         <tr>
           <td>Dùng thẻ khác nhau để gom ưu đãi</td>
-          <td>Nhận diện <strong>Mã băm phương thức thanh toán (Payment Fingerprint)</strong>; trùng tài khoản ngân hàng chuyển tiền sẽ bị hủy ưu đãi.</td>
+          <td>Đối soát <strong>mã băm phương thức thanh toán (Payment Fingerprint)</strong> — <em>[PENDING LEGAL REVIEW][ASM-005]</em> cần rà soát pháp lý/consent trước khi triển khai; trùng tài khoản ngân hàng chuyển tiền thì hủy ưu đãi.</td>
         </tr>
         <tr>
           <td>Gom hàng về cùng một địa chỉ</td>
@@ -631,7 +631,7 @@
   <div class="header">
     <div class="header-left">
       <h1>Hiệu Quả Kinh Tế, So Sánh Mô Hình & Kế Hoạch Triển Khai</h1>
-      <p>Bảng phân tích giá trị đầu tư, đo lường thực tế và lộ trình thử nghiệm 4 tuần</p>
+      <p>Khung phân tích giá trị đầu tư, mô hình đo lường đề xuất và lộ trình thử nghiệm</p>
     </div>
     <div class="header-tag">Kế Hoạch Hành Động</div>
   </div>
@@ -650,22 +650,22 @@
         <tr>
           <td><strong>Chi phí nhân sự tư vấn</strong></td>
           <td>Chi trả hoa hồng 5%–10% cho telesales; nhân viên trực chat ca đêm tốn kém, dễ bỏ sót khách.</td>
-          <td><strong>Chi phí nhân sự 0đ:</strong> Tự động hóa 24/7; chuyển hoa hồng tiết kiệm thành quỹ trợ cấp chốt khách.</td>
+          <td><strong>Giảm phụ thuộc nhân sự trực chat (mục tiêu thiết kế):</strong> Tự động hóa trong phạm vi được cho phép; phần hoa hồng tiết kiệm có thể chuyển thành quỹ trợ cấp theo chính sách đã duyệt, không phải chi phí bằng 0.</td>
         </tr>
         <tr>
           <td><strong>Xử lý giảm giá</strong></td>
           <td>Phát mã giảm giá công khai trên mạng, ai cũng dùng được; làm mất giá trị thương hiệu và bào mòn lãi.</td>
-          <td><strong>Trợ cấp có chọn lọc:</strong> Chỉ trợ cấp cho khách ngần ngại giá; kiểm soát 100% bằng giá sàn máy chủ.</td>
+          <td><strong>Trợ cấp có chọn lọc:</strong> Chỉ đề xuất trợ cấp cho khách ngần ngại giá; mọi mức giá chốt theo ERP/SoR và chính sách đã phê duyệt, có phép kiểm tra P_floor (đề xuất) làm chốt an toàn.</td>
         </tr>
         <tr>
           <td><strong>Tỷ lệ chốt xe điện</strong></td>
           <td>Khách xem web rồi thoát vì không hiểu thông số, không biết khoản tiền được nhà nước trợ cấp.</td>
-          <td><strong>Phễu O2O tự động:</strong> Tính sẵn tiền trợ cấp theo hộ khẩu, chỉ vị trí trạm pin, chốt cọc lái thử ngay.</td>
+          <td><strong>Phễu O2O (mục tiêu thiết kế):</strong> Tính sẵn tiền trợ cấp theo hộ khẩu (mức xác minh theo chính sách hiện hành), chỉ vị trí trạm pin, hỗ trợ chốt cọc lái thử.</td>
         </tr>
         <tr>
           <td><strong>Chi phí mua lại (Retention)</strong></td>
           <td>Đốt tiền chạy quảng cáo bám đuổi (Retargeting ads); mất dấu khách hàng sau khi giao hàng xong.</td>
-          <td><strong>Tiếp cận 0đ qua LINE OA:</strong> Chăm sóc định kỳ, tích điểm LINE Points và nhắc mua lại tự động.</td>
+          <td><strong>Kênh LINE OA chi phí thấp (giả định thiết kế):</strong> Chăm sóc định kỳ, tích điểm LINE Points và nhắc mua lại; chi phí thực tế phải đo theo baseline.</td>
         </tr>
       </tbody>
     </table>
@@ -673,16 +673,16 @@
     <h2>2. Bức Tranh Kinh Tế Đơn Vị (Unit Economics)</h2>
     <div class="grid-3" style="margin-bottom: 8px;">
       <div class="card-success">
-        <h3 style="color: #166534;">Chi Phí AI Cực Thấp</h3>
-        <p>Chi phí gọi AI trung bình chỉ khoảng <strong>0,5 – 1 TWD</strong> cho mỗi phiên tư vấn đầy đủ, thấp hơn hàng chục lần so với chi phí thuê nhân viên trực chat.</p>
+        <h3 style="color: #166534;">Mục Tiêu Chi Phí AI Thấp</h3>
+        <p>Định mức thiết kế đề xuất khoảng <strong>0,5 – 1 TWD</strong> cho mỗi phiên tư vấn đầy đủ (ECN-003). Đây là mục tiêu, chưa có số đo thực tế; phải khóa sau baseline theo ASM-002.</p>
       </div>
       <div class="card-success">
-        <h3 style="color: #166534;">Tăng 25%–40% Tỷ Lệ Chuyển Đổi</h3>
-        <p>Nhờ giải tỏa do dự trong 8 giây đầu tiên, tính sẵn tiền trợ cấp xe điện và hỗ trợ nhận hàng siêu thị tiện lợi 7-Eleven không cần thẻ.</p>
+        <h3 style="color: #166534;">Kỳ Vọng Cải Thiện Tỷ Lệ Chuyển Đổi</h3>
+        <p>Giả thuyết thiết kế: giải tỏa do dự ở giai đoạn tư vấn, tính sẵn khoản trợ cấp xe điện theo chính sách và hỗ trợ nhận hàng CVS COD giúp cải thiện chuyển đổi. Mức cải thiện cụ thể chưa được kiểm chứng (khóa sau baseline ASM-002).</p>
       </div>
       <div class="card-success">
-        <h3 style="color: #166534;">Bảo Vệ 100% Biên Lãi Ròng</h3>
-        <p>Mọi khoản chiết khấu đều được trích từ hoa hồng sales tiết kiệm được và chặn cứng tại giá sàn, không ảnh hưởng đến dòng tiền ròng của công ty.</p>
+        <h3 style="color: #166534;">Giữ Mục Tiêu Biên Lãi Ròng</h3>
+        <p>Chiết khấu chỉ được đề xuất trong hạn mức chính sách đã duyệt (ASM-003) và kiểm tra bằng P_floor nếu bật; đây là mục tiêu thiết kế, chưa phải kết quả đo được.</p>
       </div>
     </div>
 
@@ -706,7 +706,7 @@
     <div class="grid-2" style="margin-bottom: 8px;">
       <div class="card" style="padding: 6px 8px;">
         <h4 style="font-size: 10px; color: #1e40af; margin-bottom: 2px;">1. Cơ Chế Phích Cắm Bản Địa (Adapters)</h4>
-        <p style="font-size: 9.5px; line-height: 1.35;">Giữ nguyên 100% Lõi AI & Giá sàn; chỉ thay 3 cổng theo từng nước: Chat (LINE ➔ WhatsApp/Widget), Thanh toán (ECPay ➔ Stripe/PayPal), Pháp lý (Taiwan PDPA ➔ GDPR/CCPA).</p>
+        <p style="font-size: 9.5px; line-height: 1.35;">Giữ nguyên lõi AI &amp; phép kiểm tra P_floor (khi bật); chỉ thay 3 cổng theo từng nước: Chat (LINE ➔ WhatsApp/Widget), Thanh toán (ECPay ➔ Stripe/PayPal), Pháp lý (Taiwan PDPA ➔ GDPR/CCPA). Đây là đề xuất, từng cổng phải chốt theo ASM-001.</p>
       </div>
       <div class="card" style="padding: 6px 8px;">
         <h4 style="font-size: 10px; color: #1e40af; margin-bottom: 2px;">2. Đóng Gói 2 Sản Phẩm Ngành Dọc (Vertical SaaS)</h4>
@@ -714,20 +714,20 @@
       </div>
       <div class="card" style="padding: 6px 8px;">
         <h4 style="font-size: 10px; color: #1e40af; margin-bottom: 2px;">3. Phân Phối 1-Chạm Qua Shopify App Store</h4>
-        <p style="font-size: 9.5px; line-height: 1.35;">Đóng gói lên Shopify & WooCommerce App Store để tiếp cận hàng trăm nghìn nhà bán lẻ quốc tế theo mô hình PLG tự động, không tốn chi phí đội ngũ sales tay.</p>
+        <p style="font-size: 9.5px; line-height: 1.35;">Đề xuất đóng gói lên Shopify &amp; WooCommerce App Store (chưa phát hành) nhằm tiếp cận tệp nhà bán lẻ quốc tế theo mô hình PLG, kỳ vọng giảm phụ thuộc đội ngũ sales tay; quy mô tệp khách và CAC phải đo bằng dữ liệu thực.</p>
       </div>
       <div class="card" style="padding: 6px 8px;">
         <h4 style="font-size: 10px; color: #1e40af; margin-bottom: 2px;">4. Đòn Bẩy Case Study Đài Loan Bán Toàn Cầu</h4>
-        <p style="font-size: 9.5px; line-height: 1.35;">Dùng trực tiếp số liệu thực nghiệm tại Đài Loan (tỷ lệ chuyển đổi, độ trễ & chi phí AI/đơn đo tại analytics.md) làm bảo chứng ROI vững chắc để chào bán cho $N$ doanh nghiệp.</p>
+        <p style="font-size: 9.5px; line-height: 1.35;">Sau khi khóa baseline và đo lường thực tế tại Đài Loan (tỷ lệ chuyển đổi, độ trễ &amp; chi phí AI/đơn theo khung tại analytics.md) mới có số liệu để làm case study. <strong>Hiện chưa có số liệu thực nghiệm/ROI.</strong></p>
       </div>
     </div>
 
-    <h2>5. Cam Kết & Hành Động Tiếp Theo Dành Cho Đối Tác</h2>
+    <h2>5. Đề Xuất &amp; Hành Động Tiếp Theo Dành Cho Đối Tác</h2>
     <div class="card-highlight" style="padding: 8px 10px;">
       <p style="font-size: 10px; color: #1e3a8a; line-height: 1.5;">
-        - <strong>Không làm gián đoạn hệ thống:</strong> Tích hợp song song qua mã nhúng siêu nhẹ hoặc kênh LINE OA độc lập mà không cần sửa website gốc.<br>
-        - <strong>Bảo mật chuẩn quốc tế:</strong> Máy chủ nội địa bảo vệ dữ liệu cá nhân (Taiwan PDPA), phân tách dữ liệu tuyệt đối giữa các doanh nghiệp.<br>
-        - <strong>Kích hoạt Demo trong 48 giờ:</strong> Chỉ cần cung cấp danh mục thử nghiệm cho 1 dòng FMCG hoặc 1 mẫu xe điện để khởi chạy hệ sinh thái Demo ngay.
+        - <strong>Không làm gián đoạn hệ thống:</strong> Đề xuất tích hợp song song qua mã nhúng nhẹ hoặc kênh LINE OA độc lập mà không cần sửa website gốc.<br>
+        - <strong>Bảo mật &amp; tuân thủ:</strong> Thiết kế hướng tới lưu trữ dữ liệu cá nhân theo Taiwan PDPA và cách ly ngữ cảnh giữa các khách hàng; cách ly tenant là lớp bổ sung. Phạm vi dữ liệu lưu trữ chờ khóa theo ASM-005.<br>
+        - <strong>Bước tiếp theo (blueprint, không phải cam kết thời gian):</strong> Cung cấp danh mục mẫu cho 1 dòng FMCG hoặc 1 mẫu xe điện để cùng dựng bản mô phỏng (simulation) trên dữ liệu thử; tiến độ thực tế phụ thuộc việc khóa ASM-001..005.
       </p>
     </div>
   </div>

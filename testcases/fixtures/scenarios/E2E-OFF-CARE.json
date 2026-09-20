@@ -1,0 +1,119 @@
+{
+  "id": "E2E-OFF-CARE",
+  "title": "PILOT-03 + TC-E2E-004(a): order lookup only for the server-verified customer (mocked SoR)",
+  "document": "e2e/offline.md",
+  "layer": "e2e",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P1",
+  "basis": "blueprint",
+  "pair": "E2E-LIVE-CARE",
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "PILOT-03",
+    "TC-E2E-004",
+    "CS-01",
+    "FR-CS-001",
+    "FR-CS-002",
+    "NFR-006",
+    "NFR-008",
+    "SRS-08",
+    "SRS-11"
+  ],
+  "facets": [
+    "skill:skill.care.lookup_order",
+    "skill:skill.care.track_shipping",
+    "intent:order_status",
+    "intent:shipping",
+    "channel:WEB_APP_CHAT",
+    "memory:Customer Context",
+    "stage:CONTEXT",
+    "stage:DECISION",
+    "kpi:First Response Time",
+    "kpi:AI Resolution Rate"
+  ],
+  "risk": "A guest or impersonating session reads another customer's order status, address or invoice number because a client-sent verification_status flag was accepted as proof of identity.",
+  "preconditions": [
+    "run_id=RUN-E2E-OFF-CARE, case_id=E2E-OFF-CARE, worker=w-biz-e2e; tenant T1 restored from fixtures; identity resolution runs against the in-memory registry, which holds a verified record for sess-a-1 -> cust-a only",
+    "the OrderConnector mock serves ORD-A-1 (cust-a, order_number T1-0001, fulfillment_status SHIPPED, invoice AB12345678) and ORD-B-1 (cust-b); sess-guest-1 has no verification record"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "channel": "WEB_APP_CHAT",
+    "unverified_session_id": "sess-guest-1",
+    "verified_session_id": "sess-a-1",
+    "verified_at": "2025-11-02T03:00:00Z",
+    "client_asserted_payload": {
+      "customer_id": "cust-a",
+      "verification_status": "VERIFIED"
+    },
+    "utterances": [
+      "Don hang ORD-A-1 cua toi dang o dau?",
+      "Cho toi xem tinh trang giao hang cua ORD-A-1",
+      "Cho toi xem ORD-B-1"
+    ],
+    "expected_case_outcome": "RESOLVED with the ERP record reference"
+  },
+  "steps": [
+    {
+      "action": "Ask for order status from the session with no verification record",
+      "expected": "the answer is REQUEST_IDENTITY_VERIFICATION with no order field at all (no status, tracking, address or invoice) and the OrderConnector call count for that session is 0"
+    },
+    {
+      "action": "Replay the same question with a client-asserted identity",
+      "expected": "the payload claim {customer_id: cust-a, verification_status: VERIFIED} is ignored, identity still resolves UNRESOLVED from the server record, the answer stays REQUEST_IDENTITY_VERIFICATION and the connector stays uncalled"
+    },
+    {
+      "action": "Complete server-side verification for the session",
+      "expected": "identity resolves SESSION_BOUND to cust-a from the verified registry record and the reply stops asking for verification"
+    },
+    {
+      "action": "Look up the caller's own order",
+      "expected": "care.lookup_order issues exactly one OrderConnector read bound to tenant T1 + customer cust-a + external_id ORD-A-1 and returns the authoritative record (order_number T1-0001, fulfillment_status SHIPPED)"
+    },
+    {
+      "action": "Ask for another customer's order from the verified session",
+      "expected": "the request is refused as not owned by the verified customer: no ERP read for ORD-B-1, no field of cust-b's order in the reply, and the refusal reason is recorded on the case"
+    },
+    {
+      "action": "Resolve the case and check the evidence trail",
+      "expected": "the case reaches RESOLVED with the ERP source-of-truth evidence card, and the audit chain links intent -> identity resolution -> lookup -> case outcome"
+    }
+  ],
+  "assertions": [
+    "no order field is disclosed before a server-side verification record exists and a client-asserted verification_status never changes the resolution outcome (NFR-008 fail closed)",
+    "every ERP read carries the verified customer binding of the session: the ORD-A-1 read names cust-a and ORD-B-1 is never fetched for a session verified as cust-a",
+    "the order facts in the answer equal the ERP record returned during the run (SHIPPED, T1-0001) — no delivery date or tracking number is invented",
+    "the refused cross-customer lookup produced its own audited refusal rather than an empty success, and the resolved lookup produced the case outcome plus evidence card"
+  ],
+  "forbidden": [
+    "answering an order-status question with another customer's data or with a client-supplied identity assertion",
+    "dispatching any ERP read for a session with no verification record, even as an exploratory probe"
+  ],
+  "evidence": [
+    "identity resolution records for both sessions (server record only) plus the ignored client payload",
+    "OrderConnector transcript: exactly one read for ORD-A-1, zero reads for ORD-B-1 and zero for the unverified session",
+    "evidence card EV_ORDER_LOOKUP with sourceOfTruth=ERP and the case outcome log for the resolved lookup"
+  ],
+  "cleanup": [
+    "drop run RUN-E2E-OFF-CARE and the case rows created by the run; keep the audit/evidence entries and never delete the fixture order records"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. Intent handling, the identity gate, the case FSM and the evidence writer are real; the OrderConnector is the substituted boundary and the ZALO/web widget transport is mocked.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/05-skill-system-specifications.md",
+    "plans/modules/customer-support.md",
+    "plans/platform/workflows-and-handoffs.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/customers.json",
+    "fixtures/offline/orders.json",
+    "fixtures/offline/events.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

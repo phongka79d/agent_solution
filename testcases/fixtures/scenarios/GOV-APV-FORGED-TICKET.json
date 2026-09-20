@@ -1,0 +1,101 @@
+{
+  "id": "GOV-APV-FORGED-TICKET",
+  "title": "Forged approval: a self-declared approval ticket cannot release a prepared action",
+  "document": "governance/approval.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SCR-003",
+    "AUTH-4",
+    "BR-007",
+    "BR-010",
+    "NFR-001"
+  ],
+  "facets": [
+    "entity:Approval",
+    "entity:Action"
+  ],
+  "risk": "A prepared high-risk action is released with a hand-written approval identifier in the payload, bypassing the approval centre entirely.",
+  "preconditions": [
+    "Namespace gov-apv-<case_id>-<worker_id>; approval queue seeded from fixtures/offline/governance.json.",
+    "Operator identities and roles resolved from the fixture operator registry; every decision goes through POST /api/v1/approvals/{id}/decision, the only approval route.",
+    "No approval exists for the run; the payload will claim one."
+  ],
+  "inputs": {
+    "proposals": [
+      {
+        "label": "fabricated id",
+        "ticket": "APV-FAKE-999",
+        "signature": null
+      },
+      {
+        "label": "correct id, no signature",
+        "ticket": "APV-CAMP-15",
+        "signature": null
+      },
+      {
+        "label": "correct id, forged signature",
+        "ticket": "APV-CAMP-15",
+        "signature": "hmac-sha256:deadbeef"
+      },
+      {
+        "label": "correct id, no operator decision recorded",
+        "ticket": "APV-T2-CAMP",
+        "signature": null
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Attempt to release the action with each of the four claimed tickets",
+      "expected": "All four are refused: the approval is resolved server-side and must exist with a matching signature and a recorded operator decision."
+    },
+    {
+      "action": "Inspect the refusal reasons",
+      "expected": "Each refusal names the specific deficiency (unknown ticket, missing signature, signature mismatch, undecided item)."
+    },
+    {
+      "action": "Verify no external effect",
+      "expected": "The adapter counter is 0 for all four attempts and no task reaches completed."
+    }
+  ],
+  "assertions": [
+    "An approval reference supplied by the caller is verified against server state; it is never trusted as evidence.",
+    "All four forgeries are refused with distinguishable reasons and zero external effects.",
+    "A signature is validated cryptographically, so an arbitrary string cannot pass.",
+    "An approval item that exists but was never decided cannot release anything."
+  ],
+  "forbidden": [
+    "Trusting a caller-provided approval id.",
+    "Comparing signatures with a non-constant-time equality that leaks validity.",
+    "Falling back to execution when signature verification throws."
+  ],
+  "evidence": [
+    "Four refusal records with reasons.",
+    "Adapter counter showing zero calls.",
+    "Server-side approval resolution log for each claimed ticket."
+  ],
+  "cleanup": [
+    "Delete gov- attempt records; leave the genuine pending items untouched."
+  ],
+  "automation": "Real signature verification and approval resolution under test. Signatures are generated with a test key held outside the repository; no key material is written to fixtures.",
+  "prerequisites": [
+    "A test signing key must be provisioned outside the repository (sandbox secret store); the case is BLOCKED_PREREQUISITE without it rather than substituting a fake verification."
+  ],
+  "references": [
+    "implement/07-human-command-center-ui.md",
+    "implement/08-security-governance-nfr.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

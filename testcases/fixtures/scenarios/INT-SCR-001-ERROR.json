@@ -1,0 +1,93 @@
+{
+  "id": "INT-SCR-001-ERROR",
+  "title": "SCR-001 error state: a failing metrics source surfaces an error, not stale numbers",
+  "document": "integration/command-center.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P0",
+  "basis": "extension",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SCR-001",
+    "SRS-17",
+    "NFR-004"
+  ],
+  "facets": [
+    "stage:OUTCOME"
+  ],
+  "risk": "A broken metrics feed leaves yesterday's numbers on screen with no warning, so leadership makes a decision on data they believe is live.",
+  "preconditions": [
+    "Namespace gov-scr-<case_id>-<worker_id>; the operator UI runs against the offline gateway and mock SSE/telemetry streams.",
+    "Operator session bound to tenant T1 and an explicit operator_id from fixtures/offline/governance.json; frozen clock 2026-01-15T10:00:00Z.",
+    "Synthetic values for the previous successful fetch are cached with an observed_at timestamp."
+  ],
+  "inputs": {
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/telemetry/executive",
+      "tenant": "T1"
+    },
+    "failure_script": [
+      {
+        "call": 1,
+        "result": "200_OK"
+      },
+      {
+        "call": 2,
+        "result": "503_METRICS_UNAVAILABLE"
+      },
+      {
+        "call": 3,
+        "result": "200_OK"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Perform the first fetch successfully and record the observed_at",
+      "expected": "Payload carries fresh values and a timestamp."
+    },
+    {
+      "action": "Force the second fetch to fail with 503",
+      "expected": "The dashboard enters an error/stale state: the last-known timestamp is shown and the values are marked stale, with the upstream error code available."
+    },
+    {
+      "action": "Release the fault and fetch again",
+      "expected": "Fresh values replace the stale ones and the error state clears without a page reload."
+    }
+  ],
+  "assertions": [
+    "On failure the response never presents cached numbers as current: a staleness marker or error state is mandatory.",
+    "The upstream error code 503 is preserved in the surface, not replaced by a generic message.",
+    "Recovery clears the error state automatically and the new values are the seeded ones.",
+    "No fabricated or interpolated value fills the gap."
+  ],
+  "forbidden": [
+    "Showing cached numbers with no staleness indicator.",
+    "Recording the failed fetch as a successful dashboard load.",
+    "Replacing an error with an empty chart that looks like zero activity."
+  ],
+  "evidence": [
+    "Three fetch payloads with timestamps and error codes.",
+    "Dashboard screenshots for the success, error and recovered states.",
+    "Gateway log showing the upstream 503 was propagated."
+  ],
+  "cleanup": [
+    "Restore the mock metrics provider script and clear gov- cache keys."
+  ],
+  "automation": "Command Center React components and the gateway routes run as real code under test; ERP, channel and telemetry providers are replaced by the offline mock sinks whose call logs are the oracle. UI assertions use accessible roles and names rather than CSS classes, and stream waits are condition-based.",
+  "prerequisites": [],
+  "references": [
+    "implement/07-human-command-center-ui.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

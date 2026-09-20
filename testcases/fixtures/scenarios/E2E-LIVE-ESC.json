@@ -1,0 +1,118 @@
+{
+  "id": "E2E-LIVE-ESC",
+  "title": "PILOT-04: complaint escalation, operator takeover and authorised resolution (approved sandbox)",
+  "document": "e2e/live.md",
+  "layer": "e2e",
+  "environment": "live",
+  "priority": "critical",
+  "gate": "P1",
+  "basis": "blueprint",
+  "pair": "E2E-OFF-ESC",
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "PILOT-04",
+    "CS-01",
+    "CS-02",
+    "FR-CS-001",
+    "FR-CS-002",
+    "NFR-007",
+    "BR-007",
+    "AUTH-4",
+    "SRS-08"
+  ],
+  "facets": [
+    "skill:skill.care.escalate_to_human",
+    "skill:skill.care.manage_case",
+    "intent:complaint",
+    "intent:human_escalation",
+    "channel:ZALO",
+    "stage:DECISION",
+    "stage:APPROVAL",
+    "stage:EXECUTION",
+    "stage:OUTCOME",
+    "memory:Customer Context",
+    "kpi:Escalation Rate",
+    "kpi:Resolution Time"
+  ],
+  "risk": "A complaint is answered by the bot, or a refund/compensation is promised without human approval, and the operator takeover lock never actually silences the agent.",
+  "preconditions": [
+    "run_id=RUN-E2E-LIVE-ESC, case_id=E2E-LIVE-ESC, worker=w-biz-e2e-live; the complaint is injected through the approved sandbox ZALO test chat from the allowlisted sandbox customer",
+    "the sandbox returns are staged so a real handoff, a real operator session and a real approved compensation workflow are available; no production conversation is touched"
+  ],
+  "inputs": {
+    "tenant_id": "LIVE_TENANT_ID",
+    "customer_id": "LIVE_CUSTOMER_A_SANDBOX_ID",
+    "channel": "ZALO",
+    "utterance": "sandbox complaint demanding a refund",
+    "case_id": "sandbox-case-<run_id>",
+    "requested_compensation": "sandbox amount",
+    "operator_id": "sandbox operator account",
+    "takeover_ttl_seconds": 300
+  },
+  "steps": [
+    {
+      "action": "Inject the complaint and watch the classification",
+      "expected": "the sandbox run classifies complaint, opens the sandbox case and records the policy verdict without promising any amount"
+    },
+    {
+      "action": "Escalate through the real handoff bus",
+      "expected": "one handoff package reaches the sandbox operator queue and the session state is awaiting_human"
+    },
+    {
+      "action": "Take over the sandbox session",
+      "expected": "the operator acquires the lock through SCR-005 and a competing autonomous dispatch is refused; the sandbox provider test sink logs 0 calls for it — the provider test sink is the oracle for every denied or refused step: its call log for the run stays empty, no provider id is manufactured for the attempt, and the audit entry records the refusal instead"
+    },
+    {
+      "action": "Confirm the bot stays silent",
+      "expected": "a further sandbox customer message while the lock is held produces no outbound message and no provider call for the session"
+    },
+    {
+      "action": "Resolve with the authorised sandbox compensation workflow",
+      "expected": "the operator records the decision, the sandbox compensation executes once through the approved path (or the run reports BLOCKED_PREREQUISITE when the sandbox workflow is unsupported) and the case reaches RESOLVED citing the decision"
+    },
+    {
+      "action": "Release the lock and collect evidence",
+      "expected": "human.resume releases the takeover, the session returns to auto, and the sandbox artefacts are linked by run_id with the sent/decided items retained"
+    }
+  ],
+  "assertions": [
+    "the sandbox provider test sink shows zero calls for every refused dispatch and no provider reference is reported for a denial — a denied action has no provider receipt to show: the case records the decision, the zero-call sink and the audit entry, and never presents a receipt, order id or message id the provider did not return",
+    "the sandbox conversation received no autonomous message between escalation and lock release",
+    "the compensation, if executed, carries the recorded human decision and a single sandbox transaction; if the sandbox cannot support it the case is BLOCKED_PREREQUISITE rather than PASS",
+    "the sandbox case outcome and handoff package reference the same case id and run_id, and the audit chain is complete for the live run"
+  ],
+  "forbidden": [
+    "sending any sandbox message from the agent while the operator holds the session",
+    "claiming the escalation worked from a queue acknowledgement without the handoff package and the lock record"
+  ],
+  "evidence": [
+    "sandbox handoff package and the SCR-005 takeover lock record",
+    "sandbox provider test-sink call log for the refused dispatches (zero calls)",
+    "sandbox case record with the operator decision and the final status (retained, non-deletable)"
+  ],
+  "cleanup": [
+    "Retire the sandbox artefacts created by this run through the supported sandbox APIs (cancel/withdraw the created cart, campaign, case and voucher references); delete nothing immutable — sent messages, provider receipts and audit rows are retained and reported as non-deletable rather than pretending they were unsent"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. Same components on the sandbox with a real operator session holding SCR-005 takeover and a real sandbox handoff bus.",
+  "prerequisites": [
+    "ASM-001 approved connector lock is present (LIVE_CONNECTORS_LOCK points at the approved connector list) — without it this case is SKIP_ASM_001, never PASS",
+    "Per-case sandbox authorization: the run_id of this case is registered in the approved sandbox allowlist with its sandbox tenant/customer/SKU mapping before execution; credentials live outside the repository (env.local) and are never printed in evidence",
+    "An operator account with SCR-005 takeover rights on the sandbox is available for this run; without it the takeover sub-step is BLOCKED_PREREQUISITE and the run reports it rather than inferring the guard behaviour",
+    "No tenant policy parameter for autonomous refunds/compensation is approved (ASM-004), so the compensation must travel the human approval route"
+  ],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/05-skill-system-specifications.md",
+    "plans/modules/customer-support.md",
+    "plans/platform/workflows-and-handoffs.md",
+    "implement/08-security-governance-nfr.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/customers.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

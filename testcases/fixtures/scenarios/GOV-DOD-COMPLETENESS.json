@@ -1,0 +1,113 @@
+{
+  "id": "GOV-DOD-COMPLETENESS",
+  "title": "DoD completeness: ten pillars, and a capability is done only when all ten hold",
+  "document": "governance/dod.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P0",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SRS-27",
+    "OBJ-006"
+  ],
+  "facets": [
+    "stage:LEARNING",
+    "entity:Outcome"
+  ],
+  "risk": "A pillar is quietly dropped until the Definition of Done collapses into 'the agent can chat', so the system is declared complete without real execution, real evidence or a real outcome.",
+  "preconditions": [
+    "Namespace gov-dod-<case_id>-<worker_id>; the DoD pillar registry is read from fixtures/offline/governance.json (dod_pillars, dod_state) and no pillar may be added, removed, merged or re-kinded inside the run.",
+    "Frozen clock 2026-01-15T10:00:00Z; each pillar is scored against its own artifact and kind, so a document cannot stand in for a runtime artifact and mock coverage cannot close any pillar.",
+    "The DoD registry lists ten pillars across the two kinds (six blueprint, four runtime), and no pillar may be removed, merged or re-kinded inside the run.",
+    "The completion rule is that a capability needs all ten, so a single unmet pillar keeps the capability open."
+  ],
+  "inputs": {
+    "expected_pillar_count": 10,
+    "dod_items": [
+      "Data thật",
+      "Agent thật",
+      "Skill thật",
+      "Tool thật",
+      "Policy thật",
+      "Approval thật",
+      "Execution thật",
+      "Evidence thật",
+      "Outcome thật",
+      "Test thật"
+    ],
+    "blueprint_pillars": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6
+    ],
+    "runtime_pillars": [
+      7,
+      8,
+      9,
+      10
+    ],
+    "expected_status_by_kind": {
+      "blueprint": "DESIGN_ONLY",
+      "runtime": "NOT_RUN"
+    },
+    "capability_done_requires_all_ten": true,
+    "runtime_available": false
+  },
+  "steps": [
+    {
+      "action": "Enumerate the ten DoD pillars and their kinds",
+      "expected": "Ten pillars are listed with their items (data, agent, skill, tool, policy, approval, execution, evidence, outcome, test) and their kinds; none is missing or duplicated."
+    },
+    {
+      "action": "Evaluate each pillar against its artifact",
+      "expected": "The six blueprint pillars reach DESIGN_ONLY and the four runtime pillars are NOT_RUN, and no pillar is reported PASS."
+    },
+    {
+      "action": "Determine whether any capability is done",
+      "expected": "No capability is done while a runtime pillar is unmet, and the report names the unmet pillars rather than returning a single boolean without reasons."
+    },
+    {
+      "action": "Attempt to drop or merge a pillar so the DoD reads complete",
+      "expected": "The attempt is refused: the pillar count stays 10 and the completion rule still requires every pillar, so the DoD cannot be shortened by the run."
+    }
+  ],
+  "assertions": [
+    "All ten DoD pillars are enumerated exactly once with their item and kind, and the blueprint/runtime split is 6/4.",
+    "No pillar is reported PASS in this repository: blueprint pillars are DESIGN_ONLY and runtime pillars are NOT_RUN.",
+    "A capability is done only when all ten pillars hold; a single unmet pillar keeps it open and the unmet pillars are named.",
+    "The pillar count and the completion rule cannot be changed by a run, a fixture edit or a summary author, so the DoD cannot be shortened into a passing state."
+  ],
+  "forbidden": [
+    "Removing or merging a pillar so the DoD reads complete.",
+    "Declaring a capability done while a runtime pillar is unmet.",
+    "Reporting the DoD as a single boolean without naming the unmet pillars."
+  ],
+  "evidence": [
+    "DoD summary listing the ten pillars with their item, kind and status.",
+    "Completion evaluation naming the unmet runtime pillars and the blocked capability."
+  ],
+  "cleanup": [
+    "Delete gov- DoD report rows after export."
+  ],
+  "automation": "The gate-evaluation code and the run-report writer run as real code under test while the evidence registry is data. The oracle is the pair (evidence registry, run-report status): a gate that reads PASS without a real artifact fails the case, and a missing runtime is reported NOT_RUN instead of being allowed to fall through to PASS.",
+  "prerequisites": [
+    "No runtime exists in this repository, so the four runtime pillars cannot be satisfied and no capability can be declared done; completion is BLOCKED_PREREQUISITE."
+  ],
+  "references": [
+    "implement/09-sprint-roadmap-and-pilots.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

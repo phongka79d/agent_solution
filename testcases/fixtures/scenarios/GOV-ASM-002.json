@@ -1,0 +1,117 @@
+{
+  "id": "GOV-ASM-002",
+  "title": "ASM-002 unlocked: KPI targets are BLOCKED_PREREQUISITE while formulas and safety invariants stay testable",
+  "document": "governance/asm.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P1",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "ASM-002",
+    "NFR-002",
+    "SRS-20"
+  ],
+  "facets": [
+    "kpi:Policy Violation Rate",
+    "stage:OUTCOME"
+  ],
+  "risk": "A target is invented to make a dashboard look green, so the pilot is declared successful against a number nobody approved and the real baseline is never bought.",
+  "preconditions": [
+    "Namespace gov-asm-<case_id>-<worker_id>; the assumption registry is read from fixtures/offline/governance.json assumptions and no lock may be granted, forged, cached or edited inside the run.",
+    "Frozen clock 2026-01-15T10:00:00Z; the harness records exactly one outcome per dependent capability - EXECUTED, BLOCKED_PREREQUISITE or SKIP_ASM_<n> - and refuses to re-label a skip as PASS.",
+    "assumptions.ASM-002.locked is false and no approved baseline or target set exists; the KPI dictionary figures in fixtures/offline/governance.json kpi_dataset are labelled synthetic test configuration.",
+    "The KPI evaluation run is configured to separate formula correctness from target compliance."
+  ],
+  "inputs": {
+    "assumptions": {
+      "ASM-002": {
+        "locked": false,
+        "owner": "Business",
+        "locks": [
+          "KPI baseline and targets"
+        ],
+        "blocks": [
+          "pass/fail KPI target assertions"
+        ],
+        "does_not_block": [
+          "formula evaluation",
+          "safety invariants"
+        ]
+      }
+    },
+    "evaluations": [
+      {
+        "label": "formula arithmetic",
+        "kind": "FORMULA",
+        "expected_status": "EXECUTED"
+      },
+      {
+        "label": "target compliance",
+        "kind": "TARGET",
+        "expected_status": "BLOCKED_PREREQUISITE"
+      },
+      {
+        "label": "zero-tolerance safety invariant",
+        "kind": "SAFETY_INVARIANT",
+        "expected_status": "EXECUTED"
+      }
+    ],
+    "proposed_target_invented": false
+  },
+  "steps": [
+    {
+      "action": "Evaluate the KPI formulas against the synthetic dataset",
+      "expected": "Every metric is computed and reported with its window, unit and source; the run is EXECUTED because formulas do not need a target."
+    },
+    {
+      "action": "Attempt the target-compliance evaluation",
+      "expected": "It is reported BLOCKED_PREREQUISITE naming ASM-002 and owner Business; no pass/fail verdict is issued and no target value is displayed."
+    },
+    {
+      "action": "Check the two zero-tolerance safety invariants",
+      "expected": "Policy Violation Rate and Duplicate Execution are still evaluated and must be exactly 0, because a safety invariant is not a baseline-dependent target."
+    },
+    {
+      "action": "Attempt to publish a target figure from the synthetic dataset",
+      "expected": "The publication is refused: a synthetic figure cannot become an approved target, and the report labels the value as test configuration only."
+    }
+  ],
+  "assertions": [
+    "Target compliance is BLOCKED_PREREQUISITE, never PASS and never a substituted number; the blocker names ASM-002 and its owner.",
+    "Formula evaluation and the two zero-tolerance invariants still run, so the missing baseline does not disable measurement safety.",
+    "No target value appears anywhere in the report as an approved commitment; the synthetic figures stay labelled as test configuration.",
+    "The safety invariants remain hard requirements: they are not relaxed, weighted by sample size, or deferred to a later baseline."
+  ],
+  "forbidden": [
+    "Inventing a target so the pilot reads as successful.",
+    "Reporting a blocked target evaluation as a pass because the formula ran.",
+    "Treating a synthetic dashboard figure as an approved target after the fact."
+  ],
+  "evidence": [
+    "Run-report rows for the three evaluations with their statuses.",
+    "Assumption registry snapshot showing ASM-002 unlocked with owner Business.",
+    "KPI dictionary extract showing which metrics depend on a target and which are safety invariants."
+  ],
+  "cleanup": [
+    "Delete gov- evaluation rows after export."
+  ],
+  "automation": "The policy-parameter resolver, the PEP and the run-report writer run as real code under test; the unlocked assumption is configuration, not a substituted boundary. The oracle is the run-report status plus the adapter effect counters, so a capability that executes while its assumption is unlocked fails the case instead of passing it.",
+  "prerequisites": [
+    "The KPI baseline and targets (ASM-002, owner Business) are not locked, so a pass/fail KPI target verdict is BLOCKED_PREREQUISITE; only formulas and safety invariants may be evaluated."
+  ],
+  "references": [
+    "plans/delivery/analytics.md",
+    "implement/09-sprint-roadmap-and-pilots.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

@@ -1,0 +1,89 @@
+{
+  "id": "INT-SCR-003-CANCEL",
+  "title": "SCR-003 CANCEL: irreversible abort releases reservations and audits the abort",
+  "document": "integration/command-center.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SCR-003",
+    "AUTH-4",
+    "BR-005",
+    "NFR-002"
+  ],
+  "facets": [
+    "entity:Approval",
+    "entity:Action",
+    "stage:APPROVAL"
+  ],
+  "risk": "Cancelling a campaign leaves budget or inventory reservations held, so the tenant pays for capacity it will never use, and the abort is unlogged.",
+  "preconditions": [
+    "Namespace gov-scr-<case_id>-<worker_id>; the operator UI runs against the offline gateway and mock SSE/telemetry streams.",
+    "Operator session bound to tenant T1 and an explicit operator_id from fixtures/offline/governance.json; frozen clock 2026-01-15T10:00:00Z.",
+    "APV-CAMP-15 pending with a budget reservation of 186750 TWD held in the synthetic budget ledger."
+  ],
+  "inputs": {
+    "cancel": {
+      "decision": "CANCEL",
+      "operator_id": "OP-APPROVER-T1",
+      "reason": "Campaign postponed; budget released for the next quarter."
+    },
+    "reservations_before": {
+      "budget_twd": 186750,
+      "audience_hold": 12000
+    }
+  },
+  "steps": [
+    {
+      "action": "Read the reservation ledger before the decision",
+      "expected": "The ledger shows budget 186750 TWD and audience hold 12000 held by the run."
+    },
+    {
+      "action": "Submit CANCEL",
+      "expected": "HTTP 200 with status CANCELLED; the task is terminal and cannot be resumed by any later decision."
+    },
+    {
+      "action": "Read the reservation ledger and audit rows after the decision",
+      "expected": "Both reservations are released to 0 and an immutable audit row records the cancellation with the operator and reason."
+    },
+    {
+      "action": "Attempt an APPROVE on the cancelled item",
+      "expected": "The decision is rejected; the cancelled state is terminal and no execution occurs."
+    }
+  ],
+  "assertions": [
+    "CANCEL releases every held reservation atomically; the ledger shows 0 for both reservation types.",
+    "The cancelled state is terminal: no later decision can execute the payload.",
+    "An immutable audit row records the abort with operator identity, timestamp and reason.",
+    "Zero adapter sends occur before, during and after cancellation."
+  ],
+  "forbidden": [
+    "Releasing only the budget and leaking the audience hold.",
+    "Allowing a later approval to revive a cancelled run.",
+    "Logging the cancellation as a rejection or losing the reason."
+  ],
+  "evidence": [
+    "Reservation ledger before/after snapshots.",
+    "Cancellation audit row and the rejected late-decision response."
+  ],
+  "cleanup": [
+    "Delete gov- approval rows; released reservations are restored to the fixture ledger state."
+  ],
+  "automation": "Command Center React components and the gateway routes run as real code under test; ERP, channel and telemetry providers are replaced by the offline mock sinks whose call logs are the oracle. UI assertions use accessible roles and names rather than CSS classes, and stream waits are condition-based.",
+  "prerequisites": [],
+  "references": [
+    "implement/07-human-command-center-ui.md",
+    "implement/06-api-and-connectors-spec.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

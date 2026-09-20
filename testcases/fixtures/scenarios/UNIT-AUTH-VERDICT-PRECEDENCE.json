@@ -1,0 +1,103 @@
+{
+  "id": "UNIT-AUTH-VERDICT-PRECEDENCE",
+  "title": "Verdict precedence: AUTH-5 deny and AUTH-4 route are evaluated before rank comparison",
+  "document": "unit/authority.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "AUTH-4",
+    "AUTH-5",
+    "BR-008",
+    "NFR-001"
+  ],
+  "facets": [
+    "entity:Agent",
+    "stage:DECISION"
+  ],
+  "risk": "A high-clearance agent (AUTH-3) outranks a denial so a prohibited or approval-gated action executes without human sign-off.",
+  "preconditions": [
+    "Namespace gov-unit-auth-<case_id>-<worker_id>; no shared mutable state with other cases.",
+    "PolicyEnforcementPoint loaded with fixtures/offline/governance.json skill_authority_registry and agents[]; clock frozen at 2026-01-15T10:00:00Z.",
+    "Rank table contains only the four autonomous levels AUTH-0..AUTH-3; AUTH-4 and AUTH-5 are absent by design."
+  ],
+  "inputs": {
+    "agent": {
+      "agent_id": "SAL-02",
+      "assigned_authority": "AUTH-3"
+    },
+    "ordered_probes": [
+      {
+        "label": "AUTH-5 required by registry",
+        "skill": "skill.governance.raw_dataset_export"
+      },
+      {
+        "label": "AUTH-4 required by registry",
+        "skill": "skill.sales.create_order"
+      },
+      {
+        "label": "AUTH-3 required by registry",
+        "skill": "skill.sales.send_message"
+      },
+      {
+        "label": "AUTH-1 required but proposal declares AUTH-5",
+        "skill": "skill.sales.recommend_product",
+        "declared": "AUTH-5"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Evaluate probe 1 for the maximum-clearance autonomous agent",
+      "expected": "Verdict is DENY_PROHIBITED even though the agent holds the highest autonomous rank."
+    },
+    {
+      "action": "Evaluate probe 2 for the same agent",
+      "expected": "Verdict is REQUIRE_HUMAN_APPROVAL; the rank comparison is not reached and no execution occurs."
+    },
+    {
+      "action": "Evaluate probe 3 for the same agent",
+      "expected": "Verdict is PERMIT because AUTH-3 is the top autonomous level and the skill requires AUTH-3."
+    },
+    {
+      "action": "Evaluate probe 4 where the proposal self-declares AUTH-5 for a low-risk skill",
+      "expected": "Verdict is DENY_PROHIBITED; a self-declared prohibition is honoured as a deny, never silently dropped."
+    }
+  ],
+  "assertions": [
+    "Verdict order is deny, then approval-route, then numeric rank comparison for the four autonomous levels.",
+    "The rank table has exactly four entries and contains neither AUTH-4 nor AUTH-5.",
+    "Probe 3 is the only PERMIT; probes 1, 2 and 4 are DENY_PROHIBITED, REQUIRE_HUMAN_APPROVAL and DENY_PROHIBITED respectively.",
+    "No probe with an AUTH-4 or AUTH-5 requirement produces an executed action."
+  ],
+  "forbidden": [
+    "Implementing AUTH-4/AUTH-5 as ranks 4 and 5 that a better-qualified agent can exceed.",
+    "Falling through to PERMIT when the verdict branch is unknown.",
+    "Recording an executed action for the approval-routed probe."
+  ],
+  "evidence": [
+    "Four PEP decision JSON records in submission order.",
+    "Exported rank table showing four entries.",
+    "Audit rows for the four probes with authority and execution_status."
+  ],
+  "cleanup": [
+    "Delete the gov- namespace records; no shared state to reset beyond it."
+  ],
+  "automation": "Real PEP verdict ordering under test, driven through the public enforce() seam with the skill registry fixture. No external boundary is exercised, so no vendor substitute is needed.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

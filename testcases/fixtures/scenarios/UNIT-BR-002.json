@@ -1,0 +1,87 @@
+{
+  "id": "UNIT-BR-002",
+  "title": "BR-002: a discount that pushes the effective price below the approved floor is rejected",
+  "document": "unit/business-rules.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "BR-002",
+    "ASM-003",
+    "NFR-008",
+    "BR-003"
+  ],
+  "facets": [
+    "entity:Price",
+    "stage:DECISION"
+  ],
+  "risk": "Automated discounting erodes contribution margin below the owner-approved floor, so revenue grows while profit disappears.",
+  "preconditions": [
+    "Namespace gov-unit-br-<case_id>-<worker_id>; Business Rules Engine loaded with no cross-case state.",
+    "Frozen clock 2026-01-15T10:00:00Z; agent fixture context loaded from fixtures/offline/governance.json.",
+    "Synthetic floor inputs loaded (SKU-OK base 1000 TWD, unit cost 700 TWD, fee rate 2%, target margin 10%) giving P_floor above 800 TWD for the exercise; these numbers are not an approved policy."
+  ],
+  "inputs": {
+    "quote": {
+      "sku_id": "SKU-OK",
+      "base_price": 1000,
+      "discount_rate": 0.3,
+      "computed_floor": 820,
+      "catalog_ref_id": "ERP-SKU-OK",
+      "currency": "TWD"
+    },
+    "floor_inputs_source": "owner-approved policy configuration (synthetic in this run)"
+  },
+  "steps": [
+    {
+      "action": "Evaluate the 30 percent discount whose effective price is 700 TWD",
+      "expected": "Rule BR-002 fails with ERR_FLOOR_PRICE_VIOLATION and names both the offered price and the floor."
+    },
+    {
+      "action": "Confirm the SoR base price is untouched",
+      "expected": "A read of SKU-OK still returns 1000 TWD; the platform wrote no price back to the SoR."
+    },
+    {
+      "action": "Evaluate the same quote with the floor inputs missing",
+      "expected": "The engine fails closed with an error rather than defaulting a floor and permitting the discount."
+    }
+  ],
+  "assertions": [
+    "errorCode is exactly ERR_FLOOR_PRICE_VIOLATION and the message contains the offered price and floor value.",
+    "Zero write calls to the pricing SoR: the engine is a guardrail, not a pricing source.",
+    "Missing floor inputs produce a rejection, never a defaulted threshold.",
+    "The rejected quote is never handed to the channel adapter."
+  ],
+  "forbidden": [
+    "Clamping the discount to the cap and executing anyway without recording a violation.",
+    "Writing the discounted price back to the SoR.",
+    "Using a hardcoded margin default when policy configuration is absent."
+  ],
+  "evidence": [
+    "Rule evaluation record including offered price, floor value and errorCode.",
+    "SoR call log showing zero price mutations and the unchanged SKU-OK listing."
+  ],
+  "cleanup": [
+    "Delete gov- quote drafts; no SoR mutation to roll back."
+  ],
+  "automation": "Real BusinessRulesEngine and PEP under test; only ERP/POS/connector boundaries are substituted by the offline mock whose call log and receipts are the oracle. Rules are evaluated in sequence and halt on the first failure, so each case asserts the first failing rule code rather than a bag of errors.",
+  "prerequisites": [
+    "Discount floor inputs require owner approval (ASM-003); this case exercises the arithmetic with labelled synthetic inputs and must not be reported as policy acceptance."
+  ],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "plans/delivery/analytics.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/catalog.json",
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

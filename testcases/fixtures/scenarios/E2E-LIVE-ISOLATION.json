@@ -1,0 +1,110 @@
+{
+  "id": "E2E-LIVE-ISOLATION",
+  "title": "TC-E2E-004(b,c) + NFR-006: verified cross-customer and cross-tenant isolation (approved sandbox)",
+  "document": "e2e/live.md",
+  "layer": "e2e",
+  "environment": "live",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "blueprint",
+  "pair": "E2E-OFF-ISOLATION",
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "TC-E2E-004",
+    "NFR-006",
+    "NFR-001",
+    "CS-01",
+    "FR-CS-002",
+    "SRS-08"
+  ],
+  "facets": [
+    "skill:skill.care.lookup_order",
+    "skill:skill.sales.retrieve_customer",
+    "intent:order_status",
+    "channel:WEB_APP_CHAT",
+    "memory:Customer Context",
+    "memory:Working Memory",
+    "stage:CONTEXT",
+    "kpi:Policy Violation Rate"
+  ],
+  "risk": "Customer A's context is hydrated into customer B's session, prompt or cache — or one tenant reads another tenant's records — so the platform discloses data across customers without any failed lookup being visible.",
+  "preconditions": [
+    "run_id=RUN-E2E-LIVE-ISO, case_id=E2E-LIVE-ISO, worker=w-biz-e2e-live; two sandbox customers and their sandbox orders are staged through the approved sandbox path, and one tenant mapping for the cross-tenant replay is prepared",
+    "the sandbox session-to-customer bindings were created server-side for this run; no production session or customer record is read"
+  ],
+  "inputs": {
+    "tenant_id": "LIVE_TENANT_ID",
+    "other_tenant_id": "second approved sandbox tenant",
+    "customer_a": "sandbox customer A with its sandbox order",
+    "customer_b": "sandbox customer B with its sandbox order",
+    "cross_customer_probe": "A's session asks for B's sandbox order ref",
+    "cross_tenant_probe": "A's request replayed under the second sandbox tenant",
+    "leak_markers": "sandbox customer id, sandbox order ref and amount of B"
+  },
+  "steps": [
+    {
+      "action": "Run both positive controls on the sandbox",
+      "expected": "each sandbox session resolves its own sandbox order and returns its own fields from the sandbox API"
+    },
+    {
+      "action": "Attempt the cross-customer read",
+      "expected": "A's sandbox session asking for B's order is refused and the sandbox provider test sink records 0 reads for B's order — the provider test sink is the oracle for every denied or refused step: its call log for the run stays empty, no provider id is manufactured for the attempt, and the audit entry records the refusal instead"
+    },
+    {
+      "action": "Sweep the sandbox context for B's markers",
+      "expected": "A's sandbox prompt/context export, session memory and reply contain zero occurrences of B's sandbox markers"
+    },
+    {
+      "action": "Replay across the sandbox tenants",
+      "expected": "the second sandbox tenant's replay is refused as a tenant mismatch and returns no T1 sandbox record"
+    },
+    {
+      "action": "Check the anonymous sandbox session",
+      "expected": "the anonymous sandbox visitor keeps a distinct session bucket with customer=null and no customer context is hydrated from a supplied id"
+    },
+    {
+      "action": "Collect the sandbox isolation evidence",
+      "expected": "the refusals, the leak sweep and the provider call counts are all tied to the run and retained"
+    }
+  ],
+  "assertions": [
+    "each sandbox session resolves only its own order from the sandbox source of truth",
+    "no sandbox marker of customer B appears in customer A's prompt, context, memory, cache, log or reply",
+    "the refused cross-customer and cross-tenant reads produced zero sandbox provider calls and no B data — a denied action has no provider receipt to show: the case records the decision, the zero-call sink and the audit entry, and never presents a receipt, order id or message id the provider did not return",
+    "the anonymous sandbox session stayed isolated with customer=null and its own working-memory bucket"
+  ],
+  "forbidden": [
+    "returning any sandbox record that the session's verified customer does not own",
+    "resolving a sandbox session in one tenant to a record of another tenant"
+  ],
+  "evidence": [
+    "the two sandbox positive-control lookups with their sandbox order ids",
+    "sandbox context/prompt export plus the leak-scan report (zero findings)",
+    "sandbox provider test-sink call log for the refused reads (zero calls)"
+  ],
+  "cleanup": [
+    "Retire the sandbox artefacts created by this run through the supported sandbox APIs (cancel/withdraw the created cart, campaign, case and voucher references); delete nothing immutable — sent messages, provider receipts and audit rows are retained and reported as non-deletable rather than pretending they were unsent"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. Same components against two sandbox customers with real sandbox orders and a cross-tenant replay attempt.",
+  "prerequisites": [
+    "ASM-001 approved connector lock is present (LIVE_CONNECTORS_LOCK points at the approved connector list) — without it this case is SKIP_ASM_001, never PASS",
+    "Per-case sandbox authorization: the run_id of this case is registered in the approved sandbox allowlist with its sandbox tenant/customer/SKU mapping before execution; credentials live outside the repository (env.local) and are never printed in evidence",
+    "Two sandbox customers each own a real sandbox order and the sandbox exposes the hydrated context or context log for inspection; if the hydrated context cannot be inspected the leak-sweep sub-step is BLOCKED_PREREQUISITE and the run reports it instead of inferring isolation"
+  ],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/04-core-engine-and-orchestrator.md",
+    "implement/05-skill-system-specifications.md",
+    "plans/modules/customer-support.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/customers.json",
+    "fixtures/offline/orders.json",
+    "fixtures/offline/events.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

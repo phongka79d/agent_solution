@@ -1,0 +1,100 @@
+{
+  "id": "GOV-NFR-003-STORE-OUTAGE",
+  "title": "NFR-003 fail-closed: an unavailable idempotency store blocks the mutation rather than risking a duplicate",
+  "document": "governance/nfr.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "extension",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "NFR-003",
+    "NFR-008",
+    "BR-006"
+  ],
+  "facets": [
+    "entity:Execution",
+    "stage:EXECUTION"
+  ],
+  "risk": "With the dedup store down the platform cannot tell a retry from a new action, so it either double-sends or refuses all legitimate traffic.",
+  "preconditions": [
+    "Namespace gov-nfr-<case_id>-<worker_id>; NFR verification runs against the offline gateway with mock SoR and channel boundaries.",
+    "Frozen clock 2026-01-15T10:00:00Z; failure, outage and crash injections are scripted at the substituted boundary, never faked inside the assertion.",
+    "The idempotency store is scripted to be unavailable during the middle phase."
+  ],
+  "inputs": {
+    "action": {
+      "customer_id": "cust-a",
+      "channel": "EMAIL",
+      "template": "order_shipped",
+      "effect_key": "sha256:8888888888888888888888888888888888888888888888888888888888888888"
+    },
+    "phases": [
+      {
+        "store": "up",
+        "expected": "ONE_EFFECT"
+      },
+      {
+        "store": "down",
+        "expected": "BLOCKED_FAIL_CLOSED"
+      },
+      {
+        "store": "up_again",
+        "replay": true,
+        "expected": "NO_SECOND_EFFECT"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Dispatch with the store available",
+      "expected": "Exactly one effect and one receipt."
+    },
+    {
+      "action": "Take the store down and dispatch a new action",
+      "expected": "The dispatch is blocked with a typed fail-closed error; the adapter counter does not advance, so no unkeyed action escapes."
+    },
+    {
+      "action": "Restore the store and replay the original request",
+      "expected": "The durable dedup record blocks a second effect and returns the original receipt."
+    },
+    {
+      "action": "Reconcile effects and receipts",
+      "expected": "One effect, one receipt, no orphan delivery."
+    }
+  ],
+  "assertions": [
+    "An unavailable dedup store blocks mutating external actions instead of degrading to no protection.",
+    "The block is scoped to mutating actions: read-only skills still serve during the outage.",
+    "After restoration the replay is deduped by the durable record, not re-executed.",
+    "Exactly one external effect exists at the end of the timeline."
+  ],
+  "forbidden": [
+    "Failing open so retries can proceed while dedup is down.",
+    "Blocking reads as well and turning a dedup outage into a total outage.",
+    "Discarding the pending action silently so the customer never receives anything and nobody knows."
+  ],
+  "evidence": [
+    "Phase-by-phase adapter counter log.",
+    "Fail-closed error record and the read-path success during the outage.",
+    "Receipt comparison across the replay."
+  ],
+  "cleanup": [
+    "Delete gov- rows and restore the store script."
+  ],
+  "automation": "Core PEP, rules engine, audit writer, idempotency store and worker lease logic run as real code under test; only ERP/WMS, channel gateways, Redis and the model provider are substituted. Faults are injected at those boundaries and waits are condition-based on persisted state.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

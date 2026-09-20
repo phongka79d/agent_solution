@@ -1,0 +1,45 @@
+# Local live-sandbox values and anything derived from real credentials.
+# The generator never creates, reads or deletes these files; they are yours.
+fixtures/live/env.local
+fixtures/live/*.local
+fixtures/live/*.secret
+fixtures/live/*.env
+
+# Secrets in any form must not land in this suite.
+*.key
+*.pem
+*.p12
+*.pfx
+credentials.json
+secrets.json
+secret*.json
+
+# Run artifacts: transcripts, receipts, evidence dumps, coverage data, caches.
+results/
+receipts/
+artifacts/
+evidence/
+runs/
+*.jsonl
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Python bytecode from importing the case sources.
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Editor and OS noise.
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Atomic-write leftovers from an interrupted generation run.
+*.tmp
+# Interrupted agent fragment drafts; not part of the suite.
+sources/_frag*.py

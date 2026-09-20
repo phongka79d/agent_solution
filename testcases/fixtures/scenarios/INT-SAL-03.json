@@ -1,0 +1,129 @@
+{
+  "id": "INT-SAL-03",
+  "title": "SAL-03 recommendations: six modes, 7 fields, eligibility and suppression respected",
+  "document": "integration/sales-care-orchestrator.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P2",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "SAL-03",
+    "SAL-02",
+    "SAL-05",
+    "FR-SAL-003",
+    "FR-SAL-002",
+    "BR-004",
+    "BR-001",
+    "NFR-005",
+    "SRS-11"
+  ],
+  "facets": [
+    "skill:skill.sales.recommend_product",
+    "skill:skill.sales.check_price",
+    "skill:skill.sales.check_stock",
+    "event:purchase",
+    "kpi:Recommendation Conversion",
+    "kpi:Upsell Revenue",
+    "kpi:Cross-sell Revenue",
+    "stage:DECISION"
+  ],
+  "risk": "Customers get incomplete or ineligible offers (stale price, out-of-stock item, opt-out customer), destroying conversion and trust.",
+  "preconditions": [
+    "run_id=RUN-INT-SAL03-0115, case_id=INT-SAL-03, worker=w-biz-int; catalog/stock/price adapters mocked from the fixtures; no shared session",
+    "cust-a has cart CART-A-0115-01 with SKU-OK x2 and consent for EMAIL marketing; cust-b is marketing opt-out; SKU-ZERO has stock 0; SKU-NOPRICE has no ERP price"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "customer_id": "cust-a",
+    "current_cart_skus": [
+      "SKU-OK"
+    ],
+    "modes": [
+      "PRODUCT_RECOMMENDATION (baseline FR-SAL-003 mode, no dedicated enum value)",
+      "CROSS_SELL",
+      "UPSELL",
+      "SUBSTITUTE",
+      "REPLENISHMENT",
+      "BUNDLE"
+    ],
+    "recent_purchase_probe": {
+      "customer_id": "cust-a",
+      "last_order_days_ago": 11,
+      "consumable_cycle_days": 90
+    },
+    "suppression_probe": {
+      "customer_id": "cust-b",
+      "channel": "EMAIL"
+    },
+    "stock_price_probe": {
+      "sku_id": "SKU-NOPRICE"
+    },
+    "caller_agent": "SAL-03",
+    "granted_authority": "AUTH-1"
+  },
+  "steps": [
+    {
+      "action": "Generate one recommendation per mode for cust-a",
+      "expected": "each mode returns the same 7-field shape (customer, product, reason, evidence, eligibility, confidence, expected_outcome) with mode-appropriate reason/evidence; no mode returns a partial object and none is presented with a missing field"
+    },
+    {
+      "action": "Verify eligibility before presentation",
+      "expected": "eligibility = {stock_available:true, consent_verified:true, suppression_cleared:true} is evaluated per candidate; a candidate with stock 0 or a suppression hit is withheld"
+    },
+    {
+      "action": "Probe the replenishment suppression rule",
+      "expected": "cust-a bought SKU-OK 11 days ago inside a 90-day consumable cycle, so the REPLENISHMENT recommendation is suppressed as 'recently purchased'; the reason states the rule that fired"
+    },
+    {
+      "action": "Probe price/stock freshness",
+      "expected": "any price in product.price equals the ERP quote for the SKU and any stock claim equals the inventory read; SKU-NOPRICE yields no recommendation rather than a guess (BR-001, BR-003)"
+    },
+    {
+      "action": "Probe the opt-out customer",
+      "expected": "for cust-b the consent_verified flag is false and no recommendation is emitted or sent; no marketing message is queued for an opted-out customer (BR-004)"
+    },
+    {
+      "action": "Compare with a downgraded-confidence run",
+      "expected": "when the best candidate scores below the 0.65 threshold the run refuses explicitly instead of presenting a low-confidence product"
+    }
+  ],
+  "assertions": [
+    "all six modes return the 7 FR-SAL-003 fields, and confidence >= 0.65 plus at least one verified timeline event id gate every presentation",
+    "eligibility is evaluated against real fixture state: SKU-ZERO/SKU-NOPRICE candidates are withheld, and cust-b (opt-out) receives nothing",
+    "a recent purchase suppresses the replenishment recommendation for the same consumable inside its cycle window",
+    "prices and stock levels in every recommendation match the ERP/inventory reads at run time; no recommendation carries an invented number"
+  ],
+  "forbidden": [
+    "presenting or sending a recommendation whose eligibility check failed",
+    "attaching recency/consumable rules as facts about the customer instead of as hypothesis-tagged evidence"
+  ],
+  "evidence": [
+    "six recommendation payloads with their evidence/eligibility blocks",
+    "withheld-candidate log with the exact rule that suppressed it (stock 0, no price, opt-out, recent purchase, confidence < 0.65)",
+    "ERP/inventory read timestamps used by the recommendations (freshness proof)"
+  ],
+  "cleanup": [
+    "drop run RUN-INT-SAL03-0115 recommendations and any queued drafts; keep the eligibility decision log"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. Number-level assertions compare against the mocked ERP/inventory reads; the reason field is judged semantically (mode-appropriate, evidence-linked).",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/05-skill-system-specifications.md",
+    "plans/modules/sales.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/catalog.json",
+    "fixtures/offline/customers.json",
+    "fixtures/offline/consents.json",
+    "fixtures/offline/events.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

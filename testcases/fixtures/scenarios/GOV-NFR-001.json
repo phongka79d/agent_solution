@@ -1,0 +1,107 @@
+{
+  "id": "GOV-NFR-001",
+  "title": "NFR-001 Least privilege: no tool outside the assigned allowlist can be called",
+  "document": "governance/nfr.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "NFR-001",
+    "BR-008",
+    "AUTH-3",
+    "TC-E2E-006"
+  ],
+  "facets": [
+    "entity:Agent",
+    "entity:Skill"
+  ],
+  "risk": "An agent reaches a tool that was never granted, for example a raw database writer or an invoice API, and performs an action outside any authority model.",
+  "preconditions": [
+    "Namespace gov-nfr-<case_id>-<worker_id>; NFR verification runs against the offline gateway with mock SoR and channel boundaries.",
+    "Frozen clock 2026-01-15T10:00:00Z; failure, outage and crash injections are scripted at the substituted boundary, never faked inside the assertion.",
+    "SAL-02 is granted the read and message skills only; the allowlist is resolved server-side per agent."
+  ],
+  "inputs": {
+    "granted": [
+      "skill.sales.check_price",
+      "skill.sales.search_product",
+      "skill.sales.send_message"
+    ],
+    "attempts": [
+      {
+        "tool": "db.write",
+        "payload": {
+          "table": "orders",
+          "row": {
+            "status": "PAID"
+          }
+        }
+      },
+      {
+        "tool": "API-001.InvoiceConnector",
+        "payload": {
+          "order_id": "ORD-A-1",
+          "action": "issue"
+        }
+      },
+      {
+        "tool": "skill.governance.raw_dataset_export",
+        "payload": {
+          "tables": [
+            "customers"
+          ]
+        }
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Call each of the three ungranted tools through the agent runtime",
+      "expected": "Every call is refused before dispatch with a typed denial; no adapter is invoked."
+    },
+    {
+      "action": "Inspect the refusal records",
+      "expected": "Each names the tool and the reason (not on allowlist or prohibited), and records the agent identity."
+    },
+    {
+      "action": "Call a granted tool for contrast",
+      "expected": "The granted read succeeds, proving the allowlist does not simply block everything."
+    }
+  ],
+  "assertions": [
+    "Zero of the three ungranted tools reach their adapter; the adapters expose call counters that all read 0.",
+    "Refusals are typed and audited, not generic 500s.",
+    "The granted tool still works, so the control is a boundary and not a blanket outage.",
+    "No test exists that passes by circumventing the boundary: the case itself asserts the bypass fails."
+  ],
+  "forbidden": [
+    "Widening the allowlist at runtime from agent-provided input.",
+    "Treating an unknown tool as allowed.",
+    "Suppressing the denial so the caller sees success."
+  ],
+  "evidence": [
+    "Denial records for all three attempts with tool names and reasons.",
+    "Adapter call counters showing zero invocation.",
+    "Successful granted-tool call as the contrast evidence."
+  ],
+  "cleanup": [
+    "Delete gov- attempt rows and namespace keys."
+  ],
+  "automation": "Core PEP, rules engine, audit writer, idempotency store and worker lease logic run as real code under test; only ERP/WMS, channel gateways, Redis and the model provider are substituted. Faults are injected at those boundaries and waits are condition-based on persisted state.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

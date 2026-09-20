@@ -1,0 +1,81 @@
+{
+  "id": "INT-CASE-RESOLVED-to-CLOSED",
+  "title": "A resolved case closes after the confirmation window and stays immutable",
+  "document": "integration/case-fsm.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "CS-01",
+    "NFR-002",
+    "SRS-08"
+  ],
+  "facets": [
+    "entity:Service Case",
+    "kpi:Reopen Rate",
+    "stage:OUTCOME"
+  ],
+  "risk": "Cases stay open forever, or a closed case is edited so the audit trail no longer reflects what the customer was told.",
+  "preconditions": [
+    "A RESOLVED case CASE-T1-0006 for cust-a resolved at 2026-01-16T09:10:00Z in namespace cd-close-*",
+    "54 hours pass with no customer reply before the close transition"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "case_number": "CASE-T1-0006",
+    "closed_at": "2026-01-18T15:10:00Z",
+    "confirmation_window_hours": 48
+  },
+  "steps": [
+    {
+      "action": "Close the resolved case after the confirmation window",
+      "expected": "state becomes CLOSED with a closed_at timestamp after the resolution timestamp"
+    },
+    {
+      "action": "Attempt to edit the resolution text and the owner of the closed case",
+      "expected": "the edits are refused and the closed case content is unchanged"
+    },
+    {
+      "action": "Attempt a reply to the closed case",
+      "expected": "the reply does not reopen the case implicitly and is routed for explicit reopen handling"
+    },
+    {
+      "action": "Read the case audit trail after the close",
+      "expected": "the full transition history is intact, including resolution and close entries with their actors"
+    }
+  ],
+  "assertions": [
+    "The case reports CLOSED with closed_at later than the resolution timestamp",
+    "Post-close edits are refused and the case content hash is unchanged",
+    "The audit trail still contains every earlier transition entry"
+  ],
+  "forbidden": [
+    "Modify a closed case's resolution or owner",
+    "Delete any case transition entry to make the history look cleaner"
+  ],
+  "evidence": [
+    "Closed case projection with closed_at and content hash before/after the edit attempts",
+    "Refusal audit entries for the post-close edit and reply attempts"
+  ],
+  "cleanup": [
+    "Delete the run-scoped closed case for cd-close-*; retain its immutable audit history for the run window"
+  ],
+  "automation": "Freeze the clock to cross the confirmation window deterministically and run the real case skill; the oracle includes the content hash so silent edits cannot pass.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/03-database-and-memory-schema.md",
+    "plans/platform/workflows-and-handoffs.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/platform.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

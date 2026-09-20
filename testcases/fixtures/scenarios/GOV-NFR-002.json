@@ -1,0 +1,95 @@
+{
+  "id": "GOV-NFR-002",
+  "title": "NFR-002 Auditability: every external-change action has an audit record and an evidence record",
+  "document": "governance/nfr.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "NFR-002",
+    "BR-010",
+    "SRS-17"
+  ],
+  "facets": [
+    "entity:Evidence",
+    "entity:Action",
+    "stage:EVIDENCE"
+  ],
+  "risk": "An outbound message or order exists with no audit trail, so disputes, chargebacks and regulatory queries cannot be answered from platform records.",
+  "preconditions": [
+    "Namespace gov-nfr-<case_id>-<worker_id>; NFR verification runs against the offline gateway with mock SoR and channel boundaries.",
+    "Frozen clock 2026-01-15T10:00:00Z; failure, outage and crash injections are scripted at the substituted boundary, never faked inside the assertion.",
+    "Two mutating actions will be exercised: one permitted send and one order creation routed to approval."
+  ],
+  "inputs": {
+    "actions": [
+      {
+        "skill": "skill.sales.send_message",
+        "customer_id": "cust-a",
+        "channel": "WEB_APP_CHAT",
+        "effect_key": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+      },
+      {
+        "skill": "skill.sales.create_order",
+        "customer_id": "cust-a",
+        "sku_id": "SKU-OK",
+        "effect_key": "sha256:6666666666666666666666666666666666666666666666666666666666666666"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Execute the permitted send and let the order action route to approval",
+      "expected": "The send executes once; the order action is held in awaiting_human."
+    },
+    {
+      "action": "Query the audit store for the run",
+      "expected": "Exactly two audit rows exist, one per action, each with the 18 domain fields populated including trigger, context, skill, tool, decision, authority, action and timestamp."
+    },
+    {
+      "action": "Query the evidence store",
+      "expected": "The executed send has an evidence record with the provider receipt; the approval-held action has no execution evidence yet, which is correct."
+    },
+    {
+      "action": "Verify the action-to-audit coverage ratio",
+      "expected": "Every externally observed effect (one message) maps to exactly one audit row and one evidence record; the ratio is 1:1 with no orphan effect."
+    }
+  ],
+  "assertions": [
+    "Audit coverage is 100 percent of externally observed effects: one effect, one audit row, one evidence row.",
+    "The audit row for the executed send references the evidence record id and the effect_key.",
+    "The approval-held action has an audit row with status denied/pending and no fabricated receipt.",
+    "Action counts derived from the adapter log equal action counts derived from the audit store."
+  ],
+  "forbidden": [
+    "Auditing only successful high-value actions.",
+    "Writing a receipt into evidence before the provider confirmed.",
+    "Losing the effect_key linkage between audit and evidence."
+  ],
+  "evidence": [
+    "Audit rows (18 fields) for both actions, redacted.",
+    "Evidence record with the provider receipt for the send.",
+    "Adapter log used to reconcile the action count."
+  ],
+  "cleanup": [
+    "Delete gov- rows after exporting the audit and evidence extract."
+  ],
+  "automation": "Core PEP, rules engine, audit writer, idempotency store and worker lease logic run as real code under test; only ERP/WMS, channel gateways, Redis and the model provider are substituted. Faults are injected at those boundaries and waits are condition-based on persisted state.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/consents.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

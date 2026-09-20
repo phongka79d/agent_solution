@@ -1,0 +1,88 @@
+{
+  "id": "UNIT-BR-005",
+  "title": "BR-005: mutating action without an effect_key is rejected before any connector call",
+  "document": "unit/business-rules.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "BR-005",
+    "NFR-003",
+    "BR-006"
+  ],
+  "facets": [
+    "entity:Action",
+    "entity:Execution"
+  ],
+  "risk": "Actions without a deterministic key cannot be de-duplicated, so a retry storm creates duplicate messages and duplicate orders.",
+  "preconditions": [
+    "Namespace gov-unit-br-<case_id>-<worker_id>; Business Rules Engine loaded with no cross-case state.",
+    "Frozen clock 2026-01-15T10:00:00Z; agent fixture context loaded from fixtures/offline/governance.json."
+  ],
+  "inputs": {
+    "action": {
+      "customer_id": "cust-a",
+      "channel": "WEB_APP_CHAT",
+      "purpose": "transactional",
+      "template": "order_shipped",
+      "effect_key": null
+    },
+    "control": {
+      "customer_id": "cust-a",
+      "channel": "WEB_APP_CHAT",
+      "purpose": "transactional",
+      "template": "order_shipped",
+      "effect_key": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    }
+  },
+  "steps": [
+    {
+      "action": "Evaluate the mutating action that carries no effect_key",
+      "expected": "Rule fails with ERR_MISSING_EFFECT_KEY; the action never reaches the connector."
+    },
+    {
+      "action": "Evaluate the control action carrying a key",
+      "expected": "BR-005 passes and the action is dispatched exactly once."
+    },
+    {
+      "action": "Attempt a retry of the keyless action",
+      "expected": "The retry is rejected the same way; no second dispatch and no synthesized key."
+    }
+  ],
+  "assertions": [
+    "errorCode is exactly ERR_MISSING_EFFECT_KEY.",
+    "Adapter counter is 1 after all three attempts, proving only the control action dispatched.",
+    "No key is generated server-side to paper over the missing field.",
+    "The rejection is recorded with the action type that lacked the key."
+  ],
+  "forbidden": [
+    "Auto-generating a random key at dispatch time.",
+    "Allowing read-only actions to fail the same check and blocking harmless reads.",
+    "Dispatching first and attaching the key afterwards."
+  ],
+  "evidence": [
+    "Rule evaluation records for all three attempts.",
+    "Adapter counter log and audit rows for the dispatched control action."
+  ],
+  "cleanup": [
+    "Delete gov- action rows and the mock delivery record."
+  ],
+  "automation": "Real BusinessRulesEngine and PEP under test; only ERP/POS/connector boundaries are substituted by the offline mock whose call log and receipts are the oracle. Rules are evaluated in sequence and halt on the first failure, so each case asserts the first failing rule code rather than a bag of errors.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/consents.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

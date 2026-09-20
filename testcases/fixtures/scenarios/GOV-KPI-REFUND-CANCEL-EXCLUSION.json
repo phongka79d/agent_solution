@@ -1,0 +1,110 @@
+{
+  "id": "GOV-KPI-REFUND-CANCEL-EXCLUSION",
+  "title": "Refunded and cancelled orders are excluded from revenue, order count and AOV",
+  "document": "governance/kpi.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P2",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SRS-20",
+    "FR-SAL-002",
+    "NFR-002"
+  ],
+  "facets": [
+    "kpi:Average Order Value",
+    "kpi:Campaign Revenue",
+    "kpi:Lead-to-Order Conversion",
+    "kpi:Cost per Successful Outcome"
+  ],
+  "risk": "Cancelled and refunded orders stay inside the revenue, order count and average order value, so the platform reports money it never kept and the pilots are signed off on phantom revenue.",
+  "preconditions": [
+    "Namespace gov-kpi-<case_id>-<worker_id>; the metric is computed by the real reporting code over fixtures/offline/governance.json kpi_dataset and never copied from the dashboard payload.",
+    "Frozen clock 2026-01-15T10:00:00Z with the reporting window 2026-01-01T00:00:00Z .. 2026-02-01T00:00:00Z as a half-open interval; the stored aggregate is recomputed independently from the raw counter rows.",
+    "kpi_edge.refund_cancel supplies one paid order, one refunded order and one cancelled order with their amounts.",
+    "The adjustment rule is applied at the row level before aggregation, and the excluded rows are still retrievable for reconciliation."
+  ],
+  "inputs": {
+    "refund_cancel_dataset": {
+      "orders": [
+        {
+          "order_id": "ORD-A-1",
+          "amount_twd": 2500.0,
+          "status": "PAID"
+        },
+        {
+          "order_id": "ORD-A-2",
+          "amount_twd": 1200.0,
+          "status": "REFUNDED"
+        },
+        {
+          "order_id": "ORD-A-3",
+          "amount_twd": 900.0,
+          "status": "CANCELLED"
+        }
+      ],
+      "expected_valid_revenue_twd": 2500.0,
+      "expected_valid_orders": 1
+    },
+    "expected": {
+      "valid_revenue_twd": 2500.0,
+      "valid_orders": 1,
+      "excluded_orders": 2,
+      "revenue_including_excluded_twd": 4600.0
+    }
+  },
+  "steps": [
+    {
+      "action": "Aggregate valid revenue and successful order count over the three orders",
+      "expected": "Valid revenue is 2500 TWD from one order; the refunded and cancelled orders are excluded at row level before aggregation."
+    },
+    {
+      "action": "Recompute the average order value and the conversion numerator",
+      "expected": "AOV is 2500 TWD over one successful order, and the conversion numerator counts one paid order rather than three created orders."
+    },
+    {
+      "action": "Apply a refund after the fact to the paid order and re-aggregate",
+      "expected": "The revenue, order count and AOV figures are restated by the same exclusion rule, and the restatement is recorded instead of rewriting the closed window silently."
+    },
+    {
+      "action": "Inspect the reconciliation view",
+      "expected": "The excluded rows are still listed with their exclusion reason, so the difference between gross and valid revenue is explainable line by line."
+    }
+  ],
+  "assertions": [
+    "Refunded and cancelled orders are absent from revenue, successful order count, AOV and cost per successful outcome.",
+    "The excluded rows remain retrievable with a reason, so valid revenue reconciles to gross revenue minus the excluded amounts.",
+    "The conversion numerator counts paid orders only; a cancelled order cannot be counted as a converted lead afterwards.",
+    "A post-window refund produces a recorded restatement rather than a silent rewrite of a closed period."
+  ],
+  "forbidden": [
+    "Leaving refunded orders in revenue because they were paid at some point.",
+    "Rewriting a closed window in place so the earlier published figure cannot be reconstructed.",
+    "Excluding a cancelled order from the denominator while leaving its revenue in the numerator."
+  ],
+  "evidence": [
+    "Row-level exclusion table with the reason per order.",
+    "Recomputed revenue, order count and AOV figures with the excluded ids listed.",
+    "Restatement record created after the post-window refund."
+  ],
+  "cleanup": [
+    "Delete gov- aggregate rows and the synthetic post-window refund record after export."
+  ],
+  "automation": "The reporting service and the metric dictionary run as real code under test over the frozen KPI dataset; the dashboard is a consumer whose displayed value must equal the independently recomputed value. Waits are condition-based on the stored aggregate row, metric values are never supplied as inputs, and no vendor boundary is involved in the arithmetic.",
+  "prerequisites": [],
+  "references": [
+    "plans/delivery/analytics.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/orders.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

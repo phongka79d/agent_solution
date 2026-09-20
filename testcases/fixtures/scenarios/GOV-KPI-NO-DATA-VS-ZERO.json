@@ -1,0 +1,98 @@
+{
+  "id": "GOV-KPI-NO-DATA-VS-ZERO",
+  "title": "No-data is not zero: an unmeasured window reports NO_DATA with the missing source named",
+  "document": "governance/kpi.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P1",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SRS-20",
+    "NFR-002"
+  ],
+  "facets": [
+    "kpi:Lead Conversion",
+    "kpi:Campaign Revenue",
+    "kpi:Customer Satisfaction"
+  ],
+  "risk": "A missing source is rendered as 0, so a broken connector reads either as a business collapse or as a quiet week, and nobody investigates the outage because the dashboard looks plausible.",
+  "preconditions": [
+    "Namespace gov-kpi-<case_id>-<worker_id>; the metric is computed by the real reporting code over fixtures/offline/governance.json kpi_dataset and never copied from the dashboard payload.",
+    "Frozen clock 2026-01-15T10:00:00Z with the reporting window 2026-01-01T00:00:00Z .. 2026-02-01T00:00:00Z as a half-open interval; the stored aggregate is recomputed independently from the raw counter rows.",
+    "kpi_edge.no_data_tenant has null order and lead counters because the connector never delivered, which is a different state from a measured zero.",
+    "A second tenant has a genuine measured zero for the same metric, so the case can prove the two states are distinguishable."
+  ],
+  "inputs": {
+    "no_data_tenant": {
+      "tenant": "T2",
+      "orders_paid": null,
+      "leads": null,
+      "expected_display": "NO_DATA",
+      "expected_value": null
+    },
+    "measured_zero_case": {
+      "tenant": "T1",
+      "leads": 0,
+      "expected_display": "0 with coverage stated"
+    },
+    "required_display_fields": [
+      "state",
+      "coverage",
+      "reason",
+      "last_updated"
+    ]
+  },
+  "steps": [
+    {
+      "action": "Read the metrics for the tenant whose connector never delivered",
+      "expected": "Each affected metric displays NO_DATA with the missing source named and the last attempted update time; none of them displays 0."
+    },
+    {
+      "action": "Read the same metrics for the tenant with a genuine measured zero",
+      "expected": "The display shows 0 and states the coverage (which rows were counted) and the window, so 0 is visibly a measurement."
+    },
+    {
+      "action": "Check the aggregate rows and the coverage field",
+      "expected": "The aggregate row records state NO_DATA with a null value and a coverage of 0 rows, rather than a value of 0 with full coverage."
+    },
+    {
+      "action": "Attempt to make the dashboard render 0 for the missing tenant",
+      "expected": "The attempt is refused and the NO_DATA state survives, with the reason preserved for the operator."
+    }
+  ],
+  "assertions": [
+    "NO_DATA, measured zero and partial coverage are three distinct states in the stored row and in the display.",
+    "A metric with no source row is never rendered as 0, and a rendered 0 always carries its coverage and window.",
+    "The missing source is named in the display, so an operator can act without reading the pipeline logs.",
+    "The state does not silently change to 0 after a later successful run without a restatement record."
+  ],
+  "forbidden": [
+    "Coalescing a null aggregate to 0 in the reporting layer.",
+    "Hiding the missing source behind a generic empty state.",
+    "Backfilling the missing window with a neighbouring period's value."
+  ],
+  "evidence": [
+    "Aggregate rows for both tenants showing the distinct states.",
+    "Dashboard payload per metric with the state, coverage and reason fields.",
+    "Coverage report for the window."
+  ],
+  "cleanup": [
+    "Delete gov- aggregate rows and cached dashboard payloads after export."
+  ],
+  "automation": "The reporting service and the metric dictionary run as real code under test over the frozen KPI dataset; the dashboard is a consumer whose displayed value must equal the independently recomputed value. Waits are condition-based on the stored aggregate row, metric values are never supplied as inputs, and no vendor boundary is involved in the arithmetic.",
+  "prerequisites": [],
+  "references": [
+    "plans/delivery/analytics.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

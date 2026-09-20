@@ -1,0 +1,113 @@
+{
+  "id": "E2E-LIVE-TRACE",
+  "title": "TC-E2E-009: backward audit traceability from outcome to originating signal (approved sandbox)",
+  "document": "e2e/live.md",
+  "layer": "e2e",
+  "environment": "live",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "blueprint",
+  "pair": "E2E-OFF-TRACE",
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "TC-E2E-009",
+    "NFR-002",
+    "NFR-005",
+    "BR-010",
+    "FR-ORC-001",
+    "OBJ-005",
+    "SRS-17",
+    "SRS-09"
+  ],
+  "facets": [
+    "skill:skill.sales.create_order",
+    "event:purchase",
+    "stage:SIGNAL",
+    "stage:CONTEXT",
+    "stage:DECISION",
+    "stage:APPROVAL",
+    "stage:EXECUTION",
+    "stage:EVIDENCE",
+    "stage:OUTCOME"
+  ],
+  "risk": "Nobody can explain a completed customer-visible action: the audit trail is assembled from memory, a link is missing, or a tampered evidence row is accepted as proof.",
+  "preconditions": [
+    "run_id=RUN-E2E-LIVE-TRACE, case_id=E2E-LIVE-TRACE, worker=w-biz-e2e-live; one sandbox run that creates a real sandbox order/message is completed first",
+    "the sandbox audit export for that run is fetched read-only and the sandbox verification facility (or the documented hash fields) is available for the walk"
+  ],
+  "inputs": {
+    "tenant_id": "LIVE_TENANT_ID",
+    "customer_id": "LIVE_CUSTOMER_A_SANDBOX_ID",
+    "origin_signal": "sandbox inbound event id",
+    "order_ref": "sandbox order id",
+    "audit_export": "read-only sandbox audit trail for the run",
+    "negative_probe": "case-local copy of the chain with one tampered payload"
+  },
+  "steps": [
+    {
+      "action": "Complete one sandbox run",
+      "expected": "the run completes against the sandbox and its sandbox order/message id is recorded with the run_id"
+    },
+    {
+      "action": "Fetch the sandbox audit trail read-only",
+      "expected": "the export contains the run entries for signal, context, decision, authority verdict, execution, evidence and outcome, all carrying the same run_id"
+    },
+    {
+      "action": "Walk the chain backward on live records",
+      "expected": "outcome -> evidence -> execution -> decision -> context -> signal resolves with the sandbox ids, ending at the sandbox inbound event id"
+    },
+    {
+      "action": "Verify the live chain hashes",
+      "expected": "the sandbox hash fields or the sandbox verification endpoint confirm the chain for the run with no unchained entry"
+    },
+    {
+      "action": "Probe a broken link without touching the sandbox",
+      "expected": "the case-local chain copy with one tampered payload fails verification and the broken link is reported, while the sandbox rows themselves are left untouched"
+    },
+    {
+      "action": "Confirm nothing was reconstructed from memory",
+      "expected": "the walk is repeated from the exported rows alone and reproduces the identical chain, with the sandbox artefacts retained"
+    }
+  ],
+  "assertions": [
+    "every live walk hop resolves to a sandbox audit row with the identical run_id and ends at the real sandbox signal id",
+    "the live chain verifies with the sandbox hash fields and the failed link inside the case-local copy is detected rather than hidden",
+    "no sandbox immutable audit row was modified or deleted by the probe — the provider test sink is the oracle for every denied or refused step: its call log for the run stays empty, no provider id is manufactured for the attempt, and the audit entry records the refusal instead (the probe performs no provider mutation)",
+    "the live trace is reproducible from the export after the run, so the case passes on the persisted chain rather than on an in-session view"
+  ],
+  "forbidden": [
+    "mutating or deleting sandbox audit/evidence rows to exercise the negative probe",
+    "reporting a complete live trace while a stage entry is missing from the sandbox audit export"
+  ],
+  "evidence": [
+    "read-only sandbox audit export for the run with row ids and hashes",
+    "sandbox chain verification result plus the case-local broken-link report",
+    "the sandbox order/message id that anchors the outcome end of the chain"
+  ],
+  "cleanup": [
+    "Retire the sandbox artefacts created by this run through the supported sandbox APIs (cancel/withdraw the created cart, campaign, case and voucher references); delete nothing immutable — sent messages, provider receipts and audit rows are retained and reported as non-deletable rather than pretending they were unsent"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. Same reader against the sandbox audit trail; the broken-link probe runs on the case's own chain copy so no sandbox row is mutated.",
+  "prerequisites": [
+    "ASM-001 approved connector lock is present (LIVE_CONNECTORS_LOCK points at the approved connector list) — without it this case is SKIP_ASM_001, never PASS",
+    "Per-case sandbox authorization: the run_id of this case is registered in the approved sandbox allowlist with its sandbox tenant/customer/SKU mapping before execution; credentials live outside the repository (env.local) and are never printed in evidence",
+    "The sandbox audit trail is readable for the run (API or approved export) and exposes row hashes; without a readable audit trail the case is BLOCKED_PREREQUISITE and no PASS is claimed",
+    "The broken-link probe uses the case's own chain copy; sandbox immutable audit rows are never modified"
+  ],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/04-core-engine-and-orchestrator.md",
+    "implement/08-security-governance-nfr.md",
+    "implement/06-api-and-connectors-spec.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/customers.json",
+    "fixtures/offline/orders.json",
+    "fixtures/offline/events.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

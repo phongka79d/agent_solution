@@ -1,0 +1,91 @@
+{
+  "id": "GOV-NFR-005",
+  "title": "NFR-005 Explainability: qualification decisions persist reason plus evidence",
+  "document": "governance/nfr.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "NFR-005",
+    "FR-SAL-001",
+    "NFR-002"
+  ],
+  "facets": [
+    "entity:Decision",
+    "memory:Customer Context",
+    "stage:DECISION"
+  ],
+  "risk": "A qualification score or routing decision cannot be explained afterwards, so neither the sales team nor an auditor can justify why a customer was treated a certain way.",
+  "preconditions": [
+    "Namespace gov-nfr-<case_id>-<worker_id>; NFR verification runs against the offline gateway with mock SoR and channel boundaries.",
+    "Frozen clock 2026-01-15T10:00:00Z; failure, outage and crash injections are scripted at the substituted boundary, never faked inside the assertion."
+  ],
+  "inputs": {
+    "decision": {
+      "skill": "skill.sales.recommend_product",
+      "customer_id": "cust-a",
+      "sku_id": "SKU-OK",
+      "score": 0.72,
+      "expected_reason": "repeat purchase cycle reached",
+      "expected_evidence": [
+        "ORD-A-1"
+      ]
+    }
+  },
+  "steps": [
+    {
+      "action": "Run the qualification and recommendation decision for cust-a",
+      "expected": "A decision record is produced with a numeric score and a status."
+    },
+    {
+      "action": "Read the decision record",
+      "expected": "The record contains a human-readable reason, at least one evidence reference, the inputs used and the agent identity."
+    },
+    {
+      "action": "Resolve the evidence references",
+      "expected": "Each reference resolves to a real record (for example ORD-A-1) and its timestamp precedes the decision timestamp."
+    },
+    {
+      "action": "Inspect the audit row for the same run",
+      "expected": "The audit row decision field carries the reasoning summary and confidence consistent with the decision record."
+    }
+  ],
+  "assertions": [
+    "Every persisted decision has a non-empty reason and at least one resolvable evidence reference.",
+    "Evidence timestamps precede the decision, so the reason cannot cite the future.",
+    "The score in the decision record matches the score in the audit row; the two surfaces do not disagree.",
+    "The decision is reproducible from its recorded inputs and rule version."
+  ],
+  "forbidden": [
+    "Storing a reason string that is the model's own prose with no evidence reference.",
+    "Citing an evidence id that does not resolve.",
+    "Recording different scores on the decision and audit surfaces."
+  ],
+  "evidence": [
+    "Decision record and audit row for the run.",
+    "Resolved evidence records with timestamps.",
+    "Rule version and input snapshot used for reproducibility."
+  ],
+  "cleanup": [
+    "Delete gov- decision rows after export; customer context cache entries are cleared."
+  ],
+  "automation": "Core PEP, rules engine, audit writer, idempotency store and worker lease logic run as real code under test; only ERP/WMS, channel gateways, Redis and the model provider are substituted. Faults are injected at those boundaries and waits are condition-based on persisted state.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/customers.json",
+    "fixtures/offline/orders.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

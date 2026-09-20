@@ -1,0 +1,110 @@
+{
+  "id": "INT-FR-CS-003-WORKFLOW",
+  "title": "FR-CS-003 six-step retention workflow with evidence, budget and Learning Memory",
+  "document": "integration/sales-care-orchestrator.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P3",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "CS-02",
+    "SAL-05",
+    "FR-CS-003",
+    "FR-ORC-002",
+    "BR-007",
+    "NFR-002",
+    "NFR-005",
+    "SRS-11"
+  ],
+  "facets": [
+    "skill:skill.care.issue_retention_offer",
+    "skill:skill.care.analyze_churn_risk",
+    "memory:Learning Memory",
+    "memory:Agent Operational Memory",
+    "stage:PLAN",
+    "stage:APPROVAL",
+    "stage:EXECUTION",
+    "stage:OUTCOME",
+    "kpi:Retention",
+    "kpi:Reactivation"
+  ],
+  "risk": "Retention actions run without eligibility, budget or approver, spending money on customers who must not be contacted.",
+  "preconditions": [
+    "run_id=RUN-INT-FRCS003-WORKFLOW-0115, case_id=INT-FR-CS-003-WORKFLOW, worker=w-biz-int; frozen clock 2026-01-15T10:00:00Z",
+    "cust-dormant has an inactivity+HIGH churn hypothesis and consent for EMAIL marketing; the tenant retention budget is the synthetic 500 TWD/day with a 30-day per-customer offer quota of 1",
+    "the operator approval inbox (SCR-003) is available and the human decision is scripted as APPROVE in this case"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "customer_id": "cust-dormant",
+    "trigger": "inactivity_61d + failed_order signal (INT-FR-CS-003-SIGNALS)",
+    "recommended_action": "personalised win-back voucher on EMAIL",
+    "max_discount_value": 120,
+    "effect_key": "EK-RET-WB-0115-01",
+    "consent_check": "allowed=true (cust-dormant, EMAIL, marketing)",
+    "caller_agent": "CS-02",
+    "granted_authority": "AUTH-3"
+  },
+  "steps": [
+    {
+      "action": "Emit the six-step chain from the signal",
+      "expected": "the run materialises Signal -> Hypothesis -> Recommended Action -> Eligibility Check -> Execution/Approval -> Outcome in order, each step with its own persisted record and evidence reference"
+    },
+    {
+      "action": "Evaluate eligibility",
+      "expected": "eligibility resolves consent (allowed=true), suppression (none), the 30-day quota (available) and the daily budget (500 TWD available); a failed check stops the chain before any value is issued"
+    },
+    {
+      "action": "Execute within authority and, where required, through approval",
+      "expected": "the in-limit voucher is issued under AUTH-3 by skill.care.issue_retention_offer; a probe variant above the tenant limit produces an AUTH-4 approval request instead of an issued voucher (BR-007)"
+    },
+    {
+      "action": "Deliver through the correct owner",
+      "expected": "the customer-facing send is performed by the orchestrator-routed SAL-05/send_message path with the consent and mutex checks, never by CS-02 directly (CS-02 is a sensor, SAL-05 executes the reorder/reminder)"
+    },
+    {
+      "action": "Record the outcome and write learning",
+      "expected": "the outcome step stores the observed result (no purchase within the observation window / converted order) and appends a Learning Memory record; the hypothesis is never upgraded to a FACT by the outcome"
+    }
+  ],
+  "assertions": [
+    "the chain executes the six steps in order, each with a persisted record; skipping the eligibility step or executing before approval is detectable in the run history",
+    "within-limit issuance happens under AUTH-3 and over-limit proposals produce exactly one AUTH-4 approval request with zero value issued before the decision",
+    "the customer-facing message is produced by the authorised outbound path with consent verified and the effect_key reserved, and the outcome step records whether the customer actually responded or purchased",
+    "a Learning Memory entry is written with the action, the observed outcome and the run_id, and the Customer 360 hypothesis/FACT separation is preserved"
+  ],
+  "forbidden": [
+    "issuing or sending the retention value without the eligibility check and the required approval",
+    "recording a retention success (repeat purchase/retention) that no order evidence supports"
+  ],
+  "evidence": [
+    "the six-step chain records with evidence refs (signal id, hypothesis id, action id, eligibility verdict, approval id, execution receipt, outcome)",
+    "voucher record + outbound message receipt with the effect_key",
+    "Learning Memory entry and the outcome measurement window definition"
+  ],
+  "cleanup": [
+    "release the voucher reservation if unused, drop run RUN-INT-FRCS003-WORKFLOW-0115 artefacts, keep approval/audit rows"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. The operator decision is scripted through the approval gate API (not a mock of the gate itself); outcome measurement uses the frozen clock and a condition wait instead of a sleep.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/05-skill-system-specifications.md",
+    "plans/modules/customer-support.md",
+    "plans/platform/workflows-and-handoffs.md",
+    "implement/04-core-engine-and-orchestrator.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/customers.json",
+    "fixtures/offline/catalog.json",
+    "fixtures/offline/consents.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

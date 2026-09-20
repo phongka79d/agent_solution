@@ -1,0 +1,91 @@
+{
+  "id": "GOV-NFR-009",
+  "title": "NFR-009 Performance: turn latency is recorded per run with no fabricated SLA",
+  "document": "governance/nfr.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "NFR-009",
+    "SRS-17",
+    "NFR-002",
+    "ASM-002"
+  ],
+  "facets": [
+    "stage:EVIDENCE"
+  ],
+  "risk": "Latency numbers on dashboards are estimates or are pre-filled with target values, so a performance regression is invisible and an SLA is claimed that was never measured.",
+  "preconditions": [
+    "Namespace gov-nfr-<case_id>-<worker_id>; NFR verification runs against the offline gateway with mock SoR and channel boundaries.",
+    "Frozen clock 2026-01-15T10:00:00Z; failure, outage and crash injections are scripted at the substituted boundary, never faked inside the assertion.",
+    "No official SLA exists: NFR-009 states the SLA is locked only after benchmark, and ASM-002 KPI targets are unapproved."
+  ],
+  "inputs": {
+    "turn": {
+      "conversation_id": "conv-nfr-9",
+      "customer_id": "cust-a",
+      "injected_work_ms": 850
+    },
+    "expected": {
+      "latency_ms_min": 850,
+      "latency_ms_source": "measured_monotonic_clock",
+      "sla_asserted": false
+    }
+  },
+  "steps": [
+    {
+      "action": "Run one complete turn with a known injected workload duration",
+      "expected": "The run record contains latency_ms at least 850 and the audit row field 16 is populated."
+    },
+    {
+      "action": "Inspect where the latency value comes from",
+      "expected": "The value is measured between real start and end timestamps using the monotonic clock, not copied from a target or a constant."
+    },
+    {
+      "action": "Compare the displayed dashboard value with the stored run value",
+      "expected": "They agree; the dashboard does not substitute a target or a rounded placeholder."
+    },
+    {
+      "action": "Attempt to assert an SLA from the measurement",
+      "expected": "No SLA assertion is possible because no benchmark has been run; the case records the measurement as NOT_RUN for SLA conformance rather than PASS."
+    }
+  ],
+  "assertions": [
+    "Latency is recorded per run from measured timestamps and the recorded value is at least the injected workload duration.",
+    "The value is never a constant, a target or a default: two runs with different injected durations produce different values.",
+    "No SLA or percentile target is asserted as a pass bar; the absence of a benchmark is reported explicitly.",
+    "Dashboard and stored values agree exactly."
+  ],
+  "forbidden": [
+    "Hardcoding a target latency as the measurement.",
+    "Recording zero when the timer cannot be read.",
+    "Claiming SLA compliance from a single synthetic measurement."
+  ],
+  "evidence": [
+    "Run record with latency_ms, plus the audit row field 16.",
+    "Measurement source trace showing the timestamp pair used.",
+    "Dashboard payload for comparison."
+  ],
+  "cleanup": [
+    "Delete gov- run rows after export."
+  ],
+  "automation": "Core PEP, rules engine, audit writer, idempotency store and worker lease logic run as real code under test; only ERP/WMS, channel gateways, Redis and the model provider are substituted. Faults are injected at those boundaries and waits are condition-based on persisted state.",
+  "prerequisites": [
+    "The formal latency SLA does not exist (locked only after the NFR-009 benchmark and ASM-002 baseline); this case must not be reported as SLA acceptance."
+  ],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "implement/09-sprint-roadmap-and-pilots.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

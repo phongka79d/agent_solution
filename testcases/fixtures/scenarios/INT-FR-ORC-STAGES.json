@@ -1,0 +1,95 @@
+{
+  "id": "INT-FR-ORC-STAGES",
+  "title": "All eleven stages produce their documented artifact in one run",
+  "document": "integration/sales-care-orchestrator.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P1",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "FR-ORC-001",
+    "FR-ORC-002",
+    "TC-E2E-001",
+    "NFR-002"
+  ],
+  "facets": [
+    "stage:SIGNAL",
+    "stage:LEARNING",
+    "entity:Workflow"
+  ],
+  "risk": "Stages are skipped or collapsed, so a decision is taken without context or an action is executed without evidence, and the customer-visible outcome cannot be traced.",
+  "preconditions": [
+    "Tenant T1 run orc-stages-* processing one product-inquiry signal for cust-a",
+    "All non-cognitive adapters (ERP, vector, messaging) replaced by fixtures; cognitive bindings stubbed deterministically"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "signal_id": "evt_a_session_1",
+    "utterance": "what is the list price of the ceramic mug?",
+    "required_stages": [
+      "SIGNAL",
+      "CONTEXT",
+      "HYPOTHESIS",
+      "DECISION",
+      "PLAN",
+      "ACTION",
+      "APPROVAL",
+      "EXECUTION",
+      "EVIDENCE",
+      "OUTCOME",
+      "LEARNING"
+    ]
+  },
+  "steps": [
+    {
+      "action": "Run the pipeline once and list the recorded stage transitions",
+      "expected": "all eleven stage names appear exactly once in the documented order for the single run id"
+    },
+    {
+      "action": "Inspect the artifact of the CONTEXT, ACTION and EVIDENCE stages",
+      "expected": "CONTEXT carries the hydrated customer and citations, ACTION carries the deterministic effect key, EVIDENCE carries a chained record"
+    },
+    {
+      "action": "Inspect the agent run log rows for the run",
+      "expected": "each executed step has one terminal row carrying the 18 audit fields including authority, approval and execution status"
+    },
+    {
+      "action": "Attempt to append a second terminal row for the same (skill, step_index)",
+      "expected": "the write is refused, proving the run log is keyed and append-only"
+    }
+  ],
+  "assertions": [
+    "The run records the eleven stages in order with one artifact per stage",
+    "The ACTION artifact carries a 64 hex character effect key and the EVIDENCE artifact carries previous/chain hashes",
+    "Agent run log rows are unique per (tenant, run, skill, step index) and immutable"
+  ],
+  "forbidden": [
+    "Report a stage as completed with no artifact for it",
+    "Write a success execution status without a verified receipt"
+  ],
+  "evidence": [
+    "Stage-by-stage artifact list for the run id",
+    "Agent run log rows with the 18 audit fields and the refused duplicate-write error"
+  ],
+  "cleanup": [
+    "Delete the run-scoped task, plan and artifact rows for orc-stages-*; keep the immutable evidence chain"
+  ],
+  "automation": "Execute the real pipeline with deterministic stubs at the cognitive and vendor boundaries; the oracle is the artifact per stage plus the run-log keying, not a stage-name enumeration.",
+  "prerequisites": [],
+  "references": [
+    "implement/04-core-engine-and-orchestrator.md",
+    "plans/platform/architecture.md",
+    "plans/platform/workflows-and-handoffs.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/events.json",
+    "fixtures/offline/platform.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

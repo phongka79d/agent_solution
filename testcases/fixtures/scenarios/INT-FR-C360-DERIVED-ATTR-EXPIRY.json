@@ -1,0 +1,83 @@
+{
+  "id": "INT-FR-C360-DERIVED-ATTR-EXPIRY",
+  "title": "Derived segment attributes expire and are recomputed without touching the System of Record",
+  "document": "integration/customer-360.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "medium",
+  "gate": "P1",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "FR-C360-003",
+    "FR-C360-001",
+    "BR-003"
+  ],
+  "facets": [
+    "entity:Segment",
+    "entity:Customer",
+    "stage:LEARNING"
+  ],
+  "risk": "A months-old churn or segment guess is reused as if it were current, and outreach is aimed at a state the customer is no longer in.",
+  "preconditions": [
+    "Tenant T1 with a dormant-derived segment hypothesis computed at 2025-09-01T00:00:00Z for cust-dormant",
+    "New purchase signal recorded for the same customer at 2026-01-10T00:00:00Z in namespace run-t1-derived-*"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "customer_id": "cust-dormant",
+    "computed_at": "2025-09-01T00:00:00Z",
+    "new_signal_at": "2026-01-10T00:00:00Z",
+    "max_age_days": 30
+  },
+  "steps": [
+    {
+      "action": "Read the derived segment attribute after the freshness window has passed",
+      "expected": "the attribute is reported as expired/unusable and no downstream skill treats it as current"
+    },
+    {
+      "action": "Recompute the derived attribute after the new purchase signal",
+      "expected": "a new value is produced with a new computed_at and the name still carries the _hypothesis suffix"
+    },
+    {
+      "action": "Compare the customers row before and after the recompute",
+      "expected": "the System-of-Record mirror is byte-identical; only a hypothesis-class projection/evidence record changed"
+    },
+    {
+      "action": "Attempt to persist the recomputed value into the customers row",
+      "expected": "the write is refused and the mirror remains unchanged"
+    }
+  ],
+  "assertions": [
+    "The stale derived attribute is rejected once older than 30 days rather than reused silently",
+    "The recomputed attribute is exposed with _hypothesis in its name and a computed_at within the run window",
+    "The customers mirror digest is identical before and after both operations"
+  ],
+  "forbidden": [
+    "Serve an expired derived attribute as a current customer fact",
+    "Persist a derived segment value into the System-of-Record mirror"
+  ],
+  "evidence": [
+    "Derived attribute records with computed_at, name and expiry assessment",
+    "Before/after digest of the cust-dormant mirror row"
+  ],
+  "cleanup": [
+    "Delete the run-scoped recomputed hypothesis rows for run-t1-derived-*; keep the audit entries"
+  ],
+  "automation": "Freeze the clock to make expiry deterministic, keep the real projection and guard code in the path, and stub only the ERP aggregate read; assert on computed_at and mirror digests.",
+  "prerequisites": [],
+  "references": [
+    "implement/03-database-and-memory-schema.md",
+    "implement/04-core-engine-and-orchestrator.md",
+    "plans/platform/data-and-knowledge.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/customers.json",
+    "fixtures/offline/platform.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

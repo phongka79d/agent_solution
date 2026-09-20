@@ -1,0 +1,125 @@
+{
+  "id": "E2E-OFF-ISOLATION",
+  "title": "TC-E2E-004(b,c) + NFR-006: verified cross-customer and cross-tenant isolation (mocked SoR)",
+  "document": "e2e/offline.md",
+  "layer": "e2e",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "blueprint",
+  "pair": "E2E-LIVE-ISOLATION",
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "TC-E2E-004",
+    "NFR-006",
+    "NFR-001",
+    "CS-01",
+    "FR-CS-002",
+    "SRS-08"
+  ],
+  "facets": [
+    "skill:skill.care.lookup_order",
+    "skill:skill.sales.retrieve_customer",
+    "intent:order_status",
+    "channel:WEB_APP_CHAT",
+    "memory:Customer Context",
+    "memory:Working Memory",
+    "stage:CONTEXT",
+    "kpi:Policy Violation Rate"
+  ],
+  "risk": "Customer A's context is hydrated into customer B's session, prompt or cache — or one tenant reads another tenant's records — so the platform discloses data across customers without any failed lookup being visible.",
+  "preconditions": [
+    "run_id=RUN-E2E-OFF-ISO, case_id=E2E-OFF-ISO, worker=w-biz-e2e; two verified customers exist in tenant T1 — cust-a with sess-a-1/ORD-A-1 and cust-b with sess-b-1/ORD-B-1 (order_number T1-0002, 800 TWD) — plus the anonymous guest session sess-guest-1 and tenant T2 with cust-t2",
+    "the context capture hooks record every hydrated prompt, Working Memory bucket, cache entry, log line and reply, so a leak is detected directly instead of being inferred from an absent field"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "other_tenant_id": "22222222-2222-2222-2222-222222222222",
+    "customers": {
+      "cust-a": {
+        "session": "sess-a-1",
+        "order": "ORD-A-1"
+      },
+      "cust-b": {
+        "session": "sess-b-1",
+        "order": "ORD-B-1",
+        "order_number": "T1-0002",
+        "amount_twd": 800
+      },
+      "cust-guest": {
+        "session": "sess-guest-1",
+        "lifecycle": "anonymous"
+      }
+    },
+    "cross_customer_probe": "cust-a's session asks for ORD-B-1",
+    "cross_tenant_probe": "cust-a's request replayed in tenant T2 with T1 session id",
+    "leak_markers": [
+      "cust-b",
+      "ORD-B-1",
+      "T1-0002",
+      "800"
+    ]
+  },
+  "steps": [
+    {
+      "action": "Run the positive control for customer A",
+      "expected": "A's own lookup returns ORD-A-1 with A's fields from the ERP source of truth, so isolation is proven with data present rather than by an empty answer"
+    },
+    {
+      "action": "Run the positive control for customer B concurrently",
+      "expected": "B's session returns ORD-B-1/T1-0002 from its own read, and neither session's context contains the other's records"
+    },
+    {
+      "action": "Attempt the cross-customer read",
+      "expected": "A's session asking for ORD-B-1 is refused: zero ERP reads for B's order and no field, order number or amount of B appears in the reply or the refusal message"
+    },
+    {
+      "action": "Sweep A's context for B's markers",
+      "expected": "the captured prompt, hydrated Customer Context, Working Memory bucket, cache entry, logs and reply for A's session contain zero occurrences of B's markers"
+    },
+    {
+      "action": "Replay the request across tenants",
+      "expected": "the same request under tenant T2 with T1 session identifiers is refused as a tenant mismatch: no T1 record is returned and no T2 read resolves A's order"
+    },
+    {
+      "action": "Check the anonymous session bucketing",
+      "expected": "the guest session keeps its own Working Memory bucket (tenant:T1:wm:sess-guest-1) with customer=null, and no customer context is hydrated into it even when a customer id is supplied in the payload"
+    }
+  ],
+  "assertions": [
+    "each verified customer resolves only its own record from the source of truth (ORD-A-1 for A, ORD-B-1 for B), so the invariant is demonstrated with real data present (TC-E2E-004)",
+    "no marker of customer B appears in A's prompt, hydrated context, session memory, cache entry, log line or reply (NFR-006)",
+    "cross-customer reads never reach the connector (0 reads for the other customer's order) and the cross-tenant replay returns no T1 record",
+    "anonymous sessions stay in distinct buckets with customer=null, so a supplied customer id in the payload cannot hydrate a customer context"
+  ],
+  "forbidden": [
+    "placing another customer's context into a prompt, cache key, memory bucket or reply",
+    "resolving a session in one tenant to a customer or record of another tenant"
+  ],
+  "evidence": [
+    "the two positive-control lookups with their ERP source-of-truth references",
+    "the leak-scan report over prompt/context/memory/cache/log/reply with zero findings for the other customer's markers",
+    "refusal records for the cross-customer ask and the cross-tenant replay with the connector call counts"
+  ],
+  "cleanup": [
+    "clear both tenants' run namespaces and the anonymous session bucket; keep the audit rows and never delete another tenant's fixture records"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. Session resolution, context hydration, memory bucketing, cache keys and the PEP are real; the ERP/order reads are the substituted boundary and the capture hooks record what each session actually produced.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/04-core-engine-and-orchestrator.md",
+    "implement/05-skill-system-specifications.md",
+    "plans/modules/customer-support.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/customers.json",
+    "fixtures/offline/orders.json",
+    "fixtures/offline/events.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

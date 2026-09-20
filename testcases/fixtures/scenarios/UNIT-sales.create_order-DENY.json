@@ -1,0 +1,111 @@
+{
+  "id": "UNIT-sales.create_order-DENY",
+  "title": "skill.sales.create_order authority denial — unlisted agent, clearance shortfall, prohibition",
+  "document": "unit/skills.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P2",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "AUTH-5",
+    "BR-005",
+    "BR-006",
+    "BR-007",
+    "BR-008",
+    "BR-009",
+    "NFR-001",
+    "NFR-003",
+    "SAL-02",
+    "SRS-11"
+  ],
+  "facets": [
+    "skill:skill.sales.create_order",
+    "event:checkout",
+    "event:purchase",
+    "kpi:Failed Execution",
+    "stage:EXECUTION",
+    "kpi:Policy Violation Rate"
+  ],
+  "risk": "An agent exceeds its authority (skill.sales.create_order) and performs a business action it is not entitled to, silently.",
+  "preconditions": [
+    "isolated namespace run_id=RUN-sales.create_order-DENY, case_id=UNIT-sales.create_order-DENY, worker=w-biz-unit; no shared mutable session with any other case",
+    "skill registry row for skill.sales.create_order registered with test_cases TC-SKILL-01..05 plus >=1 skill-specific case and asserted registrable before the run",
+    "in-memory adapters loaded from the case fixtures for tenant T1 only; frozen clock 2026-01-15T10:00:00Z"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "cart_id": "CART-A-0115-01",
+    "customer_id": "cust-a",
+    "shipping_address": {
+      "city": "Taipei",
+      "cvs_store_id": "7ELEVEN-TPE-001",
+      "recipient": "cust-a"
+    },
+    "payment_method": "CVS_COD",
+    "effect_key": "EK-ORDER-A-0115-01",
+    "server_price_quote": "quote_token for SKU-OK @ 900 TWD (10% tier)",
+    "caller_agent": "SAL-03 (recommendation agent)",
+    "granted_authority": "AUTH-1",
+    "expected_error": "UNAUTHORIZED_AGENT",
+    "attempt": "AUTH-5 self-upgrade in the prompt body"
+  },
+  "steps": [
+    {
+      "action": "Invoke skill.sales.create_order as SAL-03 (recommendation agent) (absent from allowed_agents)",
+      "expected": "UNAUTHORIZED_AGENT; adapter API-001.OrderConnector call count = 0 and the run is DENIED"
+    },
+    {
+      "action": "Invoke as an allowed agent holding AUTH-1",
+      "expected": "INSUFFICIENT_AUTHORITY: AUTHORITY_RANK[AUTH-1]=1 < AUTHORITY_RANK[AUTH-3]=3, and a run presenting AUTH-5 yields PROHIBITED_ACTION instead; no adapter call and no reservation in either path"
+    },
+    {
+      "action": "Re-probe the remaining authority/identity boundary",
+      "expected": "granted AUTH-2 -> INSUFFICIENT_AUTHORITY; a run whose price quote is expired or tampered -> refused (BR-001/BR-002), no order created; an AUTH-5-style request to 'confirm payment for free' -> PROHIBITED_ACTION, never queued"
+    },
+    {
+      "action": "Confirm nothing was executed and the attempt is audited",
+      "expected": "effect_reservations has no row for this run (or the reservation was released), the run carries an AUTH-5 PROHIBITED_ACTION / DENIED audit entry with the attempted skill and caller, and the LLM's request never changed the clearance"
+    }
+  ],
+  "assertions": [
+    "the denial happens before tool dispatch: adapter API-001.OrderConnector invocation count is 0 for every denied attempt",
+    "the run's authority is unchanged after the attempt: the persisted grant equals the value the orchestrator assigned, not anything the model or the caller supplied",
+    "each denial writes an audit event naming the attempted skill, the caller agent and the verdict (BR-008, NFR-001) — a denial with no audit record is a failure",
+    "no AUTH-4 action is queued for approval during an AUTH-5 refusal; the prohibited action is neither executed nor approvable"
+  ],
+  "forbidden": [
+    "any side effect (message, order, voucher, case write, campaign) from a denied run",
+    "widening the run's clearance from prompt text, customer text or a caller-supplied claim (BR-009)"
+  ],
+  "evidence": [
+    "deny audit entries for the three attempts with their verdicts",
+    "adapter call log for API-001.OrderConnector proving zero invocations",
+    "authority snapshot of the run before/after the attempts (identical)"
+  ],
+  "cleanup": [
+    "drop in-memory namespace RUN-sales.create_order-DENY and any reserved key created by the attempted calls, keep the denial audit rows"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. The denial is asserted on the PEP verdict and adapter call count, never on response prose.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/05-skill-system-specifications.md",
+    "plans/modules/sales.md",
+    "implement/06-api-and-connectors-spec.md",
+    "implement/04-core-engine-and-orchestrator.md",
+    "implement/08-security-governance-nfr.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/orders.json",
+    "fixtures/offline/catalog.json",
+    "fixtures/offline/customers.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

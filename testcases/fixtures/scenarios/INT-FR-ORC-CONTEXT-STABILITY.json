@@ -1,0 +1,82 @@
+{
+  "id": "INT-FR-ORC-CONTEXT-STABILITY",
+  "title": "A paused run resumes on its checkpointed context and re-verifies safety inputs",
+  "document": "integration/sales-care-orchestrator.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "FR-ORC-001",
+    "NFR-004",
+    "NFR-008"
+  ],
+  "facets": [
+    "stage:CONTEXT",
+    "memory:Agent Operational Memory",
+    "entity:Workflow"
+  ],
+  "risk": "A resumed run re-hydrates a different context, so the action approved by a human no longer matches what is executed.",
+  "preconditions": [
+    "Run orc-resume-* paused at step 2 of 3 with a checkpointed context and an approved action in namespace orc-resume-*",
+    "ERP data changed after the pause while consent and authority inputs stayed valid"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "run_id": "run-orc-resume-1",
+    "checkpointed_context_ref": "ctx_orc_resume_1",
+    "resume_from_step": 2
+  },
+  "steps": [
+    {
+      "action": "Resume the paused run from its checkpoint",
+      "expected": "execution continues at step 2 with the checkpointed context identity, and step 1 is not re-executed"
+    },
+    {
+      "action": "Compare the context used at resume with the checkpoint snapshot",
+      "expected": "customer identity, session and consent inputs are identical; only refreshed operational reads differ and they are re-verified before use"
+    },
+    {
+      "action": "Change a safety input (consent withdrawn) between pause and resume, then resume again",
+      "expected": "the step is blocked at the pre-step re-verification and the run does not dispatch"
+    },
+    {
+      "action": "Read the audit trail for the run",
+      "expected": "the pause, the resume and the block each appear with their timestamps and the context reference used"
+    }
+  ],
+  "assertions": [
+    "Resume continues from step 2 without repeating step 1 or re-deciding the routing",
+    "The resumed context references the checkpointed context identity and re-verifies safety inputs before dispatch",
+    "Withdrawn consent blocks the resumed dispatch and records the reason"
+  ],
+  "forbidden": [
+    "Re-hydrate a fresh context and silently substitute it for the approved one",
+    "Re-execute an already completed step after resume"
+  ],
+  "evidence": [
+    "Checkpoint context reference and the context hash at pause and at resume",
+    "Audit entries for pause, resume and the blocked dispatch"
+  ],
+  "cleanup": [
+    "Delete the run-scoped checkpoint and task rows for orc-resume-*; keep audit entries"
+  ],
+  "automation": "Pause and resume the real durable task with a deterministic clock; safety inputs are mutated through the real consent service so the block is observable.",
+  "prerequisites": [],
+  "references": [
+    "implement/04-core-engine-and-orchestrator.md",
+    "plans/platform/workflows-and-handoffs.md",
+    "implement/03-database-and-memory-schema.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/platform.json",
+    "fixtures/offline/customers.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

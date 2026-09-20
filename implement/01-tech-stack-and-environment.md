@@ -1,29 +1,42 @@
 # Tech Stack & Environment Specification
 
+> **BLUEPRINT STATUS — Gate P0 target design, not an inventory of existing files.**
+> This document is the target design for the **Gate P0 (Foundation)** deliverable defined in SRS
+> AI-REV-SRS-001 §24. Every Docker Compose service, SQL script, environment variable, source file, and
+> configuration snippet below is a **blueprint to be implemented later**; none of them currently exists in
+> this documentation-only repository (there are no runnable packages, manifests, images, or containers).
+> Ports, service names, table names, and sample values are design proposals, not verified runtime facts.
+> Numeric latency, throughput, availability, and cost figures are **provisional design targets pending
+> ASM-002 (KPI baseline) and the NFR-009 benchmark**, not committed SLAs.
+
 ## 1. Architectural Justification Matrix (NFR-001 through NFR-010)
 
 The selection of every framework, database, cache, and runtime component within the AI Revenue & Engagement Platform is directly derived from the 10 core Non-Functional Requirements (NFR-001..NFR-010) defined in Section 19 of the Software Requirements Specification (AI-REV-SRS-001).
 
 | NFR Identifier | Requirement Name & Requirement Mandate | Technical Choice | Architectural Justification & Implementation Mechanism |
 |---|---|---|---|
-| **NFR-001** | **Security & Authority Boundaries** (MUST)<br>Strict containment within assigned authority level (`AUTH-0` to `AUTH-3`). Prompt injection defense (BR-009). Server-side deny by default. | **Node.js (TypeScript 5.x) & Python (FastAPI)** with static type enforcement and AST schema validators. | LLM outputs are never directly executed. Responses are validated against strict Zod/Pydantic schemas. Tool invocations pass through an independent, deterministic Policy Engine running outside the LLM context. Unrecognized tokens or privilege escalation attempts trigger an immediate `DENY` before dispatch. |
+| **NFR-001** | **Security & Authority Boundaries** (MUST)<br>Strict containment within the agent's assigned clearance: `AUTH-0`..`AUTH-3` are autonomous levels, `AUTH-4` routes the prepared action to human approval, and `AUTH-5` is a hard deny that is never a numeric superuser level. Prompt injection defense (BR-009). Server-side deny by default. | **Node.js (TypeScript 5.x) core runtime** with static type enforcement and schema validators. A Python (FastAPI) service is an **optional auxiliary worker only** (for Python-specific ML/NLP libraries), subject to ASM-001 and never a second core runtime. | LLM outputs are never directly executed. Responses are validated against strict Zod schemas in the Node core (Pydantic only inside an optional Python worker, if one is ever approved). Tool invocations pass through an independent, deterministic Policy Engine running outside the LLM context. Unrecognized tokens or privilege escalation attempts trigger an immediate `DENY` before dispatch. |
 | **NFR-002** | **Auditability** (MUST)<br>100% of external actions and approval decisions must generate an immutable Evidence Record with `run_id`, `tenant_id`, timestamp, latency, token consumption, cost, and agent/operator ID. | **PostgreSQL 16 (Append-Only Tables)** + **OpenTelemetry Span Context** | Every skill invocation and state transition creates an immutable record in `evidences` and `executions` tables. Postgres write-ahead logs (WAL) ensure transaction durability. OpenTelemetry `correlation_id` propagates through all distributed services, connecting client events to backend database writes. |
-| **NFR-003** | **Idempotency** (MUST)<br>External mutations and outgoing messages must carry an `effect_key`. Replays must not duplicate orders, financial transactions, or messages. | **Redis 7.2 (SET NX EX)** + **PostgreSQL Unique Constraints** | Distributed 72-hour idempotency cache in Redis (`tenant:{id}:effect:{effect_key}`) with atomic `SET NX EX 259200`. Secondary permanent deduplication enforced in PostgreSQL via `UNIQUE (tenant_id, effect_key)` on the `executions` table. Divergent payloads with identical keys trigger `IDEMPOTENCY_CONFLICT`. |
+| **NFR-003** | **Idempotency** (MUST)<br>External mutations and outgoing messages must carry an `effect_key`. Replays must not duplicate orders, financial transactions, or messages. | **Redis 7.2 (SET NX EX)** + **PostgreSQL Unique Constraints** | Distributed 72-hour idempotency cache in Redis (`tenant:{id}:effect:{effect_key}`) with atomic `SET NX EX 259200`. Secondary permanent deduplication enforced in PostgreSQL via `UNIQUE (tenant_id, effect_key)` on the `executions` table. **Identical replay** of an already-executed `effect_key` (byte-identical canonical payload) returns the **cached execution receipt** and performs no new external effect; only a **payload mismatch under the same key** returns `IDEMPOTENCY_CONFLICT` (HTTP 409). |
 | **NFR-004** | **Availability & Auto-Recovery**<br>Durable workflows with finite exponential backoff, circuit breaking, timeouts, and state checkpointing. | **Temporal.io / BullMQ 5.x** backed by Redis & PostgreSQL | Multi-step workflows (e.g., Abandoned Cart Recovery, Campaign Dispatch, Escalation Routing) are persisted as durable state machines. If a worker process crashes, Temporal/BullMQ resumes execution from the exact last verified step without repeating prior side effects. |
 | **NFR-005** | **Explainability & Transparency**<br>100% of qualification scores, recommendations, discounts, and routing decisions must store a logic `reason` and verified `evidence`. | **PostgreSQL JSONB Evidence Contracts** | Recommendations and lead evaluations strictly enforce the 7 mandatory fields (FR-SAL-003) and 5-tier evidence separation (FR-C360-003: `FACT`, `SIGNAL`, `HYPOTHESIS`, `DECISION`, `ACTION`). Inferences (`HYPOTHESIS`) are prevented from corrupting ground-truth records (`FACT`). |
-| **NFR-006** | **Multi-Tenant Data Isolation** (MUST)<br>Zero data leakage across tenants in DB, Vector DB, Cache, or Runtime Memory. | **PostgreSQL Row-Level Security (RLS)**, **Qdrant Namespaces / Collections**, **Tenant-Prefixed Redis Keys** | PostgreSQL enforces RLS on all 28 canonical tables using `tenant_id = current_setting('app.current_tenant_id')`. Qdrant enforces tenant-filtered payloads on vector searches. Redis isolates all cache and lock keys under `tenant:{tenant_id}:*`. Queries lacking tenant context are rejected at the data gateway. |
+| **NFR-006** | **Data Isolation** (MUST)<br>SRS semantic: data belonging to verified customer A must never appear in the context of customer B. Tenant-to-tenant isolation is an **additional** platform requirement layered on top of this customer-level isolation. | **PostgreSQL Row-Level Security (RLS)**, **Qdrant Namespaces / Collections**, **Tenant-Prefixed Redis Keys**, plus **subject-scoped query binding** | PostgreSQL enforces RLS on all 28 canonical tables using `tenant_id = current_setting('app.current_tenant_id')` **and** customer-subject predicates bound to the verified customer of the conversation. Qdrant enforces tenant-filtered payloads on vector searches; Redis isolates all cache and lock keys under `tenant:{tenant_id}:*`. Queries lacking tenant context, or whose subject scope does not match the verified customer, are rejected at the data gateway. |
 | **NFR-007** | **Human Override**<br>Operators must be able to Pause, Cancel, Modify pending actions (SCR-003) and Take Over live chat sessions (SCR-005) instantly. | **Next.js 14 (App Router) + Server-Sent Events (SSE) / WebSockets** + **Redis Pub/Sub** | Command Center operators hold hard override locks. Invoking `takeover` acquires a Redis session lock (`tenant:{id}:session:{session_id}:takeover_lock`), instantly pausing the AI agent and routing subsequent channel messages directly to the human agent's WebSocket feed. |
 | **NFR-008** | **Failure Safety — Fail Closed** (MUST)<br>Missing price, unverified inventory, authority doubt, or absent consent must halt execution and route to human support. | **Deterministic Guardrail Middleware (Core Engine)** | Pre-execution skill filters run prior to any external call. If API-001 fails to return authoritative price or inventory, or if consent validation returns `false` (BR-004), the pipeline halts with `FAIL_CLOSED`, logs an audit warning, and notifies the supervisor queue. |
-| **NFR-009** | **Performance & Latency**<br>Conversational response p95 < 1.5s. Lightweight Storefront Widget (< 20 KB) with zero host DOM interference. | **Vanilla TypeScript Web Component (Shadow DOM)** + **FastAPI / Node.js Streaming Responses** | The Storefront Widget is compiled without external libraries (no React/Vue runtime), achieving a gzipped bundle size < 18 KB. Streaming responses use Server-Sent Events (SSE) to display initial tokens within 350ms, while background orchestrations run asynchronously in workers. |
+| **NFR-009** | **Performance & Latency**<br>Conversational responses designed for near-real-time; **the example figures p95 < 1.5 s and widget < 20 KB are provisional design targets pending the NFR-009 benchmark**, which is what locks the official SLA (SRS §19). Lightweight Storefront Widget with zero host DOM interference. | **Vanilla TypeScript Web Component (Shadow DOM)** + **Node.js streaming responses** (a FastAPI worker would only inherit the same contract if the optional Python service is approved). | The Storefront Widget is compiled without external libraries (no React/Vue runtime); the example gzipped bundle budget (< 18 KB) and the initial-token target (~350 ms) are provisional design targets pending the NFR-009 benchmark. Streaming responses use Server-Sent Events (SSE), while background orchestrations run asynchronously in workers. |
 | **NFR-010** | **Cost Observability** (MUST)<br>Real-time calculation of token usage (input, output, cached), LLM model costs, and adapter API fees. Aggregation to cost-per-run and cost-per-customer. | **Prometheus Metrics** + **PostgreSQL Cost Aggregation Tables** | Every LLM call wrapper extracts token usage from provider response metadata, applies per-model pricing matrices, and records exact micro-dollar costs in the `executions` record. Data is aggregated hourly for display on executive dashboards SCR-001 and SCR-002. |
 
 ---
 
-## 2. Docker Compose Local Development Environment
+## 2. Docker Compose Local Development Environment (Gate P0 Blueprint — Not Yet Present)
 
-The local development environment replicates all production backing services using containerized images. It provisions PostgreSQL 16 with the `pgvector` extension, Redis 7.2 in standalone persistence mode, Qdrant Vector Search Engine, and a dedicated Mock ERP / Commerce API service that simulates API-001 (ERP/OMS) and API-002 (Event Ingestion).
+**Blueprint notice:** the `docker-compose.yml` file and the `docker/postgres/init.sql` script shown in this
+section **do not exist in this repository**; this documentation-only tree ships no manifests, images, or
+runnable services. They are the target Gate P0 local-development blueprint to be created during Sprint 1.
 
-### docker-compose.yml
+The target local development environment replicates all production backing services using containerized images. It provisions PostgreSQL 16 with the `pgvector` extension, Redis 7.2 in standalone persistence mode, Qdrant Vector Search Engine, and a dedicated Mock ERP / Commerce API service that simulates API-001 (ERP/OMS) and API-002 (Event Ingestion).
+
+### docker-compose.yml (target blueprint)
 
 ```yaml
 version: '3.8'
@@ -268,7 +281,7 @@ networks:
     driver: bridge
 ```
 
-### PostgreSQL Initialization Script (`docker/postgres/init.sql`)
+### PostgreSQL Initialization Script (`docker/postgres/init.sql`) — target blueprint
 
 ```sql
 -- Create required database extensions
@@ -306,7 +319,10 @@ $$ LANGUAGE plpgsql STABLE;
 
 ---
 
-## 2.2. Staging & Production Infrastructure Topology
+## 2.2. Staging & Production Infrastructure Topology (Gate P0 Blueprint — Not Yet Present)
+
+**Blueprint notice:** the topology, PgBouncer configuration, replication URLs, and example latency figures below
+are target design proposals for later environments. They describe no deployed infrastructure.
 
 In staging and production environments, the platform transitions from standalone containers to high-availability managed infrastructure enforcing connection pooling, strict TLS, and read/write splitting.
 
@@ -363,18 +379,21 @@ DATABASE_URL=postgresql://agentos_app:PASSWORD@pgbouncer.internal:6432/agentos?s
 
 ### 3. Read/Write Replication & URL Topology
 
-| Connection URL | Target Host & Topology | Permitted Operations | Latency SLA |
+| Connection URL | Target Host & Topology | Permitted Operations | Latency Target (provisional, pending NFR-009 benchmark) |
 |---|---|---|---|
-| `POSTGRES_PRIMARY_URL` | RDS Primary Multi-AZ (Active-Standby synchronous failover, RPO = 0, RTO < 30s) | INSERT, UPDATE, DELETE, and immediate transactional SELECT queries. | < 5ms p95 |
-| `POSTGRES_REPLICA_URL` | RDS Read Replica (Asynchronous streaming replication, lag < 100ms) | Analytical read-only workloads: SCR-001 Executive Dashboard, SCR-002 Reports, segment batch evaluation. | < 10ms p95 |
+| `POSTGRES_PRIMARY_URL` | RDS Primary Multi-AZ (Active-Standby synchronous failover; RPO = 0 and RTO < 30 s are design targets, not measured guarantees) | INSERT, UPDATE, DELETE, and immediate transactional SELECT queries. | < 5ms p95 (provisional) |
+| `POSTGRES_REPLICA_URL` | RDS Read Replica (Asynchronous streaming replication, target lag < 100ms) | Analytical read-only workloads: SCR-001 Executive Dashboard, SCR-002 Reports, segment batch evaluation. | < 10ms p95 (provisional) |
 
 ---
 
-## 3. Configuration & Environment Variables Specification
+## 3. Configuration & Environment Variables Specification (Gate P0 Blueprint — Not Yet Present)
 
-The system enforces strict schema validation at application boot time using Zod (TypeScript) and Pydantic (Python). If any mandatory variable is absent or improperly formatted, the server **fails closed** immediately and refuses to start.
+**Blueprint notice:** `.env.example` and the boot-time validators below are target design artifacts. No
+environment file, schema module, or runtime config loader exists in this repository.
 
-### `.env.example`
+The target design enforces strict schema validation at application boot time using Zod in the Node core; Pydantic applies **only** inside the optional Python auxiliary worker if that service is ever approved (see NFR-001). If any mandatory variable is absent or improperly formatted, the server **fails closed** immediately and refuses to start.
+
+### `.env.example` (target blueprint; placeholder values only — never real credentials)
 
 ```bash
 # =============================================================================
@@ -488,6 +507,17 @@ TIKTOK_APP_ID=mock_tiktok_app_id
 TIKTOK_APP_SECRET=mock_tiktok_app_secret
 TIKTOK_ACCESS_TOKEN=mock_tiktok_access_token
 
+# Baseline API-003 channels: Email and SMS (provider selection unconfirmed — ASM-001)
+EMAIL_PROVIDER=sendgrid
+EMAIL_FROM_ADDRESS=no-reply@example.invalid
+EMAIL_API_KEY=mock_email_provider_api_key
+EMAIL_WEBHOOK_SIGNING_KEY=mock_email_webhook_signing_key
+
+SMS_PROVIDER=twilio
+SMS_SENDER_ID=MockSender
+SMS_API_KEY=mock_sms_provider_api_key
+SMS_WEBHOOK_SIGNING_KEY=mock_sms_webhook_signing_key
+
 # Global Payment Adapters (ADPT-GL-002)
 STRIPE_SECRET_KEY=sk_test_mock_stripe_secret_key
 STRIPE_WEBHOOK_SECRET=whsec_mock_stripe_webhook_secret
@@ -511,6 +541,8 @@ STORAGE_REGION=ap-northeast-1
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 OTEL_SERVICE_NAME=agentos-revenue-platform
 METRICS_PORT=9090
+# Cost coefficients are PROVISIONAL configuration inputs (illustrative provider list pricing),
+# NOT measured unit economics. Final cost targets require the ASM-002 KPI baseline and NFR-009 benchmark.
 COST_PER_1K_PROMPT_TOKENS_GPT4O=0.005
 COST_PER_1K_COMPLETION_TOKENS_GPT4O=0.015
 COST_PER_1K_PROMPT_TOKENS_MINI=0.00015
@@ -519,9 +551,13 @@ COST_PER_1K_COMPLETION_TOKENS_MINI=0.0006
 
 ---
 
-## 4. Strict Environment Schema Validation (TypeScript & Python)
+## 4. Strict Environment Schema Validation (Gate P0 blueprint)
 
-### TypeScript Boot-Time Validator (`packages/core-engine/src/config/env.validator.ts`)
+**Blueprint notice:** both validators below are target design artifacts for the Node core and, optionally, for a
+future Python auxiliary worker. Neither file (`packages/core-engine/src/config/env.validator.ts`,
+`apps/api-py/config/env.py`) exists in this repository.
+
+### TypeScript Boot-Time Validator — Node core (`packages/core-engine/src/config/env.validator.ts`, target blueprint)
 
 ```typescript
 import { z } from 'zod';
@@ -576,6 +612,14 @@ export const EnvironmentSchema = z.object({
   ECPAY_MERCHANT_ID: z.string().optional().default('mock_ecpay_id'),
   NEWEBPAY_MERCHANT_ID: z.string().optional().default('mock_newebpay_id'),
 
+  // Baseline API-003 channels: Email & SMS (provider selection unconfirmed — ASM-001)
+  EMAIL_PROVIDER: z.enum(['sendgrid', 'mailgun', 'smtp']).default('sendgrid'),
+  EMAIL_API_KEY: z.string().optional().default('mock_email_api_key'),
+  EMAIL_WEBHOOK_SIGNING_KEY: z.string().optional().default('mock_email_webhook_key'),
+  SMS_PROVIDER: z.enum(['twilio', 'chunghwa_telecom', 'gateway_rest']).default('twilio'),
+  SMS_API_KEY: z.string().optional().default('mock_sms_api_key'),
+  SMS_WEBHOOK_SIGNING_KEY: z.string().optional().default('mock_sms_webhook_key'),
+
   // Global Payment (ADPT-GL-002)
   STRIPE_SECRET_KEY: z.string().optional().default('sk_test_mock'),
   PAYPAL_CLIENT_ID: z.string().optional().default('mock_paypal_id'),
@@ -614,7 +658,7 @@ export function validateEnvironment(env: Record<string, unknown> = process.env):
 }
 ```
 
-### Python Boot-Time Validator (`apps/api-py/config/env.py`)
+### Python Boot-Time Validator — OPTIONAL auxiliary worker only (`apps/api-py/config/env.py`, target blueprint)
 
 ```python
 """Strict boot-time environment validator using Pydantic v2 Settings."""
@@ -686,3 +730,17 @@ def load_and_validate_env() -> AppEnvironmentSettings:
         sys.stderr.write(f"FATAL: Environment validation failed:\n{exc}\n")
         sys.exit(1)
 ```
+
+---
+
+## 5. Runtime Reconciliation Note (Node core vs. optional Python service)
+
+- **Core runtime — Node.js (TypeScript 5.x).** API gateway, Revenue Orchestrator, agent runtime, skills,
+  adapters, durable workers, and the Next.js Command Center are all Node.js artifacts.
+- **Optional auxiliary runtime — Python (FastAPI).** A Python service MAY be introduced later for
+  Python-only ML/NLP libraries. It is **not** part of the monorepo layout in
+  `02-project-structure.md`, is **not** required by any SRS NFR, and must be justified under ASM-001
+  before it appears in any topology. Until then, every Python snippet in this document is an
+  illustrative alternative, not a planned component.
+- **Neither runtime currently exists.** This repository is documentation-only; the code paths named in
+  this document are target file locations for the Gate P0 build, not present files.

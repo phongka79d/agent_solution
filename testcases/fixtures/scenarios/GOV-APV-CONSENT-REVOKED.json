@@ -1,0 +1,94 @@
+{
+  "id": "GOV-APV-CONSENT-REVOKED",
+  "title": "Revoked consent between review and release suppresses the approved send",
+  "document": "governance/approval.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SCR-003",
+    "BR-004",
+    "TC-E2E-007",
+    "NFR-008"
+  ],
+  "facets": [
+    "entity:Consent",
+    "entity:Approval",
+    "channel:EMAIL"
+  ],
+  "risk": "An operator approval is treated as overriding the consent check, so a customer who opted out an hour ago receives the approved campaign.",
+  "preconditions": [
+    "Namespace gov-apv-<case_id>-<worker_id>; approval queue seeded from fixtures/offline/governance.json.",
+    "Operator identities and roles resolved from the fixture operator registry; every decision goes through POST /api/v1/approvals/{id}/decision, the only approval route.",
+    "cust-a holds EMAIL marketing consent granted at review time; the campaign targets only cust-a in this scenario."
+  ],
+  "inputs": {
+    "revoke": {
+      "customer_id": "cust-a",
+      "channel": "EMAIL",
+      "purpose": "marketing",
+      "at": "after approval, before dispatch"
+    },
+    "decision": {
+      "decision": "APPROVE",
+      "operator_id": "OP-APPROVER-T1",
+      "reason": "Approved for send."
+    },
+    "audience": 1
+  },
+  "steps": [
+    {
+      "action": "Approve the single-recipient campaign",
+      "expected": "Status becomes APPROVED and the task is queued for dispatch."
+    },
+    {
+      "action": "Revoke cust-a EMAIL marketing consent before dispatch runs",
+      "expected": "The consent record becomes revoked with a revocation timestamp."
+    },
+    {
+      "action": "Let the dispatch run",
+      "expected": "The send is suppressed at dispatch; the EMAIL adapter counter stays at 0 and the recipient is recorded as suppressed."
+    },
+    {
+      "action": "Read the approval and suppression records",
+      "expected": "The approval remains APPROVED and records the reviewer, while the execution records the suppression with the consent snapshot - approval and consent are independent controls."
+    }
+  ],
+  "assertions": [
+    "Human approval never substitutes for consent: the suppressed action produces zero external sends.",
+    "The suppression is attributed to the specific recipient and channel, not only to the campaign.",
+    "The approval record is not rewritten to rejected; the two controls are recorded separately and both are auditable.",
+    "The campaign can still be dispatched to any other recipient who holds a valid grant, so the block is scoped, not global."
+  ],
+  "forbidden": [
+    "Treating an operator approval as consent.",
+    "Dropping the entire campaign because one recipient lost consent.",
+    "Retrying the suppressed recipient in a loop."
+  ],
+  "evidence": [
+    "Approval record with reviewer fields.",
+    "Execution suppression record with the consent snapshot and recipient.",
+    "Adapter counter log for the EMAIL channel."
+  ],
+  "cleanup": [
+    "Restore the cust-a consent fixture row and delete gov- approval and execution rows."
+  ],
+  "automation": "Real consent evaluation at dispatch time and real approval persistence under test; the channel adapter is the substituted boundary with a per-recipient counter.",
+  "prerequisites": [],
+  "references": [
+    "implement/07-human-command-center-ui.md",
+    "implement/08-security-governance-nfr.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/consents.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

@@ -1,0 +1,96 @@
+{
+  "id": "UNIT-care.analyze_churn_risk-HAPPY",
+  "title": "skill.care.analyze_churn_risk happy path and boundary — HYPOTHESIS-tagged churn score for a dormant customer",
+  "document": "unit/skills.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P3",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "CS-02",
+    "FR-CS-003",
+    "FR-C360-003",
+    "SRS-11"
+  ],
+  "facets": [
+    "skill:skill.care.analyze_churn_risk",
+    "kpi:Churn",
+    "memory:Learning Memory",
+    "stage:HYPOTHESIS"
+  ],
+  "risk": "Invented churn facts drive wrong retention spend and contaminate the customer profile.",
+  "preconditions": [
+    "isolated namespace run_id=RUN-care.analyze_churn_risk-HAPPY, case_id=UNIT-care.analyze_churn_risk-HAPPY, worker=w-biz-unit; no shared mutable session with any other case",
+    "skill registry row for skill.care.analyze_churn_risk registered with test_cases TC-SKILL-01..05 plus >=1 skill-specific case and asserted registrable before the run",
+    "in-memory adapters loaded from the case fixtures for tenant T1 only; frozen clock 2026-01-15T10:00:00Z"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "customer_id": "cust-dormant",
+    "recent_message_snippets": [
+      "Don hang giao cham qua"
+    ],
+    "caller_agent": "CS-02",
+    "granted_authority": "AUTH-1"
+  },
+  "steps": [
+    {
+      "action": "Route the call through the orchestrator",
+      "expected": "Orchestrator resolves caller CS-02 -> skill.care.analyze_churn_risk; the registry row exposes required_authority=AUTH-1, allowed_agents=[CS-02], tool=Customer360.AnalyticsLayer, timeout_ms=2500, retry_policy={max_retries:2, backoff_multiplier:1.5, retry_on_timeout:True}"
+    },
+    {
+      "action": "Invoke with the case input payload",
+      "expected": "Input validator (additionalProperties:false) accepts it; adapter Customer360.AnalyticsLayer is invoked exactly once with the tenant binding 11111111-1111-1111-1111-111111111111"
+    },
+    {
+      "action": "Inspect the returned payload",
+      "expected": "churn_probability=0.72, risk_tier='HIGH', primary_risk_factors=['inactivity_60d', 'failed_order'], classification='HYPOTHESIS'"
+    },
+    {
+      "action": "Re-run the boundary/validation probe",
+      "expected": "every produced result carries classification='HYPOTHESIS' and is written only to the hypothesis store; a probe attempting to persist it as a Customer FACT (verified profile field) is refused (FR-C360-003)"
+    },
+    {
+      "action": "Collect the evidence and audit trail",
+      "expected": "Evidence card EV_CHURN_ANALYSIS is written with mask=['customer_id'] and latency; the run record chains run_id -> skill -> tool -> decision -> execution_status (SRS-17)"
+    }
+  ],
+  "assertions": [
+    "the numeric score and tier are the model's; a model outage yields a refusal, never a default LOW",
+    "classification is exactly 'HYPOTHESIS' and the Customer 360 FACT store is unchanged by the call (diff of profile rows is empty)",
+    "primary_risk_factors name observable signals (inactivity days, failed order) rather than inferred sensitive traits",
+    "adapter Customer360.AnalyticsLayer invocation count is exactly 1 for this run and the skill step ends execution_status='success' with latency recorded",
+    "the run audit ties run_id, caller CS-02, skill skill.care.analyze_churn_risk, decision and evidence card EV_CHURN_ANALYSIS into one record; no component reports success for another component's work"
+  ],
+  "forbidden": [
+    "writing an AI hypothesis back into Customer 360 as a verified fact (FR-C360-003)",
+    "returning a churn tier when the model did not run"
+  ],
+  "evidence": [
+    "run record for skill.care.analyze_churn_risk with the 18 SRS-17 fields and the case run_id",
+    "evidence card EV_CHURN_ANALYSIS payload, redacted (mask: ['customer_id'])",
+    "adapter call log for Customer360.AnalyticsLayer: invocation count, input digest, latency"
+  ],
+  "cleanup": [
+    "release in-memory namespace RUN-care.analyze_churn_risk-HAPPY: drop mock rows created by this case, release any effect reservation, keep audit/evidence rows required by retention"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. Adapter Customer360.AnalyticsLayer substituted; the SLA deadline is observed on the virtual clock.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/05-skill-system-specifications.md",
+    "plans/modules/customer-support.md",
+    "implement/03-database-and-memory-schema.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/customers.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

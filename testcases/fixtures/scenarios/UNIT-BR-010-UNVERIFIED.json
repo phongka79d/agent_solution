@@ -1,0 +1,96 @@
+{
+  "id": "UNIT-BR-010-UNVERIFIED",
+  "title": "BR-010: an unverified or partially written evidence record does not satisfy completion",
+  "document": "unit/business-rules.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "BR-010",
+    "NFR-002",
+    "NFR-004",
+    "TC-E2E-009"
+  ],
+  "facets": [
+    "entity:Evidence",
+    "stage:EVIDENCE"
+  ],
+  "risk": "A placeholder or half-written evidence row is treated as proof, so the trace chain breaks exactly when a real incident needs it.",
+  "preconditions": [
+    "Namespace gov-unit-br-<case_id>-<worker_id>; Business Rules Engine loaded with no cross-case state.",
+    "Frozen clock 2026-01-15T10:00:00Z; agent fixture context loaded from fixtures/offline/governance.json."
+  ],
+  "inputs": {
+    "evidence_states": [
+      {
+        "label": "empty row",
+        "state": "ROW_EXISTS_NO_RECEIPT",
+        "expected": "REFUSED"
+      },
+      {
+        "label": "unverified receipt",
+        "state": "RECEIPT_UNVERIFIED",
+        "expected": "REFUSED"
+      },
+      {
+        "label": "verified receipt",
+        "state": "VERIFIED",
+        "expected": "COMPLETED"
+      },
+      {
+        "label": "write failed midway",
+        "state": "PARTIAL_WRITE",
+        "expected": "REFUSED"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Attempt completion against each of the four evidence states in isolated runs",
+      "expected": "The first, second and fourth are refused; only the verified state completes."
+    },
+    {
+      "action": "Inspect the refusal reasons",
+      "expected": "Each refusal names the specific deficiency (no receipt, unverified, partial write) rather than a generic error."
+    },
+    {
+      "action": "Verify the chain for the completed task",
+      "expected": "The completed task has a single audit row referencing a verified evidence record whose receipt payload is intact."
+    }
+  ],
+  "assertions": [
+    "A row that exists without a verified receipt never satisfies the rule.",
+    "Only 1 of the 4 states completes; the refusal reasons are distinct.",
+    "The partial-write case is not silently repaired or ignored.",
+    "Completion is conditional on verification, not on row presence."
+  ],
+  "forbidden": [
+    "Checking only that an evidence row id exists.",
+    "Treating a partially written record as valid because it parses.",
+    "Deleting the failed evidence row so the audit shows no attempt."
+  ],
+  "evidence": [
+    "Refusal records for the three failing states with their reasons.",
+    "Verified evidence record and its audit linkage for the completed state."
+  ],
+  "cleanup": [
+    "Delete gov- evidence rows after exporting the refusal records."
+  ],
+  "automation": "Real BusinessRulesEngine and PEP under test; only ERP/POS/connector boundaries are substituted by the offline mock whose call log and receipts are the oracle. Rules are evaluated in sequence and halt on the first failure, so each case asserts the first failing rule code rather than a bag of errors.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

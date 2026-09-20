@@ -1,0 +1,113 @@
+{
+  "id": "GOV-KPI-MISSING-COST",
+  "title": "Missing cost rows produce PARTIAL coverage instead of a cheaper cost per outcome",
+  "document": "governance/kpi.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P4",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SRS-20",
+    "NFR-010",
+    "OBJ-006"
+  ],
+  "facets": [
+    "kpi:Cost per Successful Outcome",
+    "kpi:Campaign Revenue",
+    "kpi:Human Override Rate"
+  ],
+  "risk": "Rows with no cost are dropped from the cost numerator, so cost per successful outcome falls whenever a billing feed breaks and the platform looks cheaper exactly when it is unmeasured.",
+  "preconditions": [
+    "Namespace gov-kpi-<case_id>-<worker_id>; the metric is computed by the real reporting code over fixtures/offline/governance.json kpi_dataset and never copied from the dashboard payload.",
+    "Frozen clock 2026-01-15T10:00:00Z with the reporting window 2026-01-01T00:00:00Z .. 2026-02-01T00:00:00Z as a half-open interval; the stored aggregate is recomputed independently from the raw counter rows.",
+    "kpi_edge.missing_cost marks two rows whose cost is absent because the provider feed did not deliver, which is different from a cost of zero.",
+    "Cost per successful outcome must state its coverage when any contributing row has no cost."
+  ],
+  "inputs": {
+    "missing_cost": {
+      "rows_without_cost": 2,
+      "expected_display": "PARTIAL with the missing-source reason"
+    },
+    "cost_inputs": {
+      "ai_cost_total_twd": 1200,
+      "successful_outcomes": 40,
+      "session_cost_samples_twd": [
+        0.42,
+        0.55,
+        0.88,
+        1.2
+      ],
+      "run_cost_samples_twd": [
+        0.01,
+        0.02,
+        0.03,
+        0.04,
+        0.05
+      ],
+      "customer_costs_twd": {
+        "cust-a": 1.1,
+        "cust-b": 0.4
+      }
+    },
+    "expected": {
+      "cost_per_successful_outcome": "30 TWD",
+      "coverage_state": "PARTIAL with the missing-source reason",
+      "zero_substitution_allowed": false
+    }
+  },
+  "steps": [
+    {
+      "action": "Compute cost per successful outcome over the full window",
+      "expected": "The value is 30 TWD and the report states that two contributing rows have no cost, so the figure is marked PARTIAL rather than final."
+    },
+    {
+      "action": "Attempt to publish the figure as complete",
+      "expected": "Publication is refused while a contributing row lacks cost; the missing rows are listed with the provider-feed reason."
+    },
+    {
+      "action": "Attempt to treat the missing cost as zero",
+      "expected": "The substitution is refused, because a zero would silently lower the measured cost per outcome."
+    },
+    {
+      "action": "Aggregate cost per run and per customer after the feed recovers",
+      "expected": "The restated figure includes the previously missing rows, per-customer cost sums to the run totals, and the earlier PARTIAL state is superseded by a recorded restatement."
+    }
+  ],
+  "assertions": [
+    "Cost per successful outcome is never published as complete while any contributing row lacks a cost; the coverage state is PARTIAL with the reason.",
+    "A missing cost is never replaced by zero, and the recomputation before and after the feed recovery differ only by the recovered amounts.",
+    "Per-run and per-customer cost aggregates reconcile to the measured total, with no cost attributed to a customer that did not generate it.",
+    "The restatement is recorded with its cause, so the previously published partial figure can still be reconstructed."
+  ],
+  "forbidden": [
+    "Substituting zero for a missing provider cost.",
+    "Dropping the rows without cost from the numerator so the average falls.",
+    "Publishing a per-customer cost that cannot be reconciled to the run totals."
+  ],
+  "evidence": [
+    "Cost computation with the PARTIAL coverage state and the missing row ids.",
+    "Provider usage and billing extract showing which rows are absent.",
+    "Restatement record created after the feed recovery."
+  ],
+  "cleanup": [
+    "Delete gov- cost aggregate rows and invented cost rows after export; the provider feed substitute is restored."
+  ],
+  "automation": "The reporting service and the metric dictionary run as real code under test over the frozen KPI dataset; the dashboard is a consumer whose displayed value must equal the independently recomputed value. Waits are condition-based on the stored aggregate row, metric values are never supplied as inputs, and no vendor boundary is involved in the arithmetic.",
+  "prerequisites": [
+    "ASM-002 is unlocked, so the cost figures are measurements with unapproved thresholds; only the coverage and reconciliation rules are asserted here."
+  ],
+  "references": [
+    "plans/delivery/analytics.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

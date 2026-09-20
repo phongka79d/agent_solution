@@ -1,0 +1,125 @@
+{
+  "id": "GOV-ASM-001",
+  "title": "ASM-001 unlocked: live connector work is SKIP_ASM_001 while offline and unit work still runs",
+  "document": "governance/asm.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "ASM-001",
+    "NFR-001",
+    "TC-E2E-006",
+    "SRS-02"
+  ],
+  "facets": [
+    "entity:Agent",
+    "stage:ACTION",
+    "channel:EMAIL"
+  ],
+  "risk": "A connector is enabled on the strength of an implicit assumption, so the platform sends to real recipients before the production connector allowlist exists and the first real message is the incident.",
+  "preconditions": [
+    "Namespace gov-asm-<case_id>-<worker_id>; the assumption registry is read from fixtures/offline/governance.json assumptions and no lock may be granted, forged, cached or edited inside the run.",
+    "Frozen clock 2026-01-15T10:00:00Z; the harness records exactly one outcome per dependent capability - EXECUTED, BLOCKED_PREREQUISITE or SKIP_ASM_<n> - and refuses to re-label a skip as PASS.",
+    "assumptions.ASM-001.locked is false and no production connector allowlist artifact exists in the repository or the run environment.",
+    "One live-connector capability and two independent capabilities (an offline mock journey and an authority unit case) are registered in the same run plan."
+  ],
+  "inputs": {
+    "assumptions": {
+      "ASM-001": {
+        "locked": false,
+        "owner": "Product/IT",
+        "locks": [
+          "production connector allowlist"
+        ],
+        "blocks": [
+          "live channel dispatch"
+        ],
+        "does_not_block": [
+          "offline mock journeys",
+          "authority unit cases"
+        ]
+      }
+    },
+    "capabilities": [
+      {
+        "label": "live channel dispatch",
+        "depends_on": [
+          "ASM-001"
+        ],
+        "expected_status": "SKIP_ASM_001"
+      },
+      {
+        "label": "offline mock journey",
+        "depends_on": [],
+        "expected_status": "EXECUTED"
+      },
+      {
+        "label": "authority unit case",
+        "depends_on": [],
+        "expected_status": "EXECUTED"
+      }
+    ],
+    "env_example": {
+      "ASM_001_CONNECTOR_LOCK": "not_set",
+      "note": "fixtures/live/env.example is a checklist, not an approval"
+    }
+  },
+  "steps": [
+    {
+      "action": "Read the assumption registry and resolve ASM-001 for the run",
+      "expected": "ASM-001 is reported unlocked with owner Product/IT; the live-connector capability is marked dependent and cannot be entered."
+    },
+    {
+      "action": "Attempt to start the live channel dispatch",
+      "expected": "The capability is refused before any connector call and is reported SKIP_ASM_001; no credential is loaded and the provider call counter stays 0."
+    },
+    {
+      "action": "Run the two capabilities that do not depend on ASM-001",
+      "expected": "The offline mock journey and the authority unit case both execute and report EXECUTED in the same run."
+    },
+    {
+      "action": "Attempt to have the skip counted as a pass",
+      "expected": "The run report keeps SKIP_ASM_001 as its own status; a summary that reports the gate as passed is rejected because a skipped capability is neither PASS nor FAIL."
+    }
+  ],
+  "assertions": [
+    "The live-connector capability never executes while ASM-001 is unlocked: provider call counter is 0 and no credential was read.",
+    "The dependent capability is reported SKIP_ASM_001, which is distinct from PASS and from FAIL, and no summary may collapse it into either.",
+    "The two independent capabilities still execute in the same run, so the missing lock is scoped rather than a global stop.",
+    "No run path can set assumptions.ASM-001.locked to true: the registry is read-only for the run and the lock can only come from the owner outside the platform."
+  ],
+  "forbidden": [
+    "Granting the connector lock from agent input, a request header or a test fixture.",
+    "Substituting a mock connector and reporting the live capability as passed.",
+    "Blocking the offline mock journey and authority unit cases because a live lock is missing."
+  ],
+  "evidence": [
+    "Assumption registry snapshot showing ASM-001 unlocked with its owner.",
+    "Run-report rows for the three capabilities with SKIP_ASM_001 / EXECUTED / EXECUTED.",
+    "Provider call counter proving zero live dispatches."
+  ],
+  "cleanup": [
+    "Delete gov- run-report rows; no provider state was created, so nothing has to be retired."
+  ],
+  "automation": "The policy-parameter resolver, the PEP and the run-report writer run as real code under test; the unlocked assumption is configuration, not a substituted boundary. The oracle is the run-report status plus the adapter effect counters, so a capability that executes while its assumption is unlocked fails the case instead of passing it. Capabilities that do not depend on the unlocked assumption run in the same pass, so the case can distinguish 'blocked because the lock is missing' from 'everything was switched off'.",
+  "prerequisites": [
+    "The production connector allowlist (ASM-001, owner Product/IT) is not locked; live connector execution is unavailable and any attempt to report it PASS is a defect in the report, not a result."
+  ],
+  "references": [
+    "implement/09-sprint-roadmap-and-pilots.md",
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/live/env.example"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

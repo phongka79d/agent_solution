@@ -1,0 +1,121 @@
+{
+  "id": "INT-FR-CS-003-SUPPRESSION",
+  "title": "FR-CS-003 suppressions: consent, quota, budget and stale signal block the offer",
+  "document": "integration/sales-care-orchestrator.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P3",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "CS-02",
+    "SAL-05",
+    "FR-CS-003",
+    "BR-004",
+    "BR-006",
+    "BR-002",
+    "TC-E2E-007",
+    "NFR-008",
+    "SRS-11"
+  ],
+  "facets": [
+    "skill:skill.care.issue_retention_offer",
+    "intent:human_escalation",
+    "kpi:Policy Violation Rate",
+    "stage:DECISION",
+    "channel:EMAIL"
+  ],
+  "risk": "An opted-out, over-quota or over-budget customer receives retention outreach, which is both a policy breach and wasted spend.",
+  "preconditions": [
+    "run_id=RUN-INT-FRCS003-SUPPRESSION-0115, case_id=INT-FR-CS-003-SUPPRESSION, worker=w-biz-int; four independent sub-runs with separate namespaces",
+    "cust-b is marketing opt-out on every channel; cust-a already received one retention offer 3 days ago (quota consumed); the tenant daily retention budget is fully spent in sub-run 3"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "sub_runs": [
+      {
+        "customer_id": "cust-b",
+        "channel": "EMAIL",
+        "expected": "suppressed: BR-004 opt-out"
+      },
+      {
+        "customer_id": "cust-a",
+        "channel": "EMAIL",
+        "expected": "suppressed: 30-day quota already consumed, second voucher_code absent"
+      },
+      {
+        "customer_id": "cust-dormant",
+        "channel": "SMS",
+        "max_discount_value": 120,
+        "expected": "suppressed: no SMS consent for marketing"
+      },
+      {
+        "customer_id": "cust-dormant",
+        "channel": "EMAIL",
+        "max_discount_value": 200,
+        "expected": "refused: P_FLOOR_BREACH / budget exhausted, no value issued"
+      }
+    ],
+    "caller_agent": "CS-02",
+    "granted_authority": "AUTH-3"
+  },
+  "steps": [
+    {
+      "action": "Run the opt-out sub-run",
+      "expected": "check_consent returns allowed=false for cust-b; the offer skill is refused before any voucher exists and no message is queued"
+    },
+    {
+      "action": "Run the quota sub-run",
+      "expected": "the 30-day per-customer quota consumes exactly once: a second issue attempt returns RETENTION_QUOTA_EXCEEDED and the previously issued voucher_code is unchanged"
+    },
+    {
+      "action": "Run the channel/marketing-consent sub-run",
+      "expected": "a transactional-only or absent consent for SMS blocks the marketing offer; the system does not silently fall back to another channel to bypass consent"
+    },
+    {
+      "action": "Run the budget/floor sub-run",
+      "expected": "the offer would breach the floor price or the daily budget, so it is refused (or routed to approval) with no value issued and no promise made in chat"
+    },
+    {
+      "action": "Confirm the orchestrator enforces the same rules",
+      "expected": "each suppression is recorded as an eligibility decision on the run with the rule name, and no direct CS-02 send bypasses the outbound skill"
+    }
+  ],
+  "assertions": [
+    "all four sub-runs end with zero customer-visible messages and zero issued vouchers, each with a distinct, correctly named suppression/refusal reason",
+    "the only sub-run with prior quota consumption keeps its original voucher_code and issue timestamp: no second code is minted",
+    "no channel fallback happens around a consent refusal (BR-004), and no stale cached signal is used to justify outreach after consent changed",
+    "each suppression is durably audited with customer, rule and run_id so the decision can be defended later"
+  ],
+  "forbidden": [
+    "sending retention outreach to an opted-out or over-quota customer",
+    "issuing a voucher after any eligibility check returned false, or retrying the suppressed send on another channel"
+  ],
+  "evidence": [
+    "four eligibility decision records with rule names and the checked consent rows",
+    "provider/connector call log showing zero sends for every suppressed sub-run",
+    "voucher store state proving no new voucher_code was created"
+  ],
+  "cleanup": [
+    "drop the four sub-run namespaces and any reserved budget holds; keep the eligibility and suppression audit rows"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. Consent/quota/budget come from the fixtures and the reservation store; suppression is asserted on connector call counts and voucher rows.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/05-skill-system-specifications.md",
+    "plans/modules/customer-support.md",
+    "plans/modules/marketing.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/customers.json",
+    "fixtures/offline/consents.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

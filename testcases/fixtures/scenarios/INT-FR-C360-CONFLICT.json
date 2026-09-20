@@ -1,0 +1,91 @@
+{
+  "id": "INT-FR-C360-CONFLICT",
+  "title": "Conflicting sources resolve in favour of the System of Record and the conflict is surfaced",
+  "document": "integration/customer-360.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "FR-C360-001",
+    "FR-C360-003",
+    "BR-003",
+    "NFR-005"
+  ],
+  "facets": [
+    "entity:Customer",
+    "entity:Price",
+    "stage:CONTEXT"
+  ],
+  "risk": "A customer is quoted an amount that contradicts the authoritative source, or a stale cached value silently overwrites the ERP value.",
+  "preconditions": [
+    "Tenant T1 where the cached profile holds SKU-OK list price 950 TWD while the live ERP read returns 1000 TWD",
+    "Profile and price read executed at 2026-01-15T10:00:00Z in namespace run-t1-conflict-*"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "sku_id": "SKU-OK",
+    "cached_value": {
+      "list_price": 950,
+      "source": "profile_cache",
+      "cached_at": "2026-01-14T08:00:00Z"
+    },
+    "erp_value": {
+      "list_price": 1000,
+      "currency": "TWD",
+      "snapshot_at": "2026-01-15T09:59:58Z"
+    }
+  },
+  "steps": [
+    {
+      "action": "Read the price through the customer-facing skill while the cache and the ERP disagree",
+      "expected": "the response uses the ERP value 1000 TWD and records the ERP snapshot as provenance"
+    },
+    {
+      "action": "Inspect the resolution record for the conflicting pair",
+      "expected": "the conflict is recorded with both values, the winning source and the reason, and the cached value is not promoted to FACT"
+    },
+    {
+      "action": "Simulate the ERP snapshot being older than the allowed freshness window",
+      "expected": "the value is not used at all; the skill refuses and escalates instead of answering with a stale price"
+    },
+    {
+      "action": "Attempt to write the cached 950 TWD back into the ERP mirror",
+      "expected": "the write is refused and the mirror still reports 1000 TWD"
+    }
+  ],
+  "assertions": [
+    "The returned price is 1000 TWD with ERP provenance; 950 TWD never reaches the customer",
+    "The conflict record lists both candidate values, the winning source and a reason",
+    "A stale ERP snapshot produces a refusal/escalation instead of a price answer"
+  ],
+  "forbidden": [
+    "Answer with the cached value when the authoritative read is unavailable",
+    "Write a cached or derived value back into the System-of-Record mirror"
+  ],
+  "evidence": [
+    "Skill response with the winning value and its provenance",
+    "Conflict resolution record comparing cached and ERP values"
+  ],
+  "cleanup": [
+    "Delete the run-scoped cache entries and conflict records for run-t1-conflict-*; keep the refusal audit row"
+  ],
+  "automation": "Stub only the ERP adapter, keep the real cache and conflict-resolution code in the path, and freeze the clock so freshness is deterministic; the oracle is the returned amount and provenance.",
+  "prerequisites": [],
+  "references": [
+    "implement/03-database-and-memory-schema.md",
+    "plans/platform/data-and-knowledge.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/catalog.json",
+    "fixtures/offline/customers.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

@@ -1,0 +1,92 @@
+{
+  "id": "GOV-KPI-SUC-03",
+  "title": "SUC-03 Reactivation: declared formula, numerator and denominator with honest missing-data behaviour",
+  "document": "governance/kpi.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "medium",
+  "gate": "P4",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SRS-20",
+    "OBJ-004",
+    "CS-02"
+  ],
+  "facets": [
+    "kpi:Reactivation",
+    "entity:Segment"
+  ],
+  "risk": "The Reactivation figure is produced under different accounting rules - reactivated customers divided by all customers, which understates the reactivation programme by a factor of five - so the KPI is wrong in the direction that flatters the programme and every decision taken on it inherits the error.",
+  "preconditions": [
+    "Namespace gov-kpi-<case_id>-<worker_id>; the metric is computed by the real reporting code over fixtures/offline/governance.json kpi_dataset and never copied from the dashboard payload.",
+    "Frozen clock 2026-01-15T10:00:00Z with the reporting window 2026-01-01T00:00:00Z .. 2026-02-01T00:00:00Z as a half-open interval; the stored aggregate is recomputed independently from the raw counter rows.",
+    "Metric scope is fixed before measurement: numerator is dormant customers who purchased again after the care message; denominator is customers dormant for more than 90 days in the segment.",
+    "The dictionary entry for 'Reactivation' (owner, unit, window, exclusion rule) is loaded read-only and is compared with the recomputation instead of being trusted."
+  ],
+  "inputs": {
+    "metric": "Reactivation",
+    "code": "SUC-03",
+    "group": "Customer Success",
+    "dataset": "kpi_dataset.retention",
+    "formula": "dormant customers who repurchase after a care message divided by dormant customers",
+    "window": [
+      "2026-01-01T00:00:00Z",
+      "2026-02-01T00:00:00Z"
+    ],
+    "currency": "TWD",
+    "expected_value": "20.0%",
+    "wrong_value_if_buggy": "reactivated customers divided by all customers, which understates the reactivation programme by a factor of five",
+    "release_blocker": false,
+    "expected_boundary_behaviour": "no dormant customer in the segment returns NOT_DEFINED"
+  },
+  "steps": [
+    {
+      "action": "Compute Reactivation from the frozen rows in kpi_dataset.retention",
+      "expected": "The stored aggregate reports 20.0% and records the formula, the window and the currency that produced it."
+    },
+    {
+      "action": "Recompute Reactivation independently from the raw counter rows for the same tenant and window",
+      "expected": "The recomputed value equals the stored value 20.0%, and every numerator row lies inside the denominator scope."
+    },
+    {
+      "action": "Force the empty-source variant of the metric (no qualifying row in the window)",
+      "expected": "The metric reports no dormant customer in the segment returns NOT_DEFINED; the display distinguishes missing source data from a measured zero."
+    },
+    {
+      "action": "Read the dashboard payload and the metric dictionary entry",
+      "expected": "The dashboard renders the stored value with its window, coverage and source, and the dictionary names the owner, unit, numerator and denominator that the recomputation used."
+    }
+  ],
+  "assertions": [
+    "Reactivation equals 20.0% for the frozen window, recomputed from the raw counter rows with numerator scope 'dormant customers who purchased again after the care message' and denominator scope 'customers dormant for more than 90 days in the segment'.",
+    "A recomputation that yields reactivated customers divided by all customers, which understates the reactivation programme by a factor of five is detected as wrong: the stored aggregate and the independent recomputation must agree before the figure is published.",
+    "The dashboard payload for the same tenant and window carries the stored value with its window, coverage and measurement source; it substitutes neither a design target nor another metric's value.",
+    "Boundary behaviour: no dormant customer in the segment returns NOT_DEFINED; missing source data is never rendered as a measured zero."
+  ],
+  "forbidden": [
+    "Counting a customer who was never dormant as reactivated.",
+    "Omitting the 90 day dormancy definition from the metric."
+  ],
+  "evidence": [
+    "Dormancy definition and the segment list.",
+    "Reactivation purchase events with their timestamps."
+  ],
+  "cleanup": [
+    "Delete gov- aggregate, raw-counter and scenario rows for SUC-03 after exporting the recomputation table."
+  ],
+  "automation": "The reporting service and the metric dictionary run as real code under test over the frozen KPI dataset; the dashboard is a consumer whose displayed value must equal the independently recomputed value. Waits are condition-based on the stored aggregate row, metric values are never supplied as inputs, and no vendor boundary is involved in the arithmetic.",
+  "prerequisites": [],
+  "references": [
+    "plans/delivery/analytics.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

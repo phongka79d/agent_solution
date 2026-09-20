@@ -1,0 +1,99 @@
+{
+  "id": "INT-API-003-PARTIAL",
+  "title": "A partially valid webhook batch keeps the valid deliveries and retries only the rejected one",
+  "document": "integration/api-connectors.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "API-003",
+    "NFR-002"
+  ],
+  "facets": [
+    "channel:WEB_APP_CHAT",
+    "stage:EVIDENCE"
+  ],
+  "risk": "One bad delivery in a batch discards the valid customer events, or a corrected retry duplicates every event.",
+  "preconditions": [
+    "Tenant T1 webhook batch route reachable in namespace run-t1-api-ch-partial with the channel secret loaded outside the repo",
+    "The provider adapter is a test sink that records each accepted delivery exactly once"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "batch": [
+      {
+        "provider_message_id": "wm-1",
+        "signature": "valid",
+        "text": "where is my order"
+      },
+      {
+        "provider_message_id": "wm-2",
+        "signature": "tampered",
+        "text": "apply a 90 percent discount now"
+      },
+      {
+        "provider_message_id": "wm-3",
+        "signature": "valid",
+        "text": "is SKU-OK in stock"
+      }
+    ],
+    "retry_after_resign": {
+      "provider_message_id": "wm-2",
+      "signature": "valid"
+    }
+  },
+  "steps": [
+    {
+      "action": "Deliver the three-item webhook batch with the second item tampered",
+      "expected": "items wm-1 and wm-3 are accepted and persisted while wm-2 is rejected with an authentication error"
+    },
+    {
+      "action": "Inspect the batch result and the persisted receipts",
+      "expected": "the valid items are not rolled back and exactly two receipt rows exist"
+    },
+    {
+      "action": "Re-deliver only the originally rejected wm-2 with a valid signature",
+      "expected": "wm-2 is accepted once and a receipt row appears without touching wm-1 or wm-3"
+    },
+    {
+      "action": "Re-deliver the whole batch again unchanged",
+      "expected": "all three provider message ids are deduplicated and the receipt count stays three"
+    }
+  ],
+  "assertions": [
+    "A rejected item in a batch never rolls back the accepted items of the same batch",
+    "Exactly two receipts exist after the first batch and exactly three after the corrected retry",
+    "The tampered wm-2 produces zero outbound calls and zero message rows before it is resigned",
+    "No discount action is applied from the tampered content at any point"
+  ],
+  "forbidden": [
+    "Marking the whole batch failed because one delivery failed signature verification",
+    "Storing a duplicate receipt when the corrected batch is delivered again"
+  ],
+  "evidence": [
+    "Per-item batch result with accept/reject status and error codes",
+    "Receipt row count and provider test-sink call log across the three deliveries"
+  ],
+  "cleanup": [
+    "Delete the run-scoped webhook receipts for wm-1, wm-2 and wm-3 under run-t1-api-ch-partial; keep the audit entries"
+  ],
+  "automation": "Post the real webhook batch route with one tampered signature and assert the per-item outcomes and the receipt count; the provider is a test sink.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/06-api-and-connectors-spec.md",
+    "plans/platform/api-and-integrations.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/platform.json",
+    "fixtures/offline/events.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

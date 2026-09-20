@@ -1,0 +1,96 @@
+{
+  "id": "GOV-NFR-002-AUDIT-OUTAGE",
+  "title": "NFR-002 fail-closed: an unavailable audit store blocks the mutation instead of dropping the record",
+  "document": "governance/nfr.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "extension",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "NFR-002",
+    "NFR-008",
+    "BR-010"
+  ],
+  "facets": [
+    "entity:Evidence",
+    "stage:EXECUTION"
+  ],
+  "risk": "When the audit store is down the system keeps trading and simply loses the audit rows, so external effects exist that the platform cannot account for.",
+  "preconditions": [
+    "Namespace gov-nfr-<case_id>-<worker_id>; NFR verification runs against the offline gateway with mock SoR and channel boundaries.",
+    "Frozen clock 2026-01-15T10:00:00Z; failure, outage and crash injections are scripted at the substituted boundary, never faked inside the assertion.",
+    "The audit writer is scripted to fail with a connection error for the duration of the outage window."
+  ],
+  "inputs": {
+    "script": [
+      {
+        "phase": "audit_available",
+        "action": "send",
+        "expected": "SUCCESS"
+      },
+      {
+        "phase": "audit_down",
+        "action": "send",
+        "expected": "BLOCKED_FAIL_CLOSED"
+      },
+      {
+        "phase": "audit_restored",
+        "action": "send",
+        "expected": "SUCCESS"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Send while the audit store is available",
+      "expected": "The message is delivered once and the audit row is committed."
+    },
+    {
+      "action": "Take the audit store down and attempt a second send",
+      "expected": "The send is blocked before dispatch with a fail-closed error naming the audit dependency; the adapter counter does not advance."
+    },
+    {
+      "action": "Inspect the interim state and then restore the audit store",
+      "expected": "No effect exists without an audit row; after restoration a retry with the same effect_key delivers once and writes the audit row."
+    },
+    {
+      "action": "Reconcile adapter effects against audit rows",
+      "expected": "Effects and audit rows match exactly (2 effects, 2 rows) with no orphan external action."
+    }
+  ],
+  "assertions": [
+    "While auditing is unavailable, zero external effects occur - the mutation is blocked rather than unlogged.",
+    "The block is explicit and typed, not a silent drop of the audit write.",
+    "After restoration the retry is idempotent: exactly one new effect for the retried action.",
+    "Post-run reconciliation shows a 1:1 mapping between external effects and audit rows."
+  ],
+  "forbidden": [
+    "Buffering audit writes in memory and losing them on failure.",
+    "Proceeding with the mutation and logging a warning.",
+    "Treating the retry as a duplicate and refusing to deliver anything at all."
+  ],
+  "evidence": [
+    "Adapter counter log across the three phases.",
+    "Fail-closed error record naming the audit dependency.",
+    "Reconciliation table of effects versus audit rows."
+  ],
+  "cleanup": [
+    "Delete gov- rows after export and restore the audit writer script."
+  ],
+  "automation": "Core PEP, rules engine, audit writer, idempotency store and worker lease logic run as real code under test; only ERP/WMS, channel gateways, Redis and the model provider are substituted. Faults are injected at those boundaries and waits are condition-based on persisted state. The outage is injected at the audit client boundary, so the platform's real fail-closed decision is what is measured.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

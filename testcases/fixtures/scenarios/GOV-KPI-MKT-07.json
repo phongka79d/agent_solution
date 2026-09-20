@@ -1,0 +1,92 @@
+{
+  "id": "GOV-KPI-MKT-07",
+  "title": "MKT-07 Qualified Lead Rate: declared formula, numerator and denominator with honest missing-data behaviour",
+  "document": "governance/kpi.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P3",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SRS-20",
+    "SAL-01",
+    "MKT-06"
+  ],
+  "facets": [
+    "kpi:Qualified Lead Rate",
+    "stage:HYPOTHESIS"
+  ],
+  "risk": "The Qualified Lead Rate figure is produced under different accounting rules - qualified leads divided by clicks, which changes the denominator to the campaign audience - so the KPI is wrong in the direction that flatters the programme and every decision taken on it inherits the error.",
+  "preconditions": [
+    "Namespace gov-kpi-<case_id>-<worker_id>; the metric is computed by the real reporting code over fixtures/offline/governance.json kpi_dataset and never copied from the dashboard payload.",
+    "Frozen clock 2026-01-15T10:00:00Z with the reporting window 2026-01-01T00:00:00Z .. 2026-02-01T00:00:00Z as a half-open interval; the stored aggregate is recomputed independently from the raw counter rows.",
+    "Metric scope is fixed before measurement: numerator is leads confirmed qualified by the sales team or the Sales Agent; denominator is total leads received in the window.",
+    "The dictionary entry for 'Qualified Lead Rate' (owner, unit, window, exclusion rule) is loaded read-only and is compared with the recomputation instead of being trusted."
+  ],
+  "inputs": {
+    "metric": "Qualified Lead Rate",
+    "code": "MKT-07",
+    "group": "Marketing",
+    "dataset": "kpi_dataset.marketing",
+    "formula": "leads confirmed qualified by sales divided by total leads received",
+    "window": [
+      "2026-01-01T00:00:00Z",
+      "2026-02-01T00:00:00Z"
+    ],
+    "currency": "TWD",
+    "expected_value": "40.0%",
+    "wrong_value_if_buggy": "qualified leads divided by clicks, which changes the denominator to the campaign audience",
+    "release_blocker": false,
+    "expected_boundary_behaviour": "no lead received returns NOT_DEFINED"
+  },
+  "steps": [
+    {
+      "action": "Compute Qualified Lead Rate from the frozen rows in kpi_dataset.marketing",
+      "expected": "The stored aggregate reports 40.0% and records the formula, the window and the currency that produced it."
+    },
+    {
+      "action": "Recompute Qualified Lead Rate independently from the raw counter rows for the same tenant and window",
+      "expected": "The recomputed value equals the stored value 40.0%, and every numerator row lies inside the denominator scope."
+    },
+    {
+      "action": "Force the empty-source variant of the metric (no qualifying row in the window)",
+      "expected": "The metric reports no lead received returns NOT_DEFINED; the display distinguishes missing source data from a measured zero."
+    },
+    {
+      "action": "Read the dashboard payload and the metric dictionary entry",
+      "expected": "The dashboard renders the stored value with its window, coverage and source, and the dictionary names the owner, unit, numerator and denominator that the recomputation used."
+    }
+  ],
+  "assertions": [
+    "Qualified Lead Rate equals 40.0% for the frozen window, recomputed from the raw counter rows with numerator scope 'leads confirmed qualified by the sales team or the Sales Agent' and denominator scope 'total leads received in the window'.",
+    "A recomputation that yields qualified leads divided by clicks, which changes the denominator to the campaign audience is detected as wrong: the stored aggregate and the independent recomputation must agree before the figure is published.",
+    "The dashboard payload for the same tenant and window carries the stored value with its window, coverage and measurement source; it substitutes neither a design target nor another metric's value.",
+    "Boundary behaviour: no lead received returns NOT_DEFINED; missing source data is never rendered as a measured zero."
+  ],
+  "forbidden": [
+    "Re-labelling an unconfirmed lead as qualified after it converts.",
+    "Reporting a different denominator on the dashboard than in the Sales report."
+  ],
+  "evidence": [
+    "Lead qualification decisions with the confirming agent identity.",
+    "Lead intake count used as the denominator."
+  ],
+  "cleanup": [
+    "Delete gov- aggregate, raw-counter and scenario rows for MKT-07 after exporting the recomputation table."
+  ],
+  "automation": "The reporting service and the metric dictionary run as real code under test over the frozen KPI dataset; the dashboard is a consumer whose displayed value must equal the independently recomputed value. Waits are condition-based on the stored aggregate row, metric values are never supplied as inputs, and no vendor boundary is involved in the arithmetic.",
+  "prerequisites": [],
+  "references": [
+    "plans/delivery/analytics.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

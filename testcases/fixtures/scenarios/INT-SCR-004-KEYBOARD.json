@@ -1,0 +1,86 @@
+{
+  "id": "INT-SCR-004-KEYBOARD",
+  "title": "SCR-004 accessibility: timeline and evidence reachable by keyboard with announced classes",
+  "document": "integration/command-center.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "extension",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SCR-004",
+    "SCR-005",
+    "NFR-007"
+  ],
+  "facets": [
+    "entity:Evidence"
+  ],
+  "risk": "Operators who cannot use a mouse cannot review a customer timeline, so escalation decisions stall and accessibility compliance fails.",
+  "preconditions": [
+    "Namespace gov-scr-<case_id>-<worker_id>; the operator UI runs against the offline gateway and mock SSE/telemetry streams.",
+    "Operator session bound to tenant T1 and an explicit operator_id from fixtures/offline/governance.json; frozen clock 2026-01-15T10:00:00Z.",
+    "The Customer 360 view is rendered with cust-a data; pointer input is disabled for the duration of the case."
+  ],
+  "inputs": {
+    "keyboard_script": [
+      "Tab to the timeline region",
+      "Arrow down through entries",
+      "Enter to open evidence detail",
+      "Escape to close the detail",
+      "Tab to the filter control and apply the ACTION filter"
+    ]
+  },
+  "steps": [
+    {
+      "action": "Tab into the page and navigate to the timeline region",
+      "expected": "Focus reaches the timeline without a pointer; the focused element has a visible focus indicator and an accessible name that includes the customer."
+    },
+    {
+      "action": "Move through the timeline entries with the arrow keys",
+      "expected": "Each entry is announced with its evidence class, timestamp and summary; the current position is exposed to assistive technology."
+    },
+    {
+      "action": "Open one evidence detail with Enter and close it with Escape",
+      "expected": "The detail opens, focus moves into it, and Escape returns focus to the originating entry."
+    },
+    {
+      "action": "Apply the ACTION filter using the keyboard only",
+      "expected": "The list narrows to ACTION entries and the result count is announced."
+    }
+  ],
+  "assertions": [
+    "Every interactive control on the timeline is reachable and operable with the keyboard alone.",
+    "Each entry exposes role, name and the evidence class to the accessibility tree.",
+    "Focus is never lost after opening or closing the detail panel.",
+    "The filtered count is exposed as text and matches the number of ACTION entries in the payload."
+  ],
+  "forbidden": [
+    "Using a div with a click handler as the only affordance for evidence detail.",
+    "Moving focus to the document body on close.",
+    "Conveying class only through colour."
+  ],
+  "evidence": [
+    "Accessibility tree snapshot with roles and names.",
+    "Focus sequence log (element identities in order).",
+    "Screen recording or screenshot of the focus indicator."
+  ],
+  "cleanup": [
+    "Reset the filter and release the keyboard-only session namespace."
+  ],
+  "automation": "Command Center React components and the gateway routes run as real code under test; ERP, channel and telemetry providers are replaced by the offline mock sinks whose call logs are the oracle. UI assertions use accessible roles and names rather than CSS classes, and stream waits are condition-based. Uses accessibility-tree queries and element-identity assertions rather than CSS selectors, so class names cannot make the case pass.",
+  "prerequisites": [],
+  "references": [
+    "implement/07-human-command-center-ui.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/customers.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

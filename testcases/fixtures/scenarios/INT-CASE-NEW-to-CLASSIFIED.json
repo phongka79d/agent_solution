@@ -1,0 +1,90 @@
+{
+  "id": "INT-CASE-NEW-to-CLASSIFIED",
+  "title": "A new case is classified with an intent and a priority",
+  "document": "integration/case-fsm.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P1",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "CS-01",
+    "FR-CS-002",
+    "SRS-08"
+  ],
+  "facets": [
+    "entity:Service Case",
+    "intent:shipping",
+    "stage:SIGNAL"
+  ],
+  "risk": "An inbound request is never classified, so it stays invisible to the queue and breaches first-response commitments silently.",
+  "preconditions": [
+    "Tenant T1 with a conversation for cust-a carrying the utterance 'my order has not arrived' in namespace cd-case-*",
+    "Case created at 2026-01-15T10:00:00Z with priority P3 default"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "customer_id": "cust-a",
+    "case": {
+      "case_number": "CASE-T1-0001",
+      "state": "NEW",
+      "priority": "P3"
+    },
+    "transition": {
+      "event": "classify",
+      "intent": "shipping",
+      "priority": "P2"
+    }
+  },
+  "steps": [
+    {
+      "action": "Create the case from the inbound utterance and read its initial projection",
+      "expected": "state is NEW, priority P3, and the case is linked to the conversation and to cust-a"
+    },
+    {
+      "action": "Apply the classification transition with intent shipping and priority P2",
+      "expected": "the case reports state CLASSIFIED, intent shipping, priority P2 and a state-change timestamp after creation"
+    },
+    {
+      "action": "Read the audit trail for the case",
+      "expected": "exactly one NEW to CLASSIFIED entry exists with the actor, the previous state and the new state"
+    },
+    {
+      "action": "Re-apply the identical classification event",
+      "expected": "the case stays CLASSIFIED and the audit gains no second transition for that event identity"
+    }
+  ],
+  "assertions": [
+    "The case projection reports CLASSIFIED with intent shipping and priority P2",
+    "Exactly one audit entry records the NEW to CLASSIFIED transition",
+    "The duplicate classification produces zero additional transitions and does not regress the state"
+  ],
+  "forbidden": [
+    "Accept a classification with an intent outside the ten supported intents",
+    "Skip NEW and write a case directly in CLASSIFIED with no audit entry"
+  ],
+  "evidence": [
+    "Case projection before and after classification (state, intent, priority, timestamps)",
+    "Audit entries for the case with actor and previous/new state"
+  ],
+  "cleanup": [
+    "Delete the run-scoped case and its conversation link for cd-case-*; keep the append-only audit entries"
+  ],
+  "automation": "Drive the real case-management skill against fixture conversations, freezing the clock so ordering is deterministic; state the oracle on the projection and the audit count, not on the enum definition.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/03-database-and-memory-schema.md",
+    "implement/05-skill-system-specifications.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/customers.json",
+    "fixtures/offline/platform.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

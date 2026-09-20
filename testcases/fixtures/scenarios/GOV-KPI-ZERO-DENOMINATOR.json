@@ -1,0 +1,97 @@
+{
+  "id": "GOV-KPI-ZERO-DENOMINATOR",
+  "title": "Zero denominator returns NOT_DEFINED instead of 0% or an infinite rate",
+  "document": "governance/kpi.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SRS-20",
+    "NFR-002"
+  ],
+  "facets": [
+    "kpi:Lead Conversion",
+    "kpi:Engagement",
+    "kpi:Cost per Lead"
+  ],
+  "risk": "A ratio is computed over an empty denominator and published as 0% or as an unbounded number, so a campaign with no delivery is reported as a total failure or as an infinite success.",
+  "preconditions": [
+    "Namespace gov-kpi-<case_id>-<worker_id>; the metric is computed by the real reporting code over fixtures/offline/governance.json kpi_dataset and never copied from the dashboard payload.",
+    "Frozen clock 2026-01-15T10:00:00Z with the reporting window 2026-01-01T00:00:00Z .. 2026-02-01T00:00:00Z as a half-open interval; the stored aggregate is recomputed independently from the raw counter rows.",
+    "kpi_edge.zero_denominator supplies zero impressions and zero clicks with three valid leads, so the denominator is genuinely empty while the numerator is not.",
+    "The reporting layer is configured to return a typed undefined state rather than a numeric fallback."
+  ],
+  "inputs": {
+    "zero_denominator_dataset": {
+      "impressions": 0,
+      "clicks": 0,
+      "leads": 3,
+      "expected": "NOT_DEFINED"
+    },
+    "expected": {
+      "Lead Conversion": "NOT_DEFINED",
+      "Engagement": "NOT_DEFINED",
+      "Cost per Lead": "NOT_DEFINED"
+    },
+    "forbidden_fallbacks": [
+      0,
+      0.0,
+      100.0,
+      "infinity"
+    ]
+  },
+  "steps": [
+    {
+      "action": "Compute the three ratios over the empty denominator",
+      "expected": "Each returns the typed undefined state NOT_DEFINED with the reason (zero denominator), and the numerator value is still reported for context."
+    },
+    {
+      "action": "Confirm that no numeric fallback is produced",
+      "expected": "None of the three metrics reports 0, 0.0, 100% or an unbounded value; the stored row holds a null value and an explicit reason code."
+    },
+    {
+      "action": "Add one impression so the denominator becomes 1",
+      "expected": "The metric is then computed normally, proving the undefined state came from the empty denominator rather than from a broken metric."
+    },
+    {
+      "action": "Attempt to divide by zero through the API and the dashboard",
+      "expected": "Both refuse with the same typed state; no exception text, NaN or Infinity reaches the display."
+    }
+  ],
+  "assertions": [
+    "An empty denominator yields NOT_DEFINED and never 0%, 100%, NaN or Infinity on any surface.",
+    "The numerator is still visible so the operator sees that work happened while the denominator is empty.",
+    "The metric becomes computable as soon as a denominator row exists, so the undefined state is a property of the data and not of the metric code.",
+    "No API response, log line or dashboard payload leaks a raw division error."
+  ],
+  "forbidden": [
+    "Returning 0 for an empty denominator.",
+    "Adding 1 to the denominator to avoid division by zero.",
+    "Filling the empty denominator with a carried-over value from the previous window."
+  ],
+  "evidence": [
+    "Aggregate rows for the three metrics showing the null value and the reason code.",
+    "API and dashboard payloads showing the typed undefined state.",
+    "Follow-up computation after a denominator row is added."
+  ],
+  "cleanup": [
+    "Delete gov- aggregate rows and the added denominator test row after export."
+  ],
+  "automation": "The reporting service and the metric dictionary run as real code under test over the frozen KPI dataset; the dashboard is a consumer whose displayed value must equal the independently recomputed value. Waits are condition-based on the stored aggregate row, metric values are never supplied as inputs, and no vendor boundary is involved in the arithmetic.",
+  "prerequisites": [],
+  "references": [
+    "plans/delivery/analytics.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

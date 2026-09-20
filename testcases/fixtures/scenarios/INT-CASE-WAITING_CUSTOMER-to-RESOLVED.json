@@ -1,0 +1,89 @@
+{
+  "id": "INT-CASE-WAITING_CUSTOMER-to-RESOLVED",
+  "title": "The customer answers and the case is resolved with an outcome",
+  "document": "integration/case-fsm.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "CS-01",
+    "FR-CS-002",
+    "FR-CS-003"
+  ],
+  "facets": [
+    "entity:Service Case",
+    "entity:Outcome",
+    "stage:OUTCOME"
+  ],
+  "risk": "A case is closed as resolved without a resolution or an outcome, so retention analytics and CSAT are built on fiction.",
+  "preconditions": [
+    "A WAITING_CUSTOMER case CASE-T1-0005 for cust-a in namespace cd-resolve-*",
+    "Inbound customer reply received at 2026-01-16T09:00:00Z"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "case_number": "CASE-T1-0005",
+    "transition": {
+      "event": "customer_replied",
+      "reply_ref": "msg_reply_1"
+    },
+    "resolution": {
+      "code": "refund_approved",
+      "outcome": "ticket_resolved_fcr",
+      "amount_twd": 1000
+    }
+  },
+  "steps": [
+    {
+      "action": "Ingest the customer reply and re-enter the case",
+      "expected": "the case leaves WAITING_CUSTOMER and continues from IN_PROGRESS rather than jumping straight to RESOLVED"
+    },
+    {
+      "action": "Resolve the case with code refund_approved and outcome ticket_resolved_fcr",
+      "expected": "state becomes RESOLVED with a resolution code, an outcome reference and a resolution timestamp"
+    },
+    {
+      "action": "Attempt to resolve the same case a second time with a different resolution code",
+      "expected": "the second resolution is refused and the first resolution remains authoritative"
+    },
+    {
+      "action": "Read the case-linked outcome and its evidence",
+      "expected": "the outcome row carries conversion_type ticket_resolved_fcr and references the case and its evidence record"
+    }
+  ],
+  "assertions": [
+    "The case reports RESOLVED with resolution code refund_approved and a linked outcome row",
+    "The reply re-entry passed through IN_PROGRESS instead of skipping states",
+    "A second resolution attempt leaves exactly one resolution record on the case"
+  ],
+  "forbidden": [
+    "Mark a case RESOLVED with no resolution code or outcome reference",
+    "Overwrite a recorded resolution with a later attempt"
+  ],
+  "evidence": [
+    "Case projection with resolution code, timestamps and outcome reference",
+    "Outcome row with conversion_type and its evidence linkage"
+  ],
+  "cleanup": [
+    "Delete the run-scoped case, resolution and outcome rows for cd-resolve-*; the refund artifact itself is not created offline"
+  ],
+  "automation": "Drive the real case skill with fixture replies; the resolution step is stubbed at the payment boundary only, and the assertion is on resolution plus outcome linkage, not on the state label.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/03-database-and-memory-schema.md",
+    "plans/platform/workflows-and-handoffs.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/orders.json",
+    "fixtures/offline/platform.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

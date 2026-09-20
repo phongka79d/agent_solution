@@ -1,0 +1,81 @@
+{
+  "id": "INT-FR-ORC-OPTIMISTIC-CAS",
+  "title": "Optimistic task-version checks reject a stale writer instead of overwriting progress",
+  "document": "integration/sales-care-orchestrator.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "NFR-004",
+    "NFR-002",
+    "BR-010"
+  ],
+  "facets": [
+    "stage:EXECUTION",
+    "entity:Workflow",
+    "memory:Agent Operational Memory"
+  ],
+  "risk": "A slow worker overwrites a newer checkpoint, so completed work is redone or a step disappears from the run.",
+  "preconditions": [
+    "Task run-orc-cas-1 at task_version 4 with a checkpoint at step 3 in namespace orc-cas-*",
+    "Two writers: w-1 holding version 4 and w-2 having already advanced the task to version 5"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "run_id": "run-orc-cas-1",
+    "stale_writer_version": 4,
+    "current_task_version": 5,
+    "checkpoint_step": 3
+  },
+  "steps": [
+    {
+      "action": "Let w-1 attempt a checkpoint write using its stale version 4",
+      "expected": "the update matches 0 rows, the write is refused and the stored checkpoint stays at step 3 of version 5"
+    },
+    {
+      "action": "Let w-1 re-read the task and retry with the current version",
+      "expected": "the retry succeeds, the version advances to 6 and the checkpoint content reflects the new step"
+    },
+    {
+      "action": "Attempt a tag-to-state transition (queued to running) with a stale version",
+      "expected": "the guarded update matches 0 rows and the writer aborts and re-reads instead of forcing the state"
+    },
+    {
+      "action": "Read the task history for the run",
+      "expected": "the version sequence is monotonic with no repeated version and no lost checkpoint"
+    }
+  ],
+  "assertions": [
+    "The stale checkpoint write is refused (0 rows) and the stored checkpoint is unchanged",
+    "The retried write advances the version by exactly 1 and stores the new step",
+    "The version history is monotonic with no duplicate version values"
+  ],
+  "forbidden": [
+    "Force a stale write to succeed and overwrite a newer checkpoint",
+    "Allow a state transition without matching the expected task version"
+  ],
+  "evidence": [
+    "Task row before/after each write with task_version, current_step and state",
+    "Refusal record for the stale write (0 rows matched)"
+  ],
+  "cleanup": [
+    "Delete the run-scoped task and checkpoint rows for orc-cas-*; keep audit entries"
+  ],
+  "automation": "Hit the real durable-task repository concurrently from two writers with a frozen clock; the oracle is the version sequence and the stored checkpoint, so last-writer-wins implementations fail.",
+  "prerequisites": [],
+  "references": [
+    "implement/04-core-engine-and-orchestrator.md",
+    "implement/03-database-and-memory-schema.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/platform.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

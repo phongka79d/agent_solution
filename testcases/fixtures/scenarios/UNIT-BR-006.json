@@ -1,0 +1,87 @@
+{
+  "id": "UNIT-BR-006",
+  "title": "BR-006: retrying an already-succeeded action is blocked by the prior receipt",
+  "document": "unit/business-rules.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "BR-006",
+    "NFR-003",
+    "BR-005",
+    "TC-E2E-005"
+  ],
+  "facets": [
+    "entity:Execution",
+    "stage:EXECUTION"
+  ],
+  "risk": "A network timeout drives a retry that delivers the same message or creates the same order twice, which the customer sees immediately.",
+  "preconditions": [
+    "Namespace gov-unit-br-<case_id>-<worker_id>; Business Rules Engine loaded with no cross-case state.",
+    "Frozen clock 2026-01-15T10:00:00Z; agent fixture context loaded from fixtures/offline/governance.json.",
+    "A prior execution receipt exists for effect_key of the run."
+  ],
+  "inputs": {
+    "action": {
+      "customer_id": "cust-a",
+      "channel": "WEB_APP_CHAT",
+      "template": "order_shipped",
+      "effect_key": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    },
+    "prior_receipt": {
+      "effect_key": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "executed_at": "2026-01-15T09:59:30Z",
+      "status": "success"
+    }
+  },
+  "steps": [
+    {
+      "action": "Retry the action whose receipt shows a prior success",
+      "expected": "Rule fails with ERR_DUPLICATE_RETRY_BLOCKED and the reason quotes the prior execution time."
+    },
+    {
+      "action": "Force five concurrent retries of the same key",
+      "expected": "All five are blocked; the adapter counter remains 1 for the whole run."
+    },
+    {
+      "action": "Read the execution records",
+      "expected": "Exactly one execution row exists for the key, and the blocked attempts are recorded without creating execution rows."
+    }
+  ],
+  "assertions": [
+    "errorCode is exactly ERR_DUPLICATE_RETRY_BLOCKED and the message references the earlier receipt.",
+    "The adapter receives exactly one call for the key across all attempts.",
+    "Exactly one execution record exists; blocked retries do not create phantom executions.",
+    "The blocked retry returns the prior receipt rather than an error to the caller, so the workflow can continue without resending."
+  ],
+  "forbidden": [
+    "Creating a second execution row for a retried idempotent action.",
+    "Treating the duplicate as a success and reporting two messages delivered.",
+    "Deleting the prior receipt to force a resend."
+  ],
+  "evidence": [
+    "Execution records and the prior receipt used for the block.",
+    "Adapter call counter log across the retry burst."
+  ],
+  "cleanup": [
+    "Delete gov- execution rows and the single mock delivery."
+  ],
+  "automation": "Real BusinessRulesEngine and PEP under test; only ERP/POS/connector boundaries are substituted by the offline mock whose call log and receipts are the oracle. Rules are evaluated in sequence and halt on the first failure, so each case asserts the first failing rule code rather than a bag of errors.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/consents.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

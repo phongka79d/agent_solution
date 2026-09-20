@@ -1,0 +1,99 @@
+{
+  "id": "UNIT-mkt.analyze_market_signal-DENY",
+  "title": "skill.mkt.analyze_market_signal authority denial — unlisted agent, clearance shortfall, prohibition",
+  "document": "unit/skills.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P3",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "AUTH-5",
+    "BR-008",
+    "BR-009",
+    "MKT-01",
+    "MKT-02",
+    "NFR-001",
+    "NFR-004",
+    "SRS-11"
+  ],
+  "facets": [
+    "skill:skill.mkt.analyze_market_signal",
+    "kb:/marketing/playbook.md",
+    "stage:SIGNAL",
+    "memory:Working Memory",
+    "kpi:Policy Violation Rate"
+  ],
+  "risk": "An agent exceeds its authority (skill.mkt.analyze_market_signal) and performs a business action it is not entitled to, silently.",
+  "preconditions": [
+    "isolated namespace run_id=RUN-mkt.analyze_market_signal-DENY, case_id=UNIT-mkt.analyze_market_signal-DENY, worker=w-biz-unit; no shared mutable session with any other case",
+    "skill registry row for skill.mkt.analyze_market_signal registered with test_cases TC-SKILL-01..05 plus >=1 skill-specific case and asserted registrable before the run",
+    "in-memory adapters loaded from the case fixtures for tenant T1 only; frozen clock 2026-01-15T10:00:00Z"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "market_region": "TW",
+    "category_id": "cat-ev-scooter-01",
+    "observation_window_days": 30,
+    "caller_agent": "MKT-03 (absent from allowed_agents)",
+    "granted_authority": "AUTH-3",
+    "expected_error": "UNAUTHORIZED_AGENT before any clearance comparison",
+    "attempt": "AUTH-5 self-upgrade in the prompt body"
+  },
+  "steps": [
+    {
+      "action": "Invoke skill.mkt.analyze_market_signal as MKT-03 (absent from allowed_agents) (absent from allowed_agents)",
+      "expected": "UNAUTHORIZED_AGENT before any clearance comparison; adapter API-002.EventIngestion call count = 0 and the run is DENIED"
+    },
+    {
+      "action": "Invoke as an allowed agent holding AUTH-3",
+      "expected": "no rank shortfall exists because AUTH-1 is the floor requirement: the reachable denials are UNAUTHORIZED_AGENT (agent absent from allowed_agents) and PROHIBITED_ACTION when a run presents AUTH-5; both leave the adapter uncalled and the run DENIED"
+    },
+    {
+      "action": "Re-probe the remaining authority/identity boundary",
+      "expected": "tenant 22222222-2222-2222-2222-222222222222 calling with tenant_id=11111111-1111-1111-1111-111111111111 -> INVALID_REGION (non-retryable), 0 rows, no cross-tenant signal released"
+    },
+    {
+      "action": "Confirm nothing was executed and the attempt is audited",
+      "expected": "effect_reservations has no row for this run (or the reservation was released), the run carries an AUTH-5 PROHIBITED_ACTION / DENIED audit entry with the attempted skill and caller, and the LLM's request never changed the clearance"
+    }
+  ],
+  "assertions": [
+    "the denial happens before tool dispatch: adapter API-002.EventIngestion invocation count is 0 for every denied attempt",
+    "the run's authority is unchanged after the attempt: the persisted grant equals the value the orchestrator assigned, not anything the model or the caller supplied",
+    "each denial writes an audit event naming the attempted skill, the caller agent and the verdict (BR-008, NFR-001) — a denial with no audit record is a failure",
+    "no AUTH-4 action is queued for approval during an AUTH-5 refusal; the prohibited action is neither executed nor approvable"
+  ],
+  "forbidden": [
+    "any side effect (message, order, voucher, case write, campaign) from a denied run",
+    "widening the run's clearance from prompt text, customer text or a caller-supplied claim (BR-009)"
+  ],
+  "evidence": [
+    "deny audit entries for the three attempts with their verdicts",
+    "adapter call log for API-002.EventIngestion proving zero invocations",
+    "authority snapshot of the run before/after the attempts (identical)"
+  ],
+  "cleanup": [
+    "drop in-memory namespace RUN-mkt.analyze_market_signal-DENY and any reserved key created by the attempted calls, keep the denial audit rows"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. The denial is asserted on the PEP verdict and adapter call count, never on response prose.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/05-skill-system-specifications.md",
+    "plans/modules/marketing.md",
+    "implement/04-core-engine-and-orchestrator.md",
+    "implement/08-security-governance-nfr.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/tenants.json",
+    "fixtures/offline/events.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

@@ -1,0 +1,92 @@
+{
+  "id": "GOV-KPI-SAL-06",
+  "title": "SAL-06 Average Order Value: declared formula, numerator and denominator with honest missing-data behaviour",
+  "document": "governance/kpi.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P2",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SRS-20",
+    "SAL-02",
+    "FR-SAL-002"
+  ],
+  "facets": [
+    "kpi:Average Order Value",
+    "entity:Order"
+  ],
+  "risk": "The Average Order Value figure is produced under different accounting rules - total order value divided by all created orders, which spreads revenue over orders that were cancelled or refunded - so the KPI is wrong in the direction that flatters the programme and every decision taken on it inherits the error.",
+  "preconditions": [
+    "Namespace gov-kpi-<case_id>-<worker_id>; the metric is computed by the real reporting code over fixtures/offline/governance.json kpi_dataset and never copied from the dashboard payload.",
+    "Frozen clock 2026-01-15T10:00:00Z with the reporting window 2026-01-01T00:00:00Z .. 2026-02-01T00:00:00Z as a half-open interval; the stored aggregate is recomputed independently from the raw counter rows.",
+    "Metric scope is fixed before measurement: numerator is valid order revenue after cancel and refund adjustments; denominator is successful orders after cancel and refund adjustments.",
+    "The dictionary entry for 'Average Order Value' (owner, unit, window, exclusion rule) is loaded read-only and is compared with the recomputation instead of being trusted."
+  ],
+  "inputs": {
+    "metric": "Average Order Value",
+    "code": "SAL-06",
+    "group": "Sales",
+    "dataset": "kpi_dataset.sales",
+    "formula": "valid order revenue divided by successful orders after cancel and refund adjustment",
+    "window": [
+      "2026-01-01T00:00:00Z",
+      "2026-02-01T00:00:00Z"
+    ],
+    "currency": "TWD",
+    "expected_value": "2500 TWD",
+    "wrong_value_if_buggy": "total order value divided by all created orders, which spreads revenue over orders that were cancelled or refunded",
+    "release_blocker": false,
+    "expected_boundary_behaviour": "no successful order in the window returns NOT_DEFINED"
+  },
+  "steps": [
+    {
+      "action": "Compute Average Order Value from the frozen rows in kpi_dataset.sales",
+      "expected": "The stored aggregate reports 2500 TWD and records the formula, the window and the currency that produced it."
+    },
+    {
+      "action": "Recompute Average Order Value independently from the raw counter rows for the same tenant and window",
+      "expected": "The recomputed value equals the stored value 2500 TWD, and every numerator row lies inside the denominator scope."
+    },
+    {
+      "action": "Force the empty-source variant of the metric (no qualifying row in the window)",
+      "expected": "The metric reports no successful order in the window returns NOT_DEFINED; the display distinguishes missing source data from a measured zero."
+    },
+    {
+      "action": "Read the dashboard payload and the metric dictionary entry",
+      "expected": "The dashboard renders the stored value with its window, coverage and source, and the dictionary names the owner, unit, numerator and denominator that the recomputation used."
+    }
+  ],
+  "assertions": [
+    "Average Order Value equals 2500 TWD for the frozen window, recomputed from the raw counter rows with numerator scope 'valid order revenue after cancel and refund adjustments' and denominator scope 'successful orders after cancel and refund adjustments'.",
+    "A recomputation that yields total order value divided by all created orders, which spreads revenue over orders that were cancelled or refunded is detected as wrong: the stored aggregate and the independent recomputation must agree before the figure is published.",
+    "The dashboard payload for the same tenant and window carries the stored value with its window, coverage and measurement source; it substitutes neither a design target nor another metric's value.",
+    "Boundary behaviour: no successful order in the window returns NOT_DEFINED; missing source data is never rendered as a measured zero."
+  ],
+  "forbidden": [
+    "Leaving cancelled or refunded orders in the denominator.",
+    "Averaging across two currencies inside one figure."
+  ],
+  "evidence": [
+    "Order revenue reconciliation with the adjusted amounts.",
+    "Successful-order count used as the denominator."
+  ],
+  "cleanup": [
+    "Delete gov- aggregate, raw-counter and scenario rows for SAL-06 after exporting the recomputation table."
+  ],
+  "automation": "The reporting service and the metric dictionary run as real code under test over the frozen KPI dataset; the dashboard is a consumer whose displayed value must equal the independently recomputed value. Waits are condition-based on the stored aggregate row, metric values are never supplied as inputs, and no vendor boundary is involved in the arithmetic.",
+  "prerequisites": [],
+  "references": [
+    "plans/delivery/analytics.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

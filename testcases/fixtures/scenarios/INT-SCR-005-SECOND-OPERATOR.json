@@ -1,0 +1,83 @@
+{
+  "id": "INT-SCR-005-SECOND-OPERATOR",
+  "title": "SCR-005 second operator: a competing takeover is refused with 409",
+  "document": "integration/command-center.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "extension",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SCR-005",
+    "NFR-007"
+  ],
+  "facets": [
+    "entity:Conversation"
+  ],
+  "risk": "Two operators both believe they are handling the conversation and both reply, producing duplicate and contradictory answers to the customer.",
+  "preconditions": [
+    "Namespace gov-scr-<case_id>-<worker_id>; the operator UI runs against the offline gateway and mock SSE/telemetry streams.",
+    "Operator session bound to tenant T1 and an explicit operator_id from fixtures/offline/governance.json; frozen clock 2026-01-15T10:00:00Z.",
+    "OP-SUPERVISOR-T1 holds no lease; OP-SECOND-T1 is an equally authorized supervisor on tenant T1."
+  ],
+  "inputs": {
+    "first": {
+      "operator_id": "OP-SUPERVISOR-T1"
+    },
+    "second": {
+      "operator_id": "OP-SECOND-T1"
+    }
+  },
+  "steps": [
+    {
+      "action": "Operator 1 acquires the takeover lease",
+      "expected": "HTTP 200 and the lease value names OP-SUPERVISOR-T1."
+    },
+    {
+      "action": "Operator 2 attempts takeover",
+      "expected": "HTTP 409; the lease value still names OP-SUPERVISOR-T1 and no new lease is created."
+    },
+    {
+      "action": "Operator 2 sends a message anyway through the console",
+      "expected": "The message is refused because the session is not bound to that operator, and the adapter counter does not advance."
+    },
+    {
+      "action": "Operator 1 resumes, then operator 2 takes over",
+      "expected": "The second takeover now succeeds, proving the refusal was contention and not a permanent authorization error."
+    }
+  ],
+  "assertions": [
+    "Exactly one lease holder exists at any time; the second attempt returns 409 and does not overwrite the holder.",
+    "A non-holder cannot send on the conversation; adapter counter unchanged.",
+    "The refused attempt is recorded so the collision is observable.",
+    "Contention refusal is distinct from an authorization failure (409 versus 403)."
+  ],
+  "forbidden": [
+    "Overwriting the lease so both operators believe they hold it.",
+    "Allowing the non-holder to reply because the UI still shows the composer.",
+    "Returning 403 for contention so operators raise a permissions ticket."
+  ],
+  "evidence": [
+    "Lease values after each attempt.",
+    "409 body for the second takeover and the refusal record for the non-holder send.",
+    "Adapter counter log."
+  ],
+  "cleanup": [
+    "Resume with operator 1, then delete gov- conversation and lease keys."
+  ],
+  "automation": "Command Center React components and the gateway routes run as real code under test; ERP, channel and telemetry providers are replaced by the offline mock sinks whose call logs are the oracle. UI assertions use accessible roles and names rather than CSS classes, and stream waits are condition-based.",
+  "prerequisites": [],
+  "references": [
+    "implement/07-human-command-center-ui.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

@@ -1,0 +1,92 @@
+{
+  "id": "GOV-KPI-SAL-03",
+  "title": "SAL-03 Recommendation Conversion: declared formula, numerator and denominator with honest missing-data behaviour",
+  "document": "governance/kpi.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P2",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SRS-20",
+    "SAL-03",
+    "FR-SAL-003"
+  ],
+  "facets": [
+    "kpi:Recommendation Conversion",
+    "entity:Recommendation"
+  ],
+  "risk": "The Recommendation Conversion figure is produced under different accounting rules - click-buys divided by all click-buys in the period, which drops the recommendation denominator entirely - so the KPI is wrong in the direction that flatters the programme and every decision taken on it inherits the error.",
+  "preconditions": [
+    "Namespace gov-kpi-<case_id>-<worker_id>; the metric is computed by the real reporting code over fixtures/offline/governance.json kpi_dataset and never copied from the dashboard payload.",
+    "Frozen clock 2026-01-15T10:00:00Z with the reporting window 2026-01-01T00:00:00Z .. 2026-02-01T00:00:00Z as a half-open interval; the stored aggregate is recomputed independently from the raw counter rows.",
+    "Metric scope is fixed before measurement: numerator is customer clicks that resulted in buying the recommended product; denominator is recommendations served with a grounded reason and evidence.",
+    "The dictionary entry for 'Recommendation Conversion' (owner, unit, window, exclusion rule) is loaded read-only and is compared with the recomputation instead of being trusted."
+  ],
+  "inputs": {
+    "metric": "Recommendation Conversion",
+    "code": "SAL-03",
+    "group": "Sales",
+    "dataset": "kpi_dataset.sales",
+    "formula": "recommendation click-buys divided by grounded recommendations served",
+    "window": [
+      "2026-01-01T00:00:00Z",
+      "2026-02-01T00:00:00Z"
+    ],
+    "currency": "TWD",
+    "expected_value": "15.0%",
+    "wrong_value_if_buggy": "click-buys divided by all click-buys in the period, which drops the recommendation denominator entirely",
+    "release_blocker": false,
+    "expected_boundary_behaviour": "no grounded recommendation served returns NOT_DEFINED"
+  },
+  "steps": [
+    {
+      "action": "Compute Recommendation Conversion from the frozen rows in kpi_dataset.sales",
+      "expected": "The stored aggregate reports 15.0% and records the formula, the window and the currency that produced it."
+    },
+    {
+      "action": "Recompute Recommendation Conversion independently from the raw counter rows for the same tenant and window",
+      "expected": "The recomputed value equals the stored value 15.0%, and every numerator row lies inside the denominator scope."
+    },
+    {
+      "action": "Force the empty-source variant of the metric (no qualifying row in the window)",
+      "expected": "The metric reports no grounded recommendation served returns NOT_DEFINED; the display distinguishes missing source data from a measured zero."
+    },
+    {
+      "action": "Read the dashboard payload and the metric dictionary entry",
+      "expected": "The dashboard renders the stored value with its window, coverage and source, and the dictionary names the owner, unit, numerator and denominator that the recomputation used."
+    }
+  ],
+  "assertions": [
+    "Recommendation Conversion equals 15.0% for the frozen window, recomputed from the raw counter rows with numerator scope 'customer clicks that resulted in buying the recommended product' and denominator scope 'recommendations served with a grounded reason and evidence'.",
+    "A recomputation that yields click-buys divided by all click-buys in the period, which drops the recommendation denominator entirely is detected as wrong: the stored aggregate and the independent recomputation must agree before the figure is published.",
+    "The dashboard payload for the same tenant and window carries the stored value with its window, coverage and measurement source; it substitutes neither a design target nor another metric's value.",
+    "Boundary behaviour: no grounded recommendation served returns NOT_DEFINED; missing source data is never rendered as a measured zero."
+  ],
+  "forbidden": [
+    "Counting a click-buy of a different product as a recommendation conversion.",
+    "Inflating the denominator with ungrounded recommendations to lower the rate."
+  ],
+  "evidence": [
+    "Recommendation records with their evidence references.",
+    "Click-buy event log joined to the recommendation ids."
+  ],
+  "cleanup": [
+    "Delete gov- aggregate, raw-counter and scenario rows for SAL-03 after exporting the recomputation table."
+  ],
+  "automation": "The reporting service and the metric dictionary run as real code under test over the frozen KPI dataset; the dashboard is a consumer whose displayed value must equal the independently recomputed value. Waits are condition-based on the stored aggregate row, metric values are never supplied as inputs, and no vendor boundary is involved in the arithmetic.",
+  "prerequisites": [],
+  "references": [
+    "plans/delivery/analytics.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

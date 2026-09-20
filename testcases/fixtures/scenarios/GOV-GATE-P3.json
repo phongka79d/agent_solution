@@ -1,0 +1,107 @@
+{
+  "id": "GOV-GATE-P3",
+  "title": "P3 Marketing Pilot: exit criterion 'audience, campaign, approval, real channel execution and attribution all evidenced' is signed only on real runtime evidence",
+  "document": "governance/gates.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P3",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SRS-24",
+    "PILOT-01",
+    "OBJ-001",
+    "MKT-06"
+  ],
+  "facets": [
+    "entity:Campaign",
+    "kpi:Campaign Revenue",
+    "stage:APPROVAL"
+  ],
+  "risk": "The pilot is signed off without a real provider send receipt, so a campaign is reported as delivered although no channel ever accepted it.",
+  "preconditions": [
+    "Namespace gov-gate-<case_id>-<worker_id>; the gate registry and the evidence registry are read from fixtures/offline/governance.json (gate_registry, gate_evidence_state) and no evidence may be created, simulated or back-dated inside the run.",
+    "Frozen clock 2026-01-15T10:00:00Z; every required evidence artifact is classified as runtime, mock or design before any status is written.",
+    "P3 entry conditions are recorded as: audience, campaign, content, approval, channel execution and attribution are implemented.",
+    "The evidence registry for P3 lists approval_ticket, provider_send_receipt, attribution_report with the kinds approval_ticket=mock, provider_send_receipt=absent, attribution_report=mock, and the repository contains no application runtime."
+  ],
+  "inputs": {
+    "gate": "P3",
+    "name": "Marketing Pilot",
+    "owner": "Marketing/QA",
+    "entry_conditions": "audience, campaign, content, approval, channel execution and attribution are implemented",
+    "exit_criterion": "audience, campaign, approval, real channel execution and attribution all evidenced",
+    "required_evidence": [
+      "approval_ticket",
+      "provider_send_receipt",
+      "attribution_report"
+    ],
+    "evidence_kind": {
+      "approval_ticket": "mock",
+      "provider_send_receipt": "absent",
+      "attribution_report": "mock"
+    },
+    "runtime_available": false,
+    "expected_status": "NOT_RUN",
+    "mock_coverage_is_gate_evidence": false
+  },
+  "steps": [
+    {
+      "action": "Read the entry conditions and the required evidence list for P3",
+      "expected": "The registry lists the entry conditions and each required artifact with its kind (approval_ticket=mock, provider_send_receipt=absent, attribution_report=mock), and none of them is a runtime artifact."
+    },
+    {
+      "action": "Attempt to sign P3 off from the offline and mock suite results",
+      "expected": "Rejected: mock coverage shows the control logic against substituted boundaries and cannot evidence the exit criterion, so the status stays unapproved."
+    },
+    {
+      "action": "Attempt to sign P3 off from the design documents",
+      "expected": "Every artifact keeps its real kind; design artifacts remain gaps and no artifact is upgraded by the attempt."
+    },
+    {
+      "action": "Evaluate the gate with the real runtime absent",
+      "expected": "The status is NOT_RUN naming the missing runtime artifacts, with no approver, no signature and no PASS anywhere in the record."
+    },
+    {
+      "action": "Attempt to close P3 with evidence belonging to another gate",
+      "expected": "The artifact is rejected as belonging to another gate, which keeps its own status."
+    }
+  ],
+  "assertions": [
+    "P3 is never reported PASS: with no runtime the admissible outcomes are NOT_RUN for a missing runtime and BLOCKED_PREREQUISITE for a missing lock, and each required artifact is listed with its own kind and status.",
+    "A mock or substituted-boundary artifact is never accepted as gate evidence; mock coverage is reported as specification coverage only.",
+    "The exit criterion 'audience, campaign, approval, real channel execution and attribution all evidenced' is evaluated only against artifacts of kind runtime, and design or absent artifacts are listed as gaps against the owning role Marketing/QA.",
+    "All 3 required evidence items are reported individually, so a partial pack cannot be summarised as done."
+  ],
+  "forbidden": [
+    "Treating a green offline or mock suite as gate evidence.",
+    "Marking the gate passed while a required evidence item is absent.",
+    "Re-labelling a design document or a mock receipt as a runtime artifact."
+  ],
+  "evidence": [
+    "Gate evidence registry snapshot listing each required artifact with its kind and status.",
+    "Run-report row for the gate with the status NOT_RUN, the missing items and no approver signature.",
+    "Mock-coverage report kept separate from the gate record and labelled as specification coverage."
+  ],
+  "cleanup": [
+    "Delete gov- gate-report rows after exporting the registry snapshot; the registry fixture and the design documents are left unchanged."
+  ],
+  "automation": "The gate-evaluation code and the run-report writer run as real code under test while the evidence registry is data. The oracle is the pair (evidence registry, run-report status): a gate that reads PASS without a real artifact fails the case, and a missing runtime is reported NOT_RUN instead of being allowed to fall through to PASS.",
+  "prerequisites": [
+    "P3 requires real runtime evidence (approval_ticket, provider_send_receipt, attribution_report) from live adapters, real data and upstream receipts; no such runtime exists in this repository, so the gate is NOT_RUN and any PASS claim is BLOCKED_PREREQUISITE."
+  ],
+  "references": [
+    "implement/09-sprint-roadmap-and-pilots.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/live/env.example"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

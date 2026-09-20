@@ -1,0 +1,83 @@
+{
+  "id": "UNIT-BR-001-FORGED-REF",
+  "title": "BR-001: a forged catalog reference that does not resolve in the SoR is rejected",
+  "document": "unit/business-rules.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "BR-001",
+    "BR-003",
+    "NFR-008"
+  ],
+  "facets": [
+    "entity:Price",
+    "entity:SKU"
+  ],
+  "risk": "A syntactically valid but non-existent catalog reference passes the check, so a fabricated price reaches the customer while looking authoritative.",
+  "preconditions": [
+    "Namespace gov-unit-br-<case_id>-<worker_id>; Business Rules Engine loaded with no cross-case state.",
+    "Frozen clock 2026-01-15T10:00:00Z; agent fixture context loaded from fixtures/offline/governance.json."
+  ],
+  "inputs": {
+    "quote": {
+      "sku_id": "SKU-OK",
+      "offered_price": 500,
+      "catalog_ref_id": "ERP-SKU-GHOST"
+    },
+    "sor_lookup": {
+      "ref": "ERP-SKU-GHOST",
+      "result": "NOT_FOUND"
+    }
+  },
+  "steps": [
+    {
+      "action": "Evaluate a quote whose catalog_ref_id is well-formed but unknown to the SoR",
+      "expected": "The reference is resolved against the SoR; lookup returns NOT_FOUND."
+    },
+    {
+      "action": "Observe the pipeline verdict",
+      "expected": "Rule fails with ERR_ARBITRARY_PRICING and the failure reason names the unresolvable reference."
+    },
+    {
+      "action": "Evaluate the same payload with the SoR temporarily unreachable",
+      "expected": "Verdict is fail-closed: the quote is rejected (no default price, no cached price), consistent with NFR-008."
+    }
+  ],
+  "assertions": [
+    "A reference that does not resolve is treated exactly like a missing reference; there is no format-only acceptance.",
+    "The unreachable-SoR path also rejects, so an outage cannot produce a fabricated price.",
+    "Adapter counter remains 0 in both evaluations.",
+    "No fallback to base price is silently used for a discount quote."
+  ],
+  "forbidden": [
+    "Format validation used as a substitute for resolution.",
+    "Caching a previously seen price for an unknown reference.",
+    "Treating NOT_FOUND as a transient error and retrying until a price appears."
+  ],
+  "evidence": [
+    "SoR resolution log lines for the forged reference.",
+    "Rule evaluation records for both evaluations with errorCode."
+  ],
+  "cleanup": [
+    "Delete the gov- payloads; restore the SoR to its fixture state."
+  ],
+  "automation": "Real BusinessRulesEngine and PEP under test; only ERP/POS/connector boundaries are substituted by the offline mock whose call log and receipts are the oracle. Rules are evaluated in sequence and halt on the first failure, so each case asserts the first failing rule code rather than a bag of errors.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/catalog.json",
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

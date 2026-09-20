@@ -1,0 +1,99 @@
+{
+  "id": "UNIT-AUTH-DENY-AUDIT",
+  "title": "Denied action still produces an immutable audit row with denied status",
+  "document": "unit/authority.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "AUTH-5",
+    "NFR-002",
+    "BR-008",
+    "TC-E2E-006",
+    "SRS-17"
+  ],
+  "facets": [
+    "entity:Agent",
+    "entity:Evidence",
+    "stage:EVIDENCE"
+  ],
+  "risk": "Denied actions leave no trace, so an attacker can probe authority boundaries and a later investigation cannot reconstruct what was attempted.",
+  "preconditions": [
+    "Namespace gov-unit-auth-<case_id>-<worker_id>; no shared mutable state with other cases.",
+    "PolicyEnforcementPoint loaded with fixtures/offline/governance.json skill_authority_registry and agents[]; clock frozen at 2026-01-15T10:00:00Z."
+  ],
+  "inputs": {
+    "agent_id": "MKT-05",
+    "assigned_authority": "AUTH-3",
+    "denied_proposal": {
+      "skill": "skill.governance.raw_dataset_export",
+      "payload": {
+        "tables": [
+          "customers",
+          "orders"
+        ]
+      }
+    },
+    "permitted_proposal": {
+      "skill": "skill.sales.check_price",
+      "payload": {
+        "sku_id": "SKU-OK"
+      }
+    }
+  },
+  "steps": [
+    {
+      "action": "Submit the denied proposal and capture the run/correlation identifiers",
+      "expected": "Response carries authorized=false, a decision code and a correlation id."
+    },
+    {
+      "action": "Submit the permitted read for the same agent",
+      "expected": "Response carries authorized=true and the same correlation id family so the two rows can be linked."
+    },
+    {
+      "action": "Query the audit store for the run",
+      "expected": "Exactly two rows exist: one denied and one success; the denied row has the full 18 domain fields populated as far as applicable, including trigger, skill, tool, authority AUTH-5 and timestamp."
+    },
+    {
+      "action": "Verify the denied row exposes no PII",
+      "expected": "customer_or_entity_id is a pseudonym and no plaintext phone, name or address appears anywhere in the row."
+    }
+  ],
+  "assertions": [
+    "A denied action always yields an audit row with execution_status denied - never zero rows.",
+    "The denied row records the attempted skill and tool, so the probe is reconstructable.",
+    "Neither row contains plaintext PII: customer_or_entity_id is pseudonymized.",
+    "Chain linkage holds: the denied row prev_hash equals the preceding row chain_hash for the tenant."
+  ],
+  "forbidden": [
+    "Skipping audit for denied requests to save write volume.",
+    "Writing a success status for a denied request.",
+    "Storing plaintext customer identifiers in the audit row."
+  ],
+  "evidence": [
+    "Exported audit rows (18 fields) for the run namespace, redacted.",
+    "PEP response bodies for both proposals.",
+    "Chain verification output for the two rows."
+  ],
+  "cleanup": [
+    "Delete the gov- run rows after exporting evidence; never delete pre-existing sandbox audit rows."
+  ],
+  "automation": "Real audit writer plus hash-chain verifier under test. Verification recomputes SHA-256 over canonical JSON rather than trusting a stored flag.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/customers.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

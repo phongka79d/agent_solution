@@ -1,0 +1,108 @@
+{
+  "id": "GOV-KPI-TARGET-NOT-LOCKED",
+  "title": "Without a locked baseline there is no pass/fail KPI verdict, only measurements",
+  "document": "governance/kpi.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P1",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "ASM-002",
+    "SRS-20",
+    "NFR-002"
+  ],
+  "facets": [
+    "kpi:Lead-to-Order Conversion",
+    "kpi:Autonomous Completion Rate",
+    "kpi:Cost per Successful Outcome"
+  ],
+  "risk": "A pilot is declared successful because a measured value happens to exceed a target somebody proposed, so the baseline is never bought and the commitment is made on an unapproved number.",
+  "preconditions": [
+    "Namespace gov-kpi-<case_id>-<worker_id>; the metric is computed by the real reporting code over fixtures/offline/governance.json kpi_dataset and never copied from the dashboard payload.",
+    "Frozen clock 2026-01-15T10:00:00Z with the reporting window 2026-01-01T00:00:00Z .. 2026-02-01T00:00:00Z as a half-open interval; the stored aggregate is recomputed independently from the raw counter rows.",
+    "assumptions.ASM-002.locked is false and no approved baseline or target set exists in the repository.",
+    "The run is required to emit a measurement record and no pass/fail verdict for every KPI."
+  ],
+  "inputs": {
+    "assumptions": {
+      "ASM-002": {
+        "locked": false,
+        "owner": "Business"
+      }
+    },
+    "evaluations": [
+      {
+        "label": "measurement record",
+        "expected_status": "EXECUTED"
+      },
+      {
+        "label": "target verdict",
+        "expected_status": "BLOCKED_PREREQUISITE"
+      },
+      {
+        "label": "gate sign-off from KPI",
+        "expected_status": "NOT_RUN"
+      }
+    ],
+    "sample_size": {
+      "orders": 8,
+      "sessions": 60
+    },
+    "uncertainty_required": true
+  },
+  "steps": [
+    {
+      "action": "Publish the measurement record for the window",
+      "expected": "Each metric is reported with its value, its window, its sample size and the uncertainty of the sample; the record is EXECUTED."
+    },
+    {
+      "action": "Attempt the target verdict",
+      "expected": "The verdict is BLOCKED_PREREQUISITE naming ASM-002 and owner Business; no metric is labelled PASS or FAIL against a target."
+    },
+    {
+      "action": "Attempt a gate sign-off that cites a KPI value",
+      "expected": "The sign-off is NOT_RUN; the register records that no approved target exists, so a passing KPI value cannot carry a gate on its own."
+    },
+    {
+      "action": "Attempt to declare the pilot successful from a single window",
+      "expected": "The attempt is refused: a single window without a control group is reported as a measurement, and a missing sample yields an insufficient-sample conclusion rather than a win."
+    }
+  ],
+  "assertions": [
+    "Every KPI in this run has a measurement record and no metric carries a PASS or FAIL verdict while ASM-002 is unlocked.",
+    "The target verdict and any KPI-based gate sign-off are BLOCKED_PREREQUISITE or NOT_RUN, never PASS.",
+    "Each measurement states its sample size and uncertainty, and an insufficient sample produces an explicit insufficient-sample conclusion.",
+    "No target figure from a fixture, a proposal or a vendor document is promoted into an approved commitment by this run."
+  ],
+  "forbidden": [
+    "Awarding a pass because a measured value exceeded an unapproved proposal.",
+    "Signing a gate on a KPI value with no locked baseline.",
+    "Omitting the sample size so a noisy measurement reads as a result."
+  ],
+  "evidence": [
+    "Measurement records with values, windows, sample sizes and uncertainty.",
+    "Blocker records for the target verdict and the gate sign-off naming ASM-002 and its owner."
+  ],
+  "cleanup": [
+    "Delete gov- measurement and blocker rows after export."
+  ],
+  "automation": "The reporting service and the metric dictionary run as real code under test over the frozen KPI dataset; the dashboard is a consumer whose displayed value must equal the independently recomputed value. Waits are condition-based on the stored aggregate row, metric values are never supplied as inputs, and no vendor boundary is involved in the arithmetic.",
+  "prerequisites": [
+    "The KPI baseline and targets (ASM-002, owner Business) are not locked, so no pass/fail KPI verdict and no KPI-based gate sign-off is possible; only measurement is admissible."
+  ],
+  "references": [
+    "plans/delivery/analytics.md",
+    "implement/09-sprint-roadmap-and-pilots.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

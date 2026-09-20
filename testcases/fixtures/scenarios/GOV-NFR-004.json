@@ -1,0 +1,95 @@
+{
+  "id": "GOV-NFR-004",
+  "title": "NFR-004 Recovery: a worker killed mid-workflow resumes from checkpoint without duplicating",
+  "document": "governance/nfr.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "NFR-004",
+    "NFR-003",
+    "TC-E2E-005",
+    "BR-006"
+  ],
+  "facets": [
+    "entity:Execution",
+    "stage:EXECUTION"
+  ],
+  "risk": "A crashed worker either loses the in-flight action so the customer never receives it, or restarts from the beginning and duplicates the already-sent message or order.",
+  "preconditions": [
+    "Namespace gov-nfr-<case_id>-<worker_id>; NFR verification runs against the offline gateway with mock SoR and channel boundaries.",
+    "Frozen clock 2026-01-15T10:00:00Z; failure, outage and crash injections are scripted at the substituted boundary, never faked inside the assertion.",
+    "A real worker process is started against the offline gateway so it can be terminated and restarted."
+  ],
+  "inputs": {
+    "workflow": {
+      "task_id": "task-nfr-4",
+      "steps": [
+        "qualify",
+        "price",
+        "compose",
+        "send",
+        "record"
+      ]
+    },
+    "kill_point": "after step 3 (compose) and before step 4 (send)",
+    "effect_key": "sha256:9999999999999999999999999999999999999999999999999999999999999999"
+  },
+  "steps": [
+    {
+      "action": "Start the workflow and let it reach the composed step",
+      "expected": "Steps 1 to 3 are checkpointed with their outputs persisted; no outbound effect exists yet."
+    },
+    {
+      "action": "Terminate the worker process (SIGKILL) and confirm the lease expires or is reclaimed",
+      "expected": "The run is reclaimed by another worker after lease expiry; the interrupted run is marked interrupted rather than completed."
+    },
+    {
+      "action": "Restart the worker and let recovery proceed",
+      "expected": "Recovery resumes at the send step using the checkpointed composition; the adapter receives exactly one send."
+    },
+    {
+      "action": "Seed a second failure: kill the worker after the send but before the record step",
+      "expected": "On restart the persisted receipt for the effect_key prevents a second send, and the record step completes."
+    }
+  ],
+  "assertions": [
+    "Work resumes from the last checkpoint instead of restarting the whole workflow.",
+    "Exactly one external effect exists in both kill scenarios.",
+    "The interrupted run is never reported as completed before its final step succeeded.",
+    "Recovery is driven by persisted state, so a second worker can complete the run."
+  ],
+  "forbidden": [
+    "Re-executing steps that already produced an external effect.",
+    "Marking the run completed when the worker died mid-step.",
+    "Keeping checkpoints only in the dead process memory."
+  ],
+  "evidence": [
+    "Worker logs around each kill with the lease transitions.",
+    "Checkpoint records and the single adapter send receipt.",
+    "Run state history including the interrupted state."
+  ],
+  "cleanup": [
+    "Stop any worker started by the case, delete gov- execution and checkpoint rows, and confirm no lease remains."
+  ],
+  "automation": "Real worker process and durable checkpoint/lease logic under test: the crash is an actual process termination, not a simulated exception, so in-memory-only implementations fail.",
+  "prerequisites": [
+    "Requires the runnable offline harness (worker process + Postgres/Redis substitutes). Without it the case is SKIP_UNIMPLEMENTED, never PASS."
+  ],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "implement/09-sprint-roadmap-and-pilots.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/catalog.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

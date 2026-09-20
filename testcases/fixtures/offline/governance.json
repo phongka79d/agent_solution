@@ -1,0 +1,702 @@
+{
+  "namespace": "gov",
+  "frozen_clock": "2026-01-15T10:00:00Z",
+  "run_id_template": "{case_id}-{worker_id}",
+  "tenants": {
+    "T1": "11111111-1111-1111-1111-111111111111",
+    "T2": "22222222-2222-2222-2222-222222222222"
+  },
+  "operators": [
+    {
+      "operator_id": "OP-APPROVER-T1",
+      "tenant": "T1",
+      "role": "APPROVER",
+      "decisions": [
+        "APPROVE",
+        "REJECT",
+        "MODIFY",
+        "PAUSE",
+        "CANCEL"
+      ]
+    },
+    {
+      "operator_id": "OP-VIEWER-T1",
+      "tenant": "T1",
+      "role": "VIEWER",
+      "decisions": []
+    },
+    {
+      "operator_id": "OP-SUPERVISOR-T1",
+      "tenant": "T1",
+      "role": "SUPERVISOR",
+      "decisions": [
+        "APPROVE",
+        "REJECT",
+        "MODIFY",
+        "PAUSE",
+        "CANCEL"
+      ],
+      "can_takeover": true
+    },
+    {
+      "operator_id": "OP-APPROVER-T2",
+      "tenant": "T2",
+      "role": "APPROVER",
+      "decisions": [
+        "APPROVE",
+        "REJECT",
+        "MODIFY",
+        "PAUSE",
+        "CANCEL"
+      ]
+    },
+    {
+      "operator_id": "OP-SECOND-T1",
+      "tenant": "T1",
+      "role": "SUPERVISOR",
+      "decisions": [
+        "APPROVE",
+        "REJECT",
+        "MODIFY",
+        "PAUSE",
+        "CANCEL"
+      ],
+      "can_takeover": true
+    }
+  ],
+  "agents": [
+    {
+      "agent_id": "SAL-02",
+      "tenant": "T1",
+      "assigned_authority": "AUTH-3"
+    },
+    {
+      "agent_id": "SAL-01",
+      "tenant": "T1",
+      "assigned_authority": "AUTH-1"
+    },
+    {
+      "agent_id": "CS-01",
+      "tenant": "T1",
+      "assigned_authority": "AUTH-3"
+    },
+    {
+      "agent_id": "MKT-05",
+      "tenant": "T1",
+      "assigned_authority": "AUTH-3"
+    },
+    {
+      "agent_id": "MKT-02",
+      "tenant": "T1",
+      "assigned_authority": "AUTH-1"
+    }
+  ],
+  "skill_authority_registry": {
+    "skill.sales.check_price": "AUTH-0",
+    "skill.sales.search_product": "AUTH-0",
+    "skill.sales.check_stock": "AUTH-0",
+    "skill.sales.retrieve_customer": "AUTH-0",
+    "skill.sales.recommend_product": "AUTH-1",
+    "skill.mkt.generate_content": "AUTH-2",
+    "skill.sales.send_message": "AUTH-3",
+    "skill.sales.create_cart": "AUTH-3",
+    "skill.sales.create_order": "AUTH-4",
+    "skill.mkt.dispatch_campaign": "AUTH-4",
+    "skill.care.initiate_return": "AUTH-4",
+    "skill.governance.raw_dataset_export": "AUTH-5"
+  },
+  "policy_parameters": {
+    "T1_UNLOCKED": {
+      "note": "Owner has approved NO autonomy limits yet; every limit undefined -> fail closed.",
+      "maxAutonomousDiscountRate": null,
+      "maxAutonomousRefundAmount": null,
+      "maxAutonomousAudienceSize": null,
+      "maxAutonomousReminderCount": 2
+    },
+    "T1_SYNTHETIC_TEST_LOCK": {
+      "note": "Synthetic configuration used only to exercise boundary arithmetic. NOT an owner approval.",
+      "maxAutonomousDiscountRate": 0.15,
+      "maxAutonomousRefundAmount": 500.0,
+      "maxAutonomousAudienceSize": 5000,
+      "maxAutonomousReminderCount": 2,
+      "currency": "TWD"
+    },
+    "T2_SYNTHETIC_TEST_LOCK": {
+      "maxAutonomousDiscountRate": 0.1,
+      "maxAutonomousRefundAmount": 300.0,
+      "maxAutonomousAudienceSize": 1000,
+      "maxAutonomousReminderCount": 1,
+      "currency": "TWD"
+    },
+    "catalog_freshness_seconds": 120,
+    "floor_inputs_T1_SYNTHETIC": {
+      "sku_id": "SKU-OK",
+      "base_price": 1000.0,
+      "unit_cost": 700.0,
+      "revenue_fee_rate": 0.02,
+      "target_margin_rate": 0.1,
+      "currency": "TWD",
+      "note": "Synthetic floor inputs; illustrative period only."
+    }
+  },
+  "approvals": [
+    {
+      "approval_id": "APV-CAMP-15",
+      "tenant": "T1",
+      "agent_id": "MKT-05",
+      "skill": "skill.mkt.dispatch_campaign",
+      "status": "AWAITING_HUMAN",
+      "created_at": "2026-01-15T09:40:00Z",
+      "expires_at": "2026-01-15T10:10:00Z",
+      "payload": {
+        "campaign_id": "CMP-FLASH-15",
+        "discount_rate": 0.15,
+        "audience_size": 12000,
+        "estimated_budget_twd": 186750
+      },
+      "payload_hash": "sha256:7b1f0a1e2d3c4b5a6f70819a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e"
+    },
+    {
+      "approval_id": "APV-REFUND-450",
+      "tenant": "T1",
+      "agent_id": "CS-01",
+      "skill": "skill.care.initiate_return",
+      "status": "AWAITING_HUMAN",
+      "created_at": "2026-01-15T09:55:00Z",
+      "expires_at": "2026-01-15T10:25:00Z",
+      "payload": {
+        "order_id": "ORD-A-1",
+        "customer_id": "cust-a",
+        "refund_amount_twd": 450.0,
+        "reason_code": "NOT_AS_DESCRIBED"
+      },
+      "payload_hash": "sha256:1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091"
+    },
+    {
+      "approval_id": "APV-T2-CAMP",
+      "tenant": "T2",
+      "agent_id": "MKT-05",
+      "skill": "skill.mkt.dispatch_campaign",
+      "status": "AWAITING_HUMAN",
+      "created_at": "2026-01-15T09:30:00Z",
+      "expires_at": "2026-01-15T10:00:00Z",
+      "payload": {
+        "campaign_id": "CMP-T2-01",
+        "discount_rate": 0.05,
+        "audience_size": 200,
+        "estimated_budget_twd": 1200
+      },
+      "payload_hash": "sha256:aa11bb22cc33dd44ee55ff6600112233445566778899aabbccddeeff00112233"
+    }
+  ],
+  "approval_rejection_codes": [
+    "BUDGET_EXCEEDED",
+    "BRAND_VIOLATION",
+    "UNACCEPTABLE_MARGIN",
+    "INAPPROPRIATE_TIMING"
+  ],
+  "takeover_lease": {
+    "ttl_seconds": 60,
+    "heartbeat_seconds": 30,
+    "max_extend_seconds": 300,
+    "key_template": "tenant:{tenant_id}:session:{conversation_id}:takeover_lock"
+  },
+  "kpi_dataset": {
+    "tenant": "T1",
+    "window": [
+      "2026-01-01T00:00:00Z",
+      "2026-02-01T00:00:00Z"
+    ],
+    "currency": "TWD",
+    "marketing": {
+      "campaign_id": "CMP-1",
+      "spend_twd": 3000,
+      "impressions": 10000,
+      "clicks": 500,
+      "leads": 50,
+      "qualified_leads": 20,
+      "new_customers": 15,
+      "attributed_revenue_gross_twd": 14000,
+      "refunded_attributed_orders_twd": 2000,
+      "engagements": {
+        "comments": 100,
+        "messages": 80,
+        "link_clicks": 500,
+        "forms": 20
+      }
+    },
+    "sales": {
+      "qualified_leads_advised": 40,
+      "orders_paid": 8,
+      "paid_revenue_twd": 20000,
+      "abandoned_eligible_sessions": 25,
+      "recovered_orders": 5,
+      "recommendations_served": 200,
+      "recommendation_click_buys": 30,
+      "upsell_deltas_twd": [
+        500,
+        300,
+        200
+      ],
+      "crosssell_order_values_twd": [
+        250,
+        250,
+        250,
+        250
+      ],
+      "sales_cycle_hours": [
+        10,
+        20,
+        30,
+        40,
+        50,
+        60,
+        70,
+        80
+      ]
+    },
+    "care": {
+      "cases_total": 20,
+      "cases_eligible_for_ai": 20,
+      "ai_closed": 12,
+      "escalated": 5,
+      "reopened_within_72h": 2,
+      "human_takeover_sessions": 3,
+      "first_response_seconds": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "resolution_hours": [
+        6.0,
+        10.0,
+        20.0,
+        24.0
+      ],
+      "csat_scores": [
+        5,
+        4,
+        5,
+        5,
+        4,
+        5,
+        5,
+        4,
+        5,
+        5
+      ],
+      "csat_responses": 10,
+      "csat_surveys_sent": 20
+    },
+    "retention": {
+      "customers_start": 100,
+      "repurchase_next": 30,
+      "still_active": 70,
+      "dormant_customers": 20,
+      "reactivated": 4,
+      "contribution_total_twd": 50000,
+      "customers_for_clv": 50
+    },
+    "ai_system": {
+      "tasks_assigned": 50,
+      "autonomous_completed": 35,
+      "sessions_total": 60,
+      "sessions_human_override": 10,
+      "answers_audited": 200,
+      "hallucination_findings": 2,
+      "policy_violations": 0,
+      "duplicate_executions": 0,
+      "executions_total": 1000,
+      "executions_failed": 3,
+      "ai_cost_total_twd": 1200,
+      "successful_outcomes": 40,
+      "session_cost_samples_twd": [
+        0.42,
+        0.55,
+        0.88,
+        1.2
+      ],
+      "run_cost_samples_twd": [
+        0.01,
+        0.02,
+        0.03,
+        0.04,
+        0.05
+      ],
+      "customer_costs_twd": {
+        "cust-a": 1.1,
+        "cust-b": 0.4
+      }
+    },
+    "attribution": {
+      "touchpoints": [
+        "marketing_first",
+        "sales_consult",
+        "care_middle",
+        "cart_last"
+      ],
+      "weights": {
+        "marketing_first": 0.3,
+        "sales_consult": 0.3,
+        "care_middle": 0.1,
+        "cart_last": 0.3
+      },
+      "order_confirmed_twd": 1000,
+      "cart_recovery_window_hours": 24,
+      "campaign_click_window_hours": 48,
+      "organic_after_window": true,
+      "no_interaction_messages": 40
+    },
+    "kpi_edge": {
+      "note": "Synthetic edge datasets; each isolates one measurement rule. No figure here is a target or a production value.",
+      "no_data_tenant": {
+        "tenant": "T2",
+        "orders_paid": null,
+        "leads": null,
+        "expected_display": "NO_DATA",
+        "expected_value": null
+      },
+      "zero_denominator": {
+        "impressions": 0,
+        "clicks": 0,
+        "leads": 3,
+        "expected": "NOT_DEFINED"
+      },
+      "duplicate_events": {
+        "events": [
+          {
+            "event_id": "evt-1",
+            "type": "purchase",
+            "order_id": "ORD-A-1",
+            "received_at": "2026-01-10T10:00:00Z"
+          },
+          {
+            "event_id": "evt-1",
+            "type": "purchase",
+            "order_id": "ORD-A-1",
+            "received_at": "2026-01-10T10:00:05Z"
+          },
+          {
+            "event_id": "evt-2",
+            "type": "purchase",
+            "order_id": "ORD-A-1",
+            "received_at": "2026-01-10T10:00:06Z"
+          }
+        ],
+        "expected_distinct_orders": 1,
+        "expected_purchase_events": 1
+      },
+      "refund_cancel": {
+        "orders": [
+          {
+            "order_id": "ORD-A-1",
+            "amount_twd": 2500.0,
+            "status": "PAID"
+          },
+          {
+            "order_id": "ORD-A-2",
+            "amount_twd": 1200.0,
+            "status": "REFUNDED"
+          },
+          {
+            "order_id": "ORD-A-3",
+            "amount_twd": 900.0,
+            "status": "CANCELLED"
+          }
+        ],
+        "expected_valid_revenue_twd": 2500.0,
+        "expected_valid_orders": 1
+      },
+      "currency_split": {
+        "rows": [
+          {
+            "currency": "TWD",
+            "amount": 12000.0
+          },
+          {
+            "currency": "VND",
+            "amount": 9000000.0
+          }
+        ],
+        "synthetic_fixed_rates_to_twd": {
+          "TWD": 1.0,
+          "VND": 0.0013
+        },
+        "expected_display": "one row per currency, or a conversion at the event-time fixed rate"
+      },
+      "late_events": {
+        "order_confirmed_at": "2026-02-03T09:00:00Z",
+        "window_end": "2026-02-01T00:00:00Z",
+        "expected": "restated as a late arrival, never silently folded into the closed window"
+      },
+      "reopen_and_takeover": {
+        "reopened_case_final_outcomes": 1,
+        "human_takeover_sessions": 3,
+        "expected": "one final outcome per reopened case and no AI-resolved credit for a taken-over session"
+      },
+      "missing_cost": {
+        "rows_without_cost": 2,
+        "expected_display": "PARTIAL with the missing-source reason"
+      }
+    }
+  },
+  "assumptions": {
+    "ASM-001": {
+      "owner": "Product/IT",
+      "locked": false,
+      "locks": [
+        "production connector allowlist"
+      ],
+      "blocks": [
+        "live channel dispatch"
+      ],
+      "does_not_block": [
+        "offline mock journeys",
+        "authority unit cases"
+      ]
+    },
+    "ASM-002": {
+      "owner": "Business",
+      "locked": false,
+      "locks": [
+        "KPI baseline and targets"
+      ],
+      "blocks": [
+        "pass/fail KPI target assertions"
+      ],
+      "does_not_block": [
+        "formula evaluation",
+        "safety invariants"
+      ]
+    },
+    "ASM-003": {
+      "owner": "Business/Finance",
+      "locked": false,
+      "locks": [
+        "max autonomous discount rate",
+        "max campaign audience"
+      ],
+      "blocks": [
+        "autonomous discount and broadcast"
+      ],
+      "does_not_block": [
+        "AUTH-0..AUTH-2 reads",
+        "FAQ replies"
+      ]
+    },
+    "ASM-004": {
+      "owner": "Finance/Operations",
+      "locked": false,
+      "locks": [
+        "refund and compensation types requiring approval"
+      ],
+      "blocks": [
+        "autonomous refund"
+      ],
+      "does_not_block": [
+        "order status lookup",
+        "case management"
+      ]
+    },
+    "ASM-005": {
+      "owner": "Data/Legal/Product",
+      "locked": false,
+      "locks": [
+        "Customer 360 fields allowed for long-term storage"
+      ],
+      "blocks": [
+        "long-term persistence of unlisted fields"
+      ],
+      "does_not_block": [
+        "session-scoped lookup"
+      ]
+    }
+  },
+  "gate_registry": {
+    "P0": {
+      "name": "Foundation",
+      "exit": "no authority bypass and no lost trace",
+      "required_evidence": [
+        "pep_deny_audit_rows",
+        "trace_chain_reconstruction",
+        "rls_isolation_report"
+      ]
+    },
+    "P1": {
+      "name": "Customer Care Pilot",
+      "exit": "one real conversation handled E2E with evidence",
+      "required_evidence": [
+        "conversation_transcript",
+        "erp_lookup_receipt",
+        "case_outcome_record"
+      ]
+    },
+    "P2": {
+      "name": "Sales Pilot",
+      "exit": "AI action -> order -> revenue evidence",
+      "required_evidence": [
+        "order_confirmation",
+        "revenue_attribution_row"
+      ]
+    },
+    "P3": {
+      "name": "Marketing Pilot",
+      "exit": "audience, campaign, approval, channel execution, attribution",
+      "required_evidence": [
+        "approval_ticket",
+        "provider_send_receipt",
+        "attribution_report"
+      ]
+    },
+    "P4": {
+      "name": "Cross-Domain Orchestration",
+      "exit": "marketing->sales->care->retention without lost customer context",
+      "required_evidence": [
+        "handoff_packages",
+        "single_customer_context_proof"
+      ]
+    },
+    "P5": {
+      "name": "Controlled Autonomy",
+      "exit": "low-risk promotion with high-risk approval retained",
+      "required_evidence": [
+        "promotion_decision_log",
+        "high_risk_approval_still_required_proof"
+      ]
+    }
+  },
+  "gate_evidence_state": {
+    "note": "Synthetic registry of which evidence artifacts exist today. 'mock' = produced by a substituted boundary and never acceptable as gate evidence; 'design' = a written contract only; 'absent' = nothing exists.",
+    "runtime_available": false,
+    "P0": {
+      "pep_deny_audit_rows": "mock",
+      "trace_chain_reconstruction": "design",
+      "rls_isolation_report": "design"
+    },
+    "P1": {
+      "conversation_transcript": "mock",
+      "erp_lookup_receipt": "mock",
+      "case_outcome_record": "mock"
+    },
+    "P2": {
+      "order_confirmation": "mock",
+      "revenue_attribution_row": "mock"
+    },
+    "P3": {
+      "approval_ticket": "mock",
+      "provider_send_receipt": "absent",
+      "attribution_report": "mock"
+    },
+    "P4": {
+      "handoff_packages": "mock",
+      "single_customer_context_proof": "mock"
+    },
+    "P5": {
+      "promotion_decision_log": "design",
+      "high_risk_approval_still_required_proof": "mock"
+    }
+  },
+  "dod_state": {
+    "note": "Definition of Done (SRS 27). A capability is done only with real data, agent, skill, tool, policy, approval, execution, evidence, outcome and test.",
+    "runtime_available": false,
+    "blueprint_pillars": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6
+    ],
+    "runtime_pillars": [
+      7,
+      8,
+      9,
+      10
+    ],
+    "evidence_kind_by_pillar": {
+      "1": "design",
+      "2": "design",
+      "3": "design",
+      "4": "design",
+      "5": "design",
+      "6": "design",
+      "7": "absent",
+      "8": "absent",
+      "9": "absent",
+      "10": "absent"
+    }
+  },
+  "dod_pillars": [
+    {
+      "id": 1,
+      "name": "CANONICAL_SCHEMAS",
+      "kind": "blueprint",
+      "dod_item": "Data thật",
+      "evidence": "28 entity schemas + RLS + C360 view"
+    },
+    {
+      "id": 2,
+      "name": "AGENT_IDENTITIES",
+      "kind": "blueprint",
+      "dod_item": "Agent thật",
+      "evidence": "13 agent roles bound"
+    },
+    {
+      "id": 3,
+      "name": "SKILL_CONTRACTS",
+      "kind": "blueprint",
+      "dod_item": "Skill thật",
+      "evidence": "23 skills, 11-field schema"
+    },
+    {
+      "id": 4,
+      "name": "ADAPTER_SPECS",
+      "kind": "blueprint",
+      "dod_item": "Tool thật",
+      "evidence": "API-001/002/003 + channel adapters"
+    },
+    {
+      "id": 5,
+      "name": "POLICY_SECURITY",
+      "kind": "blueprint",
+      "dod_item": "Policy thật",
+      "evidence": "PEP, AUTH-0..5, BR-001..010"
+    },
+    {
+      "id": 6,
+      "name": "APPROVAL_ROUTING",
+      "kind": "blueprint",
+      "dod_item": "Approval thật",
+      "evidence": "AUTH-4 gate, SCR-003 queue, signed tickets"
+    },
+    {
+      "id": 7,
+      "name": "LIVE_EXECUTION",
+      "kind": "runtime",
+      "dod_item": "Execution thật",
+      "evidence": "unique effect_key against live adapters"
+    },
+    {
+      "id": 8,
+      "name": "LIVE_EVIDENCE",
+      "kind": "runtime",
+      "dod_item": "Evidence thật",
+      "evidence": "upstream SoR receipts verified"
+    },
+    {
+      "id": 9,
+      "name": "OUTCOME_CAPTURE",
+      "kind": "runtime",
+      "dod_item": "Outcome thật",
+      "evidence": "empirical metrics on pilot traffic"
+    },
+    {
+      "id": 10,
+      "name": "AUTOMATED_CI_PASS",
+      "kind": "runtime",
+      "dod_item": "Test thật",
+      "evidence": "CI pipeline + full E2E suite executed"
+    }
+  ]
+}

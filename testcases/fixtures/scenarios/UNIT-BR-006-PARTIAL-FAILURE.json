@@ -1,0 +1,93 @@
+{
+  "id": "UNIT-BR-006-PARTIAL-FAILURE",
+  "title": "BR-006: a timed-out attempt with unknown outcome reconciles to exactly one effect",
+  "document": "unit/business-rules.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "BR-006",
+    "NFR-003",
+    "NFR-008",
+    "TC-E2E-008"
+  ],
+  "facets": [
+    "entity:Execution",
+    "stage:EXECUTION"
+  ],
+  "risk": "After a timeout the system blindly resends and the customer receives two messages or two orders; or it assumes failure and never delivers anything.",
+  "preconditions": [
+    "Namespace gov-unit-br-<case_id>-<worker_id>; Business Rules Engine loaded with no cross-case state.",
+    "Frozen clock 2026-01-15T10:00:00Z; agent fixture context loaded from fixtures/offline/governance.json.",
+    "Mock adapter configured to accept the request, delay past the timeout, then report success for the first attempt."
+  ],
+  "inputs": {
+    "action": {
+      "customer_id": "cust-a",
+      "channel": "EMAIL",
+      "template": "order_shipped",
+      "effect_key": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    "adapter_script": [
+      {
+        "attempt": 1,
+        "behaviour": "ACCEPT_THEN_TIMEOUT",
+        "actual_upstream": "SUCCESS"
+      },
+      {
+        "attempt": 2,
+        "behaviour": "RETURN_CACHED_RECEIPT",
+        "actual_upstream": "NO_NEW_EFFECT"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Dispatch the action and let the first attempt time out",
+      "expected": "The record shows execution_status failed or unknown, with the timeout error preserved; the caller is not told the action succeeded."
+    },
+    {
+      "action": "Retry with the identical effect_key",
+      "expected": "The connector returns the cached receipt from attempt 1; no second external effect is created."
+    },
+    {
+      "action": "Reconcile the execution record",
+      "expected": "Exactly one external effect is recorded and the final state is success with the receipt from attempt 1 referenced."
+    }
+  ],
+  "assertions": [
+    "The unknown outcome is never reported as success before reconciliation, and never as a duplicate effect after it.",
+    "Adapter effect counter is exactly 1 after both attempts.",
+    "The timeout error is preserved on the interim record rather than overwritten by the later success.",
+    "The reconciliation links both attempts to one effect_key and one receipt."
+  ],
+  "forbidden": [
+    "Resending without consulting the prior receipt.",
+    "Marking the first attempt success purely because the retry succeeded.",
+    "Opening a second effect because the retry created a new key."
+  ],
+  "evidence": [
+    "Timeline of both attempts with the adapter script output and receipts.",
+    "Reconciled execution record showing one external effect."
+  ],
+  "cleanup": [
+    "Delete gov- execution rows and reset the adapter to its fixture script."
+  ],
+  "automation": "Real BusinessRulesEngine and PEP under test; only ERP/POS/connector boundaries are substituted by the offline mock whose call log and receipts are the oracle. Rules are evaluated in sequence and halt on the first failure, so each case asserts the first failing rule code rather than a bag of errors.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "implement/09-sprint-roadmap-and-pilots.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

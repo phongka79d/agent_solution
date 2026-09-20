@@ -1,0 +1,161 @@
+{
+  "canonical": [
+    "session",
+    "product_view",
+    "search",
+    "click",
+    "add_to_cart",
+    "checkout",
+    "purchase"
+  ],
+  "aliases": {
+    "session.start": "session",
+    "session.end": "session",
+    "product.view": "product_view",
+    "search.query": "search",
+    "element.click": "click",
+    "cart.add": "add_to_cart",
+    "cart.remove": null,
+    "checkout.start": "checkout",
+    "order.placed": "purchase"
+  },
+  "alias_map_version": "2026-01-r1",
+  "samples": [
+    {
+      "event_id": "evt_a_session_1",
+      "tenant_id": "11111111-1111-1111-1111-111111111111",
+      "correlation_id": "corr-a-1",
+      "customer_id": "cust-a",
+      "anonymous_id": "anon_a",
+      "session_id": "sess-a-1",
+      "event_type": "session.start",
+      "canonical_event": "session",
+      "occurred_at": "2026-01-15T09:58:00Z",
+      "provenance": "SIGNAL",
+      "context": {
+        "user_agent": "synthetic-agent/1.0",
+        "ip_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "locale": "zh-TW",
+        "page_url": "https://shop.example.invalid/",
+        "consent_granted": true
+      },
+      "data": {}
+    },
+    {
+      "event_id": "evt_a_purchase_1",
+      "tenant_id": "11111111-1111-1111-1111-111111111111",
+      "correlation_id": "corr-a-2",
+      "customer_id": "cust-a",
+      "anonymous_id": "anon_a",
+      "session_id": "sess-a-1",
+      "event_type": "order.placed",
+      "canonical_event": "purchase",
+      "occurred_at": "2026-01-15T09:59:30Z",
+      "provenance": "FACT",
+      "mirror_of": "ORD-A-1",
+      "context": {
+        "user_agent": "synthetic-agent/1.0",
+        "ip_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "locale": "zh-TW",
+        "page_url": "https://shop.example.invalid/checkout/complete",
+        "consent_granted": true
+      },
+      "data": {
+        "order_id": "ORD-A-1",
+        "order_number": "T1-0001",
+        "grand_total": 1000,
+        "payment_method": "ecpay_credit",
+        "item_count": 1
+      }
+    },
+    {
+      "event_id": "evt_a_cart_add_1",
+      "tenant_id": "11111111-1111-1111-1111-111111111111",
+      "correlation_id": "corr-a-3",
+      "customer_id": "cust-a",
+      "anonymous_id": "anon_a",
+      "session_id": "sess-a-1",
+      "event_type": "cart.add",
+      "canonical_event": "add_to_cart",
+      "occurred_at": "2026-01-15T09:59:00Z",
+      "provenance": "SIGNAL",
+      "context": {
+        "user_agent": "synthetic-agent/1.0",
+        "ip_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "locale": "zh-TW",
+        "page_url": "https://shop.example.invalid/cart",
+        "consent_granted": true
+      },
+      "data": {
+        "cart_id": "cart-a-1",
+        "sku_id": "SKU-OK",
+        "delta_quantity": 1,
+        "unit_price": 1000,
+        "total_cart_value": 1000
+      }
+    },
+    {
+      "event_id": "evt_a_cart_remove_1",
+      "tenant_id": "11111111-1111-1111-1111-111111111111",
+      "correlation_id": "corr-a-4",
+      "customer_id": "cust-a",
+      "anonymous_id": "anon_a",
+      "session_id": "sess-a-1",
+      "event_type": "cart.remove",
+      "canonical_event": null,
+      "occurred_at": "2026-01-15T09:59:10Z",
+      "provenance": "SIGNAL",
+      "context": {
+        "consent_granted": true
+      },
+      "data": {
+        "cart_id": "cart-a-1",
+        "sku_id": "SKU-OK",
+        "delta_quantity": -1,
+        "unit_price": 1000,
+        "total_cart_value": 0
+      }
+    },
+    {
+      "event_id": "evt_late_view_1",
+      "tenant_id": "11111111-1111-1111-1111-111111111111",
+      "correlation_id": "corr-a-5",
+      "customer_id": "cust-a",
+      "anonymous_id": "anon_a",
+      "session_id": "sess-a-1",
+      "event_type": "product.view",
+      "canonical_event": "product_view",
+      "occurred_at": "2026-01-15T09:58:30Z",
+      "ingested_at": "2026-01-15T10:04:00Z",
+      "provenance": "SIGNAL",
+      "context": {
+        "consent_granted": true
+      },
+      "data": {
+        "product_id": "prod-mug",
+        "sku": "SKU-OK",
+        "category_id": "home",
+        "list_price": 1000,
+        "currency": "TWD"
+      }
+    },
+    {
+      "event_id": "evt_anon_1",
+      "tenant_id": "11111111-1111-1111-1111-111111111111",
+      "correlation_id": "corr-anon-1",
+      "anonymous_id": "anon_guest_1",
+      "session_id": "sess-guest-1",
+      "event_type": "search.query",
+      "canonical_event": "search",
+      "occurred_at": "2026-01-15T09:57:00Z",
+      "provenance": "SIGNAL",
+      "context": {
+        "consent_granted": false
+      },
+      "data": {
+        "query_text": "ceramic mug",
+        "results_count": 3
+      }
+    }
+  ]
+}

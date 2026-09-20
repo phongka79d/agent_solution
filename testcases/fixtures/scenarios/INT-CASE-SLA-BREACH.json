@@ -1,0 +1,91 @@
+{
+  "id": "INT-CASE-SLA-BREACH",
+  "title": "SLA breach and priority ordering are observable on the case queue",
+  "document": "integration/case-fsm.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "CS-01",
+    "NFR-009",
+    "SRS-20"
+  ],
+  "facets": [
+    "entity:Service Case",
+    "kpi:Resolution Time",
+    "kpi:First Response Time"
+  ],
+  "risk": "Breached cases are invisible in the queue, so customers with the oldest problems keep waiting while the dashboard reports a healthy service level.",
+  "preconditions": [
+    "Tenant T1 with four cases at priorities P1..P4 and sla_due_at 2026-01-15T18:00:00Z in namespace cd-sla-*",
+    "Queue read at 2026-01-15T19:30:00Z, after two due times have passed"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "cases": [
+      {
+        "case_number": "CASE-T1-0011",
+        "priority": "P1",
+        "sla_due_at": "2026-01-15T11:00:00Z"
+      },
+      {
+        "case_number": "CASE-T1-0012",
+        "priority": "P4",
+        "sla_due_at": "2026-01-15T18:00:00Z"
+      }
+    ],
+    "read_at": "2026-01-15T19:30:00Z"
+  },
+  "steps": [
+    {
+      "action": "Read the case queue ordered by priority and SLA due time",
+      "expected": "P1 cases precede P4 cases, and within a priority the earliest sla_due_at comes first"
+    },
+    {
+      "action": "Read the breach flags at the observation timestamp",
+      "expected": "CASE-T1-0011 is flagged breached with the elapsed overrun and CASE-T1-0012 is not flagged"
+    },
+    {
+      "action": "Attempt to assign priority P5 to a case",
+      "expected": "the assignment is refused and the priority vocabulary stays P1..P4"
+    },
+    {
+      "action": "Read the Resolution Time and First Response Time inputs for the breached case",
+      "expected": "both inputs are derived from the case timestamps and the breach is reflected rather than hidden"
+    }
+  ],
+  "assertions": [
+    "The queue ordering matches priority then earliest due time, with the breached P1 case first",
+    "Exactly one of the two cases is flagged breached at the observation timestamp",
+    "Resolution Time and First Response Time inputs reflect the case timestamps including the breach"
+  ],
+  "forbidden": [
+    "Hide a breached case from the operator queue",
+    "Accept a priority outside P1..P4"
+  ],
+  "evidence": [
+    "Queue listing with priority, sla_due_at and breach flag per case",
+    "KPI input rows for the breached case (first response and resolution timings)"
+  ],
+  "cleanup": [
+    "Delete the run-scoped cases for cd-sla-*; keep KPI inputs for the run window only"
+  ],
+  "automation": "Freeze the clock at a point after the due time so breach detection is deterministic; the oracle is the queue ordering and the breach flag, both read through the real projection.",
+  "prerequisites": [],
+  "references": [
+    "implement/03-database-and-memory-schema.md",
+    "implement/07-human-command-center-ui.md",
+    "plans/platform/workflows-and-handoffs.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/platform.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

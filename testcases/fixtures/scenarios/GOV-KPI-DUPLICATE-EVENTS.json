@@ -1,0 +1,112 @@
+{
+  "id": "GOV-KPI-DUPLICATE-EVENTS",
+  "title": "Duplicate and repeat events are counted once by event identity",
+  "document": "governance/kpi.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P1",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SRS-20",
+    "BR-006",
+    "NFR-003"
+  ],
+  "facets": [
+    "kpi:Duplicate Execution",
+    "kpi:Campaign Revenue",
+    "kpi:Lead-to-Order Conversion"
+  ],
+  "risk": "The same purchase or lead is ingested twice and counted twice, so revenue and conversion double while the duplicate-execution invariant still reads zero.",
+  "preconditions": [
+    "Namespace gov-kpi-<case_id>-<worker_id>; the metric is computed by the real reporting code over fixtures/offline/governance.json kpi_dataset and never copied from the dashboard payload.",
+    "Frozen clock 2026-01-15T10:00:00Z with the reporting window 2026-01-01T00:00:00Z .. 2026-02-01T00:00:00Z as a half-open interval; the stored aggregate is recomputed independently from the raw counter rows.",
+    "kpi_edge.duplicate_events contains one repeated event_id, a second event_id for the same order, and a retry delivery of the first event.",
+    "The ingestion layer deduplicates on the event identity and the effect_key, not on the raw payload."
+  ],
+  "inputs": {
+    "duplicate_dataset": {
+      "events": [
+        {
+          "event_id": "evt-1",
+          "type": "purchase",
+          "order_id": "ORD-A-1",
+          "received_at": "2026-01-10T10:00:00Z"
+        },
+        {
+          "event_id": "evt-1",
+          "type": "purchase",
+          "order_id": "ORD-A-1",
+          "received_at": "2026-01-10T10:00:05Z"
+        },
+        {
+          "event_id": "evt-2",
+          "type": "purchase",
+          "order_id": "ORD-A-1",
+          "received_at": "2026-01-10T10:00:06Z"
+        }
+      ],
+      "expected_distinct_orders": 1,
+      "expected_purchase_events": 1
+    },
+    "expected": {
+      "distinct_purchase_events": 1,
+      "distinct_orders": 1,
+      "duplicate_suppressed": 2,
+      "orders_counted": 1
+    }
+  },
+  "steps": [
+    {
+      "action": "Ingest the three event deliveries",
+      "expected": "One purchase event is accepted and two deliveries are suppressed as duplicates or repeats, each with its own reason and correlation id."
+    },
+    {
+      "action": "Compute the purchase-denominated metrics over the ingested set",
+      "expected": "The order is counted once in paid revenue, order count and conversion; the revenue figure does not double."
+    },
+    {
+      "action": "Compare the duplicate-execution invariant with the suppression log",
+      "expected": "The suppressed deliveries are ingestion duplicates, so the invariant stays 0 and the suppression count is reported separately rather than folded into it."
+    },
+    {
+      "action": "Replay the first delivery once more after the dedup window",
+      "expected": "The replay is still recognised through the durable effect_key record and still adds no second order or revenue row."
+    }
+  ],
+  "assertions": [
+    "Distinct purchase events equal distinct orders for the window: one order, one revenue row, one conversion numerator count.",
+    "Suppressed duplicate deliveries are reported with their reason and never counted as executed actions, so the zero-duplicate invariant stays meaningful.",
+    "Revenue, order count and conversion are all derived from the deduplicated set, so no metric double counts the same purchase.",
+    "Replays after the dedup window are caught by the durable record rather than by the ephemeral cache."
+  ],
+  "forbidden": [
+    "Counting both deliveries of the same event_id as purchases.",
+    "Treating a duplicate ingestion as a duplicate execution in the safety invariant.",
+    "Dropping the second event_id because it shares an order id, which would lose a legitimate second event."
+  ],
+  "evidence": [
+    "Suppression log with reasons and correlation ids per delivery.",
+    "Recomputed revenue and order count tables showing one row.",
+    "Effect-key dedup record for the post-window replay."
+  ],
+  "cleanup": [
+    "Delete gov- raw event deliveries, aggregate rows and effect-key entries after export."
+  ],
+  "automation": "The reporting service and the metric dictionary run as real code under test over the frozen KPI dataset; the dashboard is a consumer whose displayed value must equal the independently recomputed value. Waits are condition-based on the stored aggregate row, metric values are never supplied as inputs, and no vendor boundary is involved in the arithmetic.",
+  "prerequisites": [],
+  "references": [
+    "plans/delivery/analytics.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/events.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

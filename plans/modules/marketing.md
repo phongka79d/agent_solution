@@ -2,7 +2,7 @@
 
 [Mục lục](../README.md) · [Hành trình](../customer-lifecycle.md) · [Thuật ngữ](../glossary.md)
 
-Trạng thái: thiết kế đề xuất. P0 nghiên cứu có người làm; P1 chỉ lưu nguồn/yêu cầu qua lõi, **chưa bật mô-đun Tiếp thị tự động**. P2/P3 mở các năng lực dưới đây theo [lộ trình](../delivery/mvp-and-roadmap.md).
+Trạng thái: thiết kế đề xuất. P0 nghiên cứu có người làm; P1 chỉ Chăm sóc, lưu nguồn/yêu cầu qua lõi, **chưa bật mô-đun Tiếp thị tự động**. Các năng lực dưới đây mở tại **P3 (Marketing Pilot)** theo [lộ trình](../delivery/mvp-and-roadmap.md); P2 là Sales Pilot, không bao gồm năng lực Tiếp thị.
 
 <a id=section-6></a>
 
@@ -47,7 +47,7 @@ MKT-05 điều phối quy trình chiến dịch 8 bước khép kín theo yêu c
 [Approval] (Human Manager / AUTH-4: Phê duyệt ngân sách & nội dung)
    │
    ▼
-[Publish] (Connector Dispatcher: Đẩy nội dung lên kênh chỉ định)
+[Publish] (Connector Dispatcher: chỉ đẩy nội dung lên kênh sau khi có bản ghi phê duyệt AUTH-4 tại SCR-003)
    │
    ▼
 [Monitor] (MKT-06: Giám sát tín hiệu, click, tương tác thời gian thực)
@@ -70,13 +70,15 @@ Theo Mục 11 của SRS, các Agent Tiếp thị gọi các Skill chuyên trách
 
 | Mã Skill (Skill ID) | Mục đích (Purpose) | Agent được phép dùng | Quyền hạn yêu cầu | Tool / Connector | Quy tắc kiểm tra (Validation) & Audit |
 |---|---|---|---|---|---|
-| `analyze-market-signal` | Phân tích tín hiệu nhu cầu, xu hướng tìm kiếm và cơ hội thị trường | MKT-01 | AUTH-1 (Recommend) | Market Research DB / Event Ingestion | Lọc tín hiệu hợp lệ; không suy đoán số liệu chưa kiểm chứng |
-| `segment-audience` | Phân tích cohort/segment dựa trên hành vi và giao dịch hợp lệ | MKT-02 | AUTH-1 (Recommend) | Customer 360 Ingestion Layer | Loại trừ khách hàng chưa có consent hoặc đã rút consent (BR-004) |
-| `check-consent` | Xác minh trạng thái đồng ý nhận tiếp thị theo từng kênh cụ thể | MKT-02, MKT-05 | AUTH-0 (Observe) | Consent Store (API-002) | Kiểm tra bắt buộc trước mọi chiến dịch; fail closed nếu thiếu consent |
-| `generate-content` | Sáng tạo bản thảo nội dung quảng cáo, bài viết, email theo brief | MKT-03 | AUTH-2 (Draft) | LLM Generator / Brand Template | Bắt buộc đối chiếu sổ tay thương hiệu; gắn thẻ bản nháp (Draft) |
-| `audit-brand-compliance` | Thẩm định tone of voice, tuyên bố tính năng, giá và từ cấm | MKT-04 | AUTH-1 (Review/Verify) | Brand Knowledge Base (/brand) | Đối chiếu 100% với bảng giá ERP và danh mục tuyên bố cấm |
-| `dispatch-campaign` | Phát hành nội dung chiến dịch ra các kênh quảng cáo/mạng xã hội | MKT-05 | AUTH-4 (Approval Required) | Communication Gateway (API-003) | Bắt buộc có bản ghi phê duyệt tại SCR-003; gắn mã `effect_key` |
-| `evaluate-attribution` | Đo lường hiệu quả chiến dịch, tính CAC, ROAS và quy thuộc doanh thu | MKT-06 | AUTH-0 (Observe) | Analytics Engine / ERP Reconciliation | Đối soát đơn hàng thực tế qua ERP; không suy đoán doanh thu ảo |
+| `skill.mkt.analyze_market_signal` (bí danh hiển thị: `analyze-market-signal`) | Phân tích tín hiệu nhu cầu, xu hướng tìm kiếm và cơ hội thị trường | MKT-01, MKT-02 | AUTH-1 (Recommend) | API-002 Event Ingestion | Lọc tín hiệu hợp lệ; không suy đoán số liệu chưa kiểm chứng |
+| `skill.mkt.segment_audience` (bí danh hiển thị: `segment-audience`) | Phân tích cohort/segment dựa trên hành vi và giao dịch hợp lệ | MKT-02, MKT-05 | AUTH-1 (Recommend) | Customer 360 Store | Loại trừ khách hàng chưa có consent hoặc đã rút consent (BR-004) |
+| `skill.mkt.check_consent` (bí danh hiển thị: `check-consent`) | Xác minh trạng thái đồng ý nhận tiếp thị theo từng kênh cụ thể | MKT-02, MKT-05, SAL-04 | AUTH-3 (chốt chặn trước khi gửi) | Consent Store (API-002) | Kiểm tra bắt buộc trước mọi chiến dịch; fail closed nếu thiếu consent |
+| `skill.mkt.generate_content` (bí danh hiển thị: `generate-content`) | Sáng tạo bản thảo nội dung quảng cáo, bài viết, email theo brief | MKT-03 | AUTH-2 (Draft) | LLM Content Engine | Bắt buộc đối chiếu sổ tay thương hiệu; gắn thẻ bản nháp (Draft) |
+| `skill.mkt.audit_brand_compliance` (bí danh hiển thị: `audit-brand-compliance`) | Thẩm định tone of voice, tuyên bố tính năng, giá và từ cấm | MKT-04 | AUTH-1 (Review/Verify) | Second Brain (`/brand/`) | Đối chiếu 100% với bảng giá ERP và danh mục tuyên bố cấm |
+| `skill.mkt.dispatch_campaign` (bí danh hiển thị: `dispatch-campaign`) | Phát hành nội dung chiến dịch ra các kênh quảng cáo/mạng xã hội | MKT-05 | AUTH-4 (Approval Required) | API-003 Communication | Bắt buộc có bản ghi phê duyệt tại SCR-003 kèm chữ ký phê duyệt; gắn mã `effect_key` |
+| `skill.mkt.evaluate_attribution` (bí danh hiển thị: `evaluate-attribution`) | Đo lường hiệu quả chiến dịch, tính CAC, ROAS và quy thuộc doanh thu | MKT-06 | AUTH-1 (Recommend) | Analytics Store | Đối soát đơn hàng thực tế qua ERP; không suy đoán doanh thu ảo |
+
+Mã định danh skill dùng dạng phân cấp `skill.mkt.<action>` theo Registry nền tảng tại [quy trình](../platform/workflows-and-handoffs.md); tên kebab trần chỉ là bí danh hiển thị và không được dùng làm ID trong Registry hay audit log.
 
 ## 3. Tiếp nhận, phân loại và chuyển giao bán hàng
 
@@ -88,7 +90,7 @@ Theo Mục 11 của SRS, các Agent Tiếp thị gọi các Skill chuyên trách
 4. **Thu thập thông tin tối thiểu:** Hỏi thông tin cần thiết theo từng bước, ghi nhận các trường chưa rõ là chưa biết, không suy đoán.
 5. **Chấm điểm tiềm năng (Scoring):** MKT-02 chấm mức độ phù hợp và quan tâm theo bộ quy tắc có phiên bản rõ ràng, giới hạn điểm hành vi và loại bỏ các lượt tương tác trùng lặp.
 6. **Chuyển giao bán hàng (Handoff to SAL-01):** Khách hàng có điểm sẵn sàng mua cao được bàn giao sang Bán hàng (SAL-01) kèm đầy đủ Lý do (Reason) và Bằng chứng (Evidence). Bán hàng thẩm định lại điều kiện, không mặc định coi điểm cao là đủ chuẩn mua hàng.
-7. **Chăm sóc nuôi dưỡng:** Khách hàng chưa sẵn sàng mua chỉ được đưa vào danh sách nuôi dưỡng nếu có đủ sự đồng thuận (Consent) theo đúng kênh và mục đích; luôn duy trì khả năng giải đáp câu hỏi chủ động của khách.
+7. **Chăm sóc nuôi dưỡng (P3):** Khách hàng chưa sẵn sàng mua chỉ được đưa vào danh sách nuôi dưỡng nếu có đủ sự đồng thuận (Consent) theo đúng kênh và mục đích; luôn duy trì khả năng giải đáp câu hỏi chủ động của khách.
 
 Lượt xem trang, thêm vào yêu thích hoặc thời gian dừng trên trang lớn hơn 8 giây chỉ là tín hiệu tương tác sơ bộ, không cấu thành bằng chứng ý định mua. Không áp dụng công thức chấm điểm tùy tiện cho mọi ngành hàng.
 
@@ -98,11 +100,12 @@ Tính năng sau P1 có thể gồm lưu sản phẩm chưa đăng nhập, hướ
 
 Giới hạn hiển thị gợi ý tự động là tối đa 1 lần/24 giờ/thiết bị khi kích hoạt tính năng; tham số 8 giây là giá trị thử nghiệm. Không tự bật gợi ý khi cửa sổ chat hoặc giỏ hàng đang mở, không cản trở hành vi mua sắm và không ép buộc cung cấp số điện thoại. Hành động khách hàng chủ động nhấn nút trợ giúp không tính là gợi ý tự bật.
 
-Các kênh phân phối Zalo, LINE, Facebook, Email chỉ kích hoạt khi bộ kết nối và điều kiện đồng thuận hiện hành đã được xác nhận. Hộp kiểm nhận thông tin tiếp thị phải tách biệt với số điện thoại giao hàng, không được chọn sẵn.
+Các kênh phân phối Zalo, LINE, Facebook, Email chỉ kích hoạt khi bộ kết nối đã được duyệt (adapter cụ thể là hiện thực tùy chọn **[UNCONFIRMED][ASM-001]**), điều kiện đồng thuận hiện hành đã xác nhận và hành động phát ra ngoài đã có phê duyệt AUTH-4 tại SCR-003. Hộp kiểm nhận thông tin tiếp thị phải tách biệt với số điện thoại giao hàng, không được chọn sẵn.
 
 ### Kiểm soát ngân sách và chốt chặn an toàn (Budget & Safety Controls)
 - **AUTH-4 Bắt buộc cho Ngân sách:** AI Tiếp thị (MKT-01, MKT-05) chỉ có quyền lập đề xuất kế hoạch ngân sách (Draft/Recommend), tuyệt đối không có quyền tự cấp phát hay tự động giải ngân chi phí quảng cáo.
-- **Trần ngân sách kép (Dual-Cap):** Mọi chiến dịch bắt buộc phải cấu hình trần ngân sách ngày (Daily Budget Cap) và trần tổng ngân sách chiến dịch (Total Campaign Cap). Khi chi phí chạm 95% hạn mức, hệ thống phát cảnh báo; khi chạm 100%, hệ thống tự động tạm dừng chiến dịch (Fail Closed).
+- **AUTH-4 Bắt buộc cho mọi hành động phát ra ngoài:** mọi bước xuất bản/gửi chiến dịch qua bất kỳ kênh nào chỉ chạy sau khi có bản ghi phê duyệt của con người tại SCR-003; thiếu phê duyệt thì bị chặn (TC-E2E-002) và sinh audit event. Đây là chốt chặn cố định, không phụ thuộc ngưỡng số.
+- **Trần ngân sách kép (Dual-Cap):** Mọi chiến dịch bắt buộc phải cấu hình trần ngân sách ngày (Daily Budget Cap) và trần tổng ngân sách chiến dịch (Total Campaign Cap). Khi chi phí chạm ngưỡng cảnh báo (mặc định đề xuất 95% hạn mức), hệ thống phát cảnh báo; khi chạm 100%, hệ thống tự động tạm dừng chiến dịch (Fail Closed). Ngưỡng cảnh báo do cấu hình tenant khóa, không hardcode.
 - **Phân định rõ ràng dòng chi phí:** Tách bạch chi phí truyền thông trực tiếp (Ad Spend), chi phí chi trả đối tác B2B2C và chi phí trợ cấp giá/ưu đãi khách hàng để tránh tính trùng hai lần vào biên đóng góp (Contribution Margin).
 
 ## 5. Tiêu chí nghiệm thu kỹ thuật & Hệ chỉ số KPI chuẩn SRS
@@ -131,11 +134,13 @@ Hiệu quả hoạt động của hệ thống Agent Tiếp thị (MKT-01 đến
 - **CAC (Customer Acquisition Cost):** Chi phí thu hút một khách hàng mới, tính đủ media spend, đối tác và ưu đãi.
 - **ROAS (Return on Ad Spend):** Doanh thu thu về trên mỗi đồng ngân sách quảng cáo được duyệt.
 - **Cost per Lead:** Chi phí trung bình trên mỗi đầu mối tiếp thị hợp lệ.
-- **Engagement & Brand Safety Rate:** Tỷ lệ tương tác thực và tỷ lệ vi phạm chính sách thương hiệu (phải duy trì bằng 0 nhờ MKT-04).
+- **Engagement & Brand Safety Rate:** Tỷ lệ tương tác thực và tỷ lệ vi phạm chính sách thương hiệu; mục tiêu **bắt buộc 0 vi phạm** (bất biến an toàn nhờ MKT-04), không phải chỉ số tối ưu.
 
 ---
 
 # PHẦN 2: KỊCH BẢN NGHIÊN CỨU THỊ TRƯỜNG & ĐỐI TÁC B2B2C (DOMAIN PLAYBOOKS)
+
+*Các playbook dưới đây là đề xuất tùy chọn; mọi ngưỡng số (chu kỳ bổ sung, trần voucher/Basket Cap, bán kính trạm, tỷ lệ chiết khấu...) là **ví dụ minh họa chưa được phê duyệt**, phải do cấu hình tenant khóa trước khi dùng.*
 
 ## MKT-RS-001: Market Opportunity Canvas — Phiếu cơ hội nghiên cứu tín hiệu trước nhu cầu
 

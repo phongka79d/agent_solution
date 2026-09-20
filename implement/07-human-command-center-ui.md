@@ -1,5 +1,13 @@
 # Implement 07: Human Command Center UI & Storefront Customer Widget Specification
 
+> **BLUEPRINT STATUS — Gate P0 target design, not an inventory of existing files.**
+> Every Next.js route, React component, Zustand store, hook, CSS fragment, widget bundle, and TypeScript
+> sample below is a **target blueprint for the Gate P0 (Foundation) build** (SRS AI-REV-SRS-001 §24). None of
+> them exists in this documentation-only repository, and no UI can be built, served, or clicked today.
+> Screen contracts reference the SRS codes SCR-001..SCR-005; sample figures in the mock-ups are
+> **illustrative**, and numeric budgets/latency targets are **provisional pending ASM-002 and the NFR-009
+> benchmark**.
+
 ## 1. System Overview & Architecture
 
 The Human Command Center is the centralized operational and governance interface for the AI Revenue Platform. It provides business operators, sales supervisors, and customer support engineers with real-time observability, policy enforcement, interactive session takeovers, and auditability across all autonomous agents.
@@ -19,7 +27,7 @@ The Human Command Center is the centralized operational and governance interface
 |         State Management: Zustand Stores (Telemetry, Approvals, Session)          |
 +-----------------------------------------------------------------------------------+
               ^                                                 ^
-              | SSE (/api/v1/telemetry/stream)                  | WS (/ws/v1/stream)
+              | SSE (/api/v1/telemetry/stream)                  | WS (/api/v1/ws/stream)
               v                                                 v
 +-----------------------------------------------------------------------------------+
 |                                Core Platform API Gateway                          |
@@ -40,7 +48,7 @@ The Human Command Center is the centralized operational and governance interface
 - **State Management**: Zustand stores with fine-grained selectors and `immer` middleware to eliminate unnecessary re-renders.
 - **Real-Time Data Layer**:
   - **Server-Sent Events (SSE)** via HTTP/2 for unidirectional telemetry, live analytics streaming, and queue updates (`/api/v1/telemetry/stream`).
-  - **WebSocket (`/ws/v1/stream`)** with exponential reconnect backoff and ping/pong heartbeats (30s interval) for bidirectional chat monitoring, operator keystroke sync, and session takeover mutex locking.
+  - **WebSocket (`/api/v1/ws/stream`)** with exponential reconnect backoff and ping/pong heartbeats (30s interval) for bidirectional chat monitoring, operator keystroke sync, and session takeover mutex locking.
 - **Styling & UI Library**: Tailwind CSS with CSS Variables for theming, Radix UI primitives for unstyled, accessible modals, tooltips, and dropdowns.
 - **Icons**: Lucide-React SVG icons (strictly non-emoji UI).
 
@@ -92,12 +100,21 @@ export function useTenant(): TenantContextValue {
 ### 2.1 Screen Purpose & Real-Time KPIs
 SCR-001 delivers high-level business intelligence to C-level executives, sales leaders, and marketing directors. It tracks aggregated revenue attribution, agent work volume, conversion lift, and operational anomalies.
 
+**Baseline metric contract (SRS §18 SCR-001):** the screen MUST present all ten baseline indicators — **Revenue, Leads, Conversion, Active Campaigns, AI Generated Revenue, CS status, Retention, AI Actions, Approval Pending, Abnormal Events**. No numeric target is fixed here: all example figures below are **illustrative sample values**, and every KPI target is provisional pending ASM-002 (baseline data) and NFR-009 (performance benchmark).
+
 ```
 +------------------------------------------------------------------------------------+
-| EXECUTIVE DASHBOARD                                        Tenant: ACME-ECOM-01    |
+| EXECUTIVE DASHBOARD (SCR-001)                         Tenant: ACME-ECOM-01        |
+| Sample/demo values only — not measured business data                               |
 +------------------------------------------------------------------------------------+
-| [ Total Revenue ]     [ AI Attributed Rev ]   [ AI Conversion ]   [ Active Anom ]  |
-| $1,284,500 (+14%)     $342,120 (26.6%)        4.82% (+1.2% vs BM) 0 Critical       |
+| [ Revenue ]          [ Leads ]         [ Conversion ]      [ Active Campaigns ]     |
+| 1,284,500 (+14%)     3,940 (MQL 812)   4.82% (+1.2% vs BM)  6 live / 2 in approval  |
++------------------------------------------------------------------------------------+
+| [ AI Generated Rev ] [ CS Status ]           [ Retention ]   [ AI Actions ]          |
+| 342,120 (26.6%)      FRT 41s | Escal 7.4%    Repeat 38.1%    22,760 executed         |
++------------------------------------------------------------------------------------+
+| [ Approval Pending ]      [ Abnormal Events ]                                      |
+| 4 awaiting sign-off       2 warnings / 0 critical                                   |
 +------------------------------------------------------------------------------------+
 | REVENUE ATTRIBUTION STREAM (Real-time vs Baseline)                                 |
 | [Line Chart: Total Rev vs Baseline Cohort vs Direct AI Assisted Cart Recovery]     |
@@ -109,38 +126,80 @@ SCR-001 delivers high-level business intelligence to C-level executives, sales l
 +------------------------------------------------------------------------------------+
 ```
 
+Each of the ten indicators maps to an explicit payload field (see `ExecutiveMetricsPayload` below); any indicator without a live source renders as `NOT_INSTRUMENTED` rather than a fabricated number. This single mock-up is the authoritative SCR-001 layout.
+
 ### 2.2 Component Hierarchy & Data Contracts
 ```
 app/(dashboard)/executive/
 ├── page.tsx                           // Server Component (Data prefetch)
 ├── loading.tsx                        // Suspense Skeleton
 ├── components/
-│   ├── MetricCardGrid.tsx             // RSC: Renders 4 primary KPI metrics
+│   ├── MetricCardGrid.tsx             // RSC: Renders all 10 baseline SCR-001 indicator cards
 │   ├── RevenueAttributionChart.tsx    // Client Component: Streaming canvas
 │   ├── AgentActivitySpectrum.tsx      // RSC + SSE hydration
 │   └── AnomalyAlertFeed.tsx           // Client Component: WebSocket subscriber
 ```
 
 #### Metric Payload Schema
+The ten baseline indicators of SRS §18 SCR-001 map one-to-one onto the fields below — (1) Revenue → `totalRevenue`/`organicBaselineRevenue`, (2) Leads → `leads`, (3) Conversion → `conversionRate`, (4) Active Campaigns → `activeCampaigns`, (5) AI Generated Revenue → `aiAttributedRevenue`, (6) CS status → `customerServiceStatus`, (7) Retention → `retention`, (8) AI Actions → `aiActions`, (9) Approval Pending → `approvalPending`, (10) Abnormal Events → `abnormalEvents`. A field whose upstream source is silent is emitted as `null` and the card renders `NOT_INSTRUMENTED`; it is never substituted with a fabricated figure.
+
 ```typescript
 export interface ExecutiveMetricsPayload {
   readonly tenantId: string;
   readonly timestamp: string; // ISO 8601 UTC
   readonly metrics: {
+    /** 1. Revenue */
     readonly totalRevenue: number;
     readonly organicBaselineRevenue: number;
+    /** 2. Leads */
+    readonly leads: {
+      readonly total: number;
+      readonly marketingQualified: number;
+    };
+    /** 3. Conversion */
+    readonly conversionRate: {
+      readonly overallPercent: number;
+      readonly aiAssisted: number;
+      readonly unassisted: number;
+      readonly relativeLiftPercent: number;
+    };
+    /** 4. Active Campaigns */
+    readonly activeCampaigns: {
+      readonly liveCount: number;
+      readonly pendingApprovalCount: number;
+    };
+    /** 5. AI Generated Revenue */
     readonly aiAttributedRevenue: {
       readonly directCheckout: number;
       readonly cartRecovery: number;
       readonly crossSellUpsell: number;
       readonly total: number;
+      readonly shareOfTotalRevenuePercent: number;
     };
-    readonly conversionRate: {
-      readonly aiAssisted: number;
-      readonly unassisted: number;
-      readonly relativeLiftPercent: number;
+    /** 6. CS status */
+    readonly customerServiceStatus: {
+      readonly firstResponseSeconds: number;
+      readonly escalationRatePercent: number;
+      readonly openTicketCount: number;
     };
-    readonly activeAnomaliesCount: number;
+    /** 7. Retention */
+    readonly retention: {
+      readonly repeatCustomerRatePercent: number;
+      readonly churnRatePercent: number;
+    };
+    /** 8. AI Actions */
+    readonly aiActions: {
+      readonly executedCount: number;
+    };
+    /** 9. Approval Pending */
+    readonly approvalPending: {
+      readonly awaitingSignOffCount: number;
+    };
+    /** 10. Abnormal Events */
+    readonly abnormalEvents: {
+      readonly warningCount: number;
+      readonly criticalCount: number;
+    };
   };
 }
 ```
@@ -579,10 +638,10 @@ export function AgentOperationsConsole({
 ## 4. SCR-003: Approval Center Specification
 
 ### 4.1 Screen Purpose & Risk Governance
-SCR-003 is the mandatory human-in-the-loop checkpoint for high-risk operations classified under **AUTH-4**. Operations are held in a durable `awaiting_human` state until an authorized human operator reviews and executes one of the 5 standardized actions.
+SCR-003 is the mandatory human-in-the-loop checkpoint for high-risk operations classified under **AUTH-4**. Operations are held in a durable `awaiting_human` task state until an authorized human operator reviews the evidence and submits one of the 5 standardized decisions.
 
-### 4.2 Standardized 5 Actions Workflow
-Every item in the approval queue supports exactly five atomic operations:
+### 4.2 Standardized 5 Decisions Workflow
+Every item in the approval queue supports exactly five atomic decisions, submitted through the single authoritative route `POST /api/v1/approvals/{id}/decision` (see `06-api-and-connectors-spec.md` §1). The `decision` enum is **`APPROVE` | `REJECT` | `MODIFY` | `PAUSE` | `CANCEL`**, and the resulting approval states are **`APPROVED` | `REJECTED` | `MODIFIED` | `PAUSED` | `CANCELLED`**. There is no separate `/execute` route.
 
 ```
 +-----------------------------------------------------------------------------+
@@ -595,20 +654,22 @@ Every item in the approval queue supports exactly five atomic operations:
 |   Estimated Budget Consumption: 186,750 TWD                                 |
 |   Floor Price Compliance: PASS (All SKU prices >= P_floor)                   |
 +-----------------------------------------------------------------------------+
-| Available Operator Actions:                                                 |
-|  [ 1. Approve ]      -> Signs payload with HMAC token, releases to queue    |
-|  [ 2. Reject ]       -> Rejects with mandatory reason code, terminates task |
-|  [ 3. Modify ]       -> Opens schema form to edit payload before re-check   |
-|  [ 4. Pause ]        -> Freezes workflow step timer for investigation       |
-|  [ 5. Cancel ]       -> Terminates run and releases all atomic reservations |
+| Available Operator Decisions (decision enum):                               |
+|  [ 1. APPROVE ]  -> Signs payload with HMAC token, releases to queue        |
+|  [ 2. REJECT ]   -> Rejects with mandatory reason code, terminates task     |
+|  [ 3. MODIFY ]   -> Opens schema form to edit payload before re-check       |
+|  [ 4. PAUSE ]    -> Freezes workflow step timer for investigation           |
+|  [ 5. CANCEL ]   -> Terminates run and releases all atomic reservations     |
 +-----------------------------------------------------------------------------+
 ```
 
-1. **Approve**: Operator verifies evidence. Core generates a cryptographically signed approval ticket (`approver_id`, `timestamp`, `signature`), transitioning the task from `awaiting_human` to `queued` for execution.
-2. **Reject**: Requires selection of a standardized rejection code (`BUDGET_EXCEEDED`, `BRAND_VIOLATION`, `UNACCEPTABLE_MARGIN`, `INAPPROPRIATE_TIMING`) plus freeform rationale. Transitions task to `stopped`.
-3. **Modify**: Opens an in-place JSON / structured form editor. Changes to parameters (e.g., lowering discount from 15% to 10% or trimming target audience) re-trigger deterministic business rules validation. If validated, the operator then submits as approved.
-4. **Pause**: Freezes the workflow execution timer without aborting. Sets state to `paused`. Used when internal inventory or external systems are undergoing maintenance.
-5. **Cancel**: Irrevocably aborts the workflow run, marks status as `aborted`, logs the action in the immutable audit store, and immediately releases any held atomic budget or inventory reservations.
+1. **`APPROVE`**: Operator verifies evidence. Core generates a cryptographically signed approval ticket (`approver_id`, `timestamp`, `signature`), transitioning the task from `awaiting_human` to `queued` for execution; the approval state becomes `APPROVED`.
+2. **`REJECT`**: Requires selection of a standardized rejection code (`BUDGET_EXCEEDED`, `BRAND_VIOLATION`, `UNACCEPTABLE_MARGIN`, `INAPPROPRIATE_TIMING`) plus freeform rationale; the approval state becomes `REJECTED` and the task terminates.
+3. **`MODIFY`**: Opens an in-place JSON / structured form editor. Changes to parameters (e.g., lowering discount from 15% to 10% or trimming target audience) re-trigger deterministic business rules validation; the modified payload is submitted as `modified_payload`, re-validated, then released to execution with approval state `MODIFIED`.
+4. **`PAUSE`**: Freezes the workflow execution timer without aborting it; the approval state becomes `PAUSED`. Used when internal inventory or external systems are undergoing maintenance.
+5. **`CANCEL`**: Irrevocably aborts the workflow run (approval state `CANCELLED`), logs the action in the immutable audit store, and immediately releases any held atomic budget or inventory reservations.
+
+`AWAITING_HUMAN` is the only undecided state; the other five states correspond one-to-one with the decision enum values.
 
 ### 4.3 Zustand Approval State Store
 ```typescript
@@ -619,6 +680,18 @@ Every item in the approval queue supports exactly five atomic operations:
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
+/** SCR-003 decision enum — the five baseline operator actions. This is the `decision` value sent to `POST /api/v1/approvals/{id}/decision`. */
+export type ApprovalDecision = 'APPROVE' | 'REJECT' | 'MODIFY' | 'PAUSE' | 'CANCEL';
+
+/** Approval states. `AWAITING_HUMAN` is the undecided queue state; the other five mirror `ApprovalDecisionResponse.status`. */
+export type ApprovalStatus =
+  | 'AWAITING_HUMAN'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'MODIFIED'
+  | 'PAUSED'
+  | 'CANCELLED';
+
 export interface ApprovalItem {
   readonly id: string;
   readonly runId: string;
@@ -628,18 +701,20 @@ export interface ApprovalItem {
   readonly payload: Record<string, unknown>;
   readonly riskReason: string;
   readonly expiresAt: string;
-  readonly status: 'awaiting_human' | 'approved' | 'rejected' | 'paused' | 'cancelled';
+  readonly status: ApprovalStatus;
 }
 
 interface ApprovalState {
   readonly items: Record<string, ApprovalItem>;
   readonly selectedItemId: string | null;
+  readonly operatorId: string | null;
   readonly setQueue: (items: ApprovalItem[]) => void;
   readonly selectItem: (id: string | null) => void;
+  readonly setOperator: (operatorId: string) => void;
   readonly executeAction: (
     id: string,
-    action: 'approve' | 'reject' | 'modify' | 'pause' | 'cancel',
-    meta?: { reason?: string; modifiedPayload?: Record<string, unknown> }
+    decision: ApprovalDecision,
+    meta: { reason: string; modifiedPayload?: Record<string, unknown> }
   ) => Promise<void>;
 }
 
@@ -647,6 +722,7 @@ export const useApprovalStore = create<ApprovalState>()(
   immer((set, get) => ({
     items: {},
     selectedItemId: null,
+    operatorId: null,
     setQueue: (items) => {
       set((state) => {
         state.items = items.reduce<Record<string, ApprovalItem>>((acc, item) => {
@@ -660,28 +736,42 @@ export const useApprovalStore = create<ApprovalState>()(
         state.selectedItemId = id;
       });
     },
-    executeAction: async (id, action, meta) => {
+    setOperator: (operatorId) => {
+      set((state) => {
+        state.operatorId = operatorId;
+      });
+    },
+    executeAction: async (id, decision, meta) => {
       const target = get().items[id];
+      const operatorId = get().operatorId;
       if (!target) return;
+      if (!operatorId) throw new Error('Approval decision requires an authenticated operator identity.');
 
-      const response = await fetch(`/api/v1/approvals/${id}/execute`, {
+      // Single authoritative approval route; the decision enum is exported verbatim.
+      const response = await fetch(`/api/v1/approvals/${id}/decision`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, ...meta }),
+        body: JSON.stringify({
+          decision,
+          operator_id: operatorId,
+          reason: meta.reason,
+          modified_payload: meta.modifiedPayload,
+        }),
       });
 
       if (!response.ok) {
-        throw new Error(`Failed to execute approval action: ${action}`);
+        throw new Error(`Failed to submit approval decision: ${decision}`);
       }
 
+      // Approve/Modify release the task to execution, Pause freezes it, Reject/Cancel terminate it.
       set((state) => {
-        if (action === 'approve') state.items[id].status = 'approved';
-        if (action === 'reject') state.items[id].status = 'rejected';
-        if (action === 'pause') state.items[id].status = 'paused';
-        if (action === 'cancel') state.items[id].status = 'cancelled';
-        if (action === 'modify' && meta?.modifiedPayload) {
+        if (decision === 'APPROVE') state.items[id].status = 'APPROVED';
+        if (decision === 'REJECT') state.items[id].status = 'REJECTED';
+        if (decision === 'PAUSE') state.items[id].status = 'PAUSED';
+        if (decision === 'CANCEL') state.items[id].status = 'CANCELLED';
+        if (decision === 'MODIFY' && meta.modifiedPayload) {
           state.items[id].payload = meta.modifiedPayload;
-          state.items[id].status = 'approved';
+          state.items[id].status = 'MODIFIED';
         }
       });
     },
@@ -713,15 +803,17 @@ export function ApprovalQueueList({
 }) {
   const getStatusBadge = (status: ApprovalItem['status']) => {
     switch (status) {
-      case 'awaiting_human':
+      case 'AWAITING_HUMAN':
         return 'bg-amber-950 text-amber-400 border-amber-800 animate-pulse';
-      case 'approved':
+      case 'APPROVED':
         return 'bg-emerald-950 text-emerald-400 border-emerald-800';
-      case 'rejected':
+      case 'MODIFIED':
+        return 'bg-emerald-950 text-teal-300 border-teal-800';
+      case 'REJECTED':
         return 'bg-rose-950 text-rose-400 border-rose-800';
-      case 'paused':
+      case 'PAUSED':
         return 'bg-sky-950 text-sky-400 border-sky-800';
-      case 'cancelled':
+      case 'CANCELLED':
         return 'bg-slate-800 text-slate-400 border-slate-700';
     }
   };
@@ -749,7 +841,7 @@ export function ApprovalQueueList({
                 <span className="font-semibold text-sm text-slate-100">{item.title}</span>
               </div>
               <span className={`px-2 py-0.5 text-[10px] font-mono rounded border ${getStatusBadge(item.status)}`}>
-                {item.status.toUpperCase()}
+                {item.status}
               </span>
             </div>
 
@@ -776,7 +868,7 @@ export function ApprovalQueueList({
 'use client';
 
 import React, { useState } from 'react';
-import { ApprovalItem } from '../../stores/useApprovalStore';
+import { ApprovalItem, ApprovalDecision } from '../../stores/useApprovalStore';
 
 export function ApprovalPayloadDiffModal({
   item,
@@ -787,8 +879,8 @@ export function ApprovalPayloadDiffModal({
   readonly onClose: () => void;
   readonly onExecute: (
     id: string,
-    action: 'approve' | 'reject' | 'modify' | 'pause' | 'cancel',
-    meta?: { reason?: string; modifiedPayload?: Record<string, unknown> }
+    decision: ApprovalDecision,
+    meta: { reason: string; modifiedPayload?: Record<string, unknown> }
   ) => Promise<void>;
 }) {
   const [isModifying, setIsModifying] = useState(false);
@@ -806,7 +898,7 @@ export function ApprovalPayloadDiffModal({
   const handleSaveModify = async () => {
     try {
       const parsed = JSON.parse(modifiedJson);
-      await onExecute(item.id, 'modify', { modifiedPayload: parsed });
+      await onExecute(item.id, 'MODIFY', { reason: 'OPERATOR_MODIFIED_PAYLOAD', modifiedPayload: parsed });
       setIsModifying(false);
       onClose();
     } catch {
@@ -819,7 +911,7 @@ export function ApprovalPayloadDiffModal({
       alert('Rejection reason code is mandatory.');
       return;
     }
-    await onExecute(item.id, 'reject', { reason: rejectReason });
+    await onExecute(item.id, 'REJECT', { reason: rejectReason });
     onClose();
   };
 
@@ -859,24 +951,24 @@ export function ApprovalPayloadDiffModal({
                 type="text"
                 value={rejectReason}
                 onChange={(e) => setRejectReason(e.target.value)}
-                placeholder="e.g. BUDGET_EXCEEDED, POOR_TIMING, MARGIN_VIOLATION"
+                placeholder="e.g. BUDGET_EXCEEDED, BRAND_VIOLATION"
                 className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 outline-none"
               />
             </div>
           )}
         </div>
 
-        {/* 5 Standardized Actions Bar */}
+        {/* 5 Standardized Decisions Bar (decision enum: APPROVE | REJECT | MODIFY | PAUSE | CANCEL) */}
         <div className="pt-4 border-t border-slate-800 flex justify-between items-center mt-4">
           <div className="flex gap-2">
             <button
-              onClick={() => onExecute(item.id, 'pause')}
+              onClick={() => onExecute(item.id, 'PAUSE', { reason: 'OPERATOR_PAUSED_FOR_INVESTIGATION' })}
               className="px-3 py-1.5 rounded text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-sky-400"
             >
               Pause
             </button>
             <button
-              onClick={() => onExecute(item.id, 'cancel')}
+              onClick={() => onExecute(item.id, 'CANCEL', { reason: 'OPERATOR_CANCELLED_RUN' })}
               className="px-3 py-1.5 rounded text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-400"
             >
               Cancel
@@ -918,7 +1010,7 @@ export function ApprovalPayloadDiffModal({
 
             <button
               onClick={() => {
-                onExecute(item.id, 'approve');
+                onExecute(item.id, 'APPROVE', { reason: 'OPERATOR_APPROVED' });
                 onClose();
               }}
               className="px-4 py-1.5 rounded text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white"
@@ -941,17 +1033,22 @@ export function ApprovalPayloadDiffModal({
  */
 'use client';
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useApprovalStore } from '../../stores/useApprovalStore';
 import { ApprovalQueueList } from './ApprovalQueueList';
 import { ApprovalPayloadDiffModal } from './ApprovalPayloadDiffModal';
 
-export function ApprovalCenter() {
-  const { items, selectedItemId, selectItem, executeAction } = useApprovalStore();
+export function ApprovalCenter({ operatorId }: { readonly operatorId: string }) {
+  const { items, selectedItemId, selectItem, setOperator, executeAction } = useApprovalStore();
   const itemList = Object.values(items);
   const selectedItem = selectedItemId ? items[selectedItemId] ?? null : null;
 
-  const pendingCount = itemList.filter((i) => i.status === 'awaiting_human').length;
+  // The signed-in operator identity is required on every AUTH-4 decision (operator_id).
+  useEffect(() => {
+    setOperator(operatorId);
+  }, [operatorId, setOperator]);
+
+  const pendingCount = itemList.filter((i) => i.status === 'AWAITING_HUMAN').length;
 
   return (
     <div className="p-6 bg-slate-950 min-h-screen text-slate-100">
@@ -1003,16 +1100,22 @@ SCR-004 consolidates all touchpoints across Web/Storefront, Marketing campaigns,
 |          Evidence: ERP Tracking #TW-8891 status DELAYED (Typhoon Warning)   |
 | 08:45:10 [COMMERCE] Add to Cart: SKU-BAT-01 (Quantity: 1, Price: 2,500 TWD) |
 | 08:42:00 [SALES] Chat Session initiated via Storefront Widget (Web)         |
-| 08:30:00 [MARKETING] Clicked LINE Broadcast Campaign #CAMP-EV-09           |
+| 08:30:00 [MARKETING] Clicked LINE Broadcast Campaign #CAMP-EV-09            |
 |          Evidence: LINE webhook message_id msg-tw-99120                     |
 +-----------------------------------------------------------------------------+
-| FACT VS HYPOTHESIS DICHOTOMY DRAWER                                         |
-| Verified Facts (Source of Truth):                                           |
-|   - Purchased Gogoro S2 (ERP Serial #GOG-9921 on 2025-11-20)               |
+| EVIDENCE CARDS — FIVE-TIER SEPARATION DRAWER                                |
+| FACT (System of Record):                                                    |
+|   - Purchased Gogoro S2 (ERP Serial #GOG-9921 on 2025-11-20)                |
 |   - Delivery address verified: Da'an District, Taipei City                  |
-| Inferred Hypotheses (AI Model Predictions):                                 |
-|   - Commutes > 35km daily (Confidence: 0.88, Evidence: Battery swap cadence)|
+| SIGNAL (Observed telemetry, not interpreted):                               |
+|   - 3 battery-swap events in the last 7 days (WMS scan events)              |
+| HYPOTHESIS (AI Model Predictions):                                          |
+|   - Commutes > 35km daily (Confidence: 0.88, Evidence: Battery swap cadence |
 |   - High price sensitivity for accessories (Confidence: 0.74)               |
+| DECISION (Recorded human/policy decision):                                  |
+|   - Approval #APV-9812 APPROVED by OP-99 (AUTH-4, audit-logged)             |
+| ACTION (External effect actually executed):                                 |
+|   - Replacement-battery voucher sent via API-003 channel SMS                |
 +-----------------------------------------------------------------------------+
 ```
 
@@ -1022,15 +1125,32 @@ SCR-004 consolidates all touchpoints across Web/Storefront, Marketing campaigns,
 3. **Tier 2: Verified Customer**: Authenticated via LINE Login, SMS OTP, or Storefront Session token. Authorized for real-time ERP order lookups and warranty cases.
 
 ### 5.3 Evidence Card Contract
-Every critical timeline item links to an unalterable Evidence Card:
+Every critical timeline item links to an unalterable Evidence Card. Evidence is separated into the five baseline tiers of FR-C360-003 — **`FACT`**, **`SIGNAL`**, **`HYPOTHESIS`**, **`DECISION`**, **`ACTION`** — so that recorded ground truth is never blended with AI inference.
+
 ```typescript
+/** Five-tier evidence separation (FR-C360-003). */
+export type EvidenceClassification = 'FACT' | 'SIGNAL' | 'HYPOTHESIS' | 'DECISION' | 'ACTION';
+
 export interface EvidenceCard {
   readonly evidenceId: string;
   readonly eventId: string;
   readonly eventType: string;
-  readonly classification: 'FACT' | 'HYPOTHESIS';
-  readonly sourceOfTruth: 'ERP' | 'POS' | 'WMS' | 'PAYMENT_GATEWAY' | 'AI_INFERENCE';
-  readonly confidenceScore: number; // 1.0 for FACT; 0.0-0.99 for HYPOTHESIS
+  /**
+   * FACT      — verified record from a system of record (ERP/POS/WMS/Payment Gateway).
+   * SIGNAL    — observed behavioural or telemetry measurement, not yet interpreted.
+   * HYPOTHESIS— AI inference; never written back as ground truth.
+   * DECISION  — recorded human or policy decision (e.g. an SCR-003 approval decision).
+   * ACTION    — external effect that was actually executed (message sent, order created).
+   */
+  readonly classification: EvidenceClassification;
+  readonly sourceOfTruth:
+    | 'ERP'
+    | 'POS'
+    | 'WMS'
+    | 'PAYMENT_GATEWAY'
+    | 'AI_INFERENCE'
+    | 'PLATFORM_ORCHESTRATOR';
+  readonly confidenceScore: number; // 1.0 for recorded tiers (FACT, SIGNAL, DECISION, ACTION); 0.0-0.99 for HYPOTHESIS
   readonly rawRecordRef: {
     readonly system: string;
     readonly externalId: string;
@@ -1040,20 +1160,37 @@ export interface EvidenceCard {
 }
 ```
 
+`sourceOfTruth` is `AI_INFERENCE` only for `HYPOTHESIS`; `DECISION` and `ACTION` records originate from `PLATFORM_ORCHESTRATOR` (the audited decision/effect ledger). A card is immutable once written: corrections are appended as new cards, never edited in place.
+
 ### 5.4 React Component Implementation for SCR-004
 
-#### 1. FactHypothesisDrawer.tsx
+#### 1. EvidenceCardDrawer.tsx
 ```typescript
 /**
- * @file components/customer/FactHypothesisDrawer.tsx
- * Slide-out drawer displaying verified Facts vs. AI-inferred Hypotheses with evidence cards.
+ * @file components/customer/EvidenceCardDrawer.tsx
+ * Slide-out drawer grouping a timeline item's evidence cards into the five FR-C360-003 tiers:
+ * FACT, SIGNAL, HYPOTHESIS, DECISION, ACTION.
  */
 'use client';
 
 import React from 'react';
-import { EvidenceCard } from './Customer360Timeline';
+import { EvidenceCard, EvidenceClassification } from './Customer360Timeline';
 
-export function FactHypothesisDrawer({
+/** Fixed presentation order of the five evidence tiers. */
+const TIER_ORDER: readonly EvidenceClassification[] = ['FACT', 'SIGNAL', 'HYPOTHESIS', 'DECISION', 'ACTION'];
+
+const TIER_META: Record<
+  EvidenceClassification,
+  { readonly label: string; readonly dot: string; readonly text: string; readonly border: string }
+> = {
+  FACT: { label: 'Verified Facts', dot: 'bg-emerald-500', text: 'text-emerald-400', border: 'border-emerald-950' },
+  SIGNAL: { label: 'Observed Signals', dot: 'bg-sky-500', text: 'text-sky-400', border: 'border-sky-950' },
+  HYPOTHESIS: { label: 'AI Hypotheses', dot: 'bg-amber-500', text: 'text-amber-400', border: 'border-amber-950' },
+  DECISION: { label: 'Recorded Decisions', dot: 'bg-violet-500', text: 'text-violet-400', border: 'border-violet-950' },
+  ACTION: { label: 'Executed Actions', dot: 'bg-teal-500', text: 'text-teal-400', border: 'border-teal-950' },
+};
+
+export function EvidenceCardDrawer({
   evidenceCards,
   isOpen,
   onClose,
@@ -1064,67 +1201,53 @@ export function FactHypothesisDrawer({
 }) {
   if (!isOpen) return null;
 
-  const facts = evidenceCards.filter((e) => e.classification === 'FACT');
-  const hypotheses = evidenceCards.filter((e) => e.classification === 'HYPOTHESIS');
-
   return (
     <div className="fixed inset-y-0 right-0 w-full max-w-xl bg-slate-900 border-l border-slate-800 shadow-2xl z-50 p-6 overflow-y-auto">
       <div className="flex justify-between items-center pb-4 border-b border-slate-800 mb-6">
         <div>
-          <h2 className="text-lg font-bold text-slate-100">Fact vs. Hypothesis Dichotomy</h2>
-          <p className="text-xs text-slate-400">Strict segregation between ground truth and AI inferences.</p>
+          <h2 className="text-lg font-bold text-slate-100">Evidence Cards — Five-Tier Separation</h2>
+          <p className="text-xs text-slate-400">
+            Ground truth, observations, AI inference, recorded decisions and executed effects are never blended.
+          </p>
         </div>
         <button onClick={onClose} className="text-slate-400 hover:text-slate-100">Close</button>
       </div>
 
       <div className="space-y-6">
-        {/* Verified Facts Section */}
-        <div>
-          <div className="flex items-center gap-2 mb-3">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
-            <h3 className="text-sm font-semibold text-emerald-400 uppercase tracking-wider">
-              Verified Facts ({facts.length})
-            </h3>
-          </div>
-          <div className="space-y-2">
-            {facts.map((fact) => (
-              <div key={fact.evidenceId} className="p-3 bg-slate-950 rounded border border-emerald-950">
-                <div className="flex justify-between text-xs font-mono text-slate-400 mb-1">
-                  <span>Source: <strong className="text-emerald-300">{fact.sourceOfTruth}</strong></span>
-                  <span>ID: {fact.rawRecordRef.externalId}</span>
-                </div>
-                <div className="text-xs text-slate-200">{fact.eventType}</div>
-                <pre className="mt-2 text-[11px] font-mono text-slate-400 bg-slate-900 p-2 rounded overflow-x-auto">
-                  {JSON.stringify(fact.payload, null, 2)}
-                </pre>
-              </div>
-            ))}
-          </div>
-        </div>
+        {TIER_ORDER.map((tier) => {
+          const cards = evidenceCards.filter((e) => e.classification === tier);
+          if (cards.length === 0) return null;
+          const meta = TIER_META[tier];
 
-        {/* Inferred Hypotheses Section */}
-        <div>
-          <div className="flex items-center gap-2 mb-3">
-            <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
-            <h3 className="text-sm font-semibold text-amber-400 uppercase tracking-wider">
-              Inferred Hypotheses ({hypotheses.length})
-            </h3>
-          </div>
-          <div className="space-y-2">
-            {hypotheses.map((hyp) => (
-              <div key={hyp.evidenceId} className="p-3 bg-slate-950 rounded border border-amber-950">
-                <div className="flex justify-between text-xs font-mono text-slate-400 mb-1">
-                  <span>Model Confidence: <strong className="text-amber-400">{Math.round(hyp.confidenceScore * 100)}%</strong></span>
-                  <span>Source: {hyp.sourceOfTruth}</span>
-                </div>
-                <div className="text-xs text-slate-200 mb-1">{hyp.eventType}</div>
-                <pre className="text-[11px] font-mono text-slate-400 bg-slate-900 p-2 rounded overflow-x-auto">
-                  {JSON.stringify(hyp.payload, null, 2)}
-                </pre>
+          return (
+            <div key={tier}>
+              <div className="flex items-center gap-2 mb-3">
+                <span className={`w-2.5 h-2.5 rounded-full ${meta.dot}`}></span>
+                <h3 className={`text-sm font-semibold ${meta.text} uppercase tracking-wider`}>
+                  {meta.label} ({cards.length})
+                </h3>
               </div>
-            ))}
-          </div>
-        </div>
+              <div className="space-y-2">
+                {cards.map((card) => (
+                  <div key={card.evidenceId} className={`p-3 bg-slate-950 rounded border ${meta.border}`}>
+                    <div className="flex justify-between text-xs font-mono text-slate-400 mb-1">
+                      <span>
+                        {card.classification === 'HYPOTHESIS'
+                          ? `Model Confidence: ${Math.round(card.confidenceScore * 100)}%`
+                          : `Source: ${card.sourceOfTruth}`}
+                      </span>
+                      <span>ID: {card.rawRecordRef.externalId}</span>
+                    </div>
+                    <div className="text-xs text-slate-200 mb-1">{card.eventType}</div>
+                    <pre className="text-[11px] font-mono text-slate-400 bg-slate-900 p-2 rounded overflow-x-auto">
+                      {JSON.stringify(card.payload, null, 2)}
+                    </pre>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -1140,7 +1263,7 @@ export function FactHypothesisDrawer({
 'use client';
 
 import React, { useState } from 'react';
-import { FactHypothesisDrawer } from './FactHypothesisDrawer';
+import { EvidenceCardDrawer } from './EvidenceCardDrawer';
 
 export interface TimelineEvent {
   readonly eventId: string;
@@ -1151,12 +1274,21 @@ export interface TimelineEvent {
   readonly evidenceCard?: EvidenceCard;
 }
 
+/** Five-tier evidence separation (FR-C360-003); see §5.3. */
+export type EvidenceClassification = 'FACT' | 'SIGNAL' | 'HYPOTHESIS' | 'DECISION' | 'ACTION';
+
 export interface EvidenceCard {
   readonly evidenceId: string;
   readonly eventId: string;
   readonly eventType: string;
-  readonly classification: 'FACT' | 'HYPOTHESIS';
-  readonly sourceOfTruth: 'ERP' | 'POS' | 'WMS' | 'PAYMENT_GATEWAY' | 'AI_INFERENCE';
+  readonly classification: EvidenceClassification;
+  readonly sourceOfTruth:
+    | 'ERP'
+    | 'POS'
+    | 'WMS'
+    | 'PAYMENT_GATEWAY'
+    | 'AI_INFERENCE'
+    | 'PLATFORM_ORCHESTRATOR';
   readonly confidenceScore: number;
   readonly rawRecordRef: {
     readonly system: string;
@@ -1222,7 +1354,7 @@ export function Customer360Timeline({
           onClick={() => setDrawerOpen(true)}
           className="px-4 py-2 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-sky-400 border border-slate-700"
         >
-          View Facts & Hypotheses ({evidenceCards.length})
+          View Evidence Cards ({evidenceCards.length})
         </button>
       </div>
 
@@ -1254,7 +1386,7 @@ export function Customer360Timeline({
         </div>
       </div>
 
-      <FactHypothesisDrawer
+      <EvidenceCardDrawer
         evidenceCards={evidenceCards}
         isOpen={drawerOpen}
         onClose={() => setDrawerOpen(false)}
@@ -1269,12 +1401,12 @@ export function Customer360Timeline({
 ## 6. SCR-005: Conversation Console Specification
 
 ### 6.1 Screen Purpose & Live Supervision
-SCR-005 allows human operators to monitor live customer-agent dialogues across Web, LINE OA, and WhatsApp. It features a distributed mutex lock for immediate session takeover, automated Copilot draft suggestions, and post-resolution dialogue evaluation scoring.
+SCR-005 allows human operators to monitor live customer-agent dialogues across the API-003 baseline channels — Facebook (Messenger), TikTok, Zalo, Email, SMS and Web/App Chat — with LINE OA and WhatsApp available as optional extension channels whose provider contracts remain **[UNCONFIRMED][ASM-001]** (see `06-api-and-connectors-spec.md` §4.0). It features a distributed lease for immediate session takeover, automated Copilot draft suggestions, and post-resolution dialogue evaluation scoring.
 
 ```
 +------------------------------------------------------------------------------------+
-| CONVERSATION CONSOLE: Session #SES-9821                                           |
-| Channel: LINE OA | Customer: CUST-TW-88219 | Status: AI_CONTROLLED                |
+| CONVERSATION CONSOLE: Conversation #SES-9821                                       |
+| Channel: ZALO | Customer: CUST-TW-88219 | Status: AI_CONTROLLED (= ACTIVE)         |
 +------------------------------------------------------------------------------------+
 | MESSAGE HISTORY                                                                    |
 | [09:10:02] Customer: When will my replacement battery arrive?                      |
@@ -1296,83 +1428,125 @@ SCR-005 allows human operators to monitor live customer-agent dialogues across W
 +------------------------------------------------------------------------------------+
 ```
 
-### 6.2 Session Takeover Mutex Lock Architecture
+### 6.2 Session Takeover Lease Architecture
 
 #### State Machine Sequence
 ```
      +---------------+
-     | AI_CONTROLLED |
+     | AI_CONTROLLED |   (= conversation status ACTIVE)
      +---------------+
              |
              | Customer escalation / Operator clicks "Takeover"
+             | POST /api/v1/conversations/{id}/takeover
              v
   +----------------------+
-  |  HANDOVER_REQUESTED  |
+  |  HANDOVER_REQUESTED  |   (transient UI phase, never persisted)
   +----------------------+
              |
-             | Distributed Redis Lock acquired: SET mutex:session:{id}
+             | Distributed Redis lease acquired:
+             | SET tenant:{tid}:session:{conversation_id}:takeover_lock
              v
    +--------------------+
-   |   HUMAN_TAKEOVER   | <--- AI Agent hard-locked (AUTH-5 for outbound messages)
+   |   HUMAN_TAKEOVER   | <--- AI Agent hard-locked (outbound messages denied)
    +--------------------+      AI switches to Copilot Mode (AUTH-2 internal drafts)
+             |                  Lease renewed via POST /api/v1/conversations/{id}/takeover/heartbeat every 30 s
              |
              | Operator finishes intervention, clicks "Resume AI"
+             | POST /api/v1/conversations/{id}/resume
              v
    +--------------------+
    |   RESUME_AUDIT     | <--- Re-validates consent, context, and pending orders
-   +--------------------+
+   +--------------------+      (transient UI phase, never persisted)
              |
-             | Redis Lock released
+             | Takeover lease released
              v
      +---------------+
-     | AI_CONTROLLED |
+     | AI_CONTROLLED |   (= conversation status ACTIVE)
      +---------------+
 ```
 
-#### Mutex Lock Technical Implementation
-The session lock is enforced at the server API layer via Redis Distributed Locks (Redlock pattern) with a sliding TTL:
-- Key format: `session:mutex:{tenant_id}:{session_id}`
+The persisted conversation status enum is the authoritative one defined in `06-api-and-connectors-spec.md` §1 — `ACTIVE | HUMAN_TAKEOVER | CLOSED` — and SCR-005 renders `ACTIVE` as `AI_CONTROLLED`. `HANDOVER_REQUESTED` and `RESUME_AUDIT` are transient phases of the client-side handoff animation; they are never written as conversation status.
+
+#### Takeover Lease Technical Implementation
+The session lock is enforced at the server API layer via a Redis distributed lease (single-key `SET NX EX` with owner-checked Lua release; see `03-database-and-memory-schema.md` §3 for the canonical key registry):
+- Key format: `tenant:{tenant_id}:session:{conversation_id}:takeover_lock` — the session subject is the `conversation_id`, matching the `conversations` table; there is no separate session resource and no parallel key namespace.
 - Value: `{ "operator_id": "OP-99", "acquired_at": "2026-09-18T09:11:00Z" }`
-- When locked, any incoming message generation task dispatched by the Core Orchestrator for that session is terminated with HTTP `409 Conflict: Session Locked by Human Operator`.
+- The lease is short and renewable, never unbounded: the lease TTL is 60 s and the console renews it every 30 s through `POST /api/v1/conversations/{id}/takeover/heartbeat` (`extend_seconds` ≤ 300 per 06 §1), so a crashed operator tab cannot lock a customer conversation permanently.
+- The lease is released **only** by `POST /api/v1/conversations/{id}/resume` (the same route as an operator hand-back) or by lease expiry; there is no DELETE, `release-beacon`, or other release route in the gateway contract.
+- While the lease is held, any message-generation task dispatched by the Core Orchestrator for that conversation is denied with HTTP `409 Conflict: Conversation Locked by Human Operator`, and a second operator attempting takeover receives the same `409`.
+- Field names on the wire follow `06-api-and-connectors-spec.md` §1 (`operator_id`, `reason`, `takeover_mode`, `extend_seconds`); the browser hook below uses them verbatim.
 
 ```typescript
 /**
  * @file server/services/SessionMutexService.ts
- * Redis-backed distributed mutex lock for human takeover.
+ * Redis-backed distributed lease for human conversation takeover (SCR-005).
+ * Key format is the canonical registry entry in `03-database-and-memory-schema.md` §3.
  */
 import Redis from 'ioredis';
 
 export class SessionMutexService {
+  /** Lease TTL in seconds. Short and renewable; the console heartbeats every 30 s. */
+  private static readonly LEASE_TTL_SECONDS = 60;
+
   private readonly redis: Redis;
 
   constructor(redisClient: Redis) {
     this.redis = redisClient;
   }
 
+  /** Canonical key: tenant:{tenant_id}:session:{conversation_id}:takeover_lock */
+  private leaseKey(tenantId: string, conversationId: string): string {
+    return `tenant:${tenantId}:session:${conversationId}:takeover_lock`;
+  }
+
+  /** Acquires the lease. Returns false when another operator already holds it (server answers 409). */
   public async acquireTakeover(
     tenantId: string,
-    sessionId: string,
+    conversationId: string,
     operatorId: string,
-    ttlSeconds = 900
+    ttlSeconds: number = SessionMutexService.LEASE_TTL_SECONDS
   ): Promise<boolean> {
-    const key = `session:mutex:${tenantId}:${sessionId}`;
     const payload = JSON.stringify({
-      operatorId,
-      acquiredAt: new Date().toISOString(),
+      operator_id: operatorId,
+      acquired_at: new Date().toISOString(),
     });
 
-    // SET key value NX EX ttl
-    const result = await this.redis.set(key, payload, 'EX', ttlSeconds, 'NX');
+    // SET key value NX EX ttl — atomic; no read-modify-write window.
+    const result = await this.redis.set(this.leaseKey(tenantId, conversationId), payload, 'EX', ttlSeconds, 'NX');
     return result === 'OK';
   }
 
-  public async releaseTakeover(tenantId: string, sessionId: string, operatorId: string): Promise<boolean> {
-    const key = `session:mutex:${tenantId}:${sessionId}`;
+  /** Extends the lease on heartbeat; only the current holder may extend it. */
+  public async renewTakeover(
+    tenantId: string,
+    conversationId: string,
+    operatorId: string,
+    extendSeconds: number
+  ): Promise<boolean> {
+    const key = this.leaseKey(tenantId, conversationId);
+    const luaScript = `
+      local current = redis.call('get', KEYS[1])
+      if not current then return 0 end
+      local data = cjson.decode(current)
+      if data.operator_id == ARGV[1] then
+        return redis.call('expire', KEYS[1], ARGV[2])
+      else
+        return 0
+      end
+    `;
+
+    const result = await this.redis.eval(luaScript, 1, key, operatorId, String(extendSeconds));
+    return result === 1;
+  }
+
+  /** Owner-checked release, executed by `POST /api/v1/conversations/{id}/resume`. */
+  public async releaseTakeover(tenantId: string, conversationId: string, operatorId: string): Promise<boolean> {
+    const key = this.leaseKey(tenantId, conversationId);
     const luaScript = `
       local current = redis.call('get', KEYS[1])
       if not current then return 1 end
       local data = cjson.decode(current)
-      if data.operatorId == ARGV[1] then
+      if data.operator_id == ARGV[1] then
         return redis.call('del', KEYS[1])
       else
         return 0
@@ -1383,9 +1557,8 @@ export class SessionMutexService {
     return result === 1;
   }
 
-  public async isLocked(tenantId: string, sessionId: string): Promise<boolean> {
-    const key = `session:mutex:${tenantId}:${sessionId}`;
-    const exists = await this.redis.exists(key);
+  public async isLocked(tenantId: string, conversationId: string): Promise<boolean> {
+    const exists = await this.redis.exists(this.leaseKey(tenantId, conversationId));
     return exists === 1;
   }
 }
@@ -1400,95 +1573,125 @@ export class SessionMutexService {
 
 ### 6.4 React Component Implementation & Custom Hook for SCR-005
 
-#### 1. useSessionTakeover.ts (Custom Hook)
+#### 1. useConversationTakeover.ts (Custom Hook)
 ```typescript
 /**
- * @file hooks/useSessionTakeover.ts
- * Custom hook maintaining distributed mutex lock with 30s renewal heartbeat and automatic unmount release.
+ * @file hooks/useConversationTakeover.ts
+ * Custom hook holding the SCR-005 takeover lease: acquire, 30 s heartbeat renewal, resume on exit.
+ * Routes and field names are exactly those in `06-api-and-connectors-spec.md` §1.
  */
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 
-export function useSessionTakeover({
+/** Lease extension requested per heartbeat; the gateway caps `extend_seconds` at 300. */
+const HEARTBEAT_INTERVAL_MS = 30_000;
+const HEARTBEAT_EXTEND_SECONDS = 60;
+
+export function useConversationTakeover({
   tenantId,
-  sessionId,
+  conversationId,
   operatorId,
 }: {
   readonly tenantId: string;
-  readonly sessionId: string;
+  readonly conversationId: string;
   readonly operatorId: string;
 }) {
   const [isTakenOver, setIsTakenOver] = useState(false);
   const [copilotDraft, setCopilotDraft] = useState<string | null>(null);
   const heartbeatTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  const releaseLock = useCallback(async () => {
-    try {
-      await fetch(`/api/v1/sessions/${sessionId}/takeover`, {
-        method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-tenant-id': tenantId,
-        },
-        body: JSON.stringify({ operatorId }),
-      });
-    } catch (err) {
-      console.error('Failed to release takeover mutex', err);
-    } finally {
-      setIsTakenOver(false);
-      if (heartbeatTimerRef.current) {
-        clearInterval(heartbeatTimerRef.current);
-        heartbeatTimerRef.current = null;
-      }
+  const stopHeartbeat = useCallback(() => {
+    if (heartbeatTimerRef.current) {
+      clearInterval(heartbeatTimerRef.current);
+      heartbeatTimerRef.current = null;
     }
-  }, [sessionId, tenantId, operatorId]);
+  }, []);
 
-  const acquireLock = useCallback(async (): Promise<boolean> => {
+  /** Returns the conversation to the agent and releases the lease (SCR-005 "return to agent"). */
+  const resumeConversation = useCallback(async () => {
     try {
-      const response = await fetch(`/api/v1/sessions/${sessionId}/takeover`, {
+      await fetch(`/api/v1/conversations/${conversationId}/resume`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'x-tenant-id': tenantId,
         },
-        body: JSON.stringify({ operatorId, ttlSeconds: 60 }),
+        body: JSON.stringify({ operator_id: operatorId }),
+      });
+    } catch (err) {
+      console.error('Failed to resume conversation', err);
+    } finally {
+      stopHeartbeat();
+      setIsTakenOver(false);
+    }
+  }, [conversationId, tenantId, operatorId, stopHeartbeat]);
+
+  const acquireTakeover = useCallback(async (): Promise<boolean> => {
+    try {
+      const response = await fetch(`/api/v1/conversations/${conversationId}/takeover`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-tenant-id': tenantId,
+        },
+        body: JSON.stringify({
+          operator_id: operatorId,
+          reason: 'OPERATOR_MANUAL_TAKEOVER',
+          takeover_mode: 'FULL_CONTROL',
+        }),
       });
 
+      // 409 = another operator already holds the lease; no retry, surface the conflict.
       if (!response.ok) return false;
 
       setIsTakenOver(true);
 
-      // Start 30s heartbeat to renew Redis mutex lock
-      if (heartbeatTimerRef.current) clearInterval(heartbeatTimerRef.current);
+      // Renew the 60 s lease every 30 s; the extension is refused once the lease has lapsed.
+      stopHeartbeat();
       heartbeatTimerRef.current = setInterval(async () => {
         try {
-          await fetch(`/api/v1/sessions/${sessionId}/takeover/heartbeat`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-tenant-id': tenantId,
-            },
-            body: JSON.stringify({ operatorId, extendSeconds: 60 }),
-          });
+          const heartbeat = await fetch(
+            `/api/v1/conversations/${conversationId}/takeover/heartbeat`,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-tenant-id': tenantId,
+              },
+              body: JSON.stringify({
+                operator_id: operatorId,
+                extend_seconds: HEARTBEAT_EXTEND_SECONDS,
+              }),
+            }
+          );
+          if (heartbeat.status === 409) {
+            // Lease was taken over or has expired: stop claiming control.
+            stopHeartbeat();
+            setIsTakenOver(false);
+          }
         } catch (err) {
           console.error('Takeover heartbeat failed', err);
         }
-      }, 30_000);
+      }, HEARTBEAT_INTERVAL_MS);
 
       return true;
     } catch {
       return false;
     }
-  }, [sessionId, tenantId, operatorId]);
+  }, [conversationId, tenantId, operatorId, stopHeartbeat]);
 
-  // Clean up lock on component unmount or browser tab navigation
+  // Release the lease on unmount or tab navigation. There is no separate release route:
+  // both paths call the same resume route used by the "Resume AI" button.
   useEffect(() => {
     const handleBeforeUnload = () => {
       if (isTakenOver) {
         navigator.sendBeacon(
-          `/api/v1/sessions/${sessionId}/takeover/release-beacon`,
-          JSON.stringify({ tenantId, operatorId })
+          `/api/v1/conversations/${conversationId}/resume`,
+          new Blob(
+            [JSON.stringify({ operator_id: operatorId, handoff_summary: 'OPERATOR_TAB_CLOSED' })],
+            { type: 'application/json' }
+          )
         );
       }
     };
@@ -1496,18 +1699,19 @@ export function useSessionTakeover({
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
+      stopHeartbeat();
       if (isTakenOver) {
-        releaseLock();
+        void resumeConversation();
       }
     };
-  }, [isTakenOver, sessionId, tenantId, operatorId, releaseLock]);
+  }, [isTakenOver, conversationId, operatorId, stopHeartbeat, resumeConversation]);
 
   return {
     isTakenOver,
     copilotDraft,
     setCopilotDraft,
-    acquireLock,
-    releaseLock,
+    acquireTakeover,
+    resumeConversation,
   };
 }
 ```
@@ -1669,7 +1873,7 @@ export function CopilotComposer({
 'use client';
 
 import React, { useState } from 'react';
-import { useSessionTakeover } from '../../hooks/useSessionTakeover';
+import { useConversationTakeover } from '../../hooks/useConversationTakeover';
 import { TakeoverControls } from './TakeoverControls';
 import { CopilotComposer } from './CopilotComposer';
 
@@ -1682,21 +1886,22 @@ export interface ChatMessage {
 
 export function ConversationConsole({
   tenantId,
-  sessionId,
+  conversationId,
   operatorId,
   initialMessages,
 }: {
   readonly tenantId: string;
-  readonly sessionId: string;
+  readonly conversationId: string;
   readonly operatorId: string;
   readonly initialMessages: readonly ChatMessage[];
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([...initialMessages]);
-  const { isTakenOver, copilotDraft, setCopilotDraft, acquireLock, releaseLock } = useSessionTakeover({
-    tenantId,
-    sessionId,
-    operatorId,
-  });
+  const { isTakenOver, copilotDraft, setCopilotDraft, acquireTakeover, resumeConversation } =
+    useConversationTakeover({
+      tenantId,
+      conversationId,
+      operatorId,
+    });
 
   const handleSendMessage = async (text: string) => {
     const newMsg: ChatMessage = {
@@ -1707,13 +1912,21 @@ export function ConversationConsole({
     };
     setMessages((prev) => [...prev, newMsg]);
 
-    await fetch(`/api/v1/sessions/${sessionId}/messages`, {
+    // Operator reply to the conversation: `POST /api/v1/conversations/{id}/messages` (06 §1).
+    // A fresh idempotency_key per operator send keeps an accidental double-submit from
+    // producing two outbound messages (BR-005/BR-006).
+    await fetch(`/api/v1/conversations/${conversationId}/messages`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'x-tenant-id': tenantId,
       },
-      body: JSON.stringify({ content: text, sender: 'operator' }),
+      body: JSON.stringify({
+        module: 'support',
+        message: text,
+        sender: 'operator',
+        idempotency_key: crypto.randomUUID(),
+      }),
     });
   };
 
@@ -1722,10 +1935,10 @@ export function ConversationConsole({
       <TakeoverControls
         isTakenOver={isTakenOver}
         onTakeover={async () => {
-          await acquireLock();
+          await acquireTakeover();
           setCopilotDraft('I can verify that for you immediately and reroute your order.');
         }}
-        onResume={releaseLock}
+        onResume={resumeConversation}
         onOpenEvaluation={() => alert('Evaluation Modal opened: Rate dialogue quality (1-5 stars).')}
       />
 
@@ -1792,6 +2005,8 @@ The Storefront Customer Widget is an ultra-lightweight client script embedded on
 interface QueuedMessage {
   readonly id: string;
   readonly message: string;
+  /** Reused verbatim on replay so a re-send cannot create a second chat turn (BR-006). */
+  readonly idempotencyKey: string;
   readonly timestamp: number;
 }
 
@@ -1800,6 +2015,8 @@ class AgentStorefrontWidget extends HTMLElement {
   private isOpen = false;
   private tenantId = '';
   private apiUrl = '';
+  /** Merchant storefront origin; the only origin this widget posts to and accepts from. */
+  private hostOrigin = '';
   private offlineQueueKey = 'agent_storefront_offline_queue';
 
   constructor() {
@@ -1808,12 +2025,13 @@ class AgentStorefrontWidget extends HTMLElement {
   }
 
   static get observedAttributes(): string[] {
-    return ['tenant-id', 'api-url'];
+    return ['tenant-id', 'api-url', 'host-origin'];
   }
 
   public attributeChangedCallback(name: string, oldValue: string, newValue: string): void {
     if (name === 'tenant-id') this.tenantId = newValue;
     if (name === 'api-url') this.apiUrl = newValue;
+    if (name === 'host-origin') this.hostOrigin = newValue;
   }
 
   public connectedCallback(): void {
@@ -1948,13 +2166,14 @@ class AgentStorefrontWidget extends HTMLElement {
       launcher.style.display = open ? 'none' : 'flex';
     }
 
-    // Emit AGENT_WIDGET_STATE_CHANGE to host page
+    // Emit AGENT_WIDGET_STATE_CHANGE to the merchant host page.
+    // targetOrigin is always the configured host-origin — never '*'.
     window.parent.postMessage(
       {
         type: 'AGENT_WIDGET_STATE_CHANGE',
         payload: { isOpen: this.isOpen },
       },
-      '*'
+      this.hostOrigin
     );
   }
 
@@ -1963,7 +2182,9 @@ class AgentStorefrontWidget extends HTMLElement {
     if (!text) return;
     this.appendMessage('user', text);
     input.value = '';
-    this.dispatchStreamMessage(text);
+    // Idempotency key is minted once per user message so an offline retry or a
+    // network re-send replays the same key instead of creating a second turn.
+    this.dispatchStreamMessage(text, crypto.randomUUID());
   }
 
   private appendMessage(sender: 'user' | 'agent', content: string): HTMLSpanElement | null {
@@ -1987,18 +2208,25 @@ class AgentStorefrontWidget extends HTMLElement {
   }
 
   /**
-   * Dispatches message and streams tokens back into chat bubble using ReadableStream.
+   * Dispatches one chat turn to `POST /api/v1/storefront/stream` and streams the reply
+   * into the bubble. The request body is the `PostMessageRequest` shape (06 §1) plus the
+   * optional `session_id` used to bind the first turn to a conversation.
+   *
+   * Replay contract (06 §1, NFR-003): replaying the same `idempotency_key` with a
+   * byte-identical body returns the cached receipt and creates no second chat turn; the
+   * same key with a different body is the only case answered with 409
+   * IDEMPOTENCY_CONFLICT, which is terminal and is never retried.
    */
-  private async dispatchStreamMessage(message: string): Promise<void> {
+  private async dispatchStreamMessage(message: string, idempotencyKey: string): Promise<void> {
     if (!navigator.onLine) {
-      this.enqueueOfflineMessage(message);
+      this.enqueueOfflineMessage(message, idempotencyKey);
       this.appendMessage('agent', 'You appear offline. Message queued and will send upon reconnect.');
       return;
     }
 
     const agentSpan = this.appendMessage('agent', '...');
     try {
-      const response = await fetch(`${this.apiUrl}/v1/storefront/stream`, {
+      const response = await fetch(`${this.apiUrl}/api/v1/storefront/stream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -2006,7 +2234,8 @@ class AgentStorefrontWidget extends HTMLElement {
         },
         body: JSON.stringify({
           message,
-          sessionId: sessionStorage.getItem('agent_session_id'),
+          idempotency_key: idempotencyKey,
+          session_id: sessionStorage.getItem('agent_session_id'),
         }),
       });
 
@@ -2029,18 +2258,25 @@ class AgentStorefrontWidget extends HTMLElement {
         }
       }
     } catch {
-      this.enqueueOfflineMessage(message);
+      // Unverified outcome: the same idempotency_key is replayed on reconnect, so a turn
+      // that did reach the gateway is answered from the cached receipt, not duplicated.
+      this.enqueueOfflineMessage(message, idempotencyKey);
       if (agentSpan) {
         agentSpan.textContent = 'Connection interrupted. Queued for automatic retry.';
       }
     }
   }
 
-  private enqueueOfflineMessage(message: string): void {
+  private enqueueOfflineMessage(message: string, idempotencyKey: string): void {
     const queue: QueuedMessage[] = JSON.parse(
       localStorage.getItem(this.offlineQueueKey) || '[]'
     );
-    queue.push({ id: `offline-${Date.now()}`, message, timestamp: Date.now() });
+    queue.push({
+      id: `offline-${Date.now()}`,
+      message,
+      idempotencyKey,
+      timestamp: Date.now(),
+    });
     localStorage.setItem(this.offlineQueueKey, JSON.stringify(queue));
   }
 
@@ -2052,7 +2288,8 @@ class AgentStorefrontWidget extends HTMLElement {
 
     localStorage.removeItem(this.offlineQueueKey);
     for (const item of queue) {
-      await this.dispatchStreamMessage(item.message);
+      // Replays the original idempotency key, never a fresh one.
+      await this.dispatchStreamMessage(item.message, item.idempotencyKey);
     }
   }
 
@@ -2063,10 +2300,17 @@ class AgentStorefrontWidget extends HTMLElement {
   }
 
   /**
-   * Initializes bidirectional postMessage JSON RPC bridge with host page.
+   * Initializes the bidirectional postMessage JSON RPC bridge with the merchant host page.
+   * Only messages whose `event.origin` equals the configured `host-origin` are accepted;
+   * every outbound message targets that same explicit origin (never '*').
    */
   private initPostMessageBridge(): void {
     window.addEventListener('message', (event: MessageEvent) => {
+      if (event.origin !== this.hostOrigin) {
+        console.warn(`[SECURITY] Discarded postMessage from unconfigured origin: ${event.origin}`);
+        return;
+      }
+
       const data = event.data as { type?: string; payload?: Record<string, unknown> };
       if (!data?.type) return;
 
@@ -2080,18 +2324,23 @@ class AgentStorefrontWidget extends HTMLElement {
           break;
 
         case 'AGENT_WIDGET_SEND_EVENT':
-          // Ingest storefront events (e.g. cart updated, item viewed)
-          if (data.payload?.eventName && data.payload?.eventData) {
-            fetch(`${this.apiUrl}/v1/storefront/events`, {
+          // Ingest a granular storefront event (e.g. 'cart.add', 'product.view').
+          // The envelope is the API-002 platform event (06 §1, §3.0): the gateway derives
+          // `canonical_event` from `event_type` and deduplicates on `event_id`.
+          if (data.payload?.eventName) {
+            fetch(`${this.apiUrl}/api/v1/storefront/events`, {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
                 'x-tenant-id': this.tenantId,
               },
               body: JSON.stringify({
-                event: data.payload.eventName,
-                data: data.payload.eventData,
-                sessionId: sessionStorage.getItem('agent_session_id'),
+                event_id: crypto.randomUUID(),
+                event_type: data.payload.eventName,
+                source: 'storefront_widget',
+                occurred_at: new Date().toISOString(),
+                session_id: sessionStorage.getItem('agent_session_id'),
+                payload: data.payload.eventData ?? {},
               }),
             }).catch(() => {});
           }
@@ -2101,7 +2350,7 @@ class AgentStorefrontWidget extends HTMLElement {
   }
 
   /**
-   * Triggers checkout navigation via host postMessage.
+   * Triggers checkout navigation via host postMessage (explicit target origin).
    */
   public requestHostCheckout(cartId: string, checkoutUrl: string): void {
     window.parent.postMessage(
@@ -2109,7 +2358,7 @@ class AgentStorefrontWidget extends HTMLElement {
         type: 'AGENT_NAVIGATE_CHECKOUT',
         payload: { cartId, checkoutUrl },
       },
-      '*'
+      this.hostOrigin
     );
   }
 }
@@ -2123,9 +2372,11 @@ To allow external merchant scripts (such as "Click to chat" promotional banners 
 | Direction | Event Name | Payload Schema | Action |
 |---|---|---|---|
 | **Host -> Widget** | `AGENT_WIDGET_OPEN` | `{ focusInput?: boolean }` | Expands widget chat container |
-| **Host -> Widget** | `AGENT_WIDGET_SEND_EVENT` | `{ eventName: string, eventData: object }` | Ingests storefront context (e.g. `cart_updated`) |
+| **Host -> Widget** | `AGENT_WIDGET_SEND_EVENT` | `{ eventName: string, eventData: object }` | Ingests storefront context (e.g. `cart.add`, `product.view` — the API-002 granular aliases of `06-api-and-connectors-spec.md` §3.0) |
 | **Widget -> Host** | `AGENT_WIDGET_STATE_CHANGE` | `{ isOpen: boolean }` | Notifies host to adjust mobile overlay |
 | **Widget -> Host** | `AGENT_NAVIGATE_CHECKOUT` | `{ cartId: string, checkoutUrl: string }` | Requests host to navigate to checkout |
+
+**Origin contract (both directions).** The widget's merchant storefront origin is configured once via the `host-origin` attribute and is the only origin it trusts: inbound bridge messages are accepted only when `event.origin` exactly equals that value (never a prefix or wildcard match), and every outbound message (`AGENT_WIDGET_STATE_CHANGE`, `AGENT_NAVIGATE_CHECKOUT`) is posted with that same explicit origin as `targetOrigin` — `'*'` is never used. This matches the bridge contract in `06-api-and-connectors-spec.md` §5.1.1 and is enforced by `UI-TEST-007`.
 
 ---
 
@@ -2137,7 +2388,8 @@ Every screen and component in this specification must satisfy the following veri
 |---|---|---|---|
 | **SCR-001** | `UI-TEST-001` | SSE Telemetry Stream Reconnect | Automatic reconnect within 5s when connection drops without UI crash |
 | **SCR-002** | `UI-TEST-002` | Virtual Table Rendering Performance | 10,000 run records scroll smoothly at 60 FPS (DOM node count < 100) |
-| **SCR-003** | `UI-TEST-003` | Atomic Action Idempotency | Double clicking "Approve" button issues exactly 1 signed request |
-| **SCR-004** | `UI-TEST-004` | Fact vs Hypothesis Visual Badge | 100% of ERP records marked as FACT; AI scores marked as HYPOTHESIS |
-| **SCR-005** | `UI-TEST-005` | Mutex Takeover Lock Acquisition | Takeover button locks Redis within 200ms; bot stops emitting tokens |
+| **SCR-003** | `UI-TEST-003` | Atomic Decision Idempotency | Double clicking "Approve" issues exactly 1 request to `/api/v1/approvals/{id}/decision`; all five decisions map to the shared decision enum |
+| **SCR-004** | `UI-TEST-004` | Five-Tier Evidence Badge | Every evidence card renders exactly one of FACT / SIGNAL / HYPOTHESIS / DECISION / ACTION; AI inference is never rendered or persisted as FACT |
+| **SCR-005** | `UI-TEST-005` | Mutex Takeover Lock Acquisition | Takeover button acquires the conversation lease within 200ms; AI outbound replies stop; heartbeat renews the lease and resume releases it |
 | **Storefront Widget**| `UI-TEST-006` | Bundle Budget & Host Style Isolation | Gzipped script < 20.0 KB; merchant CSS `* { margin: 50px }` does not leak |
+| **Storefront Widget**| `UI-TEST-007` | postMessage Origin Enforcement | Messages whose `event.origin` differs from the configured `host-origin` are discarded; outbound messages are posted to that explicit origin, never `*` |

@@ -1,0 +1,115 @@
+{
+  "id": "E2E-OFF-ESC",
+  "title": "PILOT-04: complaint escalation, operator takeover and authorised resolution (mocked SoR)",
+  "document": "e2e/offline.md",
+  "layer": "e2e",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P1",
+  "basis": "blueprint",
+  "pair": "E2E-LIVE-ESC",
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "PILOT-04",
+    "CS-01",
+    "CS-02",
+    "FR-CS-001",
+    "FR-CS-002",
+    "NFR-007",
+    "BR-007",
+    "AUTH-4",
+    "SRS-08"
+  ],
+  "facets": [
+    "skill:skill.care.escalate_to_human",
+    "skill:skill.care.manage_case",
+    "intent:complaint",
+    "intent:human_escalation",
+    "channel:ZALO",
+    "stage:DECISION",
+    "stage:APPROVAL",
+    "stage:EXECUTION",
+    "stage:OUTCOME",
+    "memory:Customer Context",
+    "kpi:Escalation Rate",
+    "kpi:Resolution Time"
+  ],
+  "risk": "A complaint is answered by the bot, or a refund/compensation is promised without human approval, and the operator takeover lock never actually silences the agent.",
+  "preconditions": [
+    "run_id=RUN-E2E-OFF-ESC, case_id=E2E-OFF-ESC, worker=w-biz-e2e; tenant T1 with cust-a on ZALO; the mock channel adapter counts outbound sends per effect_key and per session",
+    "the tenant compensation policy parameter (ASM-004 maximum autonomous refund) is unset in this run, so BR-007 must fail closed and route to the human path"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "customer_id": "cust-a",
+    "channel": "ZALO",
+    "utterance": "San pham giao vo hop, toi yeu cau hoan tien 1200 TWD",
+    "case_id": "CASE-0115-014",
+    "classified_intent": "complaint",
+    "requested_compensation_twd": 1200,
+    "operator_id": "OP-SUPPORT-01",
+    "takeover_ttl_seconds": 300,
+    "expected_route": "ESCALATE_HUMAN (FR-CS-002)"
+  },
+  "steps": [
+    {
+      "action": "Ingest the complaint and classify it",
+      "expected": "the intent resolves to complaint with reason + evidence, the care case is created and moves NEW -> CLASSIFIED, and severity/sentiment are derived from the message rather than from a model guess"
+    },
+    {
+      "action": "Run the policy check",
+      "expected": "routing decides ESCALATE_HUMAN; the 1200 TWD compensation is evaluated against the unset ASM-004 parameter and fails closed: no amount is promised, no voucher is issued and the case records APPROVAL_REQUIRED"
+    },
+    {
+      "action": "Escalate to a human",
+      "expected": "care.escalate_to_human writes exactly one handoff package (customer, case, transcript, policy verdict) and the conversation state becomes awaiting_human"
+    },
+    {
+      "action": "Acquire the operator takeover lock",
+      "expected": "the lock is held for the session, an autonomous dispatch attempt is refused by the guard it asserts on ('operator takeover active'), and no step is drafted or dispatched afterwards"
+    },
+    {
+      "action": "Resolve through the authorised human path",
+      "expected": "the operator decision bound to the case and effect_key is recorded, the case moves to RESOLVED citing the approval that authorised the compensation, and the AUTH-4 approval is consumed exactly once"
+    },
+    {
+      "action": "Release the takeover and verify the audit chain",
+      "expected": "human.resume releases the lock, the conversation returns to auto, the stopped bot task stays terminal, and the chained audit holds classification -> policy -> escalation -> takeover -> resolution"
+    }
+  ],
+  "assertions": [
+    "zero autonomous customer-visible messages are sent after escalation: the mock adapter send count for the session does not grow while the lock is held (NFR-007)",
+    "the compensation exists only behind the recorded human decision: before it, refund and voucher counts for the case are 0 and the case shows APPROVAL_REQUIRED",
+    "the case transitions are complete and ordered with reasons, and exactly one handoff package exists for CASE-0115-014",
+    "the resolution text is backed by the operator decision and the approval row; no bot-authored refund promise appears anywhere in the outbound log"
+  ],
+  "forbidden": [
+    "any autonomous reply or dispatch while a human holds the session lock",
+    "issuing a refund, voucher or compensation without the AUTH-4 approval row bound to that effect_key"
+  ],
+  "evidence": [
+    "handoff package plus the takeover lock record (operator id, TTL, acquired_at)",
+    "channel adapter send log for the session (empty after escalation) and the refused autonomous dispatch record",
+    "case transition history with reasons, the operator decision and the audit entries for the policy verdict, escalation and resolution"
+  ],
+  "cleanup": [
+    "release the takeover lock and close the case rows created by RUN-E2E-OFF-ESC; keep the handoff record, the approval row and the audit trail, and restore the session state to open"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. Classification, routing, the case FSM, the takeover guard and the approval gate are real; the ZALO channel adapter and the operator console are substituted boundaries.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/05-skill-system-specifications.md",
+    "plans/modules/customer-support.md",
+    "plans/platform/workflows-and-handoffs.md",
+    "implement/08-security-governance-nfr.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/customers.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

@@ -1,0 +1,88 @@
+{
+  "id": "INT-CASE-IN_PROGRESS-to-WAITING_CUSTOMER",
+  "title": "Waiting for the customer pauses the case without losing the SLA",
+  "document": "integration/case-fsm.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "CS-01",
+    "FR-CS-002",
+    "SRS-08"
+  ],
+  "facets": [
+    "entity:Service Case",
+    "intent:return_refund",
+    "kpi:Resolution Time"
+  ],
+  "risk": "The case waits forever with no customer-facing follow-up, or the SLA clock keeps running while the ball is in the customer's court.",
+  "preconditions": [
+    "An IN_PROGRESS return case CASE-T1-0004 for cust-a in namespace cd-wait-*",
+    "Outbound follow-up question prepared for the customer"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "case_number": "CASE-T1-0004",
+    "transition": {
+      "event": "await_customer",
+      "reason": "awaiting_return_photo"
+    },
+    "follow_up": {
+      "message_ref": "msg_wait_1",
+      "due_at": "2026-01-17T10:00:00Z"
+    }
+  },
+  "steps": [
+    {
+      "action": "Move the in-progress case to WAITING_CUSTOMER with a reason",
+      "expected": "state is WAITING_CUSTOMER and the reason is stored on the case"
+    },
+    {
+      "action": "Ask the system for the automatic follow-up",
+      "expected": "exactly one follow-up is scheduled at the due time and the message reference is recorded on the case"
+    },
+    {
+      "action": "Escalate the waiting case to a human operator",
+      "expected": "the case is escalated with its waiting state preserved and a new owner recorded, without a state regression"
+    },
+    {
+      "action": "Compare the SLA fields before and after the wait transition",
+      "expected": "the SLA due time is unchanged or explicitly extended by policy, never silently cleared"
+    }
+  ],
+  "assertions": [
+    "The case reports WAITING_CUSTOMER with reason awaiting_return_photo",
+    "Exactly one follow-up is scheduled and referenced on the case",
+    "sla_due_at is unchanged after the transition or carries an explicit policy extension reason"
+  ],
+  "forbidden": [
+    "Leave WAITING_CUSTOMER without any scheduled follow-up",
+    "Clear the SLA due time to hide a breach"
+  ],
+  "evidence": [
+    "Case projection with state, reason, owner and SLA fields",
+    "Scheduled follow-up record plus any extension audit entry"
+  ],
+  "cleanup": [
+    "Cancel the run-scoped follow-up and delete the case for cd-wait-*; retire the message reference only if it was never dispatched"
+  ],
+  "automation": "Run the real manage_case skill with a deterministic scheduler; the oracle combines the case projection with the scheduled follow-up so a case parked without follow-up fails.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/03-database-and-memory-schema.md",
+    "plans/platform/workflows-and-handoffs.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/platform.json",
+    "fixtures/offline/customers.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

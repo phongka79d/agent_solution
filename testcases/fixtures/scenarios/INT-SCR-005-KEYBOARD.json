@@ -1,0 +1,84 @@
+{
+  "id": "INT-SCR-005-KEYBOARD",
+  "title": "SCR-005 accessibility: takeover, compose, send and resume are keyboard operable",
+  "document": "integration/command-center.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "extension",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SCR-005",
+    "NFR-007"
+  ],
+  "facets": [
+    "entity:Conversation"
+  ],
+  "risk": "An operator without a pointing device cannot take over an escalated conversation, so urgent complaints wait or get mishandled.",
+  "preconditions": [
+    "Namespace gov-scr-<case_id>-<worker_id>; the operator UI runs against the offline gateway and mock SSE/telemetry streams.",
+    "Operator session bound to tenant T1 and an explicit operator_id from fixtures/offline/governance.json; frozen clock 2026-01-15T10:00:00Z.",
+    "Conversation conv-gov-5 is ACTIVE; pointer input is disabled for the whole case."
+  ],
+  "inputs": {
+    "keyboard_script": [
+      "Tab to the conversation list and select the conversation",
+      "Tab to the Takeover control and activate it",
+      "Tab into the composer and type a reply",
+      "Activate Send",
+      "Tab to Resume AI control and activate it"
+    ]
+  },
+  "steps": [
+    {
+      "action": "Take over using the keyboard only",
+      "expected": "Takeover succeeds; the status change to HUMAN_TAKEOVER is announced and focus remains in the console."
+    },
+    {
+      "action": "Compose and send a reply using the keyboard only",
+      "expected": "The message is delivered once and the composer clears; the send control has a discernible name."
+    },
+    {
+      "action": "Resume using the keyboard only",
+      "expected": "The conversation returns to ACTIVE and the resumed state is announced."
+    },
+    {
+      "action": "Traverse the console and enumerate focusable controls",
+      "expected": "Every interactive control exposes role, name and enabled state; no control is reachable only by pointer."
+    }
+  ],
+  "assertions": [
+    "Takeover, send and resume are all achievable with the keyboard alone.",
+    "Each control exposes role, name and state to the accessibility tree.",
+    "Status transitions are announced, not conveyed by colour alone.",
+    "Exactly one message is delivered during the keyboard-only session."
+  ],
+  "forbidden": [
+    "Making the takeover control a non-focusable element.",
+    "Trapping focus inside the composer after send.",
+    "Conveying the takeover state only through a colour change."
+  ],
+  "evidence": [
+    "Accessibility tree snapshot of the console with roles and names.",
+    "Adapter message log showing the single delivered reply.",
+    "Status history with the announced transitions."
+  ],
+  "cleanup": [
+    "Resume and delete the gov- conversation rows."
+  ],
+  "automation": "Command Center React components and the gateway routes run as real code under test; ERP, channel and telemetry providers are replaced by the offline mock sinks whose call logs are the oracle. UI assertions use accessible roles and names rather than CSS classes, and stream waits are condition-based.",
+  "prerequisites": [],
+  "references": [
+    "implement/07-human-command-center-ui.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

@@ -1,0 +1,87 @@
+{
+  "id": "INT-FR-ORC-APPROVAL-WAIT",
+  "title": "An AUTH-4 action pauses the run, creates one pending approval and resumes under the same effect key",
+  "document": "integration/sales-care-orchestrator.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P1",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "BR-007",
+    "AUTH-4",
+    "FR-ORC-001",
+    "TC-E2E-002"
+  ],
+  "facets": [
+    "stage:APPROVAL",
+    "entity:Approval",
+    "entity:Action"
+  ],
+  "risk": "A high-risk action executes without human sign-off, or the approval is reused for a different action later.",
+  "preconditions": [
+    "Tenant T1 broadcast-campaign skill with required authority AUTH-4 for a campaign of 800 recipients in namespace orc-approval-*",
+    "Approval decision submitted by operator op-7 through the approval endpoint"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "run_id": "run-orc-approval-1",
+    "skill": "skill.mkt.dispatch_campaign",
+    "action": {
+      "campaign_id": "cmp_1001",
+      "recipients": 800
+    },
+    "effect_key": "eff_8c1d0f6a4b2e73915c0d8a6f4b1e2d3c5a7b9e0f1a2b3c4d5e6f70819a2b3c4d"
+  },
+  "steps": [
+    {
+      "action": "Draft the campaign action and evaluate the authority verdict",
+      "expected": "the verdict is AWAITING_HUMAN_APPROVAL, the action row is pending and the task moves to awaiting_human"
+    },
+    {
+      "action": "List the pending approvals through the approval queue view",
+      "expected": "exactly one PENDING approval exists for the run, bound to the run id and the effect key; zero campaign messages were dispatched"
+    },
+    {
+      "action": "Approve through the decision endpoint and observe the resume",
+      "expected": "the task returns to running, exactly one dispatch happens under the same effect key, and the approval row is APPROVED with operator and timestamp"
+    },
+    {
+      "action": "Replay the same approval decision (double click or stale console tab)",
+      "expected": "the replay is refused as not claimable and the dispatch count stays 1"
+    }
+  ],
+  "assertions": [
+    "Before approval the pending-approval count is exactly 1 and the outbound dispatch count is 0",
+    "After approval exactly one dispatch occurs with the original effect key, and the task leaves awaiting_human",
+    "The replayed decision is refused and the total dispatch count remains 1"
+  ],
+  "forbidden": [
+    "Execute the AUTH-4 action while the approval is still PENDING",
+    "Reuse the approval to authorize a second execution or a different effect key"
+  ],
+  "evidence": [
+    "Approval queue row (decision, operator, decided_at, bound effect key)",
+    "Channel/provider test-sink dispatch count and the refusal entry for the replayed decision"
+  ],
+  "cleanup": [
+    "Retire the run-scoped campaign draft and approval row for orc-approval-*; keep the decision and audit records"
+  ],
+  "automation": "Use the real authority gate, approval claim transaction and durable task store; only the campaign adapter is a test sink. The oracle is the dispatch count plus the approval row state.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/04-core-engine-and-orchestrator.md",
+    "implement/03-database-and-memory-schema.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/platform.json",
+    "fixtures/offline/consents.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

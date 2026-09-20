@@ -1,0 +1,107 @@
+{
+  "id": "GOV-GATE-P1",
+  "title": "P1 Customer Care Pilot: exit criterion 'one real conversation handled end to end with evidence' is signed only on real runtime evidence",
+  "document": "governance/gates.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P1",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SRS-24",
+    "PILOT-03",
+    "OBJ-003",
+    "FR-CS-001"
+  ],
+  "facets": [
+    "entity:Service Case",
+    "kpi:AI Resolution Rate",
+    "memory:Customer Context"
+  ],
+  "risk": "A care pilot is declared passed on a scripted conversation, so the first real customer question exposes an identity, lookup or escalation defect that the gate was supposed to catch.",
+  "preconditions": [
+    "Namespace gov-gate-<case_id>-<worker_id>; the gate registry and the evidence registry are read from fixtures/offline/governance.json (gate_registry, gate_evidence_state) and no evidence may be created, simulated or back-dated inside the run.",
+    "Frozen clock 2026-01-15T10:00:00Z; every required evidence artifact is classified as runtime, mock or design before any status is written.",
+    "P1 entry conditions are recorded as: the conversation agent, intent detection, identity resolution, ERP lookup, order status, FAQ and escalation paths are implemented.",
+    "The evidence registry for P1 lists conversation_transcript, erp_lookup_receipt, case_outcome_record with the kinds conversation_transcript=mock, erp_lookup_receipt=mock, case_outcome_record=mock, and the repository contains no application runtime."
+  ],
+  "inputs": {
+    "gate": "P1",
+    "name": "Customer Care Pilot",
+    "owner": "Customer Care/QA",
+    "entry_conditions": "the conversation agent, intent detection, identity resolution, ERP lookup, order status, FAQ and escalation paths are implemented",
+    "exit_criterion": "one real conversation handled end to end with evidence",
+    "required_evidence": [
+      "conversation_transcript",
+      "erp_lookup_receipt",
+      "case_outcome_record"
+    ],
+    "evidence_kind": {
+      "conversation_transcript": "mock",
+      "erp_lookup_receipt": "mock",
+      "case_outcome_record": "mock"
+    },
+    "runtime_available": false,
+    "expected_status": "NOT_RUN",
+    "mock_coverage_is_gate_evidence": false
+  },
+  "steps": [
+    {
+      "action": "Read the entry conditions and the required evidence list for P1",
+      "expected": "The registry lists the entry conditions and each required artifact with its kind (conversation_transcript=mock, erp_lookup_receipt=mock, case_outcome_record=mock), and none of them is a runtime artifact."
+    },
+    {
+      "action": "Attempt to sign P1 off from the offline and mock suite results",
+      "expected": "Rejected: mock coverage shows the control logic against substituted boundaries and cannot evidence the exit criterion, so the status stays unapproved."
+    },
+    {
+      "action": "Attempt to sign P1 off from the design documents",
+      "expected": "Every artifact keeps its real kind; design artifacts remain gaps and no artifact is upgraded by the attempt."
+    },
+    {
+      "action": "Evaluate the gate with the real runtime absent",
+      "expected": "The status is NOT_RUN naming the missing runtime artifacts, with no approver, no signature and no PASS anywhere in the record."
+    },
+    {
+      "action": "Attempt to close P1 with evidence belonging to another gate",
+      "expected": "The artifact is rejected as belonging to another gate, which keeps its own status."
+    }
+  ],
+  "assertions": [
+    "P1 is never reported PASS: with no runtime the admissible outcomes are NOT_RUN for a missing runtime and BLOCKED_PREREQUISITE for a missing lock, and each required artifact is listed with its own kind and status.",
+    "A mock or substituted-boundary artifact is never accepted as gate evidence; mock coverage is reported as specification coverage only.",
+    "The exit criterion 'one real conversation handled end to end with evidence' is evaluated only against artifacts of kind runtime, and design or absent artifacts are listed as gaps against the owning role Customer Care/QA.",
+    "All 3 required evidence items are reported individually, so a partial pack cannot be summarised as done."
+  ],
+  "forbidden": [
+    "Treating a green offline or mock suite as gate evidence.",
+    "Marking the gate passed while a required evidence item is absent.",
+    "Re-labelling a design document or a mock receipt as a runtime artifact."
+  ],
+  "evidence": [
+    "Gate evidence registry snapshot listing each required artifact with its kind and status.",
+    "Run-report row for the gate with the status NOT_RUN, the missing items and no approver signature.",
+    "Mock-coverage report kept separate from the gate record and labelled as specification coverage."
+  ],
+  "cleanup": [
+    "Delete gov- gate-report rows after exporting the registry snapshot; the registry fixture and the design documents are left unchanged."
+  ],
+  "automation": "The gate-evaluation code and the run-report writer run as real code under test while the evidence registry is data. The oracle is the pair (evidence registry, run-report status): a gate that reads PASS without a real artifact fails the case, and a missing runtime is reported NOT_RUN instead of being allowed to fall through to PASS.",
+  "prerequisites": [
+    "P1 requires real runtime evidence (conversation_transcript, erp_lookup_receipt, case_outcome_record) from live adapters, real data and upstream receipts; no such runtime exists in this repository, so the gate is NOT_RUN and any PASS claim is BLOCKED_PREREQUISITE."
+  ],
+  "references": [
+    "implement/09-sprint-roadmap-and-pilots.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/live/env.example"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

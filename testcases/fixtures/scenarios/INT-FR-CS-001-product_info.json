@@ -1,0 +1,105 @@
+{
+  "id": "INT-FR-CS-001-product_info",
+  "title": "FR-CS-001 intent product_info — multilingual utterance, routing and safe resolution",
+  "document": "integration/sales-care-orchestrator.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "FR-CS-001",
+    "CS-01",
+    "FR-CS-002",
+    "SRS-10",
+    "SRS-08"
+  ],
+  "facets": [
+    "intent:product_info",
+    "memory:Organizational Knowledge",
+    "stage:SIGNAL",
+    "channel:WEB_APP_CHAT",
+    "kb:/product/products.md"
+  ],
+  "risk": "A product_info utterance is mis-routed (or answered from model memory), so the customer gets a wrong promise or no help at all.",
+  "preconditions": [
+    "run_id=RUN-INT-FRCS001-product_info-0115, case_id=INT-FR-CS-001-product_info, worker=w-biz-int; mocked conversation channel WEB_CHAT; no shared session",
+    "cust-a is verified with session sess-a-1, ORD-A-1 exists (SHIPPED, 1000 TWD), the 21 approved KB documents are loaded and the draft FAQ block is present but unpublished",
+    "the classifier threshold configuration is the synthetic test value from fixtures/offline/business.json"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "channel": "WEB_CHAT",
+    "session_id": "sess-a-1",
+    "utterance_vi": "Sản phẩm này có chống nước không? Có dùng được khi trời mưa to?",
+    "utterance_en": "Is this bag waterproof? Can I use it in heavy rain?",
+    "expected_intent": "usage/CONFIRMED",
+    "customer_ref": "cust-a",
+    "caller_agent": "CS-01",
+    "granted_authority": "AUTH-3"
+  },
+  "steps": [
+    {
+      "action": "Send the Vietnamese utterance and classify",
+      "expected": "intent label = usage/CONFIRMED (semantic oracle: label match, not exact wording); confidence above the threshold or an explicit clarify question is asked"
+    },
+    {
+      "action": "Send the English variant on an independent session",
+      "expected": "the same intent label is produced, showing the classification is language-robust rather than keyword-matched on Vietnamese tokens"
+    },
+    {
+      "action": "Route the request per FR-CS-002",
+      "expected": "the decision matrix picks one of: answer from approved documents (AUTH-3), lookup after verification (AUTH-0), bounded action (AUTH-3), handoff to another agent, or human escalation — recorded on the run with the reason"
+    },
+    {
+      "action": "Run the case-specific boundary probe A",
+      "expected": "the mixed utterance 'túi này giá bao nhiêu và có chống nước không' arrives in one message: the classifier must resolve both aspects (product_info + price) or ask one clarifying question — it must never drop the price half or answer the price from memory"
+    },
+    {
+      "action": "Run the case-specific boundary probe B",
+      "expected": "the answer cites /product/products.md and the ERP price for SKU-OK; a comparative claim about lasting longer than another brand, absent from the approved document, is rejected by the semantic oracle"
+    },
+    {
+      "action": "Close the interaction",
+      "expected": "a case row (or a session note for pure FAQ) records intent, priority, resolution summary and outcome; the customer's confirmation requirement is respected before any CLOSED state"
+    }
+  ],
+  "assertions": [
+    "the classified intent is usage/CONFIRMED for both the Vietnamese and the English utterance and for the mixed/ambiguous probe the agent asks a clarifying question instead of guessing a high-risk intent",
+    "every factual statement in the reply traces to an approved KB path or an ERP read made during the run; the semantic oracle rejects unsourced claims",
+    "the routing decision and its authority are recorded: read-only lookups happen only under a verified identity, and actions that exceed AUTH-3 become an approval request or a human handoff",
+    "the resulting case/session record carries the intent, the evidence references and an outcome that is not 'resolved' before the customer confirms or a human resolves it"
+  ],
+  "forbidden": [
+    "answering from LLM prior knowledge instead of the approved corpus or the ERP",
+    "performing a refund, cancellation, price change or account change from the conversation path without approval"
+  ],
+  "evidence": [
+    "classification records for both utterances (intent label, confidence, threshold, language)",
+    "routing decision record with the chosen path and the authority used",
+    "the reply's cited sources (KB path or ERP response id) plus the case id"
+  ],
+  "cleanup": [
+    "delete the case/conversation rows created by this intent case and drop namespace RUN-INT-FRCS001-product_info-0115; keep the audit entries"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. Classification is scored by the semantic oracle (intent label + required facts + cited source), never by exact response text; the conversation channel adapter is the substituted boundary.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/05-skill-system-specifications.md",
+    "plans/modules/customer-support.md",
+    "plans/customer-lifecycle.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/customers.json",
+    "fixtures/offline/knowledge.json",
+    "fixtures/offline/consents.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

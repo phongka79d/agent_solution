@@ -1,0 +1,99 @@
+{
+  "id": "UNIT-sales.recommend_product-HAPPY",
+  "title": "skill.sales.recommend_product happy path and boundary — cross-sell with the 7-field FR-SAL-003 contract",
+  "document": "unit/skills.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P2",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "SAL-03",
+    "FR-SAL-003",
+    "FR-C360-002",
+    "BR-004",
+    "SRS-11"
+  ],
+  "facets": [
+    "skill:skill.sales.recommend_product",
+    "kb:/sales/sales-playbook.md",
+    "event:add_to_cart",
+    "intent:product_info"
+  ],
+  "risk": "Customers receive irrelevant or ineligible offers, eroding trust and conversion.",
+  "preconditions": [
+    "isolated namespace run_id=RUN-sales.recommend_product-HAPPY, case_id=UNIT-sales.recommend_product-HAPPY, worker=w-biz-unit; no shared mutable session with any other case",
+    "skill registry row for skill.sales.recommend_product registered with test_cases TC-SKILL-01..05 plus >=1 skill-specific case and asserted registrable before the run",
+    "in-memory adapters loaded from the case fixtures for tenant T1 only; frozen clock 2026-01-15T10:00:00Z"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "customer_id": "cust-a",
+    "current_cart_skus": [
+      "SKU-OK"
+    ],
+    "recommendation_type": "CROSS_SELL",
+    "caller_agent": "SAL-03",
+    "granted_authority": "AUTH-1"
+  },
+  "steps": [
+    {
+      "action": "Route the call through the orchestrator",
+      "expected": "Orchestrator resolves caller SAL-02, SAL-03 -> skill.sales.recommend_product; the registry row exposes required_authority=AUTH-1, allowed_agents=[SAL-02, SAL-03], tool=Core.RecommendationEngine, timeout_ms=2500, retry_policy={max_retries:2, backoff_multiplier:1.5, retry_on_timeout:True}"
+    },
+    {
+      "action": "Invoke with the case input payload",
+      "expected": "Input validator (additionalProperties:false) accepts it; adapter Core.RecommendationEngine is invoked exactly once with the tenant binding 11111111-1111-1111-1111-111111111111"
+    },
+    {
+      "action": "Inspect the returned payload",
+      "expected": "customer='cust-a'; product={sku:'SKU-ADD-01', name:'Rain cover', price:250}; reason text cites the cart SKU; evidence.verified_timeline_event_ids=['EV-A-ADD2CART-0115'] and verified_model='catalog-co-visit-v3'; eligibility={stock_available:true, consent_verified:true, suppression_cleared:true}; confidence=0.78; expected_outcome={conversion_probability:0.31, expected_revenue:250, currency:'TWD'}"
+    },
+    {
+      "action": "Re-run the boundary/validation probe",
+      "expected": "best candidate scores 0.58 (< 0.65 threshold) -> explicit refusal, not a low-confidence recommendation; evidence lacking a verified Customer 360 timeline event id -> rejected before presentation (FR-C360-002)"
+    },
+    {
+      "action": "Collect the evidence and audit trail",
+      "expected": "Evidence card EV_SALES_RECOMMENDATION is written with mask=['customer'] and latency; the run record chains run_id -> skill -> tool -> decision -> execution_status (SRS-17)"
+    }
+  ],
+  "assertions": [
+    "all 7 FR-SAL-003 fields are present and populated with values the engine produced: customer, product, reason, evidence, eligibility, confidence, expected_outcome",
+    "confidence >= 0.65 and at least one verified timeline event id are hard preconditions of presentation",
+    "each mode (product recommendation, cross-sell, upsell, substitute, replenishment, bundle) returns the same 7-field shape with mode-appropriate reason/evidence",
+    "adapter Core.RecommendationEngine invocation count is exactly 1 for this run and the skill step ends execution_status='success' with latency recorded",
+    "the run audit ties run_id, caller SAL-02, skill skill.sales.recommend_product, decision and evidence card EV_SALES_RECOMMENDATION into one record; no component reports success for another component's work"
+  ],
+  "forbidden": [
+    "presenting a recommendation whose eligibility check failed",
+    "using a hypothesis about the customer as the evidence field (FR-C360-003)"
+  ],
+  "evidence": [
+    "run record for skill.sales.recommend_product with the 18 SRS-17 fields and the case run_id",
+    "evidence card EV_SALES_RECOMMENDATION payload, redacted (mask: ['customer'])",
+    "adapter call log for Core.RecommendationEngine: invocation count, input digest, latency"
+  ],
+  "cleanup": [
+    "release in-memory namespace RUN-sales.recommend_product-HAPPY: drop mock rows created by this case, release any effect reservation, keep audit/evidence rows required by retention"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. Adapter Core.RecommendationEngine substituted; the SLA deadline is observed on the virtual clock.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/05-skill-system-specifications.md",
+    "plans/modules/sales.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/catalog.json",
+    "fixtures/offline/customers.json",
+    "fixtures/offline/events.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

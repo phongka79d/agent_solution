@@ -1,0 +1,96 @@
+{
+  "id": "GOV-KPI-CURRENCY-SPLIT",
+  "title": "Mixed currencies are never summed into one figure",
+  "document": "governance/kpi.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P2",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SRS-20",
+    "NFR-010"
+  ],
+  "facets": [
+    "kpi:Campaign Revenue",
+    "kpi:Average Order Value",
+    "kpi:Cost per Successful Outcome"
+  ],
+  "risk": "TWD and VND rows are added together into a single total, so a mixed-currency report states a number that corresponds to no currency at all and unit economics become meaningless.",
+  "preconditions": [
+    "Namespace gov-kpi-<case_id>-<worker_id>; the metric is computed by the real reporting code over fixtures/offline/governance.json kpi_dataset and never copied from the dashboard payload.",
+    "Frozen clock 2026-01-15T10:00:00Z with the reporting window 2026-01-01T00:00:00Z .. 2026-02-01T00:00:00Z as a half-open interval; the stored aggregate is recomputed independently from the raw counter rows.",
+    "kpi_edge.currency_split supplies one TWD row and one VND row with a synthetic fixed rate recorded at the event time.",
+    "The reporting currency of the tenant is TWD and any conversion must use the rate fixed when the event occurred."
+  ],
+  "inputs": {
+    "currency_rows": [
+      {
+        "currency": "TWD",
+        "amount": 12000.0
+      },
+      {
+        "currency": "VND",
+        "amount": 9000000.0
+      }
+    ],
+    "synthetic_fixed_rates_to_twd": {
+      "TWD": 1.0,
+      "VND": 0.0013
+    },
+    "expected_display": "one row per currency, or a conversion at the event-time fixed rate",
+    "naive_wrong_total": 9012000.0
+  },
+  "steps": [
+    {
+      "action": "Aggregate the two rows with the default reporting configuration",
+      "expected": "The report shows one row per currency instead of one combined figure, and the currency is present on every row."
+    },
+    {
+      "action": "Enable the conversion view and re-run",
+      "expected": "The VND row is converted with the fixed rate recorded at the event time and the TWD total is derived only from converted rows, with the rate and the rate timestamp shown."
+    },
+    {
+      "action": "Attempt to sum the raw amounts",
+      "expected": "The attempt is refused: a figure of 9012000 with no currency is rejected, and the conversion path must be used explicitly."
+    },
+    {
+      "action": "Compare the two views",
+      "expected": "Per-currency rows and the converted total reconcile exactly, and the denominator of any ratio is taken from the same currency scope as the numerator."
+    }
+  ],
+  "assertions": [
+    "No published metric ever adds amounts of two different currencies; the currency is present on every stored row and every display.",
+    "A conversion uses the fixed rate recorded at the event time and states the rate and its timestamp, so the converted total is reproducible.",
+    "Ratio metrics such as average order value and cost per successful outcome use a denominator from the same currency scope as the numerator.",
+    "The naive cross-currency total is refused on every surface rather than being labelled as an approximation."
+  ],
+  "forbidden": [
+    "Summing TWD and VND amounts into one figure.",
+    "Converting with the current rate instead of the event-time fixed rate.",
+    "Computing a ratio across two currency scopes."
+  ],
+  "evidence": [
+    "Per-currency aggregate rows with the amounts and currency codes.",
+    "Conversion table naming the rate and the event-time timestamp per converted row.",
+    "Refusal record for the naive cross-currency sum attempt."
+  ],
+  "cleanup": [
+    "Delete gov- aggregate, conversion and refusal rows after export."
+  ],
+  "automation": "The reporting service and the metric dictionary run as real code under test over the frozen KPI dataset; the dashboard is a consumer whose displayed value must equal the independently recomputed value. Waits are condition-based on the stored aggregate row, metric values are never supplied as inputs, and no vendor boundary is involved in the arithmetic.",
+  "prerequisites": [],
+  "references": [
+    "plans/delivery/analytics.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

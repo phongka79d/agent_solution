@@ -1,0 +1,81 @@
+{
+  "id": "INT-FR-ORC-APPROVAL-EXPIRE",
+  "title": "An unanswered approval expires at 72 hours and parks the run for a human",
+  "document": "integration/sales-care-orchestrator.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "BR-007",
+    "AUTH-4",
+    "NFR-004"
+  ],
+  "facets": [
+    "stage:APPROVAL",
+    "entity:Approval",
+    "entity:Action"
+  ],
+  "risk": "A forgotten approval leaves a task parked forever, and the risky action fires later with nobody accountable.",
+  "preconditions": [
+    "Tenant T1 run orc-approval-exp-* paused on an AUTH-4 refund action created at 2026-01-15T10:00:00Z",
+    "Sweep executed at 2026-01-18T11:00:00Z, beyond the 72 hour approval TTL"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "approval_created_at": "2026-01-15T10:00:00Z",
+    "sweep_at": "2026-01-18T11:00:00Z",
+    "approval_ttl_hours": 72
+  },
+  "steps": [
+    {
+      "action": "Run the expiry sweep for the tenant",
+      "expected": "the approval row moves from PENDING to EXPIRED with a decided_at timestamp and the pending queue for the run becomes empty"
+    },
+    {
+      "action": "Read the task state after the sweep",
+      "expected": "the task remains outside running and is either awaiting_human or stopped, never executed"
+    },
+    {
+      "action": "Attempt to approve the expired approval",
+      "expected": "the decision is refused and no dispatch occurs"
+    },
+    {
+      "action": "Read the exception list raised for the run",
+      "expected": "one exception item references the expired approval and the run, so a human can resolve it"
+    }
+  ],
+  "assertions": [
+    "The approval row is EXPIRED with decided_at after the 72 hour TTL, and PENDING count for the run is 0",
+    "No dispatch is recorded for the expired action and the task never reports success",
+    "Exactly one exception item exists for the expired approval"
+  ],
+  "forbidden": [
+    "Execute an action whose approval expired unanswered",
+    "Silently drop the expired approval without an exception item"
+  ],
+  "evidence": [
+    "Approval row state transition with timestamps",
+    "Exception item for the run plus the zero-dispatch evidence"
+  ],
+  "cleanup": [
+    "Delete the run-scoped approval and exception rows for orc-approval-exp-*; keep audit entries"
+  ],
+  "automation": "Freeze the clock past the TTL and run the real sweep job; the oracle is the approval state plus the exception item and the dispatch count.",
+  "prerequisites": [],
+  "references": [
+    "implement/04-core-engine-and-orchestrator.md",
+    "implement/03-database-and-memory-schema.md",
+    "implement/07-human-command-center-ui.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/platform.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

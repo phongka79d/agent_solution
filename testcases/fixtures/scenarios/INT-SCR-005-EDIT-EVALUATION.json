@@ -1,0 +1,90 @@
+{
+  "id": "INT-SCR-005-EDIT-EVALUATION",
+  "title": "SCR-005 edit and evaluate: an operator-edited reply is attributed and evaluated",
+  "document": "integration/command-center.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "extension",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SCR-005",
+    "NFR-005",
+    "NFR-002"
+  ],
+  "facets": [
+    "entity:Conversation",
+    "entity:Outcome",
+    "stage:OUTCOME"
+  ],
+  "risk": "Operator edits are sent as if they were the AI reply, so KPIs credit the AI for human work and the learning loop trains on text nobody reviewed.",
+  "preconditions": [
+    "Namespace gov-scr-<case_id>-<worker_id>; the operator UI runs against the offline gateway and mock SSE/telemetry streams.",
+    "Operator session bound to tenant T1 and an explicit operator_id from fixtures/offline/governance.json; frozen clock 2026-01-15T10:00:00Z.",
+    "An AUTH-2 copilot draft exists for conv-gov-3; the operator edits it before sending."
+  ],
+  "inputs": {
+    "draft": {
+      "text": "Your parcel is delayed by two days; a replacement ships today."
+    },
+    "edited": {
+      "text": "Your parcel is delayed by two days; a replacement ships today and we waive the shipping fee."
+    },
+    "evaluation": {
+      "rating": "PARTIAL",
+      "note": "Draft missed the goodwill gesture."
+    }
+  },
+  "steps": [
+    {
+      "action": "Open the copilot draft during takeover",
+      "expected": "The draft is labelled as an AI suggestion in AUTH-2 mode and is not yet sent."
+    },
+    {
+      "action": "Edit the draft and send it",
+      "expected": "The outbound message is attributed to the operator, and the AI-generated flag is cleared on the conversation turn."
+    },
+    {
+      "action": "Record an evaluation of the original draft",
+      "expected": "The evaluation record links the draft, the operator edit and the rating, and it stores the reason text."
+    },
+    {
+      "action": "Check the human override accounting",
+      "expected": "The session is counted as a human override so Autonomous Completion Rate and AI Resolution Rate exclude it."
+    }
+  ],
+  "assertions": [
+    "The sent message is attributed to the human, and the AI-generated flag is false on that turn.",
+    "The evaluation record references both the original draft and the edit, with the rating and note.",
+    "The override counter increments by exactly one for this session, so AI-resolved metrics exclude it.",
+    "The original unedited draft remains retrievable for learning rather than being overwritten."
+  ],
+  "forbidden": [
+    "Attributing the edited message to the AI.",
+    "Discarding the original draft so no comparison is possible.",
+    "Counting the session as autonomous because the draft came from the AI."
+  ],
+  "evidence": [
+    "Conversation turns with sender attribution and the AI-generated flag.",
+    "Evaluation record plus the retained original draft.",
+    "Override counter value before and after."
+  ],
+  "cleanup": [
+    "Delete gov- conversation, draft and evaluation rows after exporting evidence."
+  ],
+  "automation": "Command Center React components and the gateway routes run as real code under test; ERP, channel and telemetry providers are replaced by the offline mock sinks whose call logs are the oracle. UI assertions use accessible roles and names rather than CSS classes, and stream waits are condition-based.",
+  "prerequisites": [],
+  "references": [
+    "implement/07-human-command-center-ui.md",
+    "plans/delivery/analytics.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

@@ -1,0 +1,89 @@
+{
+  "id": "UNIT-BR-007-UNSET-THRESHOLD",
+  "title": "BR-007: unset refund threshold routes to approval instead of executing",
+  "document": "unit/business-rules.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "BR-007",
+    "NFR-008",
+    "ASM-004"
+  ],
+  "facets": [
+    "entity:Approval",
+    "stage:APPROVAL"
+  ],
+  "risk": "With no approved refund threshold the code assumes any amount is autonomous, so an unlimited refund capability exists by omission.",
+  "preconditions": [
+    "Namespace gov-unit-br-<case_id>-<worker_id>; Business Rules Engine loaded with no cross-case state.",
+    "Frozen clock 2026-01-15T10:00:00Z; agent fixture context loaded from fixtures/offline/governance.json.",
+    "Tenant policy parameters undefined (T1_UNLOCKED): maxAutonomousRefundAmount is null."
+  ],
+  "inputs": {
+    "actions": [
+      {
+        "label": "tiny refund",
+        "order_id": "ORD-A-1",
+        "refund_amount_twd": 1
+      },
+      {
+        "label": "large refund",
+        "order_id": "ORD-B-1",
+        "refund_amount_twd": 9000
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Evaluate the one-TWD refund under an unset threshold",
+      "expected": "It is routed to human approval: an undefined limit never behaves as unlimited."
+    },
+    {
+      "action": "Evaluate the 9000 TWD refund under the same state",
+      "expected": "Also routed to approval; no amount is small enough to bypass an unset policy."
+    },
+    {
+      "action": "Compare both actions against an unrelated non-financial action in the same tenant",
+      "expected": "The unrelated action (order status lookup) still executes, proving the missing policy blocks only refunds."
+    }
+  ],
+  "assertions": [
+    "With the threshold undefined, zero refunds execute autonomously regardless of amount.",
+    "Both refund actions create approval tickets and the payment adapter refund counter stays 0.",
+    "The unrelated lookup succeeds, so a missing financial policy does not freeze unrelated work.",
+    "The routing reason names the missing parameter rather than a generic policy error."
+  ],
+  "forbidden": [
+    "Defaulting the threshold to a permissive number.",
+    "Blocking all care actions because the refund policy is missing.",
+    "Executing the small refund as a goodwill gesture below an assumed minimum."
+  ],
+  "evidence": [
+    "Routing records for both refund actions with the missing-parameter reason.",
+    "Approval queue snapshot plus payment adapter counter log."
+  ],
+  "cleanup": [
+    "Cancel the created tickets and delete gov- rows."
+  ],
+  "automation": "Real BusinessRulesEngine and PEP under test; only ERP/POS/connector boundaries are substituted by the offline mock whose call log and receipts are the oracle. Rules are evaluated in sequence and halt on the first failure, so each case asserts the first failing rule code rather than a bag of errors.",
+  "prerequisites": [
+    "ASM-004 threshold is deliberately unapproved; expected behaviour is routing, not policy acceptance."
+  ],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/orders.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

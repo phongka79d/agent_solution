@@ -1,0 +1,87 @@
+{
+  "id": "UNIT-BR-003",
+  "title": "BR-003: unreachable ERP yields zero stock and no availability claim",
+  "document": "unit/business-rules.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "BR-003",
+    "NFR-008",
+    "API-001",
+    "FR-SAL-002"
+  ],
+  "facets": [
+    "entity:Inventory",
+    "stage:DECISION"
+  ],
+  "risk": "During an ERP outage the agent tells customers an item is in stock, taking orders it cannot fulfil and generating cancellations and refunds.",
+  "preconditions": [
+    "Namespace gov-unit-br-<case_id>-<worker_id>; Business Rules Engine loaded with no cross-case state.",
+    "Frozen clock 2026-01-15T10:00:00Z; agent fixture context loaded from fixtures/offline/governance.json.",
+    "Mock API-001 configured to answer with connection refused for the inventory endpoint."
+  ],
+  "inputs": {
+    "agent_id": "SAL-02",
+    "tool": "API-001.InventoryConnector",
+    "payload": {
+      "sku_id": "SKU-OK",
+      "warehouse": "TW-01"
+    },
+    "outage": {
+      "mode": "CONNECTION_REFUSED",
+      "duration": "until cleanup"
+    }
+  },
+  "steps": [
+    {
+      "action": "Call check_stock while the inventory endpoint is unreachable",
+      "expected": "The call fails closed: no stock figure is returned and the response carries an error, not a number."
+    },
+    {
+      "action": "Attempt to compose an availability message for the customer",
+      "expected": "The message is blocked because no verified stock value exists; the adapter counter stays at 0."
+    },
+    {
+      "action": "Retry after the connector is restored",
+      "expected": "The retry returns the fixture stock 12 with the receipt timestamp, and a subsequent availability message is permitted."
+    }
+  ],
+  "assertions": [
+    "Fail-closed stock is treated as unverified (zero assumed), never as zero stock displayed to the customer as a fact.",
+    "No availability claim is dispatched while the SoR is unreachable: adapter counter 0.",
+    "After restoration the reply carries the authoritative stock 12 and the receipt reference.",
+    "The audit row for the outage records execution_status failed with the upstream error code, not success."
+  ],
+  "forbidden": [
+    "Serving a cached or default stock value during an outage.",
+    "Claiming availability from the model context while the connector failed.",
+    "Recording the failed call as success so dashboards stay green."
+  ],
+  "evidence": [
+    "Connector error record with upstream status and correlation id.",
+    "Adapter counter log for the blocked availability message.",
+    "Post-restoration stock receipt with timestamp."
+  ],
+  "cleanup": [
+    "Restore the mock ERP to its fixture config and delete gov- message rows."
+  ],
+  "automation": "Real BusinessRulesEngine and PEP under test; only ERP/POS/connector boundaries are substituted by the offline mock whose call log and receipts are the oracle. Rules are evaluated in sequence and halt on the first failure, so each case asserts the first failing rule code rather than a bag of errors.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/catalog.json",
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

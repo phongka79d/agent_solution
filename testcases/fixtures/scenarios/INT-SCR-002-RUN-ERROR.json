@@ -1,0 +1,91 @@
+{
+  "id": "INT-SCR-002-RUN-ERROR",
+  "title": "SCR-002 run inspection: error code and sanitized stack without PII leakage",
+  "document": "integration/command-center.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "extension",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SCR-002",
+    "SRS-17",
+    "NFR-002",
+    "NFR-006"
+  ],
+  "facets": [
+    "stage:EVIDENCE"
+  ],
+  "risk": "The run drawer exposes raw context containing customer identifiers, or hides the error so a failing connector looks idle.",
+  "preconditions": [
+    "Namespace gov-scr-<case_id>-<worker_id>; the operator UI runs against the offline gateway and mock SSE/telemetry streams.",
+    "Operator session bound to tenant T1 and an explicit operator_id from fixtures/offline/governance.json; frozen clock 2026-01-15T10:00:00Z.",
+    "One failed run is seeded with an upstream 504 and a sanitized context snapshot."
+  ],
+  "inputs": {
+    "run": {
+      "run_id": "run-gov-301",
+      "agent_id": "CS-01",
+      "status": "failed",
+      "error": {
+        "code": "UPSTREAM_504",
+        "message": "ERP lookup timed out",
+        "stack": "WmsAdapter.fetchStockStatus(line 142)"
+      },
+      "context_snapshot": {
+        "customer_ref": "psn:9f2a...",
+        "sku": "SKU-OK",
+        "warehouse": "TW-01"
+      }
+    }
+  },
+  "steps": [
+    {
+      "action": "Open the failed run in the inspection drawer",
+      "expected": "The displayed error code is UPSTREAM_504 with the sanitized stack line; the run status is failed, not idle."
+    },
+    {
+      "action": "Inspect the context snapshot field",
+      "expected": "The customer reference is pseudonymized; no plaintext phone, name, address or session token appears."
+    },
+    {
+      "action": "Trigger the retry control from the drawer",
+      "expected": "A retry is dispatched with the original effect_key and the drawer shows the new attempt linked to the same run group."
+    }
+  ],
+  "assertions": [
+    "The failed run is visibly failed with its upstream code, never presented as pending or idle.",
+    "Zero plaintext PII tokens appear in the rendered drawer payload (asserted by scanning the serialized payload for the fixture phone digits).",
+    "The retry reuses the original effect_key rather than minting a new one.",
+    "The new attempt is linked to the original run so the history stays one chain."
+  ],
+  "forbidden": [
+    "Swallowing the error and showing a blank run.",
+    "Rendering the raw context snapshot with plaintext identifiers.",
+    "Retrying with a fresh key and creating a second external effect."
+  ],
+  "evidence": [
+    "Drawer payload with the error object.",
+    "Rendered text scan result for PII tokens.",
+    "Retry request record showing the reused effect_key."
+  ],
+  "cleanup": [
+    "Delete the gov- run and retry rows after exporting evidence."
+  ],
+  "automation": "Command Center React components and the gateway routes run as real code under test; ERP, channel and telemetry providers are replaced by the offline mock sinks whose call logs are the oracle. UI assertions use accessible roles and names rather than CSS classes, and stream waits are condition-based.",
+  "prerequisites": [],
+  "references": [
+    "implement/07-human-command-center-ui.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/customers.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

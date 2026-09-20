@@ -1,0 +1,86 @@
+{
+  "id": "INT-FR-ORC-WORKER-RESTART",
+  "title": "A worker crash and restart resumes the run without duplicating the external effect",
+  "document": "integration/sales-care-orchestrator.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P1",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "NFR-004",
+    "NFR-003",
+    "BR-005",
+    "BR-006",
+    "TC-E2E-005"
+  ],
+  "facets": [
+    "stage:EXECUTION",
+    "memory:Agent Operational Memory",
+    "kpi:Duplicate Execution"
+  ],
+  "risk": "A restarted worker re-sends a message or re-creates an order, so the customer is charged or contacted twice.",
+  "preconditions": [
+    "Run orc-restart-* mid-execution with a reserved effect key when the worker process is killed",
+    "Worker restarted at 2026-01-15T10:10:00Z with the same durable task row and a redelivered inbound signal"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "run_id": "run-orc-restart-1",
+    "request_id": "evt_a_cart_add_1",
+    "skill_id": "skill.sales.send_message",
+    "step_index": 2,
+    "action_revision": 1
+  },
+  "steps": [
+    {
+      "action": "Kill the worker after the effect key was reserved but before the receipt was settled, then restart",
+      "expected": "the durable task row survives with state waiting or running, lease_owner cleared by the stale-lease requeue and the reservation still RESERVED"
+    },
+    {
+      "action": "Redeliver the identical inbound signal to the restarted worker",
+      "expected": "the recomputed effect key is byte-identical to the pre-crash key because run_id, retries and timestamps are not inputs"
+    },
+    {
+      "action": "Let the worker reconcile the reservation with the provider",
+      "expected": "the reconciliation settles the effect (present or absent) and only an absent effect is re-dispatched, under the same effect key"
+    },
+    {
+      "action": "Count the external effects recorded by the provider test sink",
+      "expected": "exactly one external effect exists for the effect key across the crash, the restart and the reconciliation"
+    }
+  ],
+  "assertions": [
+    "The effect key recomputed after the restart equals the pre-crash key byte for byte",
+    "The total external effect count for that key is exactly 1",
+    "The task resumes from its checkpoint step without repeating completed steps or incrementing retry_count for a settled effect"
+  ],
+  "forbidden": [
+    "Re-dispatch blindly after the crash instead of reconciling by effect key",
+    "Increment retry_count or fabricate a success receipt when the outcome is unproven"
+  ],
+  "evidence": [
+    "Durable task row before and after the restart (state, current_step, retry_count)",
+    "Effect key before/after restart plus the provider test-sink effect count"
+  ],
+  "cleanup": [
+    "Delete the run-scoped task and reservation rows for orc-restart-*; keep the immutable evidence chain"
+  ],
+  "automation": "Kill and restart the real worker process with a persistent local durable store; the oracle is the byte-equal effect key plus the single external effect in the sink.",
+  "prerequisites": [],
+  "references": [
+    "implement/04-core-engine-and-orchestrator.md",
+    "implement/03-database-and-memory-schema.md",
+    "plans/platform/api-and-integrations.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/platform.json",
+    "fixtures/offline/events.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

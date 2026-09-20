@@ -1,0 +1,80 @@
+{
+  "id": "INT-SCR-001-EMPTY",
+  "title": "SCR-001 empty state: a brand-new tenant shows explicit no-data, never zeros",
+  "document": "integration/command-center.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P0",
+  "basis": "extension",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SCR-001",
+    "SRS-17"
+  ],
+  "facets": [
+    "stage:OUTCOME"
+  ],
+  "risk": "A newly onboarded tenant sees a wall of zeros and concludes the platform recorded a catastrophic drop instead of simply having no data yet.",
+  "preconditions": [
+    "Namespace gov-scr-<case_id>-<worker_id>; the operator UI runs against the offline gateway and mock SSE/telemetry streams.",
+    "Operator session bound to tenant T1 and an explicit operator_id from fixtures/offline/governance.json; frozen clock 2026-01-15T10:00:00Z.",
+    "Tenant T2 has no events, orders or campaigns in the telemetry namespace."
+  ],
+  "inputs": {
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/telemetry/executive",
+      "tenant": "T2"
+    },
+    "seed_state": "EMPTY_TENANT"
+  },
+  "steps": [
+    {
+      "action": "Fetch the executive payload for the empty tenant",
+      "expected": "All ten indicators return NO_DATA with the reason no_events_in_window."
+    },
+    {
+      "action": "Render the dashboard",
+      "expected": "Each indicator shows an empty-state affordance (dash plus explanatory label), and no indicator renders a numeric zero."
+    },
+    {
+      "action": "Ingest one purchase event for cust-t2 and refresh",
+      "expected": "Revenue and AI Actions switch to real values while the remaining indicators stay NO_DATA."
+    }
+  ],
+  "assertions": [
+    "Zero indicators render numeric 0 while the tenant has no data.",
+    "At least one explanatory label is present and its accessible name mentions that no data exists for the window.",
+    "After ingesting a single event, only the indicators with a source change value; others remain NO_DATA rather than flipping to 0.",
+    "The payload distinguishes an empty window from a missing source (different reason codes)."
+  ],
+  "forbidden": [
+    "Rendering 0 for an empty window so the chart draws a flat line.",
+    "Showing sample or demonstration numbers on an empty tenant.",
+    "Treating an empty tenant fetch as an error page."
+  ],
+  "evidence": [
+    "Executive payload for the empty tenant with reason codes.",
+    "Empty-state screenshot and accessibility tree snapshot.",
+    "Post-ingest payload showing partial data."
+  ],
+  "cleanup": [
+    "Remove the gov- event and telemetry keys for T2."
+  ],
+  "automation": "Command Center React components and the gateway routes run as real code under test; ERP, channel and telemetry providers are replaced by the offline mock sinks whose call logs are the oracle. UI assertions use accessible roles and names rather than CSS classes, and stream waits are condition-based.",
+  "prerequisites": [],
+  "references": [
+    "implement/07-human-command-center-ui.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/tenants.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

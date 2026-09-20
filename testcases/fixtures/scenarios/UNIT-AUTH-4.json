@@ -1,0 +1,91 @@
+{
+  "id": "UNIT-AUTH-4",
+  "title": "AUTH-4 verdict: prepared action halts in awaiting_human and is not executed",
+  "document": "unit/authority.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "AUTH-4",
+    "BR-007",
+    "SCR-003",
+    "NFR-007",
+    "TC-E2E-002"
+  ],
+  "facets": [
+    "entity:Agent",
+    "entity:Approval",
+    "stage:APPROVAL"
+  ],
+  "risk": "A refund or campaign classified AUTH-4 executes autonomously because the amount was below an assumed threshold, producing an unauthorized financial action.",
+  "preconditions": [
+    "Namespace gov-unit-auth-<case_id>-<worker_id>; no shared mutable state with other cases.",
+    "PolicyEnforcementPoint loaded with fixtures/offline/governance.json skill_authority_registry and agents[]; clock frozen at 2026-01-15T10:00:00Z.",
+    "Approval APV-REFUND-450 exists in AWAITING_HUMAN with payload_hash recorded from its creation."
+  ],
+  "inputs": {
+    "agent_id": "CS-01",
+    "assigned_authority": "AUTH-3",
+    "proposal": {
+      "skill": "skill.care.initiate_return",
+      "approval_id": "APV-REFUND-450",
+      "payload": {
+        "order_id": "ORD-A-1",
+        "refund_amount_twd": 450,
+        "reason_code": "NOT_AS_DESCRIBED"
+      }
+    }
+  },
+  "steps": [
+    {
+      "action": "Submit the refund proposal whose skill requires AUTH-4",
+      "expected": "Enforcement returns authorized=false with decisionCode REQUIRE_HUMAN_APPROVAL and a non-empty approvalTicketId."
+    },
+    {
+      "action": "Query the task and approval state immediately after the call",
+      "expected": "Task state is awaiting_human and the approval state is AWAITING_HUMAN; the return connector has not been called."
+    },
+    {
+      "action": "Query the SoR for a return or refund transaction on ORD-A-1",
+      "expected": "No refund transaction exists; ORD-A-1 remains in its original status SHIPPED."
+    }
+  ],
+  "assertions": [
+    "The action is trapped in awaiting_human and never reported as executed or completed.",
+    "Zero calls to the returns/payment adapter for an undecided AUTH-4 action.",
+    "The approval ticket records approver_id unset and signed_at unset, so no signed release exists.",
+    "AUTH-4 is handled as a routing verdict: the audit row authority value is AUTH-4 while the agent assigned authority stays AUTH-3."
+  ],
+  "forbidden": [
+    "Executing before a signed human decision exists.",
+    "Recording execution_status success while the task is still awaiting_human.",
+    "Presenting AUTH-4 as a rank the agent has been granted."
+  ],
+  "evidence": [
+    "PEP decision JSON plus the created approval ticket row.",
+    "Mock SoR return/payment adapter call log showing zero refund calls.",
+    "Task-state snapshot showing awaiting_human with signed_at null."
+  ],
+  "cleanup": [
+    "Cancel APV-REFUND-450 through the sandbox approval API and delete the gov- task rows."
+  ],
+  "automation": "Real PEP, business rules and approval-queue persistence under test; the returns adapter is substituted and exposes a call log. Condition-based wait on the task state, never a fixed sleep.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/08-security-governance-nfr.md",
+    "implement/06-api-and-connectors-spec.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/orders.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

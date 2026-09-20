@@ -1,0 +1,85 @@
+{
+  "id": "INT-FR-ORC-ROUTING-CLARIFY",
+  "title": "An ambiguous request produces at most one clarifying question before routing",
+  "document": "integration/sales-care-orchestrator.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P2",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "FR-ORC-001",
+    "FR-CS-002",
+    "NFR-009"
+  ],
+  "facets": [
+    "stage:DECISION",
+    "intent:product_info",
+    "entity:Decision"
+  ],
+  "risk": "The system keeps asking questions or bounces the customer between agents, so the customer abandons the conversation.",
+  "preconditions": [
+    "Tenant T1 session sess-a-1 with the ambiguous utterance 'how much is the thing I saw?' in namespace orc-clarify-*",
+    "Clarification rule configured as at most one question before routing or human handoff"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "utterance": "how much is the thing I saw?",
+    "allowed_outcomes": [
+      "single_clarifying_question",
+      "human_handoff",
+      "routed_with_reason"
+    ]
+  },
+  "steps": [
+    {
+      "action": "Submit the ambiguous utterance and read the decision",
+      "expected": "the decision is flagged requires_clarification and the plan contains exactly one send_message step"
+    },
+    {
+      "action": "Replay ambiguous utterances for three turns without any disambiguating information",
+      "expected": "the run escalates to human handoff instead of emitting a second or third clarifying question"
+    },
+    {
+      "action": "Submit a request that becomes unambiguous after one clarification",
+      "expected": "routing happens with a named agent and a reason, and no further question is asked"
+    },
+    {
+      "action": "Read the decision audit for the session",
+      "expected": "the questions asked per run are counted and never exceed one"
+    }
+  ],
+  "assertions": [
+    "The clarification plan contains exactly one one-step question with the send_message skill",
+    "Three consecutive ambiguous turns produce a human handoff rather than a second question",
+    "The audited question count per run never exceeds 1"
+  ],
+  "forbidden": [
+    "Ask a second clarifying question in the same run",
+    "Route an unresolved ambiguity to a random agent to keep the conversation moving"
+  ],
+  "evidence": [
+    "Decision records per turn with the clarification flag",
+    "Audit count of clarifying questions and the human-handoff record"
+  ],
+  "cleanup": [
+    "Delete the run-scoped decision and message rows for orc-clarify-*; keep audit entries"
+  ],
+  "automation": "Drive the real orchestrator with ambiguous fixture utterances and a counting test sink for outbound questions; the oracle is the audited question count plus the handoff record.",
+  "prerequisites": [],
+  "references": [
+    "implement/04-core-engine-and-orchestrator.md",
+    "plans/platform/architecture.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/platform.json",
+    "fixtures/offline/knowledge.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

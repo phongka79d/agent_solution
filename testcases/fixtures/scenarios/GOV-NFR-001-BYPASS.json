@@ -1,0 +1,114 @@
+{
+  "id": "GOV-NFR-001-BYPASS",
+  "title": "NFR-001 bypass attempts: direct adapter calls, argument smuggling and token replay all fail",
+  "document": "governance/nfr.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "NFR-001",
+    "BR-008",
+    "BR-009",
+    "NFR-006"
+  ],
+  "facets": [
+    "entity:Agent",
+    "entity:Action"
+  ],
+  "risk": "The allowlist is enforced only in the agent wrapper, so anything that reaches the adapter directly or smuggles a tool name through arguments evades the control.",
+  "preconditions": [
+    "Namespace gov-nfr-<case_id>-<worker_id>; NFR verification runs against the offline gateway with mock SoR and channel boundaries.",
+    "Frozen clock 2026-01-15T10:00:00Z; failure, outage and crash injections are scripted at the substituted boundary, never faked inside the assertion.",
+    "Adapter endpoints are reachable only through the gateway allowlist; the raw adapter port is network-isolated in the offline harness."
+  ],
+  "inputs": {
+    "attempts": [
+      {
+        "label": "direct adapter call",
+        "vector": "DIRECT_HTTP",
+        "target": "mock-adapter://email/send"
+      },
+      {
+        "label": "argument smuggling",
+        "vector": "TOOL_ARGS",
+        "payload": {
+          "sku_id": "SKU-OK",
+          "options": {
+            "tool": "db.write"
+          }
+        }
+      },
+      {
+        "label": "foreign token replay",
+        "vector": "TOKEN",
+        "token_tenant": "T2",
+        "used_in_tenant": "T1"
+      },
+      {
+        "label": "nested skill escalation",
+        "vector": "CHAINED_SKILL",
+        "payload": {
+          "steps": [
+            "skill.sales.check_price",
+            "skill.governance.raw_dataset_export"
+          ]
+        }
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Attempt the direct adapter call",
+      "expected": "The call is refused at the gateway because the adapter does not accept unmediated clients."
+    },
+    {
+      "action": "Send the smuggling payload and the chained-skill payload",
+      "expected": "The nested tool name is treated as data; the prohibited step is refused and the permitted step still runs."
+    },
+    {
+      "action": "Replay the T2 token inside T1",
+      "expected": "The replay is refused on tenant or signature grounds; no T2 data is returned."
+    },
+    {
+      "action": "Inspect all four outcomes",
+      "expected": "Four refusals with distinct reasons; adapter effect counters are 0 for every attempt."
+    }
+  ],
+  "assertions": [
+    "Every one of the four bypass vectors fails, and each failure has a distinct, auditable reason.",
+    "The nested-skill attempt does not abort the harmless preceding step, proving the refusal is scoped.",
+    "The replayed token yields zero foreign data in the response.",
+    "No failure returns a success-shaped payload."
+  ],
+  "forbidden": [
+    "Relying on the agent wrapper as the only enforcement point.",
+    "Parsing a tool name out of free-form arguments.",
+    "Accepting a token whose tenant does not match the session."
+  ],
+  "evidence": [
+    "Refusal records for the four vectors.",
+    "Response bodies (redacted) showing no foreign data.",
+    "Adapter effect counters."
+  ],
+  "cleanup": [
+    "Delete gov- attempt rows and any cached token material."
+  ],
+  "automation": "Core PEP, rules engine, audit writer, idempotency store and worker lease logic run as real code under test; only ERP/WMS, channel gateways, Redis and the model provider are substituted. Faults are injected at those boundaries and waits are condition-based on persisted state.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/customers.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

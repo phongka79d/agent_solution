@@ -1,0 +1,125 @@
+{
+  "id": "GOV-ASM-005",
+  "title": "ASM-005 unlocked: Customer 360 fields without a storage decision are not persisted long term",
+  "document": "governance/asm.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "ASM-005",
+    "FR-C360-002",
+    "NFR-006",
+    "SRS-16"
+  ],
+  "facets": [
+    "memory:Customer Context",
+    "entity:Customer",
+    "stage:CONTEXT"
+  ],
+  "risk": "Fields nobody approved for long-term storage are persisted anyway, so sensitive profile data accumulates without a legal basis and a later deletion request cannot be satisfied.",
+  "preconditions": [
+    "Namespace gov-asm-<case_id>-<worker_id>; the assumption registry is read from fixtures/offline/governance.json assumptions and no lock may be granted, forged, cached or edited inside the run.",
+    "Frozen clock 2026-01-15T10:00:00Z; the harness records exactly one outcome per dependent capability - EXECUTED, BLOCKED_PREREQUISITE or SKIP_ASM_<n> - and refuses to re-label a skip as PASS.",
+    "assumptions.ASM-005.locked is false and the list of Customer 360 fields allowed for long-term storage is empty, so allowed-set membership is unknown for every field.",
+    "A session-scoped lookup for cust-a is available and the run can inspect every key written to the durable store."
+  ],
+  "inputs": {
+    "assumptions": {
+      "ASM-005": {
+        "locked": false,
+        "owner": "Data/Legal/Product",
+        "locks": [
+          "Customer 360 fields allowed for long-term storage"
+        ],
+        "blocks": [
+          "long-term persistence of unlisted fields"
+        ],
+        "does_not_block": [
+          "session-scoped lookup"
+        ]
+      }
+    },
+    "candidates": [
+      {
+        "label": "session-scoped profile read",
+        "scope": "SESSION",
+        "expected_status": "EXECUTED"
+      },
+      {
+        "label": "durable profile write",
+        "scope": "LONG_TERM",
+        "fields": [
+          "customer_id",
+          "lifetime_order_count"
+        ],
+        "expected_status": "BLOCKED_PREREQUISITE"
+      },
+      {
+        "label": "durable contact write",
+        "scope": "LONG_TERM",
+        "fields": [
+          "customer_id",
+          "channel_handle"
+        ],
+        "expected_status": "BLOCKED_PREREQUISITE"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Read the Customer 360 profile for cust-a inside the session",
+      "expected": "The read succeeds and the data is held only for the session; nothing is written to the durable store."
+    },
+    {
+      "action": "Attempt to persist the two long-term write candidates",
+      "expected": "Both writes are refused with BLOCKED_PREREQUISITE naming ASM-005, because allowed-set membership is unknown and an unknown set fails closed."
+    },
+    {
+      "action": "Inspect the durable store for keys written during the run",
+      "expected": "No customer field rows were created; only namespace and audit keys exist, and the audit rows record the refused writes."
+    },
+    {
+      "action": "Attempt to store the fields after marking them as consented by the caller",
+      "expected": "The refusal stands: a caller-supplied consent or verification flag cannot widen the allowed field set."
+    }
+  ],
+  "assertions": [
+    "Zero long-term customer-field rows are created while ASM-005 is unlocked; the durable store contains no customer profile data after the run.",
+    "An unknown allowed-field set fails closed for every field, including fields that look harmless.",
+    "Session-scoped lookup still works, so customer service is not disabled by the missing legal decision.",
+    "No payload field, header or consent claim provided by the caller can widen the allowed set, and refused writes are audited rather than dropped."
+  ],
+  "forbidden": [
+    "Persisting customer fields 'temporarily' in a durable store and deleting them later.",
+    "Treating a caller-asserted consent or verification_status payload as authority to store.",
+    "Blocking session-scoped reads and breaking customer care as a side effect."
+  ],
+  "evidence": [
+    "Durable-store key listing after the run showing no customer field rows.",
+    "Refusal records for both write attempts with the ASM-005 reason.",
+    "Audit rows for the refused writes plus the successful session-scoped read."
+  ],
+  "cleanup": [
+    "Delete gov- session cache entries and refusal rows; confirm the durable store holds no customer field data."
+  ],
+  "automation": "The policy-parameter resolver, the PEP and the run-report writer run as real code under test; the unlocked assumption is configuration, not a substituted boundary. The oracle is the run-report status plus the adapter effect counters, so a capability that executes while its assumption is unlocked fails the case instead of passing it.",
+  "prerequisites": [
+    "The Customer 360 long-term-storage field list (ASM-005, owner Data/Legal/Product) is not locked, so long-term persistence of unlisted fields is BLOCKED_PREREQUISITE while session-scoped lookup remains available."
+  ],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/customers.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

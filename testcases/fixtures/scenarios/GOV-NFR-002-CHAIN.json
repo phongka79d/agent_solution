@@ -1,0 +1,105 @@
+{
+  "id": "GOV-NFR-002-CHAIN",
+  "title": "NFR-002 tamper detection: modifying a historical audit row breaks the tenant chain",
+  "document": "governance/nfr.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "NFR-002",
+    "SRS-17",
+    "NFR-006"
+  ],
+  "facets": [
+    "entity:Evidence",
+    "stage:EVIDENCE"
+  ],
+  "risk": "Audit rows can be edited or deleted without detection, so the audit trail cannot be trusted in a dispute or an investigation.",
+  "preconditions": [
+    "Namespace gov-nfr-<case_id>-<worker_id>; NFR verification runs against the offline gateway with mock SoR and channel boundaries.",
+    "Frozen clock 2026-01-15T10:00:00Z; failure, outage and crash injections are scripted at the substituted boundary, never faked inside the assertion.",
+    "Five audit rows exist for the tenant with a genesis row whose prev_hash is 64 zeros."
+  ],
+  "inputs": {
+    "chain_checks": [
+      {
+        "label": "pristine chain",
+        "mutation": null,
+        "expected": "VALID"
+      },
+      {
+        "label": "payload edited in row 3",
+        "mutation": "UPDATE payload",
+        "expected": "INVALID_AT_ROW_3"
+      },
+      {
+        "label": "row 2 deleted",
+        "mutation": "DELETE row 2",
+        "expected": "INVALID_AT_ROW_2"
+      },
+      {
+        "label": "row reordered",
+        "mutation": "SWAP",
+        "expected": "INVALID"
+      },
+      {
+        "label": "tenant changed on row 4",
+        "mutation": "CHANGE_TENANT",
+        "expected": "INVALID"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Verify the pristine chain",
+      "expected": "Verification reports VALID and every row prev_hash equals the previous row chain_hash."
+    },
+    {
+      "action": "Edit the payload of row 3 and re-verify",
+      "expected": "Verification fails and reports the first invalid row index as 3."
+    },
+    {
+      "action": "Delete row 2 and re-verify on a restored copy",
+      "expected": "Verification fails at the deletion point and names row 2."
+    },
+    {
+      "action": "Swap two rows and change a tenant on a copy, then verify",
+      "expected": "Both mutate the chain so verification fails; the tenant-change case is rejected explicitly rather than silently passing."
+    }
+  ],
+  "assertions": [
+    "The verifier recomputes SHA-256 over canonical JSON from the 18 domain fields; it does not trust a stored valid flag.",
+    "Tampering anywhere invalidates the rest of the chain, and the first invalid row is reported precisely.",
+    "Chain partitioning is per tenant: a sequence whose tenant changes is rejected.",
+    "Any non-zero exit from verification is a release blocker, not a warning."
+  ],
+  "forbidden": [
+    "Endorsing a record by trusting a boolean column.",
+    "Globally chaining across tenants so one tenant's write breaks another's verification.",
+    "Repairing the chain automatically (re-signing) after tampering instead of reporting it."
+  ],
+  "evidence": [
+    "Chain verification reports for the five scenarios with the failing row index.",
+    "Row hashes before and after each mutation, exported from the tampered copies only."
+  ],
+  "cleanup": [
+    "Discard the tampered copies; the pristine chain for the namespace is left intact and exported as evidence."
+  ],
+  "automation": "Real chaining writer and verifier under test, including the canonical JSON serialization, so a mismatch between writer and verifier surfaces as a failure rather than a silent pass.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

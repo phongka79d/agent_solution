@@ -1,0 +1,96 @@
+{
+  "id": "GOV-APV-EXECUTION-GAP",
+  "title": "Approval is not execution: APPROVED does not mean the external side effect already happened",
+  "document": "governance/approval.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SCR-003",
+    "AUTH-4",
+    "BR-006",
+    "TC-E2E-008",
+    "NFR-003"
+  ],
+  "facets": [
+    "entity:Approval",
+    "entity:Execution",
+    "stage:EXECUTION"
+  ],
+  "risk": "The UI marks the campaign as done when the decision is registered, so an operator stops watching a job that later fails in the adapter and the customer never receives the message.",
+  "preconditions": [
+    "Namespace gov-apv-<case_id>-<worker_id>; approval queue seeded from fixtures/offline/governance.json.",
+    "Operator identities and roles resolved from the fixture operator registry; every decision goes through POST /api/v1/approvals/{id}/decision, the only approval route.",
+    "The mock EMAIL adapter is scripted to fail the first dispatch attempt with 503 and succeed on retry."
+  ],
+  "inputs": {
+    "decision": {
+      "decision": "APPROVE",
+      "operator_id": "OP-APPROVER-T1",
+      "reason": "Reviewed."
+    },
+    "adapter_script": [
+      {
+        "attempt": 1,
+        "result": "503"
+      },
+      {
+        "attempt": 2,
+        "result": "200"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Submit APPROVE and observe the immediate response",
+      "expected": "The response status is APPROVED with a task id; it does not claim the message was delivered."
+    },
+    {
+      "action": "Observe the first dispatch attempt failing",
+      "expected": "The execution record shows failed with the upstream 503 preserved; the run is not marked completed."
+    },
+    {
+      "action": "Let the retry run with the same effect_key",
+      "expected": "The retry succeeds and exactly one external send is recorded with one receipt."
+    },
+    {
+      "action": "Read the run and task records at each stage",
+      "expected": "Distinct states are visible: approval APPROVED, execution failed then succeeded, task completed only after the receipt."
+    }
+  ],
+  "assertions": [
+    "Approval status and execution status are different fields and disagree while the job is failing.",
+    "A 503 is never reported to the operator as a successful send.",
+    "The retry reuses the effect_key, so the eventual delivery is single, not duplicated.",
+    "The task only reaches completed after a verified receipt exists."
+  ],
+  "forbidden": [
+    "Setting task status completed when the decision is registered.",
+    "Reporting success on the queue acknowledgement rather than the provider response.",
+    "Creating a second external send on retry."
+  ],
+  "evidence": [
+    "Decision response, execution records for both attempts, and the final receipt.",
+    "Adapter log with the 503 and the later 200 plus the single effect_key."
+  ],
+  "cleanup": [
+    "Delete gov- task and execution rows; the single simulated send is reported as non-recallable."
+  ],
+  "automation": "Real approval-to-execution handoff and retry logic under test; the adapter is the substituted boundary and its script makes the failure deterministic.",
+  "prerequisites": [],
+  "references": [
+    "implement/07-human-command-center-ui.md",
+    "implement/08-security-governance-nfr.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

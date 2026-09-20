@@ -1,0 +1,89 @@
+{
+  "id": "INT-FR-C360-CONSENT-WITHDRAWAL",
+  "title": "Consent withdrawal immediately stops queued marketing and cancels schedules",
+  "document": "integration/customer-360.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P1",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "BR-004",
+    "FR-C360-001",
+    "NFR-008"
+  ],
+  "facets": [
+    "entity:Consent",
+    "memory:Customer Context",
+    "stage:EXECUTION"
+  ],
+  "risk": "Marketing continues after a customer opts out, which is a legal and brand-damaging violation.",
+  "preconditions": [
+    "Tenant T1 with a queued reminder sequence for cust-a (EMAIL marketing granted, 2 messages per week cap)",
+    "Consent withdrawal event injected at 2026-01-15T10:05:00Z in namespace run-t1-consent-*"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "customer_id": "cust-a",
+    "queued_messages": [
+      "msg_reminder_1",
+      "msg_reminder_2"
+    ],
+    "withdrawal": {
+      "channel": "email",
+      "consent_type": "marketing_messaging",
+      "at": "2026-01-15T10:05:00Z"
+    }
+  },
+  "steps": [
+    {
+      "action": "Register the withdrawal and read the consent record and the consent_marketing projection",
+      "expected": "the record moves to not granted with an opt-out timestamp and the projection reports consent_marketing false with an active suppression"
+    },
+    {
+      "action": "Attempt to dispatch both queued reminder messages",
+      "expected": "zero messages are dispatched and each attempt is refused before the channel adapter is reached"
+    },
+    {
+      "action": "Inspect the schedule and queue state",
+      "expected": "the reminder schedule is cancelled and the queued items are marked suppressed rather than silently dropped"
+    },
+    {
+      "action": "Attempt to weaken the consent record by replaying an older granted payload",
+      "expected": "the replay is rejected and the newer withdrawal remains the effective state"
+    }
+  ],
+  "assertions": [
+    "Dispatched marketing messages for cust-a after the withdrawal: exactly 0",
+    "The queue holds 2 suppressed items with a reason referencing the withdrawal event",
+    "The consent record keeps the later opt-out timestamp and no older granted payload overwrites it"
+  ],
+  "forbidden": [
+    "Send any marketing message after the withdrawal",
+    "Delete the withdrawal record to make a send possible"
+  ],
+  "evidence": [
+    "Consent record and projection values with timestamps",
+    "Queue state showing 2 suppressed items and the zero-dispatch evidence"
+  ],
+  "cleanup": [
+    "Clear the run-scoped queue and schedule items for run-t1-consent-*; retain the consent audit history"
+  ],
+  "automation": "Replay the withdrawal through the real consent service and observe the queue; the channel adapter is a test sink that records zero calls, which is the oracle for suppression.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "plans/platform/data-and-knowledge.md",
+    "implement/03-database-and-memory-schema.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/consents.json",
+    "fixtures/offline/platform.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

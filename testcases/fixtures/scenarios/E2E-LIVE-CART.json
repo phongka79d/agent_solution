@@ -1,0 +1,127 @@
+{
+  "id": "E2E-LIVE-CART",
+  "title": "PILOT-02 + TC-E2E-007: cart recovery with floor-price guard and consent suppression (approved sandbox)",
+  "document": "e2e/live.md",
+  "layer": "e2e",
+  "environment": "live",
+  "priority": "critical",
+  "gate": "P2",
+  "basis": "blueprint",
+  "pair": "E2E-OFF-CART",
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "PILOT-02",
+    "TC-E2E-007",
+    "SAL-04",
+    "SAL-05",
+    "FR-SAL-002",
+    "FR-SAL-003",
+    "BR-002",
+    "BR-004",
+    "BR-005",
+    "BR-006",
+    "NFR-003",
+    "NFR-008",
+    "SRS-11"
+  ],
+  "facets": [
+    "skill:skill.sales.recommend_product",
+    "skill:skill.sales.check_price",
+    "skill:skill.sales.send_message",
+    "skill:skill.mkt.check_consent",
+    "event:add_to_cart",
+    "event:checkout",
+    "event:purchase",
+    "channel:EMAIL",
+    "stage:PLAN",
+    "stage:ACTION",
+    "stage:APPROVAL",
+    "stage:EXECUTION",
+    "stage:OUTCOME",
+    "kpi:Cart Recovery Rate",
+    "kpi:Duplicate Execution"
+  ],
+  "risk": "An abandoned-cart reminder reaches a customer who opted out, or is sent with a discount below the owner-approved floor — either way the company either harasses a customer or sells at a loss because the recovery message bypassed the policy guards.",
+  "preconditions": [
+    "run_id=RUN-E2E-LIVE-CART, case_id=E2E-LIVE-CART, worker=w-biz-e2e-live; a sandbox-only cart for the sandbox customer is created and abandoned through the sandbox commerce API",
+    "the sandbox consent store holds a granted EMAIL marketing consent for the recipient and no consent for a second sandbox identity used as the suppression probe"
+  ],
+  "inputs": {
+    "tenant_id": "LIVE_TENANT_ID",
+    "customer_id": "LIVE_CUSTOMER_A_SANDBOX_ID",
+    "cart_id": "sandbox cart created for this run",
+    "channel": "EMAIL",
+    "effect_key": "EK-E2E-LIVE-CART-<run_id>",
+    "sandbox_recipient": "approved test mailbox only",
+    "consent_check": "read live from the sandbox consent store at send time",
+    "p_floor_source": "sandbox pricing service verdict for the sandbox SKU"
+  },
+  "steps": [
+    {
+      "action": "Create and abandon the sandbox cart",
+      "expected": "the sandbox commerce API returns a cart owned by the sandbox customer and the abandonment condition fires from the scheduler, not from a sleep"
+    },
+    {
+      "action": "Attempt the below-floor sandbox offer",
+      "expected": "the sandbox pricing service rejects the reduced price, no discounted quote is issued, and the sandbox provider test sink logs 0 sends for that attempt"
+    },
+    {
+      "action": "Send the in-policy sandbox reminder",
+      "expected": "exactly one sandbox message is dispatched for the effect_key, recipient_count is 1 and the consent row is re-read at send time"
+    },
+    {
+      "action": "Replay the abandonment on the sandbox",
+      "expected": "the reserve outcome is REPLAY with the stored receipt and the sandbox provider records exactly one message for the effect_key"
+    },
+    {
+      "action": "Probe the suppression path on the sandbox",
+      "expected": "the second sandbox identity without consent is suppressed with ERR_CONSENT_SUPPRESSED and the provider test sink shows 0 calls for it — the provider test sink is the oracle for every denied or refused step: its call log for the run stays empty, no provider id is manufactured for the attempt, and the audit entry records the refusal instead"
+    },
+    {
+      "action": "Observe recovery and pick up the receipts",
+      "expected": "the sandbox order/response script advances the outcome, and the provider receipt, reservation row and attribution reference all resolve to the same run_id"
+    }
+  ],
+  "assertions": [
+    "the sandbox provider holds exactly one message for the effect_key and its receipt resolves in the sandbox provider API",
+    "the suppressed sandbox identity produced zero provider calls and no provider id was manufactured for it — a denied action has no provider receipt to show: the case records the decision, the zero-call sink and the audit entry, and never presents a receipt, order id or message id the provider did not return",
+    "the sandbox floor verdict, not local arithmetic, is what blocked the reduced price, and the offer that was sent respects the sandbox floor",
+    "the recovered sandbox order resolves against the sandbox commerce API with the attributed amount, so the pilot passes on the conversion chain rather than on the send count"
+  ],
+  "forbidden": [
+    "sending to any address outside the approved sandbox allowlist",
+    "reporting cart recovery from a sandbox queue acknowledgement instead of the provider receipt and the recovered order"
+  ],
+  "evidence": [
+    "sandbox provider message id plus the consent rows read at send time",
+    "sandbox pricing-service verdict for the refused discount and the provider test-sink log (0 calls)",
+    "sandbox order/receipt record for the recovered cart and the attribution reference (retained)"
+  ],
+  "cleanup": [
+    "Retire the sandbox artefacts created by this run through the supported sandbox APIs (cancel/withdraw the created cart, campaign, case and voucher references); delete nothing immutable — sent messages, provider receipts and audit rows are retained and reported as non-deletable rather than pretending they were unsent"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. Same flow over the sandbox commerce API with a single approved sandbox recipient and a sandbox-only cart.",
+  "prerequisites": [
+    "ASM-001 approved connector lock is present (LIVE_CONNECTORS_LOCK points at the approved connector list) — without it this case is SKIP_ASM_001, never PASS",
+    "Per-case sandbox authorization: the run_id of this case is registered in the approved sandbox allowlist with its sandbox tenant/customer/SKU mapping before execution; credentials live outside the repository (env.local) and are never printed in evidence",
+    "The sandbox channel and pricing endpoints are allowlisted for this run and one approved test mailbox is the only recipient; without it the case is BLOCKED_PREREQUISITE, never PASS"
+  ],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/05-skill-system-specifications.md",
+    "plans/modules/sales.md",
+    "plans/customer-lifecycle.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/catalog.json",
+    "fixtures/offline/customers.json",
+    "fixtures/offline/consents.json",
+    "fixtures/offline/events.json",
+    "fixtures/offline/orders.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

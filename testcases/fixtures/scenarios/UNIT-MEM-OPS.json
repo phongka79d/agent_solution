@@ -1,0 +1,83 @@
+{
+  "id": "UNIT-MEM-OPS",
+  "title": "Memory layer Agent Operational Memory stores only its own content class for its own lifetime and tenant",
+  "document": "unit/knowledge-entities.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "SRS-16",
+    "NFR-006",
+    "NFR-004"
+  ],
+  "facets": [
+    "memory:Agent Operational Memory"
+  ],
+  "risk": "Layers are conflated, so transient scratchpad or an unreviewed turn survives as organisational knowledge or as a customer fact, and one customer's data leaks into another's context.",
+  "preconditions": [
+    "Tenant T1 run run-t1-agent-operational-memory has a live session for cust-a and cust-b with the layer's store reachable",
+    "The clock is fixed at 2026-01-15T10:00:00Z so lifetimes and expiries are comparable"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "customer_id": "cust-a",
+    "store": "Postgres tenant:{tid}:workflow_checkpoint:{workflow_id}:{step_index}",
+    "lifetime": "until the workflow run completes or is cancelled",
+    "allowed_content": "the workflow step checkpoint and the in-flight task state of the run",
+    "refused_content": "a customer FACT or a durable knowledge sentence written from operational state"
+  },
+  "steps": [
+    {
+      "action": "Write the representative content of this layer for cust-a and read it back through the layer's own reader",
+      "expected": "the reader returns exactly the written content together with the layer's key scope and lifetime"
+    },
+    {
+      "action": "Read the same key through the reader of each of the other four layers",
+      "expected": "the other layers return nothing, so a layer is never satisfied from another layer's store"
+    },
+    {
+      "action": "Attempt to persist the refused content class into this layer",
+      "expected": "the write is refused and nothing durable is created: a customer FACT or a durable knowledge sentence written from operational state"
+    },
+    {
+      "action": "Read the layer content from a second session of another customer and from tenant T2",
+      "expected": "the content is absent or denied, an empty result never falls back to a shared cache entry"
+    }
+  ],
+  "assertions": [
+    "The layer round-trips its allowed content: the workflow step checkpoint and the in-flight task state of the run",
+    "The layer key is tenant- and customer-scoped and its lifetime is until the workflow run completes or is cancelled",
+    "The refused content class leaves no durable row, cache entry or fact after the attempt: a customer FACT or a durable knowledge sentence written from operational state",
+    "No other layer and no other tenant or customer observes this layer's content"
+  ],
+  "forbidden": [
+    "Promoting this layer's transient content into a durable layer without the review path: a customer FACT or a durable knowledge sentence written from operational state",
+    "Serving another customer's or another tenant's layer entry as a cache hit"
+  ],
+  "evidence": [
+    "Reader output per layer for the same key, including the empty results of the other four layers",
+    "Attempt log of the refused content class plus a store scan showing nothing durable was written"
+  ],
+  "cleanup": [
+    "Delete the run-scoped layer entries under run-t1-agent-operational-memory while keeping the session audit entries"
+  ],
+  "automation": "Write and read each layer through its own API with the fixed tenant and clock, then assert on the other layers' empty reads and on the refused write; no model or provider is contacted.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/03-database-and-memory-schema.md",
+    "implement/04-core-engine-and-orchestrator.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/platform.json",
+    "fixtures/offline/customers.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

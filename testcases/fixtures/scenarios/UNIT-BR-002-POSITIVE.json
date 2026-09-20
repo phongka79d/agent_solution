@@ -1,0 +1,85 @@
+{
+  "id": "UNIT-BR-002-POSITIVE",
+  "title": "BR-002 positive: a discount at or above the floor is released unchanged",
+  "document": "unit/business-rules.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "BR-002",
+    "ASM-003"
+  ],
+  "facets": [
+    "entity:Price",
+    "stage:EXECUTION"
+  ],
+  "risk": "Over-blocking makes every promotion fail, so the sales pilot cannot close a single discounted deal and operators start bypassing the guardrail.",
+  "preconditions": [
+    "Namespace gov-unit-br-<case_id>-<worker_id>; Business Rules Engine loaded with no cross-case state.",
+    "Frozen clock 2026-01-15T10:00:00Z; agent fixture context loaded from fixtures/offline/governance.json.",
+    "Same synthetic floor inputs as UNIT-BR-002 so the two cases share arithmetic but differ in outcome."
+  ],
+  "inputs": {
+    "quote": {
+      "sku_id": "SKU-OK",
+      "base_price": 1000,
+      "discount_rate": 0.15,
+      "effective_price": 850,
+      "computed_floor": 820,
+      "catalog_ref_id": "ERP-SKU-OK",
+      "currency": "TWD"
+    }
+  },
+  "steps": [
+    {
+      "action": "Evaluate a 15 percent discount with effective price 850 TWD",
+      "expected": "BR-001 and BR-002 both pass and the pipeline continues to the later rules."
+    },
+    {
+      "action": "Release the quote to the channel adapter",
+      "expected": "The adapter receives the offer once with effective price 850 TWD and the recorded floor 820 TWD."
+    },
+    {
+      "action": "Read the audit row for the release",
+      "expected": "The row records the applied discount rate, the floor used and the authoritative base price reference."
+    }
+  ],
+  "assertions": [
+    "The quote is released with the exact discounted price supplied, not a re-derived number.",
+    "Adapter receives exactly one offer call.",
+    "Audit row is present with authority and evidence linkage, and the floor used is the configured one.",
+    "No violation code appears for a compliant discount."
+  ],
+  "forbidden": [
+    "Rejecting a compliant discount because the rule checks the wrong bound.",
+    "Rounding the price up or down to pass the floor check.",
+    "Recomputing the floor from a hardcoded margin instead of the supplied configuration."
+  ],
+  "evidence": [
+    "Released quote payload with price and floor recorded.",
+    "Audit row for the release plus the adapter receipt."
+  ],
+  "cleanup": [
+    "Delete the gov- released quote and adapter log entry."
+  ],
+  "automation": "Real BusinessRulesEngine and PEP under test; only ERP/POS/connector boundaries are substituted by the offline mock whose call log and receipts are the oracle. Rules are evaluated in sequence and halt on the first failure, so each case asserts the first failing rule code rather than a bag of errors.",
+  "prerequisites": [
+    "Uses the same labelled synthetic floor inputs as UNIT-BR-002; not evidence of an owner-approved discount policy."
+  ],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "plans/delivery/analytics.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/catalog.json",
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

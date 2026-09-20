@@ -1,0 +1,87 @@
+{
+  "id": "UNIT-AUTH-SELF-ASSERTED",
+  "title": "Server-side skill registry outranks a self-asserted authority in the payload",
+  "document": "unit/authority.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "AUTH-4",
+    "BR-008",
+    "BR-009",
+    "NFR-001"
+  ],
+  "facets": [
+    "entity:Agent",
+    "entity:Skill"
+  ],
+  "risk": "A model- or prompt-supplied authority claim downgrades an approval-gated skill so it executes autonomously.",
+  "preconditions": [
+    "Namespace gov-unit-auth-<case_id>-<worker_id>; no shared mutable state with other cases.",
+    "PolicyEnforcementPoint loaded with fixtures/offline/governance.json skill_authority_registry and agents[]; clock frozen at 2026-01-15T10:00:00Z.",
+    "Registry entry skill.sales.create_order requires AUTH-4; the proposal will claim AUTH-0."
+  ],
+  "inputs": {
+    "agent_id": "SAL-02",
+    "assigned_authority": "AUTH-3",
+    "proposal": {
+      "skill": "skill.sales.create_order",
+      "required_authority": "AUTH-0",
+      "payload": {
+        "customer_id": "cust-a",
+        "sku_id": "SKU-OK",
+        "qty": 1,
+        "effect_key": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    }
+  },
+  "steps": [
+    {
+      "action": "Submit the proposal that declares a lower requirement than the registry holds",
+      "expected": "The resolved requirement is AUTH-4 from the registry; verdict is REQUIRE_HUMAN_APPROVAL."
+    },
+    {
+      "action": "Repeat with a registry-missing skill whose declared requirement is AUTH-0",
+      "expected": "The declared value is used, the autonomous rank comparison still applies, and the verdict is PERMIT only because the agent holds AUTH-3."
+    },
+    {
+      "action": "Repeat the first proposal with the registry entry removed",
+      "expected": "Behaviour is documented and stable (declared value used), and no execution of a create_order occurs while the registry is unavailable."
+    }
+  ],
+  "assertions": [
+    "The resolved requirement always comes from the registry when present; the payload field is ignored.",
+    "Verdict for the first probe is REQUIRE_HUMAN_APPROVAL and 0 order-creation calls reach the mock SoR.",
+    "Removing the registry entry never results in an executed high-risk action."
+  ],
+  "forbidden": [
+    "Trusting proposal.required_authority for a skill the registry knows.",
+    "Falling back to PERMIT when the registry lookup fails.",
+    "Creating the order and asking for approval afterwards."
+  ],
+  "evidence": [
+    "PEP decision JSON with the resolved requirement and its source (registry or proposal).",
+    "Mock SoR order-creation call log showing zero calls.",
+    "Audit row for the proposal with authority AUTH-4."
+  ],
+  "cleanup": [
+    "Delete gov- order drafts and namespace keys."
+  ],
+  "automation": "Real registry lookup and PEP under test. The registry is loaded from the fixture; removing an entry is a supported in-test mutation of the substituted registry boundary.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

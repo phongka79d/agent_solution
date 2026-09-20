@@ -1,0 +1,92 @@
+{
+  "id": "INT-FR-ORC-001",
+  "title": "Central routing picks the agent, skill, data and approval need for one signal",
+  "document": "integration/sales-care-orchestrator.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P1",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "FR-ORC-001",
+    "NFR-008",
+    "OBJ-005"
+  ],
+  "facets": [
+    "stage:DECISION",
+    "entity:Decision",
+    "intent:stock"
+  ],
+  "risk": "A signal reaches the wrong agent or a skill the agent may not use, so work is done without the right authority, data or approval check.",
+  "preconditions": [
+    "Tenant T1 with a stock question for cust-a in namespace orc-route-* at 2026-01-15T10:00:00Z",
+    "Routing table and allowed agent set loaded from the platform fixture"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "signal": {
+      "signal_id": "evt_a_cart_add_1",
+      "event_type": "cart.add",
+      "source_channel": "web"
+    },
+    "utterance": "is the ceramic mug in stock for pickup today?",
+    "expected": {
+      "domains": [
+        "sales",
+        "support"
+      ],
+      "allowed_agents": "SAL-01|SAL-02|SAL-03|CS-01"
+    }
+  },
+  "steps": [
+    {
+      "action": "Submit the signal and read the routing decision",
+      "expected": "the decision names one target agent from the allowed set, the chosen skill, the data sources and whether approval is needed"
+    },
+    {
+      "action": "Inspect the decision's reason and the data access list",
+      "expected": "the reason references the observed signal, and the data list contains only tenant-scoped sources the target skill may read"
+    },
+    {
+      "action": "Force a routing decision that names an agent id outside the allowed set",
+      "expected": "routing fails closed instead of dispatching to the unknown agent"
+    },
+    {
+      "action": "Force the routing binding to be absent",
+      "expected": "the run fails closed with an explicit error and no canned routing decision is produced"
+    }
+  ],
+  "assertions": [
+    "The routing decision selects exactly one agent from the allowed set and exposes skill, data and approval need",
+    "An agent id outside the allowed set is rejected rather than dispatched",
+    "A missing routing binding produces a hard failure with no fabricated decision"
+  ],
+  "forbidden": [
+    "Route a signal to an agent that does not exist in the tenant registry",
+    "Return a hard-coded routing decision when the model binding is absent"
+  ],
+  "evidence": [
+    "Routing decision record with target agent, skill, data list and approval flag",
+    "Fatal error record for the missing-binding and illegal-agent attempts"
+  ],
+  "cleanup": [
+    "Delete the run-scoped decision and task rows for orc-route-*; keep audit entries"
+  ],
+  "automation": "Drive the real orchestrator with fixture signals and a stubbed cognitive binding; the oracle is the routing record's contents plus the fail-closed behavior, not the presence of fields.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/04-core-engine-and-orchestrator.md",
+    "plans/platform/architecture.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/events.json",
+    "fixtures/offline/platform.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

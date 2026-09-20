@@ -1,0 +1,106 @@
+{
+  "id": "UNIT-BR-004-CHANNEL-SCOPE",
+  "title": "BR-004: consent is channel-and-purpose scoped, not global",
+  "document": "unit/business-rules.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "BR-004",
+    "TC-E2E-007",
+    "FR-CS-003"
+  ],
+  "facets": [
+    "entity:Consent",
+    "channel:EMAIL",
+    "channel:SMS"
+  ],
+  "risk": "A marketing grant for one channel is reused for another, or a transactional message is blocked by a marketing opt-out, breaking either privacy or deliverability.",
+  "preconditions": [
+    "Namespace gov-unit-br-<case_id>-<worker_id>; Business Rules Engine loaded with no cross-case state.",
+    "Frozen clock 2026-01-15T10:00:00Z; agent fixture context loaded from fixtures/offline/governance.json.",
+    "cust-a holds EMAIL+marketing granted and WEB_CHAT+transactional granted; no SMS grant exists for cust-a."
+  ],
+  "inputs": {
+    "probes": [
+      {
+        "label": "EMAIL marketing",
+        "customer_id": "cust-a",
+        "channel": "EMAIL",
+        "purpose": "marketing",
+        "expected": "PASS"
+      },
+      {
+        "label": "SMS marketing (no grant)",
+        "customer_id": "cust-a",
+        "channel": "SMS",
+        "purpose": "marketing",
+        "expected": "ERR_CONSENT_SUPPRESSED"
+      },
+      {
+        "label": "SMS transactional (no marketing grant needed)",
+        "customer_id": "cust-a",
+        "channel": "SMS",
+        "purpose": "transactional",
+        "expected": "PASS"
+      },
+      {
+        "label": "EMAIL marketing for opt-out customer",
+        "customer_id": "cust-b",
+        "channel": "EMAIL",
+        "purpose": "marketing",
+        "expected": "ERR_CONSENT_SUPPRESSED"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Evaluate the four probes against the consent registry",
+      "expected": "Verdicts follow the expected column: EMAIL marketing and SMS transactional pass; the two marketing cases without a matching grant are suppressed."
+    },
+    {
+      "action": "Dispatch only the passing probes",
+      "expected": "Adapter logs two sends, one on EMAIL and one on SMS, both transactional-or-granted."
+    },
+    {
+      "action": "Inspect the consent lookups recorded per probe",
+      "expected": "Each evaluation records the exact (customer, channel, purpose) tuple it resolved, so a wildcard grant is never assumed."
+    }
+  ],
+  "assertions": [
+    "Consent is resolved per (customer, channel, purpose); a wildcard positive grant is never inferred from an absent record.",
+    "Exactly two of the four probes dispatch, matching the expected column.",
+    "The transactional SMS send is not blocked by the absence of a marketing grant - over-blocking is a defect too.",
+    "Each suppression names the specific missing grant it needed."
+  ],
+  "forbidden": [
+    "Treating a missing consent record as granted.",
+    "Blocking transactional messages because marketing consent is absent.",
+    "Reusing an EMAIL grant for SMS delivery."
+  ],
+  "evidence": [
+    "Consent resolution log per probe with the resolved tuple.",
+    "Adapter counter log listing the two dispatched channels."
+  ],
+  "cleanup": [
+    "Delete gov- message rows and any consent cache entries populated during the run."
+  ],
+  "automation": "Real BusinessRulesEngine and PEP under test; only ERP/POS/connector boundaries are substituted by the offline mock whose call log and receipts are the oracle. Rules are evaluated in sequence and halt on the first failure, so each case asserts the first failing rule code rather than a bag of errors.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/consents.json",
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

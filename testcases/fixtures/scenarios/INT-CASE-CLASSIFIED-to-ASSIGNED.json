@@ -1,0 +1,85 @@
+{
+  "id": "INT-CASE-CLASSIFIED-to-ASSIGNED",
+  "title": "A classified case is assigned to an owner and the queue reflects it",
+  "document": "integration/case-fsm.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "CS-01",
+    "FR-CS-002",
+    "SRS-08"
+  ],
+  "facets": [
+    "entity:Service Case",
+    "entity:Agent",
+    "kpi:First Response Time"
+  ],
+  "risk": "A classified case is never owned by anyone, so no operator acts on it and the customer waits indefinitely.",
+  "preconditions": [
+    "A CLASSIFIED shipping case CASE-T1-0002 for cust-a in namespace cd-assign-*",
+    "Two candidate owners: agent CS-01 (auto) and operator op-7 (human)"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "case_number": "CASE-T1-0002",
+    "assignment": {
+      "owner": "CS-01",
+      "queue": "support-shipping",
+      "sla_due_at": "2026-01-15T18:00:00Z"
+    }
+  },
+  "steps": [
+    {
+      "action": "Assign the classified case to owner CS-01 with an SLA due time",
+      "expected": "state becomes ASSIGNED, owner is CS-01 and sla_due_at equals the supplied value"
+    },
+    {
+      "action": "Read the operator queue for tenant T1",
+      "expected": "the case appears in queue support-shipping exactly once with its priority and SLA due time"
+    },
+    {
+      "action": "Attempt a second assignment to a different owner without an unassign event",
+      "expected": "the reassignment is refused or produces an explicit reassignment audit entry, never a silent owner swap"
+    },
+    {
+      "action": "Attempt to assign a case from tenant T2 to owner CS-01 of tenant T1",
+      "expected": "the assignment is rejected and no cross-tenant ownership row is created"
+    }
+  ],
+  "assertions": [
+    "The case reports ASSIGNED with owner CS-01 and the exact SLA due time supplied",
+    "The queue contains the case exactly once and the owner field is populated",
+    "The cross-tenant assignment attempt leaves both tenants' case tables unchanged"
+  ],
+  "forbidden": [
+    "Leave the case unowned while reporting it as ASSIGNED",
+    "Let an owner from another tenant appear on the case"
+  ],
+  "evidence": [
+    "Case projection after assignment (owner, queue, sla_due_at)",
+    "Queue listing entry plus the audit entries for the assignment attempts"
+  ],
+  "cleanup": [
+    "Unassign and delete the run-scoped case for cd-assign-*; keep audit history"
+  ],
+  "automation": "Exercise the real case-management skill with a fixture operator roster; the assertion covers both the case projection and the queue listing so an unowned case cannot pass.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/03-database-and-memory-schema.md",
+    "plans/platform/workflows-and-handoffs.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/platform.json",
+    "fixtures/offline/customers.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

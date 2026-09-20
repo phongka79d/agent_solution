@@ -1,0 +1,86 @@
+{
+  "id": "UNIT-BR-004-REVOKED",
+  "title": "BR-004: consent revoked after queueing suppresses the send at dispatch time",
+  "document": "unit/business-rules.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "BR-004",
+    "TC-E2E-007",
+    "NFR-002"
+  ],
+  "facets": [
+    "entity:Consent",
+    "stage:ACTION"
+  ],
+  "risk": "A queued campaign message is delivered after the customer revokes consent, because consent was checked only when the action was created.",
+  "preconditions": [
+    "Namespace gov-unit-br-<case_id>-<worker_id>; Business Rules Engine loaded with no cross-case state.",
+    "Frozen clock 2026-01-15T10:00:00Z; agent fixture context loaded from fixtures/offline/governance.json.",
+    "Background worker starts paused so the revoke lands between queueing and dispatch."
+  ],
+  "inputs": {
+    "action": {
+      "customer_id": "cust-a",
+      "channel": "EMAIL",
+      "purpose": "marketing",
+      "template": "january_sale",
+      "effect_key": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "revoke": {
+      "at": "between-queue-and-dispatch",
+      "new_status": "revoked"
+    }
+  },
+  "steps": [
+    {
+      "action": "Queue the marketing send while consent is granted (evaluation passes)",
+      "expected": "The action is queued with the effect_key and no dispatch has happened yet."
+    },
+    {
+      "action": "Revoke cust-a EMAIL marketing consent, then release the worker",
+      "expected": "Dispatch re-checks consent, finds it revoked, and suppresses with zero adapter calls."
+    },
+    {
+      "action": "Read the audit rows for queue and dispatch",
+      "expected": "The queue row records the granted state observed at queue time; the dispatch row records the revoked state observed at dispatch time and the suppression."
+    }
+  ],
+  "assertions": [
+    "Consent is re-verified at dispatch, not just at queue time.",
+    "Adapter counter is 0 for the revoked action, with the suppression reason naming the revocation.",
+    "The two audit rows show the differing consent snapshots, proving the re-check happened.",
+    "The queued action is terminal (not retried) after suppression."
+  ],
+  "forbidden": [
+    "Trusting the queue-time consent snapshot.",
+    "Sending the already-reserved message because it was approved earlier.",
+    "Deleting the queued action silently so no trace of the near-miss remains."
+  ],
+  "evidence": [
+    "Both audit rows with their consent snapshots.",
+    "Adapter counter log plus the revoke event record."
+  ],
+  "cleanup": [
+    "Restore the consent fixture state for cust-a and delete gov- queue rows."
+  ],
+  "automation": "Real BusinessRulesEngine and PEP under test; only ERP/POS/connector boundaries are substituted by the offline mock whose call log and receipts are the oracle. Rules are evaluated in sequence and halt on the first failure, so each case asserts the first failing rule code rather than a bag of errors.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/consents.json",
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

@@ -1,0 +1,99 @@
+{
+  "id": "INT-FR-C360-002",
+  "title": "Unified timeline orders View, Search, Click, Chat, Cart, Purchase, Delivery, Support, Review, Repurchase",
+  "document": "integration/customer-360.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "FR-C360-002",
+    "NFR-002",
+    "NFR-005"
+  ],
+  "facets": [
+    "entity:Customer Event",
+    "event:product_view",
+    "stage:EVIDENCE"
+  ],
+  "risk": "The timeline merges or drops events, so a support agent sees the wrong history and treats a returning customer as new or attributes another customer's order to them.",
+  "preconditions": [
+    "Tenant T1 seeded with the canonical events of session sess-a-1 plus ORD-A-1 (SHIPPED) in namespace run-t1-c360-002-*",
+    "Timeline queried for cust-a over 2026-01-01..2026-01-15 after replaying one duplicate delivery and one late delivery"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "customer_id": "cust-a",
+    "window": {
+      "from": "2026-01-01T00:00:00Z",
+      "to": "2026-01-15T10:00:00Z"
+    },
+    "seeded_events": [
+      "evt_a_session_1",
+      "evt_late_view_1",
+      "evt_a_cart_add_1",
+      "evt_a_purchase_1"
+    ],
+    "expected_order": [
+      "session",
+      "product_view",
+      "add_to_cart",
+      "purchase",
+      "delivery"
+    ]
+  },
+  "steps": [
+    {
+      "action": "Ingest the seeded events and query the unified timeline for cust-a",
+      "expected": "each entry carries canonical event name, occurred_at, source channel, session_id and a source_record_id that resolves to the originating record"
+    },
+    {
+      "action": "Replay evt_a_cart_add_1 byte-identically, then deliver the late evt_late_view_1 with occurred_at 2026-01-15T09:58:30Z",
+      "expected": "the replay adds no entry and the late view is inserted at its occurred_at position without reordering or deleting existing entries"
+    },
+    {
+      "action": "Join the timeline with ORD-A-1 (SHIPPED) and with a support case for the same customer",
+      "expected": "purchase, delivery, support and review entries are traceable to the order, shipment and case records"
+    },
+    {
+      "action": "Query the timeline for cust-b and for the anonymous session sess-guest-1",
+      "expected": "cust-b shows only cust-b entries (ORD-B-1, 800 TWD) and the anonymous session shows no customer-attributed entry"
+    }
+  ],
+  "assertions": [
+    "The timeline contains exactly one entry per distinct (canonical event, occurred_at, source_record_id) and exactly one purchase entry",
+    "Every entry exposes traceability fields (source_record_id, source_version, occurred_at) that resolve to a real record",
+    "The late event appears exactly once and no entry is reordered relative to its occurred_at",
+    "The cust-b and anonymous timelines contain zero cust-a identifiers or amounts"
+  ],
+  "forbidden": [
+    "Collapse two distinct events into a single timeline entry or discard a late-arriving event",
+    "Attribute an anonymous-session entry to cust-a"
+  ],
+  "evidence": [
+    "Redacted timeline result for cust-a with per-entry traceability fields",
+    "Entry count before and after the duplicate replay (must be unchanged)"
+  ],
+  "cleanup": [
+    "Delete the run-scoped timeline rows for run-t1-c360-002-*; append-only customer_events rows and audit entries remain"
+  ],
+  "automation": "Run the real ingestion normalizer over fixture envelopes, freeze the clock for the window filter, and stub only the ERP boundary; assertions read returned ordering and counts, not storage layout.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "plans/platform/data-and-knowledge.md",
+    "implement/06-api-and-connectors-spec.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/events.json",
+    "fixtures/offline/orders.json",
+    "fixtures/offline/platform.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

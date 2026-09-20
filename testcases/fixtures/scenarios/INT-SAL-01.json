@@ -1,0 +1,113 @@
+{
+  "id": "INT-SAL-01",
+  "title": "SAL-01 qualification returns reason + evidence, never guessed traits",
+  "document": "integration/sales-care-orchestrator.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P2",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "SAL-01",
+    "FR-SAL-001",
+    "FR-C360-002",
+    "FR-C360-003",
+    "NFR-005",
+    "MKT-02",
+    "SRS-11"
+  ],
+  "facets": [
+    "skill:skill.sales.retrieve_customer",
+    "event:add_to_cart",
+    "event:search",
+    "memory:Customer Context",
+    "stage:HYPOTHESIS",
+    "kpi:Qualified Lead Rate"
+  ],
+  "risk": "High-score leads are fabricated (or real ones discarded) because the qualification gives no verifiable reason/evidence, so Sales works the wrong list.",
+  "preconditions": [
+    "run_id=RUN-INT-SAL01-0115, case_id=INT-SAL-01, worker=w-biz-int; mocked API-002 events and API-001 orders only, no shared session",
+    "cust-a has timeline events product_view(01-14T09:00Z) + add_to_cart(01-14T09:20Z) and ORD-A-1 delivered 2026-01-04; cust-dormant has no event in 60 days",
+    "the mock Marketing handoff payload (from segment_audience) is present for cust-a"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "candidate_leads": [
+      "cust-a",
+      "cust-dormant"
+    ],
+    "handoff_source": "MKT-02 segment SEG-atrisk-0115",
+    "behaviour_window_days": 30,
+    "marketing_handoff_score": 0.81,
+    "caller_agent": "SAL-01",
+    "granted_authority": "AUTH-1",
+    "probe_payload": {
+      "customer_id": "cust-dormant",
+      "caller_asserted_attributes": [
+        "income=high",
+        "has_children=true"
+      ]
+    }
+  },
+  "steps": [
+    {
+      "action": "Run qualification for both candidates",
+      "expected": "SAL-01 returns one qualification per candidate, each with reason and evidence; a high marketing score alone is re-verified by Sales and never accepted as the verdict"
+    },
+    {
+      "action": "Inspect the evidence for cust-a",
+      "expected": "evidence references the verified timeline event ids of the 30-day window plus ORD-A-1; reason names the observed behaviour (cart add without purchase, last order 11 days ago) rather than an asserted trait"
+    },
+    {
+      "action": "Resolve the insufficient-data candidate",
+      "expected": "cust-dormant with no recent event is reported as insufficient evidence / not qualified, with the missing fields listed as unknown; nothing is inferred to fill them"
+    },
+    {
+      "action": "Probe inference on caller-asserted attributes",
+      "expected": "the caller-asserted income/children payload is ignored: no qualification field, segment label or score changes, and no sensitive attribute is persisted (BR-009, FR-C360-003)"
+    },
+    {
+      "action": "Hand off the qualified lead through the orchestrator",
+      "expected": "the handoff is an orchestrator-bus event carrying reason+evidence; no peer-to-peer call between MKT-02 and SAL-01 exists in the trace"
+    }
+  ],
+  "assertions": [
+    "every qualification record carries a non-empty reason and evidence containing at least one verified Customer 360 timeline event id from the case window",
+    "a qualification with insufficient evidence is explicitly labelled, never upgraded to qualified by a marketing score or by model confidence alone",
+    "no sensitive/inferred personal attribute is written to Customer 360 or used in the reason/evidence fields (a hypothesis cannot become a customer fact)",
+    "the lead-to-opportunity record is traceable to the MKT-02 handoff event id and run_id"
+  ],
+  "forbidden": [
+    "qualifying a lead from an unverified attribute or a caller-supplied claim",
+    "calling SAL-02/SAL-03 directly from SAL-01 outside the orchestrator"
+  ],
+  "evidence": [
+    "qualification cards for cust-a and cust-dormant with reason/evidence and the missing-field list",
+    "Customer 360 diff showing no new FACT rows for the asserted sensitive attributes",
+    "orchestrator bus trace of the MKT-02 -> SAL-01 handoff (event id, run_id, policy decision)"
+  ],
+  "cleanup": [
+    "drop run RUN-INT-SAL01-0115 leads/opportunities created by the case; keep the handoff event and qualification evidence rows"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. MKT-02/SAL-01 reason+evidence is judged by a semantic oracle (does the evidence cite the timeline event ids? is the reason behavioural?) rather than by wording.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/05-skill-system-specifications.md",
+    "plans/modules/sales.md",
+    "plans/customer-lifecycle.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/customers.json",
+    "fixtures/offline/events.json",
+    "fixtures/offline/orders.json",
+    "fixtures/offline/consents.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

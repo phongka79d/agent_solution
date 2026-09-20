@@ -1,0 +1,96 @@
+{
+  "id": "UNIT-sales.retrieve_customer-HAPPY",
+  "title": "skill.sales.retrieve_customer happy path and boundary — verified cust-a Customer 360 hydration",
+  "document": "unit/skills.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P2",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "SAL-01",
+    "FR-C360-001",
+    "NFR-006",
+    "NFR-008",
+    "SRS-11"
+  ],
+  "facets": [
+    "skill:skill.sales.retrieve_customer",
+    "memory:Customer Context",
+    "stage:CONTEXT",
+    "kb:/customer/customer.md"
+  ],
+  "risk": "A wrong or unverified customer receives another customer's purchase history.",
+  "preconditions": [
+    "isolated namespace run_id=RUN-sales.retrieve_customer-HAPPY, case_id=UNIT-sales.retrieve_customer-HAPPY, worker=w-biz-unit; no shared mutable session with any other case",
+    "skill registry row for skill.sales.retrieve_customer registered with test_cases TC-SKILL-01..05 plus >=1 skill-specific case and asserted registrable before the run",
+    "in-memory adapters loaded from the case fixtures for tenant T1 only; frozen clock 2026-01-15T10:00:00Z"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "customer_identifier": "cust-a",
+    "caller_agent": "SAL-01",
+    "granted_authority": "AUTH-0"
+  },
+  "steps": [
+    {
+      "action": "Route the call through the orchestrator",
+      "expected": "Orchestrator resolves caller SAL-01, SAL-02, SAL-03, SAL-04, SAL-05 -> skill.sales.retrieve_customer; the registry row exposes required_authority=AUTH-0, allowed_agents=[SAL-01, SAL-02, SAL-03, SAL-04, SAL-05], tool=PostgreSQL.Customer360Store, timeout_ms=1500, retry_policy={max_retries:3, backoff_multiplier:1.5, retry_on_timeout:True}"
+    },
+    {
+      "action": "Invoke with the case input payload",
+      "expected": "Input validator (additionalProperties:false) accepts it; adapter PostgreSQL.Customer360Store is invoked exactly once with the tenant binding 11111111-1111-1111-1111-111111111111"
+    },
+    {
+      "action": "Inspect the returned payload",
+      "expected": "customer_id='cust-a', total_orders=1, lifetime_value=1000 TWD, verified=true, rfm_segment='POTENTIAL_LOYALIST', last_order_date=2026-01-04T09:12:00Z"
+    },
+    {
+      "action": "Re-run the boundary/validation probe",
+      "expected": "session-bound identity UNRESOLVED (cust-guest) -> refusal with zero profile rows released; a caller payload asserting verification_status='VERIFIED' without a server-side verification record is ignored (BR-003, NFR-008)"
+    },
+    {
+      "action": "Collect the evidence and audit trail",
+      "expected": "Evidence card EV_CUSTOMER_HYDRATION is written with mask=['customer_id', 'customer_identifier'] and latency; the run record chains run_id -> skill -> tool -> decision -> execution_status (SRS-17)"
+    }
+  ],
+  "assertions": [
+    "the returned profile is bound to the session-resolved customer_id, never to a caller-asserted identifier",
+    "no customer A field appears in the response for a customer B run (NFR-006): the two runs share zero customer-identifying tokens",
+    "audit masks customer_id/customer_identifier while the run record keeps the entity link",
+    "adapter PostgreSQL.Customer360Store invocation count is exactly 1 for this run and the skill step ends execution_status='success' with latency recorded",
+    "the run audit ties run_id, caller SAL-01, skill skill.sales.retrieve_customer, decision and evidence card EV_CUSTOMER_HYDRATION into one record; no component reports success for another component's work"
+  ],
+  "forbidden": [
+    "hydrating a profile for an unverified or anonymous session",
+    "trusting a customer-supplied identity/verification claim as proof (BR-009)"
+  ],
+  "evidence": [
+    "run record for skill.sales.retrieve_customer with the 18 SRS-17 fields and the case run_id",
+    "evidence card EV_CUSTOMER_HYDRATION payload, redacted (mask: ['customer_id', 'customer_identifier'])",
+    "adapter call log for PostgreSQL.Customer360Store: invocation count, input digest, latency"
+  ],
+  "cleanup": [
+    "release in-memory namespace RUN-sales.retrieve_customer-HAPPY: drop mock rows created by this case, release any effect reservation, keep audit/evidence rows required by retention"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. Adapter PostgreSQL.Customer360Store substituted; the SLA deadline is observed on the virtual clock.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/05-skill-system-specifications.md",
+    "plans/modules/sales.md",
+    "implement/03-database-and-memory-schema.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/customers.json",
+    "fixtures/offline/orders.json",
+    "fixtures/offline/consents.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

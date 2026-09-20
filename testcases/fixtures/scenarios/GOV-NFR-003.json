@@ -1,0 +1,109 @@
+{
+  "id": "GOV-NFR-003",
+  "title": "NFR-003 Idempotency: replay after cache expiry still yields one external transaction",
+  "document": "governance/nfr.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "NFR-003",
+    "BR-005",
+    "BR-006",
+    "TC-E2E-005"
+  ],
+  "facets": [
+    "entity:Execution",
+    "stage:EXECUTION"
+  ],
+  "risk": "Idempotency lives only in a cache with a TTL, so a replay after expiry creates a second order or a second message.",
+  "preconditions": [
+    "Namespace gov-nfr-<case_id>-<worker_id>; NFR verification runs against the offline gateway with mock SoR and channel boundaries.",
+    "Frozen clock 2026-01-15T10:00:00Z; failure, outage and crash injections are scripted at the substituted boundary, never faked inside the assertion.",
+    "The ephemeral idempotency cache TTL is set below the durable store retention so the replay crosses the cache boundary."
+  ],
+  "inputs": {
+    "action": {
+      "customer_id": "cust-a",
+      "channel": "WEB_APP_CHAT",
+      "template": "order_shipped",
+      "effect_key": "sha256:7777777777777777777777777777777777777777777777777777777777777777"
+    },
+    "timeline": [
+      {
+        "t": 0,
+        "event": "first attempt",
+        "expected": "SUCCESS_ONE_EFFECT"
+      },
+      {
+        "t": 60,
+        "event": "replay while cache warm",
+        "expected": "CACHED_RECEIPT_NO_EFFECT"
+      },
+      {
+        "t": 4000,
+        "event": "replay after cache TTL (durable store only)",
+        "expected": "DEDUPED_NO_EFFECT"
+      },
+      {
+        "t": 4001,
+        "event": "same key, different body",
+        "expected": "409_IDEMPOTENCY_CONFLICT"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Execute the action once and confirm a single effect",
+      "expected": "One adapter call and one execution receipt keyed by the effect_key."
+    },
+    {
+      "action": "Replay the identical request while the cache is warm",
+      "expected": "The cached receipt is returned; the adapter counter does not advance."
+    },
+    {
+      "action": "Advance the injected clock past the cache TTL and replay again",
+      "expected": "The durable execution record still dedupes the request: no second effect, and the original receipt is returned."
+    },
+    {
+      "action": "Replay with the same key but a mutated body",
+      "expected": "HTTP 409 IDEMPOTENCY_CONFLICT, terminal, with no retry and no effect."
+    }
+  ],
+  "assertions": [
+    "Across four attempts the adapter effect count is exactly 1.",
+    "Deduplication survives the loss of the ephemeral cache: the durable record is the backstop.",
+    "A mutated body with the same key is a terminal conflict, not a silent overwrite.",
+    "Each replay response identifies the original execution so callers can proceed without resending."
+  ],
+  "forbidden": [
+    "Relying solely on a TTL cache for idempotency.",
+    "Treating the mutated-body replay as a new action and executing it.",
+    "Retrying the conflict automatically."
+  ],
+  "evidence": [
+    "Adapter counter log across the timeline.",
+    "Execution receipts and the conflict response body.",
+    "Cache and durable store lookups recorded per replay."
+  ],
+  "cleanup": [
+    "Delete gov- execution rows and cache keys; the single simulated send is reported as non-recallable."
+  ],
+  "automation": "Core PEP, rules engine, audit writer, idempotency store and worker lease logic run as real code under test; only ERP/WMS, channel gateways, Redis and the model provider are substituted. Faults are injected at those boundaries and waits are condition-based on persisted state. Clock advancement is injected; no case sleeps for the TTL.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/consents.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

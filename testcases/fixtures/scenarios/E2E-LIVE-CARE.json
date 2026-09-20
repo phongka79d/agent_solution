@@ -1,0 +1,118 @@
+{
+  "id": "E2E-LIVE-CARE",
+  "title": "PILOT-03 + TC-E2E-004(a): order lookup only for the server-verified customer (approved sandbox)",
+  "document": "e2e/live.md",
+  "layer": "e2e",
+  "environment": "live",
+  "priority": "critical",
+  "gate": "P1",
+  "basis": "blueprint",
+  "pair": "E2E-OFF-CARE",
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "PILOT-03",
+    "TC-E2E-004",
+    "CS-01",
+    "FR-CS-001",
+    "FR-CS-002",
+    "NFR-006",
+    "NFR-008",
+    "SRS-08",
+    "SRS-11"
+  ],
+  "facets": [
+    "skill:skill.care.lookup_order",
+    "skill:skill.care.track_shipping",
+    "intent:order_status",
+    "intent:shipping",
+    "channel:WEB_APP_CHAT",
+    "memory:Customer Context",
+    "stage:CONTEXT",
+    "stage:DECISION",
+    "kpi:First Response Time",
+    "kpi:AI Resolution Rate"
+  ],
+  "risk": "A guest or impersonating session reads another customer's order status, address or invoice number because a client-sent verification_status flag was accepted as proof of identity.",
+  "preconditions": [
+    "run_id=RUN-E2E-LIVE-CARE, case_id=E2E-LIVE-CARE, worker=w-biz-e2e-live; one sandbox order owned by LIVE_CUSTOMER_A_SANDBOX_ID and one owned by a second sandbox customer are staged through the approved sandbox ordering path",
+    "the unverified sandbox session is opened through the approved widget endpoint and may carry a client-asserted claim, but the claim is never presented as proof"
+  ],
+  "inputs": {
+    "tenant_id": "LIVE_TENANT_ID",
+    "channel": "WEB_APP_CHAT",
+    "unverified_session": "sandbox session with no verification record",
+    "verified_session": "sandbox session bound to the sandbox customer",
+    "own_order_ref": "sandbox order of the sandbox customer",
+    "other_order_ref": "sandbox order of the second sandbox customer",
+    "client_asserted_payload": {
+      "customer_id": "sandbox customer id",
+      "verification_status": "VERIFIED"
+    }
+  },
+  "steps": [
+    {
+      "action": "Ask for order status from the unverified sandbox session",
+      "expected": "the answer requests identity verification, discloses no order field, and the sandbox connector call log shows 0 reads for that session"
+    },
+    {
+      "action": "Replay with a sandbox client-asserted identity",
+      "expected": "the claim is ignored, the answer is unchanged and the sandbox provider test sink still logs 0 calls — the provider test sink is the oracle for every denied or refused step: its call log for the run stays empty, no provider id is manufactured for the attempt, and the audit entry records the refusal instead"
+    },
+    {
+      "action": "Verify the sandbox session server-side",
+      "expected": "the identity registry returns the verified binding and the session leaves the verification-pending state"
+    },
+    {
+      "action": "Look up the caller's own sandbox order",
+      "expected": "exactly one sandbox order read is dispatched with the verified customer binding and the spoken order facts match the sandbox API response"
+    },
+    {
+      "action": "Ask for the other sandbox customer's order",
+      "expected": "the request is refused, the sandbox provider test sink records no additional read and no field of the other customer's order appears in the reply"
+    },
+    {
+      "action": "Verify evidence and retention",
+      "expected": "the resolved lookup carries a sandbox-sourced evidence reference and the refused attempt carries its audit entry and zero-call log"
+    }
+  ],
+  "assertions": [
+    "the unverified session never triggered a sandbox order read and the refused cross-customer ask added none (provider test sink is the oracle)",
+    "the spoken order facts equal the sandbox order API record for the verified customer, with the sandbox evidence reference attached",
+    "addresses, invoice numbers or statuses belonging to the second sandbox customer appear in no reply, context dump or log line of the verified session",
+    "the sandbox case outcome exists only for the resolved lookup; the refused ask produced a refusal record rather than a case success"
+  ],
+  "forbidden": [
+    "presenting a client-asserted verification flag to the sandbox identity API as if it were a verification record",
+    "reading any sandbox order that the verified session does not own"
+  ],
+  "evidence": [
+    "sandbox identity resolution result for both sessions",
+    "sandbox order API response for the owned order plus the provider test-sink call log (1 read, then 0 for the refused ask)",
+    "sandbox case/evidence record for the resolved lookup (retained)"
+  ],
+  "cleanup": [
+    "Retire the sandbox artefacts created by this run through the supported sandbox APIs (cancel/withdraw the created cart, campaign, case and voucher references); delete nothing immutable — sent messages, provider receipts and audit rows are retained and reported as non-deletable rather than pretending they were unsent"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. Same components against the sandbox order API and the sandbox identity registry; the unverified and the verified sandbox session are both real sessions.",
+  "prerequisites": [
+    "ASM-001 approved connector lock is present (LIVE_CONNECTORS_LOCK points at the approved connector list) — without it this case is SKIP_ASM_001, never PASS",
+    "Per-case sandbox authorization: the run_id of this case is registered in the approved sandbox allowlist with its sandbox tenant/customer/SKU mapping before execution; credentials live outside the repository (env.local) and are never printed in evidence",
+    "The sandbox identity registry can hold a verified binding for one sandbox session and leave another session unverified; if the sandbox exposes no identity API the case is BLOCKED_PREREQUISITE, never PASS"
+  ],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/05-skill-system-specifications.md",
+    "plans/modules/customer-support.md",
+    "plans/platform/workflows-and-handoffs.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/customers.json",
+    "fixtures/offline/orders.json",
+    "fixtures/offline/events.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

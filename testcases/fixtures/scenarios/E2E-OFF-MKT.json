@@ -1,0 +1,122 @@
+{
+  "id": "E2E-OFF-MKT",
+  "title": "TC-E2E-002 + PILOT-01: approval gate, then campaign to reconciled revenue (mocked SoR)",
+  "document": "e2e/offline.md",
+  "layer": "e2e",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P3",
+  "basis": "blueprint",
+  "pair": "E2E-LIVE-MKT",
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "TC-E2E-002",
+    "PILOT-01",
+    "MKT-05",
+    "MKT-06",
+    "MKT-04",
+    "MKT-02",
+    "SAL-02",
+    "SAL-03",
+    "BR-007",
+    "AUTH-4",
+    "BR-004",
+    "SRS-20"
+  ],
+  "facets": [
+    "stage:PLAN",
+    "stage:APPROVAL",
+    "stage:EXECUTION",
+    "stage:OUTCOME",
+    "stage:LEARNING",
+    "skill:skill.mkt.dispatch_campaign",
+    "skill:skill.mkt.evaluate_attribution",
+    "skill:skill.mkt.segment_audience",
+    "skill:skill.mkt.audit_brand_compliance",
+    "channel:EMAIL",
+    "kpi:Campaign Revenue",
+    "kpi:ROAS",
+    "kpi:Lead Conversion"
+  ],
+  "risk": "A campaign publishes without approval, or stops at 'sent': with no response, order and reconciled revenue there is no evidence the marketing spend worked.",
+  "preconditions": [
+    "run_id=RUN-E2E-OFF-MKT, case_id=E2E-OFF-MKT, worker=w-biz-e2e; the mock channel adapter counts sends per effect_key and returns provider references",
+    "campaign CAMP-0115-01 targets segment SEG-atrisk-0115, the brand audit for DRAFT-0115-07 returned compliant=true and no approval row exists yet"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "campaign_id": "CAMP-0115-01",
+    "segment_id": "SEG-atrisk-0115",
+    "channel": "EMAIL",
+    "approved_content_id": "DRAFT-0115-07",
+    "effect_key_publish": "EK-CAMP-0115-01-EMAIL",
+    "brief": "win-back the at-risk cohort with the 24-month battery warranty message",
+    "response_script": "sandboxed reply 'cho toi dat hang' then order ORD-MKT-0115-01 at 900 TWD",
+    "attribution_model": "LAST_TOUCH"
+  },
+  "steps": [
+    {
+      "action": "Complete Brief -> Audience -> Content -> Review",
+      "expected": "the run records the brief, the consent-filtered segment, the content draft and the brand audit verdict; the draft stays in state DRAFT"
+    },
+    {
+      "action": "Attempt to publish without approval",
+      "expected": "dispatch_campaign returns APPROVAL_REQUIRED; the mock channel adapter records 0 sends and exactly one PENDING approval row exists for the run"
+    },
+    {
+      "action": "Approve and publish",
+      "expected": "after the operator approval bound to EK-CAMP-0115-01-EMAIL the publish executes once; recipient_count counts only consent-verified members (opt-out customer excluded) and the adapter logs one send with a provider reference"
+    },
+    {
+      "action": "Drive the customer response into Sales",
+      "expected": "the scripted reply opens a Sales conversation routed by the orchestrator (no peer-to-peer MKT->SAL call) and SAL-03 returns a 7-field recommendation for SKU-OK"
+    },
+    {
+      "action": "Convert and reconcile the order",
+      "expected": "SAL-02 creates ORD-MKT-0115-01 through create_order using the server-signed price quote, and the order is reconciled against the ERP mock"
+    },
+    {
+      "action": "Measure revenue evidence and learning",
+      "expected": "evaluate_attribution returns attributed_orders=1 and attributed_revenue=900 TWD for LAST_TOUCH with roas from the approved spend, and LEARNING records the result"
+    }
+  ],
+  "assertions": [
+    "pre-approval publish attempts produce zero sends and the only send is covered by the approval row bound to the effect_key (TC-E2E-002)",
+    "the post-approval send reaches only consent-verified recipients: the opt-out customer is never contacted and recipient_count equals the eligible count",
+    "the revenue chain is complete and ordered: campaign/send -> customer response -> sales conversation -> recommendation -> order id -> attributed revenue 900 TWD",
+    "stopping at 'sent' fails the journey: the response, the order and the attribution figures must exist before this case passes"
+  ],
+  "forbidden": [
+    "publishing or resending the campaign without a bound approval",
+    "reporting campaign revenue without a reconciled order, or passing the marketing pilot on send count alone"
+  ],
+  "evidence": [
+    "approval row for the effect_key plus the channel adapter send log",
+    "order ORD-MKT-0115-01 as returned by the ERP mock and the conversation trace",
+    "attribution payload (revenue, orders, roas) and the campaign LEARNING record"
+  ],
+  "cleanup": [
+    "cancel/withdraw the campaign draft and scheduled sends in the mock and drop run RUN-E2E-OFF-MKT; keep the approval and attribution evidence"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. Campaign lifecycle, approval gate, attribution and order creation run as real components over the mocked SoR and channel.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/05-skill-system-specifications.md",
+    "plans/modules/marketing.md",
+    "implement/09-sprint-roadmap-and-pilots.md",
+    "plans/delivery/analytics.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/catalog.json",
+    "fixtures/offline/customers.json",
+    "fixtures/offline/consents.json",
+    "fixtures/offline/events.json",
+    "fixtures/offline/orders.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

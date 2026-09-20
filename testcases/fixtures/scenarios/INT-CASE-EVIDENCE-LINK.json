@@ -1,0 +1,89 @@
+{
+  "id": "INT-CASE-EVIDENCE-LINK",
+  "title": "A case closure is traceable from trigger to evidence to outcome",
+  "document": "integration/case-fsm.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "CS-01",
+    "BR-010",
+    "TC-E2E-009"
+  ],
+  "facets": [
+    "entity:Service Case",
+    "entity:Evidence",
+    "entity:Outcome",
+    "stage:EVIDENCE"
+  ],
+  "risk": "A closed case cannot be explained later, so the business cannot prove what the customer was told or whether the promise was kept.",
+  "preconditions": [
+    "A case for cust-a resolved with refund_approved and linked to ORD-A-1 in namespace cd-trace-*",
+    "Traceability query executed for the case at 2026-01-16T12:00:00Z"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "case_number": "CASE-T1-0013",
+    "expected_chain": [
+      "trigger_event",
+      "conversation_message",
+      "decision",
+      "action",
+      "evidence",
+      "outcome"
+    ]
+  },
+  "steps": [
+    {
+      "action": "Traverse the case traceability chain from the trigger to the outcome",
+      "expected": "each hop resolves to a concrete record id and the chain is unbroken end to end"
+    },
+    {
+      "action": "Verify the evidence record backing the resolution",
+      "expected": "the evidence record carries a provider or system reference and its own identifier, and resolves to ORD-A-1"
+    },
+    {
+      "action": "Attempt to close a second case without linking any evidence record",
+      "expected": "the closure is refused because resolution requires evidence for a customer-impacting action"
+    },
+    {
+      "action": "Compare the traceability chain before and after an attempted evidence edit",
+      "expected": "the edit is refused and the chain hashes are unchanged"
+    }
+  ],
+  "assertions": [
+    "The chain resolves every hop from trigger to outcome with concrete record identifiers",
+    "Closing a case with no evidence record is refused",
+    "Evidence records are immutable: the edit attempt leaves the chain hash unchanged"
+  ],
+  "forbidden": [
+    "Close a customer-impacting case with no evidence record",
+    "Rewrite or delete an evidence record after the case closed"
+  ],
+  "evidence": [
+    "Traceability chain output for CASE-T1-0013 with record identifiers (redacted)",
+    "Refusal entry for the evidence-less closure and the chain hash before/after the edit attempt"
+  ],
+  "cleanup": [
+    "Delete the run-scoped case and evidence rows for cd-trace-*; retain the linked audit chain for the run window"
+  ],
+  "automation": "Query the real traceability projection over fixture records; the assertion walks the chain end to end instead of checking that a field exists.",
+  "prerequisites": [],
+  "references": [
+    "implement/03-database-and-memory-schema.md",
+    "implement/04-core-engine-and-orchestrator.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/orders.json",
+    "fixtures/offline/platform.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

@@ -1,0 +1,86 @@
+{
+  "id": "INT-CASE-REOPEN",
+  "title": "A closed case reopens through the explicit reopen branch",
+  "document": "integration/case-fsm.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "medium",
+  "gate": "P1",
+  "basis": "extension",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "CS-01",
+    "FR-CS-002",
+    "FR-CS-003"
+  ],
+  "facets": [
+    "entity:Service Case",
+    "kpi:Reopen Rate",
+    "intent:complaint"
+  ],
+  "risk": "A dissatisfied customer cannot reopen a closed case, so the complaint is lost and the reopen KPI is wrong. The blueprint names a REOPENED branch while the SRS lists only the seven minimum states, so the transition here is proposed configuration.",
+  "preconditions": [
+    "A CLOSED case CASE-T1-0008 for cust-a in namespace cd-reopen-*",
+    "Tenant policy publish_case_reopen enabled with a 30 day reopen window"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "case_number": "CASE-T1-0008",
+    "reopen_event": {
+      "reason": "customer_complaint",
+      "within_days": 12,
+      "actor": "CS-01"
+    },
+    "closed_at": "2026-01-04T10:00:00Z"
+  },
+  "steps": [
+    {
+      "action": "Apply the explicit reopen event inside the policy window",
+      "expected": "the case enters REOPENED with the previous resolution retained and a reopen timestamp recorded"
+    },
+    {
+      "action": "Apply an identical reopen event again",
+      "expected": "no second reopen entry is produced and the case stays REOPENED"
+    },
+    {
+      "action": "Attempt a reopen 45 days after closure",
+      "expected": "the reopen is refused by the window policy and the case stays CLOSED"
+    },
+    {
+      "action": "Read the reopen KPI input for the tenant",
+      "expected": "the reopened case is counted exactly once in the Reopen Rate numerator for the period"
+    }
+  ],
+  "assertions": [
+    "The in-window reopen produces state REOPENED with one reopen audit entry and the original resolution preserved",
+    "The out-of-window reopen is refused and the case stays CLOSED",
+    "The Reopen Rate input counts the case exactly once"
+  ],
+  "forbidden": [
+    "Reopen a closed case while discarding the previous resolution or its evidence",
+    "Count the same reopen twice in the KPI input"
+  ],
+  "evidence": [
+    "Case projection after each reopen attempt with the retained resolution reference",
+    "Reopen Rate input rows for the tenant period"
+  ],
+  "cleanup": [
+    "Delete the run-scoped reopen rows for cd-reopen-*; restore the policy flag to its fixture value"
+  ],
+  "automation": "Run the real state machine with the reopen branch enabled by tenant policy; because the SRS fixes only the minimum states, this case is labelled a proposed configuration and must not be reported as SRS-mandated.",
+  "prerequisites": [],
+  "references": [
+    "plans/platform/data-and-knowledge.md",
+    "plans/platform/workflows-and-handoffs.md",
+    "implement/03-database-and-memory-schema.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/platform.json",
+    "fixtures/offline/customers.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

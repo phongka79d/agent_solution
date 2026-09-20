@@ -130,12 +130,12 @@ Theo Mục 22 của SRS v0.1, hệ thống phải vượt qua toàn bộ 9 ca ki
 
 | Mã kiểm thử | Tên kịch bản E2E | Phạm vi & Tiêu chí nghiệm thu (Pass Criteria) |
 |---|---|---|
-| **TC-E2E-001** | Luồng xử lý tín hiệu khép kín E2E | Một tín hiệu (signal) đi trọn vẹn chuỗi: **Signal → Decision → Action → Execution → Evidence → Outcome**. Mọi bước đều có log liên kết đồng nhất qua `trace_id`. |
-| **TC-E2E-002** | Kiểm soát phê duyệt Tiếp thị | Marketing Agent tuyệt đối không thể xuất bản (publish) nội dung hoặc kích hoạt chiến dịch nếu thiếu thẩm quyền (authority) hoặc chưa có phê duyệt (human approval) theo chính sách. |
+| **TC-E2E-001** | Luồng xử lý tín hiệu khép kín E2E | Một tín hiệu (signal) đi trọn vẹn chuỗi 11 bước có **Context**: **Signal → Context → Hypothesis → Decision → Plan → Action → Approval → Execution → Evidence → Outcome → Learning**. Mọi bước đều có log liên kết đồng nhất qua `trace_id`, và bước Outcome tham chiếu đúng chứng từ đơn hàng nguồn. |
+| **TC-E2E-002** | Kiểm soát phê duyệt Tiếp thị | Marketing Agent tuyệt đối không thể xuất bản (publish) nội dung hoặc kích hoạt chiến dịch nếu thiếu thẩm quyền (authority) hoặc chưa có phê duyệt (human approval) theo chính sách. **AUTH-4 là tuyến bắt buộc phê duyệt của con người** (việc chờ người duyệt, không phải một cấp bậc số để nâng lên); một đề xuất thuộc **AUTH-5 bị DENY cứng** và không được định tuyến sang phê duyệt. |
 | **TC-E2E-003** | Toàn vẹn giá bán chính thức | Sales Agent không thể đưa ra mức giá, chiết khấu hoặc điều kiện bán hàng không có trong nguồn dữ liệu chính thức (Catalog/ERP/Price Rules); không bịa đặt hoặc phá giá sàn. |
 | **TC-E2E-004** | Xác minh danh tính chăm sóc khách hàng | Customer Care Agent chỉ tra cứu và hiển thị dữ liệu đơn hàng/tài khoản đối với khách hàng đã được xác minh danh tính; cấm rò rỉ dữ liệu giữa các khách hàng khác nhau. |
 | **TC-E2E-005** | Chống trùng lặp hành động (Idempotency) | Thực hiện lại cùng một yêu cầu thực thi (retry execution request do timeout/lỗi mạng) không được tạo tin nhắn gửi trùng hoặc phát sinh giao dịch/đơn hàng ngoài ý muốn lần hai. |
-| **TC-E2E-006** | Từ chối và ghi vết vượt quyền | Bất kỳ hành vi nào của AI cố vượt thẩm quyền hoặc vi phạm chính sách bảo mật đều phải bị hệ thống từ chối lập tức (**DENY**) và tự động phát sinh sự kiện kiểm toán bảo mật (Security Audit Event). |
+| **TC-E2E-006** | Từ chối và ghi vết vượt quyền | Bất kỳ hành vi nào của AI cố vượt thẩm quyền (kể cả đề xuất thuộc AUTH-5) hoặc vi phạm chính sách bảo mật đều phải bị hệ thống từ chối lập tức (**DENY**) và tự động phát sinh sự kiện kiểm toán bảo mật (Security Audit Event); không có tuyến phê duyệt nào cứu được một đề xuất AUTH-5. |
 | **TC-E2E-007** | Triệt tiêu liên hệ thiếu đồng ý (Suppression) | Khách hàng chưa cấp sự đồng ý (consent) hoặc đã rút phép nhận tin (opt-out) phải bị hệ thống triệt tiêu liên hệ tự động; cấm gửi tin tiếp thị hoặc tin nhắc ngoài ý muốn. |
 | **TC-E2E-008** | Xử lý lỗi cổng kết nối trung thực | Khi cổng kết nối (Connector) bên thứ ba gặp sự cố (lỗi mạng, HTTP 5xx, token hết hạn), hệ thống phải chuyển sang trạng thái failure/retry; tuyệt đối cấm ghi nhận thành công giả. |
 | **TC-E2E-009** | Khả năng truy vết ngược toàn diện | Mỗi hành động thành công đều phải cho phép truy ngược 100%: **Trigger → Context → Decision → Approval → Execution → Evidence → Outcome**, kèm đầy đủ tham số, chi phí và độ trễ. |
@@ -146,7 +146,7 @@ Chạy lại bộ tình huống cố định sau thay đổi lời hướng dẫ
 
 ### Chỉ tiêu kinh doanh để thảo luận
 
-Các mục tiêu từ kế hoạch cũ được giữ để đối chiếu, chưa dùng làm lời hứa:
+Các mục tiêu từ kế hoạch cũ được giữ để đối chiếu, chưa dùng làm lời hứa: mọi ngưỡng dưới đây là giả thuyết phải khóa theo baseline ASM-002 (KPI) và NFR-009 (độ trễ/SLA) trước khi trở thành cam kết trong hợp đồng hoặc hồ sơ cổng.
 
 | Mục tiêu tham khảo | Cách dùng trong kế hoạch mới |
 |---|---|
@@ -200,7 +200,7 @@ Bảng đối chiếu truy vết 100% giữa các Mục tiêu kinh doanh nền t
     - 100% nội dung chiến dịch được phê duyệt qua cổng SCR-003 trước khi phát tán ra môi trường thực tế (Zero Unauthorized Publish).
     - Chuỗi truy vết liên tục 100% từ Signal ID → Campaign ID → Message ID → Lead ID → Order ID mang cùng `trace_id`.
     - Doanh thu đơn hàng ghi nhận khớp 100% với số liệu từ System of Record (ERP/Payment Gateway).
-    - Độ trễ phản hồi khi khách tương tác qua lại < 2.0 giây (p95).
+    - Độ trễ phản hồi khi khách tương tác qua lại là mục tiêu thiết kế theo NFR-009: cách đo (phân vị) và ngưỡng SLA được khóa sau benchmark, không ấn định số cố định trước baseline.
   - **KHÔNG ĐẠT (FAIL):**
     - AI tự động xuất bản thông điệp khi chưa có xác nhận từ con người trên SCR-003 (Vi phạm nghiêm trọng TC-E2E-002).
     - Nội dung tin nhắn chứa thông tin giá, khuyến mãi sai lệch với nguồn ERP hoặc vi phạm brand policy.
@@ -236,15 +236,15 @@ Bảng đối chiếu truy vết 100% giữa các Mục tiêu kinh doanh nền t
 - **Các bước thực thi tuần tự:**
   1. *Phân tích ý định (Intent Detection):* CS-01 phân tích nội dung, xác định ý định: `order_status_inquiry` (độ tin cậy > 85%).
   2. *Xác minh danh tính khách hàng (Identity Verification):* Hệ thống đối chiếu `session_token` hoặc yêu cầu xác thực OTP / 4 số cuối điện thoại (TC-E2E-004); từ chối hiển thị dữ liệu chi tiết nếu chưa xác minh.
-  3. *Gọi Skill tra cứu ERP (ERP Lookup Tool):* CS-01 gọi skill `order.lookup` (AUTH-3) truyền `customer_id` đã xác thực và `order_id` lên hệ thống ERP/WMS.
+  3. *Gọi Skill tra cứu ERP (ERP Lookup Tool):* CS-01 gọi skill `skill.care.lookup_order` (AUTH-0 Observe — đọc dữ liệu; câu trả lời gửi khách là hành động AUTH-3 riêng) truyền `customer_id` đã xác thực phía máy chủ và `order_id` lên hệ thống ERP/WMS.
   4. *Trích xuất bằng chứng (Evidence Fact):* ERP trả về trạng thái: *"Đang vận chuyển - Đối tác: Hsinchu Logistics / 7-Eleven - Mã vận đơn: #TW-8891 - Dự kiến giao: 17:00 ngày mai"*.
   5. *Soạn phản hồi & Gửi khách:* CS-01 định dạng câu trả lời thân thiện, chính xác kèm đầy đủ thông tin mã vận đơn và ngày giao dự kiến.
   6. *Đóng vụ việc & Đo lường:* Ghi nhận Case ID, sinh sự kiện `support.resolved`, ghi vết audit log và chi phí token theo NFR-010.
 - **Tiêu chuẩn Đạt / Không đạt (Pass/Fail Criteria) lượng hóa:**
   - **ĐẠT (PASS):**
-    - Thời gian phản hồi đầu tiên (FRT) < 2.0 giây (trung vị) và < 3.0 giây (p95).
+    - Thời gian phản hồi đầu tiên (FRT) là mục tiêu thiết kế theo NFR-009: cách đo (trung vị/p95) và ngưỡng SLA được khóa sau benchmark, chưa ấn định số cố định.
     - 100% dữ liệu đơn hàng hiển thị thuộc về đúng khách hàng đã xác minh danh tính; cấm tuyệt đối truy cập chéo dữ liệu khách hàng khác (TC-E2E-004, NFR-006).
-    - Câu trả lời khớp 100% với dữ liệu từ ERP nguồn (Zero Hallucination).
+    - Câu trả lời về đơn hàng chỉ được lấy từ phản hồi ERP/WMS đã xác nhận; nếu connector lỗi thì fail closed, không bịa ngày giao hay mã vận đơn (TC-E2E-003, TC-E2E-008). Không dùng cụm “zero hallucination” như kết quả đã đo.
     - Ghi nhận đầy đủ audit log: Run ID, Customer ID, Tool Call, Raw API Response, Evidence, Latency, Token Cost (NFR-002, NFR-010).
   - **KHÔNG ĐẠT (FAIL):**
     - Tiết lộ thông tin đơn hàng khi chưa xác minh danh tính người gửi yêu cầu.
@@ -257,7 +257,7 @@ Bảng đối chiếu truy vết 100% giữa các Mục tiêu kinh doanh nền t
   - Sự kiện: Tin nhắn khiếu nại gay gắt từ khách hàng: *"Sản phẩm nhận được bị nứt vỡ! Tôi yêu cầu hoàn tiền toàn bộ ngay lập tức và đền bù thiệt hại, nếu không tôi sẽ khiếu nại lên Hội bảo vệ người tiêu dùng!"*
 - **Các bước thực thi tuần tự:**
   1. *Phân loại khiếu nại & Cảm xúc:* CS-01 nhận diện intent: `damage_complaint` và phát hiện yêu cầu hoàn tiền/đền bù; chỉ số cảm xúc phân loại `Sentiment = ANGRY / URGENT`.
-  2. *Kiểm tra ranh giới thẩm quyền (Policy Engine):* Hệ thống đối chiếu chính sách: Yêu cầu hoàn tiền và cấp voucher đền bù thuộc cấp độ thẩm quyền AUTH-4 (Cần duyệt) và AUTH-5 (AI cấm tự quyết theo BR-007, ASM-004). AI nhận thức rõ không có thẩm quyền tự giải quyết.
+  2. *Kiểm tra ranh giới thẩm quyền (Policy Engine):* Hệ thống đối chiếu chính sách: yêu cầu hoàn tiền và cấp voucher đền bù thuộc **tuyến AUTH-4 — bắt buộc phê duyệt của con người** (không phải một cấp tự chủ để nâng lên), còn hành vi AI tự quyết định hoàn tiền/cấp bù nằm trong **AUTH-5 — cấm tuyệt đối** (DENY cứng theo BR-007, ASM-004). AI nhận thức rõ không có thẩm quyền tự giải quyết.
   3. *Tạo vụ việc chuyển cấp (Escalation Case):* CS-01 tự động tạo Service Case với mức ưu tiên cao nhất (`Priority = URGENT`), đính kèm tóm tắt vấn đề, phân tích cảm xúc và bằng chứng liên quan.
   4. *Phản hồi trấn an & Bàn giao:* CS-01 gửi thông điệp đồng cảm, thông báo vụ việc đã được chuyển thẳng tới chuyên viên hỗ trợ cấp cao và giữ kết nối.
   5. *Nhân viên tiếp quản (Human Takeover):* Tín hiệu chuông cảnh báo hiển thị trên Human Command Center SCR-005; chuyên viên CSKH nhấn nút `Accept Takeover`.
@@ -265,7 +265,7 @@ Bảng đối chiếu truy vết 100% giữa các Mục tiêu kinh doanh nền t
   7. *Kết thúc vụ việc & Trả quyền AI:* Nhân viên chốt phương án bồi thường, ghi nhận kết quả và trả lại quyền trực tự động cho AI.
 - **Tiêu chuẩn Đạt / Không đạt (Pass/Fail Criteria) lượng hóa:**
   - **ĐẠT (PASS):**
-    - Thời gian chuyển giao từ khi nhận diện khiếu nại đến khi tạo ticket vào hàng đợi nhân viên < 3.0 giây.
+    - Thời gian chuyển giao từ khi nhận diện khiếu nại đến khi tạo ticket vào hàng đợi nhân viên là mục tiêu thiết kế theo NFR-009, khóa sau benchmark (không ấn định số cố định).
     - AI tuyệt đối không đưa ra bất kỳ lời hứa hoàn tiền hoặc mức bồi thường cụ thể nào vượt quyền (Policy Violation Rate = 0%, tuân thủ TC-E2E-006, BR-007).
     - 100% ngữ cảnh hội thoại và dữ liệu Customer360 được kế thừa nguyên vẹn trên màn hình SCR-005 của nhân viên.
     - Quy trình chuyển đổi quyền điều khiển giữa AI và người (Takeover & Release) diễn ra trơn tru, không có hiện tượng trả lời chồng chéo.
@@ -281,6 +281,8 @@ Bảng đối chiếu truy vết 100% giữa các Mục tiêu kinh doanh nền t
 Để giải quyết triệt để sự giằng co giữa an toàn kỹ thuật phần mềm và mục tiêu tăng trưởng thương mại thực chiến, hệ thống vận hành theo **Mô hình Lộ trình Trục kép (Dual-Track Roadmap)**:
 - **Trục 1 — Kỹ thuật Phần mềm (Engineering Track)**: Tuân thủ nghiêm ngặt 6 Cổng kỹ thuật P0–P5 theo Mục 24 của SRS v0.1, bảo đảm an toàn dữ liệu, kiểm soát ranh giới quyền hạn và tính ổn định của hệ thống.
 - **Trục 2 — Kinh doanh & Thương mại (Commercial Track)**: Thực thi 3 giai đoạn mở rộng thị trường từ Khách hàng mỏ neo Đài Loan đến Mạng lưới phân phối App Store toàn cầu, bảo đảm dòng tiền và hiệu quả kinh tế đơn vị.
+
+Thứ tự cổng bắt buộc — không nhảy cổng, không đảo thứ tự: **P0 (Foundation) → P1 (Customer Care) → P2 (Sales) → P3 (Marketing) → P4 (Cross-domain) → P5 (Controlled Autonomy)**. Chỉ mở cổng P(n+1) sau khi cổng Pn được ký duyệt kèm bằng chứng pilot (PILOT-xx / TC-E2E-xxx).
 
 ```text
 ======================= DUAL-TRACK ROADMAP ARCHITECTURE =======================
@@ -309,10 +311,10 @@ TRỤC 2: KINH DOANH & THƯƠNG MẠI (COMMERCIAL TRACK - 3 GIAI ĐOẠN TĂNG T
 |---|---|---|---|
 | **P0 — Foundation** (Hạ tầng nền tảng & Hợp đồng dữ liệu) | Chuẩn hóa Canonical Contracts, kiến trúc đa doanh nghiệp (Multi-tenant), phân quyền và kiểm toán. | Thiết lập Canonical contracts cho Customer360, Agent, Skill, Decision, Action, Approval, Evidence, Outcome; dựng Connector Framework, Policy Engine (BR-001..010), Authority Model (AUTH-0..5); phân tách schema đa tenant. | Agent chưa cần thông minh nhất nhưng tuyệt đối không vượt quyền hoặc mất trace. Vượt qua kiểm thử cô lập dữ liệu 2 doanh nghiệp; không lọt lỗi ranh giới bảo mật. |
 | **P1 — Customer Care Pilot** (Thí điểm Chăm sóc khách hàng thuần túy) | Kiểm chứng khả năng hội thoại và tra cứu dữ liệu thời gian thực từ System of Record mà không rò rỉ thông tin. | Triển khai CS-01 và CS-02; nhận diện 10 nhóm intent; xác minh danh tính khách hàng; tra cứu đơn hàng ERP/WMS; trả lời FAQ; quy trình chuyển người (PILOT-03, PILOT-04); ghi vết kiểm toán đầy đủ. Module Bán hàng tắt hoàn toàn. | Một hội thoại thật được xử lý E2E và có evidence từ ERP nguồn; nhân viên tiếp quản trơn tru; đạt chuẩn TC-E2E-004 (xác minh danh tính) và TC-E2E-008 (connector trung thực). |
-| **P2 — Sales Pilot** (Thí điểm Bán hàng & Bảo toàn giá sàn) | Kiểm chứng chuỗi giá trị: AI tư vấn → Đơn hàng → Doanh thu thật; bảo vệ 100% biên lãi ròng qua máy chủ. | Triển khai 5 Sales Agent (SAL-01..SAL-05); chấm điểm nhu cầu; tra cứu tồn kho/giá ERP; đề xuất cross/upsell; phục hồi giỏ hàng bỏ quên (PILOT-02); máy chủ duyệt giá sàn $P_{floor}$ (ECN-002) và trần giảm giá $D_{cap}$ (ECN-001). | Chứng minh chuỗi: AI action → order → revenue evidence; không đưa giá ngoài nguồn chính thức (TC-E2E-003); chống tạo đơn trùng lặp (TC-E2E-005); kiểm tra giá sàn thành công 100%. |
-| **P3 — Marketing Pilot** (Thí điểm Tiếp thị có kiểm duyệt) | Tự động hóa tạo chiến dịch và nội dung tiếp thị dưới sự kiểm duyệt tuyệt đối của con người (Human Approval Gate). | Triển khai 6 Marketing Agent (MKT-01..MKT-06); phân tích cohort/segment; lập kế hoạch chiến dịch; sinh nội dung đa kênh (Facebook, TikTok, Email); cổng duyệt phê duyệt (SCR-003); quy thuộc doanh thu (attribution). | Chiến dịch Marketing chạy E2E có approval 100%; tuyệt đối không tự ý xuất bản nếu thiếu phê duyệt (TC-E2E-002); mô hình quy thuộc doanh thu minh bạch, không suy đoán. |
+| **P2 — Sales Pilot** (Thí điểm Bán hàng & Bảo toàn giá sàn) | Kiểm chứng chuỗi giá trị: AI tư vấn → Đơn hàng → Doanh thu thật; giữ mọi báo giá trong chính sách sàn đã được chủ sở hữu duyệt ($P \ge P_{floor}$) — bất biến chính sách, không phải cam kết lợi nhuận. | Triển khai 5 Sales Agent (SAL-01..SAL-05); chấm điểm nhu cầu; tra cứu tồn kho/giá ERP; đề xuất cross/upsell; phục hồi giỏ hàng bỏ quên (PILOT-02); phép kiểm tra chính sách giá sàn $P_{floor}$ (ECN-002) đối chiếu giá đọc từ SoR, và trần giảm giá $D_{cap}$ (ngưỡng theo ASM-003, quỹ trợ cấp ECN-001). | Chứng minh chuỗi: AI action → order → revenue evidence; không đưa giá ngoài nguồn chính thức (TC-E2E-003); chống tạo đơn trùng lặp (TC-E2E-005, NFR-003); không có báo giá nào dưới sàn đã duyệt (bất biến chính sách, đo bằng 0 vi phạm); chỉ tiêu doanh thu/chuyển đổi chờ baseline ASM-002. |
+| **P3 — Marketing Pilot** (Thí điểm Tiếp thị có kiểm duyệt) | Tự động hóa tạo chiến dịch và nội dung tiếp thị dưới sự kiểm duyệt tuyệt đối của con người (Human Approval Gate). | Triển khai 6 Marketing Agent (MKT-01..MKT-06); phân tích cohort/segment; lập kế hoạch chiến dịch; sinh nội dung đa kênh (Facebook, TikTok, Email); cổng duyệt phê duyệt (SCR-003); quy thuộc doanh thu (attribution). | Bất biến: không có lượt xuất bản/kích hoạt chiến dịch nào thiếu phê duyệt người (AUTH-4 tại SCR-003; TC-E2E-002), đo bằng 0 vi phạm; mô hình quy thuộc doanh thu minh bạch, không suy đoán; mọi chỉ tiêu tăng trưởng/attribution chờ baseline ASM-002. |
 | **P4 — Cross-domain Orchestration** (Điều phối xuyên miền) | Hợp nhất toàn diện luồng dữ liệu liên miền Marketing → Sales → CSKH → Retention/Success trên cùng Customer360. | Revenue Orchestrator điều phối chu trình 11 bước; đồng bộ trạng thái khách hàng giữa các module; chuyển tiếp lead từ Marketing sang Sales, chuyển đơn hàng sang CSKH, kích hoạt vòng lặp giữ chân và mua lại. | Toàn bộ hành trình khách hàng xuyên suốt 3 Agent duy trì ngữ cảnh Customer360 thống nhất; đạt chuẩn TC-E2E-001 (luồng khép kín) và TC-E2E-009 (truy vết ngược 100%). |
-| **P5 — Controlled Autonomy** (Tự chủ có kiểm soát quy mô lớn) | Mở rộng tự động hóa an toàn cho $N$ doanh nghiệp, nâng quyền tự động cho tác vụ an toàn và tối ưu chi phí vận hành. | Hành động rủi ro thấp đủ điều kiện được nâng từ *Recommend* → *Draft* → *Bounded Execute* (AUTH-3); hành động tài chính/rủi ro cao (hoàn tiền, đền bù, đổi giá) bắt buộc giữ Human Approval (AUTH-4); tối ưu chi phí token. | Tỷ lệ vi phạm chính sách bằng 0 (Policy Violation Rate = 0%); chi phí AI đạt định mức mục tiêu 0,5–1 TWD/phiên (ECN-003); hệ thống tự động ngắt khi phát hiện rủi ro (Fail Closed). |
+| **P5 — Controlled Autonomy** (Tự chủ có kiểm soát quy mô lớn) | Mở rộng tự động hóa an toàn cho $N$ doanh nghiệp, nâng quyền tự động cho tác vụ an toàn và tối ưu chi phí vận hành. | Hành động rủi ro thấp đủ điều kiện được nâng trong dải tự chủ AUTH-0..3 (*Recommend* → *Draft* → *Bounded Execute*); hành động tài chính/rủi ro cao (hoàn tiền, đền bù, đổi giá) bắt buộc giữ tuyến phê duyệt AUTH-4; hành vi thuộc AUTH-5 không bao giờ được nâng; tối ưu chi phí token. | Bất biến: tỷ lệ vi phạm chính sách bằng 0 (Policy Violation Rate = 0%) và không có hành động trùng lặp; hệ thống tự ngắt khi phát hiện rủi ro (Fail Closed). Chi phí AI chỉ được đối chiếu với định mức thiết kế ECN-003 (0,5–1 TWD/phiên) sau khi khóa baseline ASM-002; độ trễ/throughput khóa theo NFR-009 sau benchmark — không cam kết số cố định trước đó. |
 
 ### 5.2. Trục 2 — Kinh doanh & Thương mại: Phân kỳ Gói sản phẩm theo 2 Nấc Triển Khai
 
@@ -341,9 +343,9 @@ TRỤC 2: KINH DOANH & THƯƠNG MẠI (COMMERCIAL TRACK - 3 GIAI ĐOẠN TĂNG T
 
 | Giai đoạn thương mại | Trọng tâm thị trường & Sản phẩm | Các thành phần triển khai chi tiết | Điều kiện chuyển tiếp (Milestone Gate) |
 |---|---|---|---|
-| **Phase 1 — Taiwan Anchor Pilot** (Thí điểm mỏ neo Đài Loan: Phân kỳ 2 nấc) | Kiểm chứng thực chiến bài toán kinh tế và văn hóa tiêu dùng B2C Đài Loan cho 2 ngành: High-Ticket EV Scooter và FMCG. | **Nấc 1 (tại P1):** Triển khai Care & FAQ cho GTM-001A (tra cứu trạm pin, bảo hành, tiến độ giao xe) và GTM-001B (tra cứu đơn hàng CVS, FAQ đổi trả); tích hợp LINE OA và cổng đọc ERP; tắt toàn bộ bán hàng.<br>**Nấc 2 (tại P2):** Mở toàn diện module Bán hàng: GTM-001A (tư vấn showroom, cọc giữ chỗ, trả góp, giá sàn $P_{floor}$) và GTM-001B (giỏ hàng, subscription 定期購, 7-Eleven CVS COD, phục hồi giỏ PILOT-02, LINE Points); tích hợp cổng thanh toán ECPay/LINE Pay. | Đạt được các chỉ số thiết kế giả thuyết đo lường tại [analytics.md](analytics.md) sau khi lấy Baseline (ASM-002): Chuyển đổi, độ trễ phản hồi, chi phí AI 0,5–1 TWD/phiên (ECN-003), bảo toàn 100% biên lãi ròng ($P \ge P_{floor}$). |
+| **Phase 1 — Taiwan Anchor Pilot** (Thí điểm mỏ neo Đài Loan: Phân kỳ 2 nấc) | Kiểm chứng thực chiến bài toán kinh tế và văn hóa tiêu dùng B2C Đài Loan cho 2 ngành: High-Ticket EV Scooter và FMCG. | **Nấc 1 (tại P1):** Triển khai Care & FAQ cho GTM-001A (tra cứu trạm pin, bảo hành, tiến độ giao xe) và GTM-001B (tra cứu đơn hàng CVS, FAQ đổi trả); tích hợp LINE OA và cổng đọc ERP; tắt toàn bộ bán hàng.<br>**Nấc 2 (tại P2):** Mở toàn diện module Bán hàng: GTM-001A (tư vấn showroom, cọc giữ chỗ, trả góp, giá sàn $P_{floor}$) và GTM-001B (giỏ hàng, subscription 定期購, 7-Eleven CVS COD, phục hồi giỏ PILOT-02, LINE Points); tích hợp cổng thanh toán ECPay/LINE Pay. | Đạt được các chỉ số thiết kế giả thuyết đo lường tại [analytics.md](analytics.md) sau khi lấy Baseline (ASM-002): chuyển đổi, độ trễ phản hồi, chi phí AI 0,5–1 TWD/phiên (ECN-003 — mục tiêu thiết kế), và bất biến giữ giá bán không dưới sàn đã duyệt ($P \ge P_{floor}$; không phải cam kết lợi nhuận). |
 | **Phase 2 — Adapter Standardization & Multi-tenant** (Chuẩn hóa Vertical SaaS & Cơ chế Cắm-Rút) | Đóng gói sản phẩm độc lập, tách rời Core Engine và sẵn sàng mở rộng cho $N$ doanh nghiệp đa quốc gia. | Chuẩn hóa cấu trúc gói sản phẩm Vertical SaaS (GTM-001A và GTM-001B); hoàn thiện 3 cổng kết nối cắm-rút toàn cầu: **ADPT-GL-001** (WhatsApp Business API, Telegram, đa ngôn ngữ Web Widget), **ADPT-GL-002** (Stripe, PayPal, Apple Pay, Google Pay, Postal COD), **ADPT-GL-003** (Tuân thủ GDPR Châu Âu, CCPA Mỹ, PDPA Singapore); thiết lập cổng tự phục vụ cấu hình (Self-serve Onboarding). | Hoán đổi thành công giữa ADPT-TW-001 và ADPT-GL-001..003 mà không cần chỉnh sửa Core AI Engine; vượt qua kiểm thử cô lập dữ liệu 100% giữa các tenant doanh nghiệp. |
-| **Phase 3 — Global 1-Click App Store Distribution** (Phân phối 1-chạm toàn cầu qua App Store) | Mở rộng quy mô toàn cầu theo mô hình Tăng trưởng dựa trên sản phẩm (Product-Led Growth - PLG) với chi phí thu hút khách hàng (CAC) tối thiểu. | Phát hành ứng dụng cài đặt 1-chạm **GTM-002** trên **Shopify App Store** và **WooCommerce Marketplace**; tự động đồng bộ sản phẩm, tồn kho và đơn hàng qua GraphQL/REST API; xuất bản Case Study và Whitepaper định lượng **GTM-003** đòn bẩy số liệu thực nghiệm Đài Loan làm bằng chứng xã hội (Social Proof) và cam kết ROI để bán cho hàng trăm nghìn nhà bán lẻ quốc tế. | Đạt quy mô tăng trưởng tự chủ toàn cầu; hệ thống vận hành tự động ổn định; doanh thu định kỳ hàng tháng (MRR) tăng trưởng bền vững dựa trên phí nền tảng và mức sử dụng AI. |
+| **Phase 3 — Global 1-Click App Store Distribution** (Phân phối 1-chạm toàn cầu qua App Store — đề xuất, chưa phát hành) | Mở rộng quy mô toàn cầu theo mô hình Tăng trưởng dựa trên sản phẩm (Product-Led Growth - PLG); mục tiêu chi phí thu hút khách hàng (CAC) chỉ được cam kết sau khi khóa baseline ASM-002. | Phát hành ứng dụng cài đặt 1-chạm **GTM-002** trên **Shopify App Store** và **WooCommerce Marketplace** khi nền tảng phê duyệt và ASM-001 xác nhận quyền/API; tự động đồng bộ sản phẩm, tồn kho và đơn hàng qua GraphQL/REST API; chỉ xuất bản Case Study/Whitepaper **GTM-003** sau khi đối tác mỏ neo khóa baseline (ASM-002) và có số liệu đo lường thực tế — hiện **chưa có số liệu thực nghiệm/ROI**, không cam kết ROI trước baseline. | Điều kiện chuyển tiếp: vận hành tự động ổn định và các số liệu quy mô/doanh thu định kỳ hàng tháng (MRR) được đo sau baseline ASM-002; chưa có cam kết định lượng trước đó. |
 
 ### 5.3. Ma trận đồng bộ giữa Trục Kỹ thuật và Trục Thương mại (Track Synchronization)
 
@@ -384,7 +386,7 @@ Theo Mục 28 của đề bài SRS v0.1, quy trình chuyển giao triển khai k
 | 4. Xây dựng API Gateway, Event Pipeline & Adapters | Backend / DevOps Lead | Technical Director | Security / Data Legal | Frontend Team |
 | 5. Phát triển Human Command Center (SCR-001..005) | Frontend Lead | Product Designer | Operations / CS Lead | End Users |
 | 6. Xây dựng Acceptance Suite TC-E2E-001..009 & DoD | QA / Test Lead | Quality Director | Security Engineer | Dev Teams |
-| 7. Pilot Production-like theo lộ trình P1 ➔ P5 | Cross-functional Squad | Steering Committee | Anchor Client (Đài Loan) | Nhà Đầu Tư |
+| 7. Pilot Production-like theo lộ trình P0 ➔ P5 | Cross-functional Squad | Steering Committee | Anchor Client (Đài Loan) | Nhà Đầu Tư |
 
 Chi tiết nội dung thực thi từng bước chuyển giao:
 1. **Business Analyst / PO**: Khóa danh sách KPI, cổng kết nối (Connectors), ngưỡng phê duyệt (Approval Thresholds) và phạm vi dữ liệu được phép sử dụng (ASM-001..ASM-005).
@@ -393,4 +395,4 @@ Chi tiết nội dung thực thi từng bước chuyển giao:
 4. **Backend / Integration**: Xây dựng API Gateway, Event Ingestion Pipeline, hệ thống Connector cắm-rút và cơ chế thực thi Idempotent chống trùng lặp.
 5. **Frontend**: Phát triển Human Command Center gồm Executive Dashboard, Agent Operations, Approval Center, Customer360 Timeline và Conversation Console.
 6. **QA / Testing**: Thiết lập bộ Acceptance Test Suite tự động hóa từ TC-E2E-001..TC-E2E-009 kèm các bộ kiểm thử phủ định (Negative / Adversarial Tests).
-7. **Triển khai Pilot Production-like**: Vận hành thử nghiệm theo đúng thứ tự cổng Gate: Customer Care (P1) → Sales (P2) → Marketing (P3) → Cross-domain Orchestration (P4) → Controlled Autonomy (P5).
+7. **Triển khai Pilot Production-like**: Vận hành thử nghiệm theo đúng thứ tự cổng Gate: Foundation (P0) → Customer Care (P1) → Sales (P2) → Marketing (P3) → Cross-domain Orchestration (P4) → Controlled Autonomy (P5).

@@ -1,0 +1,117 @@
+{
+  "id": "E2E-LIVE-P5-AUTONOMY",
+  "title": "P5: controlled autonomy promotes low-risk work and still gates high risk (approved sandbox)",
+  "document": "e2e/live.md",
+  "layer": "e2e",
+  "environment": "live",
+  "priority": "high",
+  "gate": "P5",
+  "basis": "blueprint",
+  "pair": "E2E-OFF-P5-AUTONOMY",
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "AUTH-2",
+    "AUTH-3",
+    "AUTH-4",
+    "BR-007",
+    "BR-008",
+    "BR-009",
+    "NFR-001",
+    "NFR-005",
+    "NFR-007",
+    "BR-010"
+  ],
+  "facets": [
+    "skill:skill.sales.send_message",
+    "skill:skill.care.issue_retention_offer",
+    "channel:EMAIL",
+    "stage:DECISION",
+    "stage:PLAN",
+    "stage:APPROVAL",
+    "stage:EXECUTION",
+    "memory:Agent Operational Memory",
+    "kpi:Autonomous Completion Rate",
+    "kpi:Human Override Rate"
+  ],
+  "risk": "Controlled autonomy is either cosmetic (nothing is ever promoted, so the platform stays manual) or unsafe: a high-risk refund or broadcast executes itself because the tenant sat in a higher autonomy mode with no promotion decision recorded.",
+  "preconditions": [
+    "run_id=RUN-E2E-LIVE-P5, case_id=E2E-LIVE-P5, worker=w-biz-e2e-live; the sandbox tenant is configured for the promotion mode with one approved sandbox recipient and the sandbox channel is allowlisted",
+    "the sandbox approval queue and the sandbox operator pause control are reachable through the approved operator API for this run"
+  ],
+  "inputs": {
+    "tenant_id": "LIVE_TENANT_ID",
+    "customer_id": "LIVE_CUSTOMER_A_SANDBOX_ID",
+    "channel": "EMAIL",
+    "assigned_authority": "AUTH-3",
+    "low_risk_action": "sandbox reorder reminder for LIVE_SKU_OK",
+    "high_risk_action": "sandbox compensation above the unset threshold",
+    "pause_probe": "sandbox operator pause of tenant autonomy",
+    "sandbox_recipient": "approved test mailbox only"
+  },
+  "steps": [
+    {
+      "action": "Promote and execute the low-risk sandbox action",
+      "expected": "the sandbox run records recommend -> draft -> auto-execute with the policy parameters and the sandbox provider returns a real receipt for the single send"
+    },
+    {
+      "action": "Probe the high-risk sandbox action",
+      "expected": "the sandbox approval row is PENDING, no sandbox dispatch happens and the provider test sink logs 0 calls for it — the provider test sink is the oracle for every denied or refused step: its call log for the run stays empty, no provider id is manufactured for the attempt, and the audit entry records the refusal instead"
+    },
+    {
+      "action": "Attempt the sandbox self-promotion",
+      "expected": "the prompt-text claim changes no sandbox promotion or authority state, and the attempt is recorded"
+    },
+    {
+      "action": "Pause autonomy on the sandbox",
+      "expected": "the operator pause takes effect: the next low-risk sandbox action parks as a draft and no sandbox provider call is made for it"
+    },
+    {
+      "action": "Restore autonomy on the sandbox",
+      "expected": "the next in-policy low-risk action auto-executes with a sandbox provider receipt, while a fresh high-risk action still gates on approval"
+    },
+    {
+      "action": "Collect the live promotion and gate evidence",
+      "expected": "the sandbox promotion log, the pending high-risk approval and the pause record are tied to the run and retained"
+    }
+  ],
+  "assertions": [
+    "the sandbox promotion log documents each autonomous execution with its criterion and the sandbox policy parameters used",
+    "the high-risk sandbox action produced zero provider calls and no receipt while the approval was PENDING — a denied action has no provider receipt to show: the case records the decision, the zero-call sink and the audit entry, and never presents a receipt, order id or message id the provider did not return",
+    "the sandbox pause measurably stopped auto-execution and the resume measurably restored it for eligible low-risk work",
+    "no sandbox authority or promotion value changed from prompt text, and the audit trail records the attempt"
+  ],
+  "forbidden": [
+    "executing a high-risk sandbox action without the sandbox approval decision",
+    "claiming the pause works from the absence of a provider call alone, without the parked-draft record and the operator pause entry"
+  ],
+  "evidence": [
+    "sandbox promotion decision log with criterion, parameters and eligibility",
+    "sandbox high-risk approval row (PENDING) plus the provider test-sink log (zero calls)",
+    "sandbox operator pause entry and the resumed action's receipt (retained)"
+  ],
+  "cleanup": [
+    "Retire the sandbox artefacts created by this run through the supported sandbox APIs (cancel/withdraw the created cart, campaign, case and voucher references); delete nothing immutable — sent messages, provider receipts and audit rows are retained and reported as non-deletable rather than pretending they were unsent"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. Same components against the sandbox, with the sandbox tenant autonomy configuration and the sandbox operator pause control.",
+  "prerequisites": [
+    "ASM-001 approved connector lock is present (LIVE_CONNECTORS_LOCK points at the approved connector list) — without it this case is SKIP_ASM_001, never PASS",
+    "Per-case sandbox authorization: the run_id of this case is registered in the approved sandbox allowlist with its sandbox tenant/customer/SKU mapping before execution; credentials live outside the repository (env.local) and are never printed in evidence",
+    "The sandbox supports the tenant autonomy configuration and an operator pause control for the run; if either is unsupported the corresponding sub-step is BLOCKED_PREREQUISITE and the run reports it instead of assuming the behaviour",
+    "No approved policy parameter exists for autonomous compensation amounts (ASM-004), so the high-risk probe must travel the approval route"
+  ],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/08-security-governance-nfr.md",
+    "plans/delivery/mvp-and-roadmap.md",
+    "implement/05-skill-system-specifications.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/customers.json",
+    "fixtures/offline/consents.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

@@ -1,0 +1,95 @@
+{
+  "id": "UNIT-BR-002-BOUNDARY",
+  "title": "BR-002 boundary: price exactly at the floor passes, one cent below fails",
+  "document": "unit/business-rules.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "BR-002",
+    "ASM-003"
+  ],
+  "facets": [
+    "entity:Price",
+    "stage:DECISION"
+  ],
+  "risk": "An off-by-one comparison lets a transaction land one cent under the margin floor, or rejects the exact-floor price and blocks a legitimate sale.",
+  "preconditions": [
+    "Namespace gov-unit-br-<case_id>-<worker_id>; Business Rules Engine loaded with no cross-case state.",
+    "Frozen clock 2026-01-15T10:00:00Z; agent fixture context loaded from fixtures/offline/governance.json.",
+    "Floor fixed at 820.00 TWD by the synthetic inputs; the case varies only the offered price."
+  ],
+  "inputs": {
+    "boundary_probes": [
+      {
+        "label": "at floor",
+        "effective_price": 820.0,
+        "expected": "PASS"
+      },
+      {
+        "label": "one cent below",
+        "effective_price": 819.99,
+        "expected": "ERR_FLOOR_PRICE_VIOLATION"
+      },
+      {
+        "label": "one cent above",
+        "effective_price": 820.01,
+        "expected": "PASS"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Evaluate the at-floor price 820.00 TWD",
+      "expected": "The invariant P >= P_floor holds; the quote passes with no violation code."
+    },
+    {
+      "action": "Evaluate the one-cent-below price 819.99 TWD",
+      "expected": "Rule fails with ERR_FLOOR_PRICE_VIOLATION and the message shows 819.99 against 820.00."
+    },
+    {
+      "action": "Evaluate the one-cent-above price 820.01 TWD",
+      "expected": "The quote passes, proving the comparison is not a strict-greater-than error."
+    },
+    {
+      "action": "Compare the three verdicts side by side",
+      "expected": "Exactly the middle probe fails, so the boundary is closed at the floor value."
+    }
+  ],
+  "assertions": [
+    "The comparison is inclusive at the floor: 820.00 passes and 819.99 fails, with no rounding slack.",
+    "Money arithmetic uses a fixed decimal scale; no floating-point artefact changes the verdict.",
+    "Only one of the three probes carries a violation code.",
+    "Failure message contains both compared values so the boundary is auditable."
+  ],
+  "forbidden": [
+    "Using floating-point equality that lets 819.99 round to 820.00.",
+    "Applying a tolerance band that permits sub-floor prices.",
+    "Rejecting the exact-floor price and blocking a compliant sale."
+  ],
+  "evidence": [
+    "Three rule evaluation records with the exact compared values.",
+    "Adapter counter showing only the two passing quotes were released."
+  ],
+  "cleanup": [
+    "Delete the gov- probe payloads."
+  ],
+  "automation": "Real BusinessRulesEngine and PEP under test; only ERP/POS/connector boundaries are substituted by the offline mock whose call log and receipts are the oracle. Rules are evaluated in sequence and halt on the first failure, so each case asserts the first failing rule code rather than a bag of errors.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "plans/delivery/analytics.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/catalog.json",
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

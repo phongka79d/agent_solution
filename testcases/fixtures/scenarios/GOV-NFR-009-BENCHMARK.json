@@ -1,0 +1,97 @@
+{
+  "id": "GOV-NFR-009-BENCHMARK",
+  "title": "NFR-009 benchmark harness: percentiles come from a real measurement, or the gate is NOT_RUN",
+  "document": "governance/nfr.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "extension",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "NFR-009",
+    "SRS-24",
+    "SRS-27",
+    "ASM-002"
+  ],
+  "facets": [
+    "stage:EVIDENCE",
+    "stage:OUTCOME"
+  ],
+  "risk": "A benchmark number is quoted in a gate sign-off or an investor statement although no harness ever ran, so the platform commits to a latency it cannot hold.",
+  "preconditions": [
+    "Namespace gov-nfr-<case_id>-<worker_id>; NFR verification runs against the offline gateway with mock SoR and channel boundaries.",
+    "Frozen clock 2026-01-15T10:00:00Z; failure, outage and crash injections are scripted at the substituted boundary, never faked inside the assertion.",
+    "The service under measurement is the offline gateway with mocked SoR; the harness records raw samples."
+  ],
+  "inputs": {
+    "benchmark": {
+      "samples": 200,
+      "workload": "conversation turn with mocked SoR",
+      "percentiles": [
+        "p50",
+        "p95"
+      ],
+      "raw_samples_required": true,
+      "sla_claim_allowed": false
+    },
+    "no_runtime_variant": {
+      "harness_available": false,
+      "expected_status": "NOT_RUN"
+    }
+  },
+  "steps": [
+    {
+      "action": "Run the harness against the offline gateway and collect raw samples",
+      "expected": "200 raw samples are stored with their timestamps; p50 and p95 are derived from the samples rather than supplied as inputs."
+    },
+    {
+      "action": "Recompute the percentiles independently from the raw samples",
+      "expected": "The recomputed p50 and p95 match the reported values within the documented rounding rule."
+    },
+    {
+      "action": "Attempt the variant where the harness cannot run",
+      "expected": "The result is reported as NOT_RUN with the reason, never as PASS and never with a substituted number."
+    },
+    {
+      "action": "Attempt to publish an SLA from the mock-environment benchmark",
+      "expected": "Publication is blocked: a mocked-boundary benchmark cannot set an official SLA, and the report is labelled as a design-target measurement."
+    }
+  ],
+  "assertions": [
+    "Reported percentiles are reproducible from the stored raw samples; recomputation matches.",
+    "With no harness, the status is NOT_RUN - never PASS and never a placeholder figure.",
+    "The benchmark record states that vendor boundaries were mocked, so it cannot be quoted as production performance.",
+    "No percentile target appears as a pass/fail criterion; the run reports measurements only."
+  ],
+  "forbidden": [
+    "Supplying percentile values as harness configuration.",
+    "Filling a missing benchmark with a design target.",
+    "Labelling a mocked-environment measurement as an SLA.",
+    "Dropping the slowest samples so the percentile looks better."
+  ],
+  "evidence": [
+    "Raw sample file and the derived percentile table.",
+    "Recomputation output for both percentiles.",
+    "NOT_RUN record for the harness-unavailable variant with its reason."
+  ],
+  "cleanup": [
+    "Delete gov- benchmark artifacts after exporting the report; no production data is involved."
+  ],
+  "automation": "Core PEP, rules engine, audit writer, idempotency store and worker lease logic run as real code under test; only ERP/WMS, channel gateways, Redis and the model provider are substituted. Faults are injected at those boundaries and waits are condition-based on persisted state. The harness measures real code paths with substituted vendor boundaries; the raw-sample recomputation is the oracle.",
+  "prerequisites": [
+    "An official SLA cannot be established here: the NFR-009 benchmark against real infrastructure and the ASM-002 baseline are outstanding, so any SLA statement is BLOCKED_PREREQUISITE."
+  ],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "implement/09-sprint-roadmap-and-pilots.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

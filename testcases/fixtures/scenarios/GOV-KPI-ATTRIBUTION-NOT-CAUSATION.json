@@ -1,0 +1,112 @@
+{
+  "id": "GOV-KPI-ATTRIBUTION-NOT-CAUSATION",
+  "title": "Attribution is reported as correlation, not as proven incremental revenue",
+  "document": "governance/kpi.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P3",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SRS-20",
+    "MKT-06",
+    "NFR-005"
+  ],
+  "facets": [
+    "kpi:Campaign Revenue",
+    "kpi:Recommendation Conversion",
+    "kpi:Autonomous Completion Rate"
+  ],
+  "risk": "An attributed revenue figure is presented as revenue the AI created, so the pilot claims causal impact that was never tested and budget is committed on a correlation.",
+  "preconditions": [
+    "Namespace gov-kpi-<case_id>-<worker_id>; the metric is computed by the real reporting code over fixtures/offline/governance.json kpi_dataset and never copied from the dashboard payload.",
+    "Frozen clock 2026-01-15T10:00:00Z with the reporting window 2026-01-01T00:00:00Z .. 2026-02-01T00:00:00Z as a half-open interval; the stored aggregate is recomputed independently from the raw counter rows.",
+    "kpi_dataset.attribution holds W-shaped weights (30/30/30/10) for a single confirmed order of 1000 TWD, and no controlled experiment exists in this repository.",
+    "The report is required to state that attribution is a model unless a valid controlled comparison exists."
+  ],
+  "inputs": {
+    "attribution": {
+      "touchpoints": [
+        "marketing_first",
+        "sales_consult",
+        "care_middle",
+        "cart_last"
+      ],
+      "weights": {
+        "marketing_first": 0.3,
+        "sales_consult": 0.3,
+        "care_middle": 0.1,
+        "cart_last": 0.3
+      },
+      "order_confirmed_twd": 1000,
+      "cart_recovery_window_hours": 24,
+      "campaign_click_window_hours": 48,
+      "organic_after_window": true,
+      "no_interaction_messages": 40
+    },
+    "expected": {
+      "weight_sum": 1.0,
+      "marketing_first_twd": 300.0,
+      "sales_consult_twd": 300.0,
+      "care_middle_twd": 100.0,
+      "cart_last_twd": 300.0,
+      "causal_claim_allowed": false,
+      "experiment_present": false
+    },
+    "claimed_incremental_revenue_twd_if_buggy": 1000.0
+  },
+  "steps": [
+    {
+      "action": "Apply the W-shaped weights to the confirmed order",
+      "expected": "The 1000 TWD order is split 300/300/100/300 across the four touchpoints and the weights sum to exactly 1.0 with no residual."
+    },
+    {
+      "action": "Aggregate attributed revenue per agent for the window",
+      "expected": "Each agent's attributed share is reported as its weighted portion, and the sum of all shares equals the attributed order value."
+    },
+    {
+      "action": "Attempt to publish the attributed figure as incremental revenue created by the AI",
+      "expected": "Publication is refused while no controlled experiment exists; the report labels the figure as attributed correlation."
+    },
+    {
+      "action": "Attempt a variant where one agent alone is credited with the whole order",
+      "expected": "The single-agent rule applies only when exactly one agent participated; with four touchpoints the 100% claim is rejected."
+    }
+  ],
+  "assertions": [
+    "Attribution weights sum to 1.0 per order and the per-agent shares sum back to the attributed order value.",
+    "No attributed figure is published or labelled as incremental, causal or AI-created revenue before a valid controlled comparison exists.",
+    "A single-agent 100% credit applies only when the journey has one touchpoint; multi-touch journeys keep the declared weight model.",
+    "The report states the attribution model, the touchpoints used and the absence of an experiment, so a reader cannot mistake correlation for causation."
+  ],
+  "forbidden": [
+    "Calling attributed revenue 'AI-generated revenue'.",
+    "Crediting the full order to one agent to simplify the report.",
+    "Presenting a post-hoc comparison of strong and weak days as a controlled experiment."
+  ],
+  "evidence": [
+    "Per-order attribution table with the weights and the touchpoints.",
+    "Per-agent attributed revenue report with the model statement.",
+    "Refusal record for the causal publication attempt."
+  ],
+  "cleanup": [
+    "Delete gov- attribution and publication rows after export."
+  ],
+  "automation": "The reporting service and the metric dictionary run as real code under test over the frozen KPI dataset; the dashboard is a consumer whose displayed value must equal the independently recomputed value. Waits are condition-based on the stored aggregate row, metric values are never supplied as inputs, and no vendor boundary is involved in the arithmetic.",
+  "prerequisites": [
+    "No controlled experiment exists and the KPI baseline is not locked, so no causal or incremental revenue claim can be made from this dataset."
+  ],
+  "references": [
+    "plans/delivery/analytics.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

@@ -1,0 +1,90 @@
+{
+  "id": "GOV-APV-EXPIRY",
+  "title": "Expiry TTL: an expired approval cannot be approved or silently executed",
+  "document": "governance/approval.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SCR-003",
+    "AUTH-4",
+    "NFR-008",
+    "NFR-004"
+  ],
+  "facets": [
+    "entity:Approval",
+    "stage:APPROVAL"
+  ],
+  "risk": "A month-old approval is reused to release a campaign whose prices, consent and inventory have all changed, executing a commitment nobody currently endorses.",
+  "preconditions": [
+    "Namespace gov-apv-<case_id>-<worker_id>; approval queue seeded from fixtures/offline/governance.json.",
+    "Operator identities and roles resolved from the fixture operator registry; every decision goes through POST /api/v1/approvals/{id}/decision, the only approval route.",
+    "APV-T2-CAMP carries expires_at 2026-01-15T10:00:00Z, exactly the frozen clock."
+  ],
+  "inputs": {
+    "expired_item": {
+      "approval_id": "APV-T2-CAMP",
+      "expires_at": "2026-01-15T10:00:00Z"
+    },
+    "decision_before": {
+      "decision": "APPROVE",
+      "operator_id": "OP-APPROVER-T2",
+      "reason": "Approve before expiry."
+    },
+    "decision_after": {
+      "decision": "APPROVE",
+      "operator_id": "OP-APPROVER-T2",
+      "reason": "Approve after expiry."
+    }
+  },
+  "steps": [
+    {
+      "action": "Approve one second before the expiry instant using the injected clock",
+      "expected": "HTTP 200 with status APPROVED; the item is released once."
+    },
+    {
+      "action": "Attempt to approve a second item after its expiry instant has passed",
+      "expected": "The decision is refused with an expired status response; the item moves to an expired terminal state rather than executing."
+    },
+    {
+      "action": "Advance the clock further and inspect the queue",
+      "expected": "The expired item is no longer actionable and no automatic execution has occurred for it."
+    }
+  ],
+  "assertions": [
+    "The expiry boundary is evaluated against server time; at exactly expires_at the item is no longer approvable.",
+    "An expired approval never executes, and expiry is terminal rather than silently renewed.",
+    "The expired item's terminal state is recorded in the audit trail with the expiry instant used.",
+    "Expiry does not delete the reviewed payload, so the audit trail remains complete."
+  ],
+  "forbidden": [
+    "Extending the TTL automatically when an operator opens the item.",
+    "Falling back to execution when the expiry check errors.",
+    "Treating an expired item as cancelled and releasing its reservations without recording why."
+  ],
+  "evidence": [
+    "Decision responses before and after expiry with the evaluated instants.",
+    "Approval record terminal states and audit rows.",
+    "Queue listing after clock advancement."
+  ],
+  "cleanup": [
+    "Delete gov- approval rows after exporting the expiry audit evidence."
+  ],
+  "automation": "Time is injected at the approval service boundary so the boundary is exact; the service itself, not the test, decides approvability.",
+  "prerequisites": [],
+  "references": [
+    "implement/07-human-command-center-ui.md",
+    "implement/06-api-and-connectors-spec.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

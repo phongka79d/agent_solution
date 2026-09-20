@@ -1,0 +1,115 @@
+{
+  "id": "INT-FR-CS-003-OUTCOME",
+  "title": "FR-CS-003 outcome measurement: response, conversion and no-success-without-evidence",
+  "document": "integration/sales-care-orchestrator.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P3",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "CS-02",
+    "SAL-05",
+    "FR-CS-003",
+    "SRS-20",
+    "NFR-002",
+    "NFR-005",
+    "MKT-06",
+    "SRS-11"
+  ],
+  "facets": [
+    "skill:skill.mkt.evaluate_attribution",
+    "memory:Learning Memory",
+    "stage:OUTCOME",
+    "stage:LEARNING",
+    "kpi:Repeat Purchase",
+    "kpi:Retention",
+    "kpi:Churn",
+    "kpi:Reactivation"
+  ],
+  "risk": "Retention looks successful (or fails silently) because outcomes are recorded without evidence, so spend compounds on what does not work.",
+  "preconditions": [
+    "run_id=RUN-INT-FRCS003-OUTCOME-0115, case_id=INT-FR-CS-003-OUTCOME, worker=w-biz-int; frozen clock with an observation window of 30 days",
+    "an issued voucher OFF-0115-01 exists for cust-dormant with effect_key EK-RET-D-0115-01, and a later order is scripted in three variants: converted, no response, and cancelled/refunded"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "customer_id": "cust-dormant",
+    "offer_id": "OFF-0115-01",
+    "observation_window_days": 30,
+    "variants": [
+      "purchase within window (ORD-D-0115-02, 900 TWD)",
+      "no purchase, no response",
+      "order placed then cancelled/refunded"
+    ],
+    "expected_metrics": [
+      "Repeat Purchase",
+      "Retention",
+      "Reactivation",
+      "Churn",
+      "Customer Lifetime Value"
+    ],
+    "caller_agent": "CS-02",
+    "granted_authority": "AUTH-1"
+  },
+  "steps": [
+    {
+      "action": "Advance the frozen clock to the end of the observation window",
+      "expected": "the outcome step closes only on the deadline condition, never on a wall-clock sleep"
+    },
+    {
+      "action": "Run the converted variant",
+      "expected": "the outcome records the order id as evidence, increments the conversion/retention counter once, and writes a Learning Memory entry with the observed uplift"
+    },
+    {
+      "action": "Run the no-response variant",
+      "expected": "the outcome records an explicit 'no response' with the window definition; no conversion, retention or reactivation counter moves"
+    },
+    {
+      "action": "Run the cancelled/refunded variant",
+      "expected": "the previously counted order is excluded and the retention credit is reversed, matching the KPI definition (a cancelled order is not retention)"
+    },
+    {
+      "action": "Check Learning Memory and the hypothesis boundary",
+      "expected": "each variant appends a Learning Memory record linked to the offer and run; the original churn hypothesis stays HYPOTHESIS and is never rewritten as a customer fact"
+    }
+  ],
+  "assertions": [
+    "outcome counters move only for evidence-supported results: 1 conversion in variant 1, 0 in variant 2, and a reversal in variant 3",
+    "each outcome record cites the order id (or the explicit absence of one) plus the observation window, so the metric can be recomputed later",
+    "a Learning Memory entry exists per variant with the action id and observed result, and the Customer 360 hypothesis/FACT separation is intact",
+    "no retention/CLV figure is emitted for the customer without a reconciled source order (kpi:Hallucination/Error Rate stays 0 on this path)"
+  ],
+  "forbidden": [
+    "counting a cancelled or refunded order as retention success",
+    "reporting a retention outcome before the window closes or without order evidence"
+  ],
+  "evidence": [
+    "outcome records for the three variants with order ids and window timestamps",
+    "KPI counter deltas (Repeat Purchase, Retention, Reactivation, Churn, CLV)",
+    "Learning Memory entries with offer id, run id and observed result"
+  ],
+  "cleanup": [
+    "drop run RUN-INT-FRCS003-OUTCOME-0115 outcome/learning rows if regenerating; keep the audit trail of the measured outcomes"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. The clock is virtual so the 30-day window closes deterministically; outcome counters are read from the analytics store, not from the agent's own summary text.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/05-skill-system-specifications.md",
+    "plans/modules/customer-support.md",
+    "plans/delivery/analytics.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/customers.json",
+    "fixtures/offline/orders.json",
+    "fixtures/offline/events.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

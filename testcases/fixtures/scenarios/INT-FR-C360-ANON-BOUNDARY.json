@@ -1,0 +1,88 @@
+{
+  "id": "INT-FR-C360-ANON-BOUNDARY",
+  "title": "Anonymous sessions stay anonymous until a verified link exists",
+  "document": "integration/customer-360.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "NFR-006",
+    "FR-C360-001",
+    "BR-009",
+    "TC-E2E-004"
+  ],
+  "facets": [
+    "entity:Customer Identity",
+    "memory:Working Memory",
+    "stage:CONTEXT"
+  ],
+  "risk": "Anonymous browsing history is attached to a customer who merely shares a device or a cookie, leaking one person's behaviour into another's profile.",
+  "preconditions": [
+    "Tenant T1 with anonymous session sess-guest-1 and an unrelated verified customer cust-a in namespace run-t1-anon-*",
+    "Link attempt raised while the session is still unauthenticated"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "anonymous_session": "sess-guest-1",
+    "events": [
+      "evt_anon_1"
+    ],
+    "link_attempt": {
+      "claimed_customer_id": "cust-a",
+      "evidence": "cookie only"
+    }
+  },
+  "steps": [
+    {
+      "action": "Ingest the anonymous events and read the anonymous working memory",
+      "expected": "events are stored against anonymous_id/session_id with customer_id null and no Customer 360 FACT is attached"
+    },
+    {
+      "action": "Attempt to link the anonymous session to cust-a using a cookie alone",
+      "expected": "the link is refused as unverified and the timeline written under the anonymous session is not re-attributed"
+    },
+    {
+      "action": "Link through a gateway-authenticated session for cust-a and then read the merged view",
+      "expected": "the previously anonymous events stay attributed to the anonymous session while new events attach to cust-a, and the link event is recorded"
+    },
+    {
+      "action": "Scan cust-b context for any trace of the anonymous session",
+      "expected": "zero occurrences, and no shared working-memory bucket exists between the sessions"
+    }
+  ],
+  "assertions": [
+    "Anonymous events remain customer_id null until a server-verified link exists",
+    "Cookie-only linking is refused and produces no retroactive attribution",
+    "A verified link records a link event and does not move data into any other customer's context"
+  ],
+  "forbidden": [
+    "Attach anonymous browsing history to a customer without server-side verification",
+    "Share one working-memory bucket across anonymous sessions"
+  ],
+  "evidence": [
+    "Anonymous session rows with customer_id and the refused link audit entry",
+    "Link event record from the verified path with the session identifiers it joined"
+  ],
+  "cleanup": [
+    "Delete the run-scoped anonymous and link rows for run-t1-anon-*; keep audit records"
+  ],
+  "automation": "Drive the real identity-link path with fixture events; only the ERP/vector reads are stubbed. The oracle is the attribution of the stored event rows, not an enum value.",
+  "prerequisites": [],
+  "references": [
+    "implement/03-database-and-memory-schema.md",
+    "implement/04-core-engine-and-orchestrator.md",
+    "plans/platform/data-and-knowledge.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/customers.json",
+    "fixtures/offline/events.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

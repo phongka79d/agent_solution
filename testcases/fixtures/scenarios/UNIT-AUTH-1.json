@@ -1,0 +1,93 @@
+{
+  "id": "UNIT-AUTH-1",
+  "title": "AUTH-1 Recommend: hypothesis-only output, publishing recommendation denied",
+  "document": "unit/authority.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "AUTH-1",
+    "SAL-03",
+    "BR-008",
+    "NFR-001"
+  ],
+  "facets": [
+    "entity:Agent",
+    "stage:HYPOTHESIS"
+  ],
+  "risk": "A recommend-only agent publishes a cross-sell recommendation to a customer channel, creating an outbound contact with no consent check and no approval.",
+  "preconditions": [
+    "Namespace gov-unit-auth-<case_id>-<worker_id>; no shared mutable state with other cases.",
+    "PolicyEnforcementPoint loaded with fixtures/offline/governance.json skill_authority_registry and agents[]; clock frozen at 2026-01-15T10:00:00Z."
+  ],
+  "inputs": {
+    "agent_id": "SAL-01",
+    "assigned_authority": "AUTH-1",
+    "session_customer": "cust-a",
+    "recommendation": {
+      "customer": "cust-a",
+      "product": "SKU-OK",
+      "reason": "repeat cycle reached",
+      "evidence": "ORD-A-1",
+      "eligibility": "active",
+      "confidence": 0.72,
+      "expected_outcome": "repurchase"
+    },
+    "publish_attempt": {
+      "channel": "EMAIL",
+      "purpose": "marketing",
+      "audience": 1
+    }
+  },
+  "steps": [
+    {
+      "action": "Submit skill.sales.recommend_product for cust-a",
+      "expected": "Returns authorized=true with decisionCode PERMIT and a payload whose status is hypothesis/recommendation, not action."
+    },
+    {
+      "action": "Attempt to publish the same recommendation to the EMAIL channel",
+      "expected": "Enforcement returns authorized=false; no channel adapter is called."
+    },
+    {
+      "action": "Read the stored recommendation record and its audit row",
+      "expected": "Recommendation is stored internally with customer, product, reason, evidence, eligibility, confidence and expected_outcome; audit authority is AUTH-1."
+    }
+  ],
+  "assertions": [
+    "The recommendation payload carries all seven contract fields and is marked as a proposal, never as an executed action.",
+    "0 calls reach the EMAIL adapter test sink for the publish attempt.",
+    "The audit row for the publish attempt records execution_status denied and authority AUTH-1.",
+    "The stored recommendation is retrievable by the customer scope only (no cross-customer read)."
+  ],
+  "forbidden": [
+    "Silently upgrading AUTH-1 to an outbound send because the recommendation confidence is high.",
+    "Storing a recommendation without a reason or without evidence.",
+    "Recording a success outcome for a recommendation that was never accepted by the customer."
+  ],
+  "evidence": [
+    "Stored recommendation record (seven fields) exported as JSON.",
+    "PEP decision JSON for both proposals.",
+    "Channel adapter test-sink log showing zero publish calls."
+  ],
+  "cleanup": [
+    "Remove the gov- recommendation rows and namespace keys; retain the audit chain copy."
+  ],
+  "automation": "Real PEP plus the recommendation contract under test; only the channel adapter is the substituted vendor boundary and it exposes a call counter used as the oracle. Frozen clock makes cycle arithmetic deterministic.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/08-security-governance-nfr.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/catalog.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

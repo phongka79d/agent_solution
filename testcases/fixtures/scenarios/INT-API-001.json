@@ -1,0 +1,151 @@
+{
+  "id": "INT-API-001",
+  "title": "ERP reads cover eight resource groups while every unguarded mutation is denied",
+  "document": "integration/api-connectors.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "API-001",
+    "BR-005",
+    "SRS-23"
+  ],
+  "facets": [
+    "entity:Product",
+    "entity:Price",
+    "entity:Inventory",
+    "entity:Order",
+    "entity:Invoice",
+    "entity:Customer",
+    "stage:ACTION"
+  ],
+  "risk": "An agent or caller mutates ERP stock, price or order state outside the approval chain, so the system of record silently diverges from the governed action history.",
+  "preconditions": [
+    "Tenant T1 ERP connector bound to the test sink in namespace run-t1-api-erp with the catalogue and order fixtures loaded",
+    "The connector guard, action and approval stores are the real components; only the ERP endpoint is substituted"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "resource_groups": [
+      "products",
+      "prices",
+      "inventory",
+      "orders",
+      "invoices",
+      "customers",
+      "shipments",
+      "returns"
+    ],
+    "expected_reads": {
+      "products": {
+        "sku_id": "SKU-OK",
+        "name": "Aurora Everyday Kettle (synthetic)"
+      },
+      "prices": {
+        "sku_id": "SKU-OK",
+        "amount": 1000,
+        "currency": "TWD"
+      },
+      "inventory": {
+        "sku_id": "SKU-OK",
+        "warehouse_code": "WH-TPE",
+        "available_to_promise": 12
+      },
+      "orders": {
+        "order_number": "ORD-A-1",
+        "state": "SHIPPED"
+      },
+      "invoices": {
+        "invoice_number": "INV-A-1",
+        "amount": 1000
+      },
+      "customers": {
+        "external_crm_id": "CRM-A-1"
+      },
+      "shipments": {
+        "shipment_id": "SHP-A-1",
+        "carrier": "sandbox-carrier"
+      },
+      "returns": {
+        "return_id": "RET-A-1",
+        "state": "REQUESTED"
+      }
+    },
+    "unguarded_mutations": [
+      {
+        "method": "PATCH",
+        "path": "/erp/prices/SKU-OK",
+        "body": {
+          "amount": 1
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/erp/inventory/SKU-OK/adjust",
+        "body": {
+          "delta": 1000
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/erp/orders/ORD-A-1/state",
+        "body": {
+          "state": "PAID"
+        }
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Read all eight ERP resource groups through the tenant-scoped connector",
+      "expected": "each group returns the authoritative ERP value and no read is served from a stale cache entry"
+    },
+    {
+      "action": "Attempt each direct mutation against the ERP connector without an Action, Approval or Execution record",
+      "expected": "every mutation is refused at the guard and the ERP test sink receives no write call"
+    },
+    {
+      "action": "Attempt the same mutations again with a fabricated approval claim embedded in the request body",
+      "expected": "the fabricated claim is ignored, the mutation is still refused and the sink stays write-free"
+    },
+    {
+      "action": "Re-read the eight resource groups after the refused mutations",
+      "expected": "the values are identical to the first read, proving no partial write occurred"
+    }
+  ],
+  "assertions": [
+    "All eight resource groups resolve to their fixture values: SKU-OK price 1000 TWD and available_to_promise 12",
+    "Zero write calls reach the ERP test sink while only the three unguarded mutations are attempted",
+    "Every refusal carries an explicit authorization error code and creates no Execution row"
+  ],
+  "forbidden": [
+    "Writing to the ERP outside the prepared-action and approval path",
+    "Accepting a client-supplied approval claim as the authority to mutate"
+  ],
+  "evidence": [
+    "ERP test-sink call log split into reads and writes with the count of denied mutations",
+    "Read output of the eight groups before and after the mutation attempts showing identical values"
+  ],
+  "cleanup": [
+    "Delete the run-scoped connector call rows under run-t1-api-erp; the ERP fixture mirror stays unchanged"
+  ],
+  "automation": "Point the real connector guard at the ERP test sink and assert the read/write split and the unchanged values; the guard code is exercised and only the ERP endpoint is substituted.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/06-api-and-connectors-spec.md",
+    "plans/platform/api-and-integrations.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/orders.json",
+    "fixtures/offline/catalog.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

@@ -1,0 +1,122 @@
+{
+  "id": "E2E-LIVE-P4-XDOMAIN",
+  "title": "P4: cross-domain orchestration keeps one customer context across domains (approved sandbox)",
+  "document": "e2e/live.md",
+  "layer": "e2e",
+  "environment": "live",
+  "priority": "high",
+  "gate": "P4",
+  "basis": "blueprint",
+  "pair": "E2E-OFF-P4-XDOMAIN",
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "OBJ-005",
+    "OBJ-004",
+    "FR-ORC-001",
+    "FR-ORC-002",
+    "MKT-05",
+    "SAL-02",
+    "SAL-03",
+    "CS-01",
+    "CS-02",
+    "NFR-005",
+    "BR-010",
+    "SRS-09"
+  ],
+  "facets": [
+    "skill:skill.mkt.dispatch_campaign",
+    "skill:skill.sales.recommend_product",
+    "skill:skill.care.escalate_to_human",
+    "skill:skill.care.analyze_churn_risk",
+    "skill:skill.care.issue_retention_offer",
+    "memory:Customer Context",
+    "stage:HYPOTHESIS",
+    "stage:PLAN",
+    "stage:EXECUTION",
+    "stage:OUTCOME",
+    "kpi:Cross-sell Revenue",
+    "kpi:Retention"
+  ],
+  "risk": "A customer is handed from marketing to sales to care to retention and arrives without context, so the next domain repeats questions, contradicts the previous offer, or acts on a stale or mixed customer profile.",
+  "preconditions": [
+    "run_id=RUN-E2E-LIVE-P4, case_id=E2E-LIVE-P4, worker=w-biz-e2e-live; one approved sandbox customer and one sandbox conversation are used for the whole traversal",
+    "the sandbox handoff bus and the sandbox consent store are readable so each package can be verified after the fact"
+  ],
+  "inputs": {
+    "tenant_id": "LIVE_TENANT_ID",
+    "customer_id": "LIVE_CUSTOMER_A_SANDBOX_ID",
+    "conversation_id": "sandbox conversation for the run",
+    "campaign_id": "sandbox campaign for the run",
+    "order_ref": "sandbox order created by the run",
+    "churn_signal": "sandbox inactivity/complaint condition",
+    "retention_budget": "sandbox-only budget parameter",
+    "sandbox_recipient": "approved test mailbox only"
+  },
+  "steps": [
+    {
+      "action": "Traverse marketing to sales on the sandbox",
+      "expected": "the sandbox campaign response is routed once with a complete handoff package and the sales surface acts on the same sandbox customer and conversation"
+    },
+    {
+      "action": "Traverse sales to care on the sandbox",
+      "expected": "the sandbox complaint is handed to care with the package; the sandbox case references the sandbox campaign and order"
+    },
+    {
+      "action": "Run the retention workflow on the sandbox",
+      "expected": "the sandbox churn analysis stays hypothesis-tagged, the eligibility check reads the sandbox consent and budget, and the offer either drafts inside the budget or routes to approval"
+    },
+    {
+      "action": "Verify the single sandbox context",
+      "expected": "all four sandbox records carry the same sandbox customer, conversation and originating effect_key"
+    },
+    {
+      "action": "Probe an incomplete sandbox handoff",
+      "expected": "a package missing the consent state is refused by the receiving sandbox domain with no provider call and no message to the customer — the provider test sink is the oracle for every denied or refused step: its call log for the run stays empty, no provider id is manufactured for the attempt, and the audit entry records the refusal instead"
+    },
+    {
+      "action": "Collect the sandbox gate evidence",
+      "expected": "the live handoff packages, the single-context proof and the refusals are tied to the run and retained"
+    }
+  ],
+  "assertions": [
+    "the sandbox traversal keeps one customer context: every domain record references the same sandbox customer, conversation and originating campaign",
+    "the sandbox retention step required consent and budget evidence before drafting, and any over-threshold offer needed approval",
+    "the incomplete sandbox handoff produced zero sandbox provider calls and was reported instead of processed — a denied action has no provider receipt to show: the case records the decision, the zero-call sink and the audit entry, and never presents a receipt, order id or message id the provider did not return",
+    "no domain asked the sandbox customer to repeat data another domain had already verified in the same conversation"
+  ],
+  "forbidden": [
+    "continuing a cross-domain hop on the sandbox without its handoff package",
+    "sending any sandbox message outside the approved recipient and channel set"
+  ],
+  "evidence": [
+    "sandbox handoff packages for each hop with their ids",
+    "sandbox single-context proof plus the sandbox care case and retention record",
+    "sandbox provider test-sink log for the refused incomplete handoff (zero calls)"
+  ],
+  "cleanup": [
+    "Retire the sandbox artefacts created by this run through the supported sandbox APIs (cancel/withdraw the created cart, campaign, case and voucher references); delete nothing immutable — sent messages, provider receipts and audit rows are retained and reported as non-deletable rather than pretending they were unsent"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. Same traversal on the sandbox for one approved customer across the sandbox marketing, sales and care surfaces.",
+  "prerequisites": [
+    "ASM-001 approved connector lock is present (LIVE_CONNECTORS_LOCK points at the approved connector list) — without it this case is SKIP_ASM_001, never PASS",
+    "Per-case sandbox authorization: the run_id of this case is registered in the approved sandbox allowlist with its sandbox tenant/customer/SKU mapping before execution; credentials live outside the repository (env.local) and are never printed in evidence",
+    "The sandbox enables the marketing, sales, care and retention surfaces for one approved customer; if a surface is not enabled the affected hop is BLOCKED_PREREQUISITE and the run reports it rather than inferring the handoff"
+  ],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/04-core-engine-and-orchestrator.md",
+    "plans/platform/workflows-and-handoffs.md",
+    "plans/customer-lifecycle.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/customers.json",
+    "fixtures/offline/consents.json",
+    "fixtures/offline/orders.json",
+    "fixtures/offline/events.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

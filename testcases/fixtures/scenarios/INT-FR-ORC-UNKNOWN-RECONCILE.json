@@ -1,0 +1,84 @@
+{
+  "id": "INT-FR-ORC-UNKNOWN-RECONCILE",
+  "title": "A dispatch timeout is recorded as UNKNOWN and reconciled instead of retried blind",
+  "document": "integration/sales-care-orchestrator.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P1",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "NFR-004",
+    "NFR-003",
+    "BR-006",
+    "NFR-008",
+    "TC-E2E-008"
+  ],
+  "facets": [
+    "stage:EXECUTION",
+    "entity:Execution",
+    "kpi:Failed Execution"
+  ],
+  "risk": "A timeout after the request was sent is treated as failure, so the action is repeated and the customer receives the message or the refund twice.",
+  "preconditions": [
+    "Tenant T1 run orc-unknown-* sending one message where the adapter aborts after receiving the request",
+    "Reconciliation run executed at 2026-01-15T10:12:00Z against the provider test sink"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "run_id": "run-orc-unknown-1",
+    "skill_id": "skill.sales.send_message",
+    "effect_key": "eff_8c1d0f6a4b2e73915c0d8a6f4b1e2d3c5a7b9e0f1a2b3c4d5e6f70819a2b3c4d",
+    "provider_scenario": "effect_present_after_timeout"
+  },
+  "steps": [
+    {
+      "action": "Dispatch the mutating step and abort the adapter after the request was received",
+      "expected": "the audit row records execution_status failed with error code DISPATCH_TIMEOUT and error.outcome UNKNOWN; never success"
+    },
+    {
+      "action": "Read the reservation and task state",
+      "expected": "the reservation stays RESERVED and the task is parked in waiting with its checkpoint, not retried"
+    },
+    {
+      "action": "Run reconciliation for the effect key",
+      "expected": "the provider reports the effect present, the reservation settles to SUCCEEDED with the stored receipt and the step is not re-dispatched"
+    },
+    {
+      "action": "Run reconciliation for a second effect key whose effect is confirmed absent",
+      "expected": "that reservation settles to FAILED and only then is a single re-dispatch allowed under the same effect key"
+    }
+  ],
+  "assertions": [
+    "The timeout attempt is recorded as failed with error.outcome UNKNOWN and never as success",
+    "The reservation is left RESERVED until reconciliation; no dispatch occurs between timeout and reconciliation",
+    "The present effect yields exactly one external effect and the absent effect yields exactly one re-dispatch under the same key"
+  ],
+  "forbidden": [
+    "Record the timed-out dispatch as success or as a proven no-op",
+    "Retry a mutating dispatch without a reconciliation that proves the effect absent"
+  ],
+  "evidence": [
+    "Audit row with execution_status and the UNKNOWN error object",
+    "Reservation status before/after reconciliation plus the provider test-sink effect count per key"
+  ],
+  "cleanup": [
+    "Delete the run-scoped reservation and task rows for orc-unknown-*; keep the audit and evidence records"
+  ],
+  "automation": "Configure the adapter stub to swallow the response after accepting the request; the oracle couples the audit vocabulary with the reservation state and the sink effect count.",
+  "prerequisites": [],
+  "references": [
+    "implement/04-core-engine-and-orchestrator.md",
+    "plans/platform/api-and-integrations.md",
+    "implement/03-database-and-memory-schema.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/platform.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

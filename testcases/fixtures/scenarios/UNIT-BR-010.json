@@ -1,0 +1,91 @@
+{
+  "id": "UNIT-BR-010",
+  "title": "BR-010: task completion without a committed evidence record is refused",
+  "document": "unit/business-rules.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "BR-010",
+    "NFR-002",
+    "NFR-005",
+    "TC-E2E-009"
+  ],
+  "facets": [
+    "entity:Evidence",
+    "stage:EVIDENCE"
+  ],
+  "risk": "A transaction is marked complete with no auditable receipt, so revenue cannot be reconciled and disputes cannot be resolved.",
+  "preconditions": [
+    "Namespace gov-unit-br-<case_id>-<worker_id>; Business Rules Engine loaded with no cross-case state.",
+    "Frozen clock 2026-01-15T10:00:00Z; agent fixture context loaded from fixtures/offline/governance.json."
+  ],
+  "inputs": {
+    "task": {
+      "task_id": "task-gov-1",
+      "action": "create_order",
+      "effect_key": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "evidence_state": "MISSING",
+    "control": {
+      "task_id": "task-gov-2",
+      "action": "create_order",
+      "effect_key": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "evidence_state": "COMMITTED",
+      "receipt": {
+        "erp_order_id": "ORD-A-1",
+        "received_at": "2026-01-15T10:00:00Z"
+      }
+    }
+  },
+  "steps": [
+    {
+      "action": "Attempt to complete the task with no evidence record",
+      "expected": "Completion is refused with ERR_MISSING_EVIDENCE_RECORD and the task stays in a non-completed state."
+    },
+    {
+      "action": "Attempt to complete the control task that has a committed receipt",
+      "expected": "The control task completes and references the evidence record id from its audit row."
+    },
+    {
+      "action": "Query the audit rows for both tasks",
+      "expected": "The refused task row shows execution_status not completed with the error code; the control row references the evidence record."
+    }
+  ],
+  "assertions": [
+    "errorCode is exactly ERR_MISSING_EVIDENCE_RECORD for the evidence-less task.",
+    "Task state is not completed after the refusal, so no downstream consumer treats it as finished.",
+    "The control task completes and its audit row field 14 references the evidence record id.",
+    "No evidence record is fabricated to satisfy the rule."
+  ],
+  "forbidden": [
+    "Marking the task complete and backfilling evidence later.",
+    "Creating an empty evidence row to pass the check.",
+    "Recording the refusal as a success with a warning."
+  ],
+  "evidence": [
+    "Task state snapshots before and after, plus the audit rows.",
+    "Evidence record for the control task with its receipt payload."
+  ],
+  "cleanup": [
+    "Delete gov- task rows and their evidence records after exporting evidence."
+  ],
+  "automation": "Real BusinessRulesEngine and PEP under test; only ERP/POS/connector boundaries are substituted by the offline mock whose call log and receipts are the oracle. Rules are evaluated in sequence and halt on the first failure, so each case asserts the first failing rule code rather than a bag of errors.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/orders.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

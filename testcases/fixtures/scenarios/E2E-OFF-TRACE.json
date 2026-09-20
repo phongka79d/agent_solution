@@ -1,0 +1,115 @@
+{
+  "id": "E2E-OFF-TRACE",
+  "title": "TC-E2E-009: backward audit traceability from outcome to originating signal (mocked SoR)",
+  "document": "e2e/offline.md",
+  "layer": "e2e",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "blueprint",
+  "pair": "E2E-LIVE-TRACE",
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "TC-E2E-009",
+    "NFR-002",
+    "NFR-005",
+    "BR-010",
+    "FR-ORC-001",
+    "OBJ-005",
+    "SRS-17",
+    "SRS-09"
+  ],
+  "facets": [
+    "skill:skill.sales.create_order",
+    "event:purchase",
+    "stage:SIGNAL",
+    "stage:CONTEXT",
+    "stage:DECISION",
+    "stage:APPROVAL",
+    "stage:EXECUTION",
+    "stage:EVIDENCE",
+    "stage:OUTCOME"
+  ],
+  "risk": "Nobody can explain a completed customer-visible action: the audit trail is assembled from memory, a link is missing, or a tampered evidence row is accepted as proof.",
+  "preconditions": [
+    "run_id=RUN-E2E-OFF-TRACE, case_id=E2E-OFF-TRACE, worker=w-biz-e2e; one complete run (signal evt_a_cart_add_1 -> order ORD-A-1) is executed first so the audit trail exists before the walk begins",
+    "the chain verifier uses the HMAC secret injected for this run (never a hard-coded literal) and the walk is read-only apart from the deliberate tamper probe"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "customer_id": "cust-a",
+    "run_id": "RUN-E2E-OFF-TRACE",
+    "origin_signal": "evt_a_cart_add_1",
+    "order_ref": "ORD-A-1",
+    "audit_stores": [
+      "audit_records",
+      "evidence_records",
+      "agent_run_logs",
+      "pending_outcome_attributions"
+    ],
+    "negative_probe": "tamper one middle evidence payload after the run",
+    "chain_secret_ref": "AUDIT_HMAC_SECRET from the case environment (not in repo)"
+  },
+  "steps": [
+    {
+      "action": "Complete one run and record its identifiers",
+      "expected": "the run ends completed with one run_id/correlation_id and the order ORD-A-1; the outcome watch is registered for the effect_key"
+    },
+    {
+      "action": "Walk backward from OUTCOME",
+      "expected": "outcome attribution -> evidence record -> execution receipt -> authority verdict -> decision -> context -> originating signal each resolve to a persisted row carrying the identical run_id and correlation_id"
+    },
+    {
+      "action": "Verify the hash chain end to end",
+      "expected": "every evidence row's previous_evidence_hash equals its predecessor's chain_hash and every row's HMAC verifies with the injected secret, with no unchained entry"
+    },
+    {
+      "action": "Explain an autonomously authorised step",
+      "expected": "the walk shows the authority verdict that authorised the step (AUTH-3 auto path) and distinguishes it from a missing approval rather than leaving a silent gap"
+    },
+    {
+      "action": "Probe a broken link",
+      "expected": "after one middle evidence payload is tampered with, the chain verification fails and the walk reports the identified broken link instead of returning a truncated trace"
+    },
+    {
+      "action": "Re-read the trace after a process restart",
+      "expected": "the same chain is reproduced from the persisted stores alone, proving the trace is not a reconstruction from in-memory objects"
+    }
+  ],
+  "assertions": [
+    "every hop of the backward walk resolves to a persisted record with the identical run_id, from the outcome back to the originating signal (TC-E2E-009)",
+    "the evidence hash chain verifies end to end with the injected secret, and a tampered or missing middle row fails verification instead of yielding a partial trace",
+    "decisions in the chain carry reason + evidence rather than prose alone (NFR-005), and the authority verdict that authorised the step is recorded",
+    "the trace is reproducible from persisted state after a restart and never assembled from caches or from the model's account of what happened"
+  ],
+  "forbidden": [
+    "presenting a trace built from in-memory objects or from the agent's own narrative",
+    "silently skipping a missing link, or rewriting an immutable audit/evidence row to make the chain look complete"
+  ],
+  "evidence": [
+    "the full ordered chain with row ids, payload digests and chain hashes for the run",
+    "chain verification report (per-row HMAC plus previous-hash linkage)",
+    "negative-probe report identifying the tampered row and the failed link"
+  ],
+  "cleanup": [
+    "restore the tampered probe row and drop run RUN-E2E-OFF-TRACE from the mock stores; the original chained audit and evidence rows are immutable and are retained"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. The audit writer, evidence hash chain and the trace reader are real; the order connector is the substituted boundary and the audit stores are in-memory but read exactly as the persisted ones are.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/04-core-engine-and-orchestrator.md",
+    "implement/08-security-governance-nfr.md",
+    "implement/06-api-and-connectors-spec.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/customers.json",
+    "fixtures/offline/orders.json",
+    "fixtures/offline/events.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

@@ -1,0 +1,86 @@
+{
+  "id": "GOV-NFR-004-TIMEOUT",
+  "title": "NFR-004 timeout discipline: a hung upstream is abandoned at the deadline and recorded honestly",
+  "document": "governance/nfr.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P0",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "NFR-004",
+    "NFR-008",
+    "TC-E2E-008"
+  ],
+  "facets": [
+    "entity:Execution",
+    "stage:ACTION"
+  ],
+  "risk": "A hung connector call blocks a worker forever, so queues back up and the customer waits indefinitely with no honest status anywhere.",
+  "preconditions": [
+    "Namespace gov-nfr-<case_id>-<worker_id>; NFR verification runs against the offline gateway with mock SoR and channel boundaries.",
+    "Frozen clock 2026-01-15T10:00:00Z; failure, outage and crash injections are scripted at the substituted boundary, never faked inside the assertion.",
+    "The mock ERP is scripted to accept the connection and never respond."
+  ],
+  "inputs": {
+    "call": {
+      "skill": "skill.care.lookup_order",
+      "order_id": "ORD-A-1",
+      "timeout_ms": 2000
+    },
+    "clock_advance": "injected to 2001 ms"
+  },
+  "steps": [
+    {
+      "action": "Issue the lookup against the hanging upstream",
+      "expected": "The call is abandoned at the configured deadline (2001 ms on the injected clock) rather than waiting indefinitely."
+    },
+    {
+      "action": "Inspect the failure record",
+      "expected": "The record shows a timeout error preserving the upstream identity and the elapsed time; it is not marked success."
+    },
+    {
+      "action": "Check the worker and queue state",
+      "expected": "The worker is released and the task moves to a retry or failure state; no worker remains blocked on the call."
+    },
+    {
+      "action": "Retry after the upstream recovers",
+      "expected": "The retry returns ORD-A-1 details and the final record reconciles to one honest successful attempt."
+    }
+  ],
+  "assertions": [
+    "The deadline is enforced deterministically using the injected clock: the call does not hang past it.",
+    "Timed-out attempts are recorded as failures with elapsed time, never as successes.",
+    "The worker is not leaked: the pool returns to its pre-call capacity.",
+    "After recovery, exactly one successful attempt and one failure attempt are recorded for the task."
+  ],
+  "forbidden": [
+    "No timeout at all so the worker hangs.",
+    "Reporting a timeout as a success because the connection was accepted.",
+    "Leaking the worker slot on timeout."
+  ],
+  "evidence": [
+    "Timeout error record with elapsed time and upstream identity.",
+    "Worker capacity before and after the call.",
+    "Recovery attempt record and the final order payload."
+  ],
+  "cleanup": [
+    "Restore the mock ERP script and delete gov- task rows."
+  ],
+  "automation": "Core PEP, rules engine, audit writer, idempotency store and worker lease logic run as real code under test; only ERP/WMS, channel gateways, Redis and the model provider are substituted. Faults are injected at those boundaries and waits are condition-based on persisted state. Deadline enforcement uses the injected clock so the case cannot pass by finishing early in real time.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/orders.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

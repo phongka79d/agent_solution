@@ -1,0 +1,109 @@
+{
+  "id": "INT-SCR-003-MODIFY",
+  "title": "SCR-003 MODIFY: the edited payload is re-validated before release",
+  "document": "integration/command-center.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SCR-003",
+    "AUTH-4",
+    "BR-002",
+    "ASM-003",
+    "NFR-008"
+  ],
+  "facets": [
+    "entity:Approval",
+    "stage:APPROVAL",
+    "stage:EXECUTION"
+  ],
+  "risk": "A modified payload goes straight to execution, so an operator edit that breaches the floor price or exceeds the audience cap is never caught by the rules engine.",
+  "preconditions": [
+    "Namespace gov-scr-<case_id>-<worker_id>; the operator UI runs against the offline gateway and mock SSE/telemetry streams.",
+    "Operator session bound to tenant T1 and an explicit operator_id from fixtures/offline/governance.json; frozen clock 2026-01-15T10:00:00Z.",
+    "APV-CAMP-15 pending with the original 15 percent discount and 12000 audience; synthetic floor inputs loaded for the arithmetic only."
+  ],
+  "inputs": {
+    "requests": [
+      {
+        "label": "safe modification",
+        "body": {
+          "decision": "MODIFY",
+          "operator_id": "OP-APPROVER-T1",
+          "reason": "Reduce discount and audience.",
+          "modified_payload": {
+            "campaign_id": "CMP-FLASH-15",
+            "discount_rate": 0.1,
+            "audience_size": 4000
+          }
+        }
+      },
+      {
+        "label": "floor breach",
+        "body": {
+          "decision": "MODIFY",
+          "operator_id": "OP-APPROVER-T1",
+          "reason": "Aggressive push.",
+          "modified_payload": {
+            "campaign_id": "CMP-FLASH-15",
+            "discount_rate": 0.45,
+            "audience_size": 4000
+          }
+        }
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Submit the safe modification",
+      "expected": "HTTP 200 with status MODIFIED; the payload is re-validated successfully and released for execution with the reduced values."
+    },
+    {
+      "action": "Observe the released action",
+      "expected": "The adapter receives one send with discount 0.10 and audience 4000 - the modified payload, not the original."
+    },
+    {
+      "action": "Submit the floor-breaching modification on a fresh pending item",
+      "expected": "The re-validation fails with a floor or policy violation; the item is not released and its state records the failed re-validation."
+    }
+  ],
+  "assertions": [
+    "A MODIFY always re-runs the deterministic rules before release; approval cannot substitute for policy.",
+    "The released payload equals the re-validated modified payload (discount 0.10, audience 4000) and the original 0.15 was not used.",
+    "The breaching modification produces zero adapter calls.",
+    "The original and modified payloads are both retained so the change is auditable."
+  ],
+  "forbidden": [
+    "Releasing the modified payload without re-validation.",
+    "Silently reverting to the original payload when validation fails.",
+    "Applying the modification to the wrong approval item."
+  ],
+  "evidence": [
+    "ApprovalDecisionResponse and the released payload copy.",
+    "Re-validation record for both modifications with the failure code.",
+    "Adapter send log with the modified values."
+  ],
+  "cleanup": [
+    "Cancel residual tasks and delete gov- rows; simulated sends are reported as such."
+  ],
+  "automation": "Command Center React components and the gateway routes run as real code under test; ERP, channel and telemetry providers are replaced by the offline mock sinks whose call logs are the oracle. UI assertions use accessible roles and names rather than CSS classes, and stream waits are condition-based.",
+  "prerequisites": [
+    "The floor arithmetic uses labelled synthetic policy inputs; a real owner-approved floor (ASM-003) does not yet exist."
+  ],
+  "references": [
+    "implement/07-human-command-center-ui.md",
+    "implement/06-api-and-connectors-spec.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/catalog.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

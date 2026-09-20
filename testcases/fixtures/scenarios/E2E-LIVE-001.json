@@ -1,0 +1,120 @@
+{
+  "id": "E2E-LIVE-001",
+  "title": "TC-E2E-001 closed loop: one signal through all eleven stages (approved sandbox)",
+  "document": "e2e/live.md",
+  "layer": "e2e",
+  "environment": "live",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "blueprint",
+  "pair": "E2E-OFF-001",
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "TC-E2E-001",
+    "OBJ-005",
+    "FR-ORC-001",
+    "FR-ORC-002",
+    "NFR-002",
+    "BR-010",
+    "SRS-09",
+    "SRS-17"
+  ],
+  "facets": [
+    "stage:SIGNAL",
+    "stage:CONTEXT",
+    "stage:HYPOTHESIS",
+    "stage:DECISION",
+    "stage:PLAN",
+    "stage:ACTION",
+    "stage:APPROVAL",
+    "stage:EXECUTION",
+    "stage:EVIDENCE",
+    "stage:OUTCOME",
+    "stage:LEARNING",
+    "skill:skill.sales.send_message",
+    "skill:skill.mkt.check_consent",
+    "event:add_to_cart",
+    "channel:EMAIL"
+  ],
+  "risk": "A run only looks complete: the orchestrator reports an outcome while decision, approval or evidence never happened, so nobody can prove why a customer was contacted.",
+  "preconditions": [
+    "run_id=RUN-E2E-LIVE-001, case_id=E2E-LIVE-001, worker=w-biz-e2e-live; sandbox tenant mapped from LIVE_TENANT_ID and sandbox customer from LIVE_CUSTOMER_A_SANDBOX_ID",
+    "the sandbox recipient is a pre-approved test mailbox and a sandbox-unique cart is created for this run; no production record is read or written"
+  ],
+  "inputs": {
+    "tenant_id": "LIVE_TENANT_ID",
+    "customer_id": "LIVE_CUSTOMER_A_SANDBOX_ID",
+    "signal": "cart_abandoned",
+    "channel": "EMAIL",
+    "effect_key": "EK-E2E-LIVE-001-<run_id>",
+    "abandon_minutes": 30,
+    "consent_check": "read live from the sandbox consent store",
+    "sandbox_recipient": "approved test mailbox only"
+  },
+  "steps": [
+    {
+      "action": "Create and abandon the sandbox cart",
+      "expected": "the sandbox commerce API returns a cart id owned by the sandbox customer and the abandonment signal fires from the scheduler condition, not from a sleep"
+    },
+    {
+      "action": "Wait for the provider delivery condition",
+      "expected": "the sandbox provider webhook/status for the message is observed before the run is treated as executed"
+    },
+    {
+      "action": "Verify the provider reference is real",
+      "expected": "the EXECUTION provider_reference resolves against the sandbox provider API for that message id, with a timestamp after the reservation"
+    },
+    {
+      "action": "Verify the outcome condition",
+      "expected": "OUTCOME is populated from the sandbox order/webhook script for this cart, or documented as no-response when the sandbox window closes"
+    },
+    {
+      "action": "Verify the stage chain on live identifiers",
+      "expected": "the eleven stages reference the live run_id, the live cart id and the provider receipt; the recipient's live message count for the effect_key is 1"
+    },
+    {
+      "action": "Interrupt a second sandbox run at the approval boundary",
+      "expected": "the parked run produces zero provider calls in the test sink and resumes without duplicating the send"
+    }
+  ],
+  "assertions": [
+    "exactly one sandbox message exists for the effect_key and its provider reference resolves in the sandbox provider record set",
+    "the live stage chain matches the offline contract (same eleven stages, order and evidence links) against real sandbox identifiers",
+    "the sandbox consent row is re-read at send time and still grants EMAIL marketing; a consent change between plan and execution blocks the send",
+    "the parked sub-run yields zero provider calls in the provider test sink rather than a fabricated provider id"
+  ],
+  "forbidden": [
+    "using any recipient outside the approved sandbox allowlist",
+    "treating a sandbox queue acknowledgement as delivery without a provider receipt"
+  ],
+  "evidence": [
+    "sandbox provider message id + delivery receipt for the single send",
+    "live stage records with sandbox ids plus the effect reservation row",
+    "provider test-sink call log for the parked sub-run proving zero calls"
+  ],
+  "cleanup": [
+    "Retire the sandbox artefacts created by this run through the supported sandbox APIs (cancel/withdraw the created cart, campaign, case and voucher references); delete nothing immutable — sent messages, provider receipts and audit rows are retained and reported as non-deletable rather than pretending they were unsent"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. Same real components against staged sandbox endpoints; provider receipts come from the sandbox, not from a mock.",
+  "prerequisites": [
+    "ASM-001 approved connector lock is present (LIVE_CONNECTORS_LOCK points at the approved connector list) — without it this case is SKIP_ASM_001, never PASS",
+    "Per-case sandbox authorization: the run_id of this case is registered in the approved sandbox allowlist with its sandbox tenant/customer/SKU mapping before execution; credentials live outside the repository (env.local) and are never printed in evidence"
+  ],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/04-core-engine-and-orchestrator.md",
+    "plans/customer-lifecycle.md",
+    "plans/platform/workflows-and-handoffs.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/catalog.json",
+    "fixtures/offline/customers.json",
+    "fixtures/offline/consents.json",
+    "fixtures/offline/events.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

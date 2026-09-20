@@ -1,0 +1,95 @@
+{
+  "id": "INT-API-003-WEB_CHAT",
+  "title": "WEB_CHAT channel webhook verifies the signature, records one receipt and rejects replays",
+  "document": "integration/api-connectors.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "API-003",
+    "NFR-002"
+  ],
+  "facets": [
+    "channel:WEB_APP_CHAT",
+    "stage:EVIDENCE"
+  ],
+  "risk": "A forged or replayed webhook injects messages or sends duplicate outbound replies, and the customer receives the same answer twice or an attacker acts as the customer.",
+  "preconditions": [
+    "Tenant T1 WEB_CHAT webhook route reachable in namespace run-t1-api-ch-web_chat with the channel secret loaded outside the repo",
+    "The provider adapter for webchat-widget is a test sink recording every call and its idempotency key"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "channel": "WEB_APP_CHAT",
+    "provider": "webchat-widget",
+    "signature_scheme": "HMAC-SHA256 over body plus widget session token",
+    "signing_secret_ref": "sandbox/webchat-widget/webhook-secret",
+    "inbound_payload": {
+      "event_id": "ch_webchat_in_1",
+      "provider_message_id": "pg_webchat_1",
+      "session_id": "sess-a-1",
+      "text": "do you deliver on weekends?",
+      "received_at": "2026-01-15T10:00:20Z"
+    },
+    "tampered_signature": "computed over a different secret with the same body",
+    "outbound_message": {
+      "idempotency_key": "ch_webchat_out_key_1",
+      "to": "sess-a-1",
+      "body": "Deliveries run on business days within the 3 to 5 business day window."
+    }
+  },
+  "steps": [
+    {
+      "action": "Deliver one correctly signed inbound webhook for WEB_CHAT",
+      "expected": "the delivery is accepted and exactly one receipt is persisted keyed by the provider message id"
+    },
+    {
+      "action": "Redeliver the byte-identical webhook with the same provider message id",
+      "expected": "the replay is deduplicated: still exactly one receipt and no second message, case or customer signal"
+    },
+    {
+      "action": "Deliver the same body with a signature computed over a different secret",
+      "expected": "the webhook is rejected with an authentication error and no receipt, message or side effect is created"
+    },
+    {
+      "action": "Send one outbound reply and then retry it with the same idempotency key",
+      "expected": "the provider test sink observes exactly one outbound send and the receipt references that key"
+    }
+  ],
+  "assertions": [
+    "Exactly one receipt row exists per provider message id after the replay: pg_webchat_1",
+    "The tampered delivery creates zero receipts, zero messages and zero outbound calls",
+    "The outbound send count in the provider test sink is exactly one for key ch_webchat_out_key_1",
+    "The receipt belongs to channel WEB_APP_CHAT and no other channel or tenant observes it"
+  ],
+  "forbidden": [
+    "Processing a webhook whose signature does not verify against the channel secret",
+    "Sending the outbound reply a second time when the first provider call already succeeded"
+  ],
+  "evidence": [
+    "Webhook receipt rows with signature verification result, provider message id and idempotency key",
+    "Provider test-sink call log showing one accept, one replay dedupe and zero send for the tampered delivery"
+  ],
+  "cleanup": [
+    "Delete the run-scoped webhook receipts and message rows under run-t1-api-ch-web_chat; keep the immutable audit entries"
+  ],
+  "automation": "Post each webhook variant to the real signature-verifying route with the provider adapter replaced by a test sink; the oracle couples the receipt count with the sink call count.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/06-api-and-connectors-spec.md",
+    "plans/platform/api-and-integrations.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/platform.json",
+    "fixtures/offline/events.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

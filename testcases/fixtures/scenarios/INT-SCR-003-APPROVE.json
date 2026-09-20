@@ -1,0 +1,91 @@
+{
+  "id": "INT-SCR-003-APPROVE",
+  "title": "SCR-003 APPROVE: signed ticket releases the prepared payload exactly once",
+  "document": "integration/command-center.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SCR-003",
+    "AUTH-4",
+    "BR-007",
+    "NFR-007",
+    "TC-E2E-002"
+  ],
+  "facets": [
+    "entity:Approval",
+    "stage:APPROVAL",
+    "stage:EXECUTION"
+  ],
+  "risk": "Approval releases an unsigned or stale payload, or releases it twice, producing an unauthorized broadcast or a double execution.",
+  "preconditions": [
+    "Namespace gov-scr-<case_id>-<worker_id>; the operator UI runs against the offline gateway and mock SSE/telemetry streams.",
+    "Operator session bound to tenant T1 and an explicit operator_id from fixtures/offline/governance.json; frozen clock 2026-01-15T10:00:00Z.",
+    "APV-CAMP-15 is AWAITING_HUMAN for MKT-05 with payload_hash recorded; the mock EMAIL adapter counts sends."
+  ],
+  "inputs": {
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/approvals/APV-CAMP-15/decision",
+      "body": {
+        "decision": "APPROVE",
+        "operator_id": "OP-APPROVER-T1",
+        "reason": "Budget and margin checked against the attached evidence."
+      }
+    }
+  },
+  "steps": [
+    {
+      "action": "Submit the APPROVE decision as an authorized T1 approver",
+      "expected": "HTTP 200 with status APPROVED, a decided_at timestamp and a correlation id; the task leaves awaiting_human and is queued for execution."
+    },
+    {
+      "action": "Wait for the execution attempt and read the adapter log",
+      "expected": "Exactly one send occurs, carrying the same payload (campaign CMP-FLASH-15, discount 15 percent, audience 12000)."
+    },
+    {
+      "action": "Read the approval and audit records",
+      "expected": "The approval record carries approver_id OP-APPROVER-T1, action APPROVE and signed_at; the audit row references the approver and the effect_key."
+    },
+    {
+      "action": "Submit the same APPROVE decision a second time",
+      "expected": "The repeat is rejected as already decided and no second send occurs."
+    }
+  ],
+  "assertions": [
+    "Exactly one external send results from the approval, with the effect_key recorded once.",
+    "The released payload is byte-identical to the reviewed payload; its payload_hash still matches the reviewed hash.",
+    "The signature fields approver_id, action and signed_at are all populated - an unsigned release is impossible.",
+    "A second identical decision does not execute again."
+  ],
+  "forbidden": [
+    "Releasing the task without a signed approval record.",
+    "Sending a payload modified after review while claiming it was approved.",
+    "Executing on both the first and the repeated decision."
+  ],
+  "evidence": [
+    "ApprovalDecisionResponse body and the approval record with signature fields.",
+    "EMAIL adapter send log with payload copy and effect_key.",
+    "Audit row referencing the approver."
+  ],
+  "cleanup": [
+    "Cancel any residual task, delete gov- approval and execution rows; the mock send is recorded as simulated, not recalled."
+  ],
+  "automation": "Command Center React components and the gateway routes run as real code under test; ERP, channel and telemetry providers are replaced by the offline mock sinks whose call logs are the oracle. UI assertions use accessible roles and names rather than CSS classes, and stream waits are condition-based.",
+  "prerequisites": [],
+  "references": [
+    "implement/07-human-command-center-ui.md",
+    "implement/06-api-and-connectors-spec.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

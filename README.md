@@ -4,10 +4,12 @@
 
 AgentOS Customer360 là giải pháp phần mềm B2B SaaS cung cấp bộ 3 trợ lý trí tuệ nhân tạo (AI Agents) chuyên biệt cho doanh nghiệp thương mại điện tử (E-Commerce):
 - **Tiếp Thị (Marketing Agent)**: Nghiên cứu tín hiệu thị trường, tìm kiếm khách hàng tiềm năng, nuôi dưỡng nhận diện thương hiệu và tiếp nhận nhu cầu.
-- **Bán Hàng (Sales Agent)**: Tư vấn thông minh, phân tích đối chiếu thông số sản phẩm, hỗ trợ cấu hình giỏ hàng và chốt đơn có kiểm soát giá sàn tự động.
+- **Bán Hàng (Sales Agent)**: Tư vấn thông minh, đối chiếu thông số sản phẩm theo nguồn đã duyệt, hỗ trợ cấu hình giỏ hàng và chốt đơn trong giới hạn chính sách giá/khuyến mãi do ERP/POS và người có thẩm quyền phê duyệt.
 - **Chăm Sóc Khách Hàng (Customer Support Agent)**: Hỗ trợ sau bán hàng 24/7, tra cứu vận đơn, xử lý sự cố, kích hoạt chu kỳ bảo dưỡng - mua lại và tạo vòng lặp khách hàng trung thành.
 
-Hệ thống được thiết kế theo kiến trúc đa người dùng (Multi-tenant) dùng chung lõi điều phối thông minh (Core AI Engine) và hồ sơ khách hàng 360 độ (Customer360), tích hợp thông qua cơ chế Adapter bản địa hóa (Plug-and-Play Adapters). Thí điểm mỏ neo (Anchor Pilot) đầu tiên được thiết kế cho doanh nghiệp B2C kinh doanh Hàng tiêu dùng (FMCG) và Xe máy điện thông minh (Mobility), sẵn sàng mở rộng quy mô quốc tế qua Shopify và WooCommerce App Store.
+Hệ thống được thiết kế theo kiến trúc đa người dùng (Multi-tenant) dùng chung lõi điều phối thông minh (Core AI Engine) và hồ sơ khách hàng 360 độ (Customer360), tích hợp thông qua cơ chế Adapter bản địa hóa (Plug-and-Play Adapters). Thí điểm mỏ neo (Anchor Pilot) đầu tiên được thiết kế cho doanh nghiệp B2C kinh doanh Hàng tiêu dùng (FMCG) và Xe máy điện thông minh (Mobility), với định hướng mở rộng quy mô quốc tế qua Shopify và WooCommerce App Store (đề xuất GTM-002; chưa xác nhận theo ASM-001).
+
+> **Trạng thái tài liệu:** Kho lưu trữ này là **bộ tài liệu thiết kế/đề xuất (blueprint)**, chưa có mã nguồn chạy thật, chưa triển khai môi trường production và **chưa có số liệu vận hành**. Mọi chỉ tiêu định lượng (KPI, chi phí AI, tỷ lệ chuyển đổi, mức giá sàn) chỉ là **mục tiêu thiết kế giả thuyết**; chỉ được xem là cam kết sau khi khóa các giả định ASM-001..005 của [đề bài SRS v0.1](De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md). ERP/POS/Web/App vẫn là **System of Record** cho sản phẩm, SKU, giá, tồn kho, khách hàng và đơn hàng. Các tệp PDF trong kho là bản xuất sinh tự động từ mã nguồn HTML, có thể chậm hơn bản Markdown/HTML mới nhất.
 
 ---
 
@@ -37,6 +39,21 @@ agent_solution/
 │   ├── 07-human-command-center-ui.md          # Command Center SCR-001..005 và widget nhúng
 │   ├── 08-security-governance-nfr.md          # PEP, Authority, BR-001..010 và NFR-001..010
 │   └── 09-sprint-roadmap-and-pilots.md        # Lộ trình sprint, kịch bản pilot và CI/CD
+├── testcases/                                 # Đặc tả chấp nhận 383 ca (chưa có runtime; NOT_RUN)
+│   ├── README.md                              # Chiến lược pyramid, mock vs sandbox, cách sinh
+│   ├── TRACEABILITY.md                        # Ma trận ID ca → yêu cầu/facet
+│   ├── COVERAGE.md                            # Ma trận ngược yêu cầu/facet → ca, khoảng trống
+│   ├── manifest.json                          # Số lượng, hash nguồn, trạng thái NOT_RUN
+│   ├── _generate.py                           # Bộ sinh + kiểm tra stdlib
+│   ├── sources/                               # Nguồn ca viết tay (business/governance/platform)
+│   ├── fixtures/offline/                      # JSON SoR giả lập
+│   ├── fixtures/live/                         # env.example sandbox (ASM-001)
+│   ├── fixtures/scenarios/                    # Bản JSON từng ca
+│   ├── unit/                                  # Skills, AUTH, BR, KB, thực thể
+│   ├── integration/                           # API, C360, FSM, SCR, điều phối
+│   ├── e2e/                                   # Hành trình then chốt offline.md + live.md
+│   ├── governance/                            # NFR, ASM, KPI, cổng, DoD, phê duyệt
+│   └── platform/                              # Bản đồ phủ KB/memory và thực thể
 ├── research/                                  # Tài liệu nghiên cứu thị trường và người dùng
 │   └── market_research.md                     # Khung chiến lược sản phẩm, phân tích thị trường chi tiết
 ├── plans/                                     # Toàn bộ hồ sơ quy hoạch kiến trúc và kế hoạch nghiệp vụ
@@ -56,7 +73,7 @@ agent_solution/
 │   │   └── api-and-integrations.md            # Hợp đồng API, cổng kết nối và chính sách bảo mật
 │   └── delivery/                              # Kế hoạch bàn giao và kiểm chứng
 │       ├── mvp-and-roadmap.md                 # Lộ trình trục kép (Engineering P0-P5 & Commercial Phase 1-3), DoD 10 thành tố và bộ test TC-E2E-001..009
-│       └── analytics.md                       # Hệ thống KPI 5 nhóm theo SRS Mục 20, động lực kinh tế ECN-001..004, ngân sách AI 0,5-1 TWD và bảo toàn biên lãi
+│       └── analytics.md                       # Hệ thống KPI 5 nhóm theo SRS Mục 20, động lực kinh tế ECN-001..004, ngân sách AI mục tiêu 0,5-1 TWD (chờ baseline) và mục tiêu bảo toàn biên lãi
 └── reports/                                   # Nhật ký làm việc và báo cáo thẩm định định kỳ
     ├── AUDIT_DE_BAI_VS_KE_HOACH.md            # Báo cáo thẩm định đối chiếu đề bài SRS và kế hoạch
     ├── 09-09-2026/
@@ -77,15 +94,15 @@ Nhằm giải quyết triệt để sự giằng co giữa khung gầm kỹ thu�
 │ - GTM-001A: AgentOS Mobility Edition (Xe điện O2O, DOM-MOB-001..004)   │
 │ - GTM-001B: AgentOS FMCG Edition (Bán lẻ tiêu dùng, DOM-FMCG-001..005) │
 │ - GTM-002: Phân phối 1-chạm qua Shopify & WooCommerce App Store        │
-│ - GTM-003: Đòn bẩy số liệu thực nghiệm Đài Loan làm bằng chứng ROI      │
+│ - GTM-003: Đòn bẩy kết quả đo lường sau khóa baseline (đề xuất)        │
 │ - Cổng kết nối cắm-rút: ADPT-TW-001 (Đài Loan) & ADPT-GL-001..003      │
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │ Cấu hình & Kế thừa
 ┌───────────────────────────────────▼────────────────────────────────────┐
 │ TẦNG 2: COMMERCIAL ENGINE & ECONOMICS (Động Lực Kinh Tế Đơn Vị)        │
 │ - ECN-001: Tái phân bổ hoa hồng bán hàng/telesales 5–10% thành trợ cấp │
-│ - ECN-002: Công thức giá sàn toán học máy chủ P_floor (Bảo toàn 100% L)│
-│ - ECN-003: Định mức chi phí AI 0,5–1 TWD/phiên tư vấn hoàn chỉnh       │
+│ - ECN-002: Kiểm tra giá sàn P_floor (mục tiêu thiết kế, chờ baseline)  │
+│ - ECN-003: Định mức chi phí AI 0,5–1 TWD/phiên (mục tiêu, chờ baseline)│
 │ - ECN-004: Ngân sách điểm thưởng, trần Basket Cap & chống gian lận     │
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │ Vận hành trên nền tảng
@@ -100,6 +117,8 @@ Nhằm giải quyết triệt để sự giằng co giữa khung gầm kỹ thu�
 │ - Lộ trình kỹ thuật 6 Cổng Gate (P0–P5) & 5 Giả định (ASM-001..005)    │
 └────────────────────────────────────────────────────────────────────────┘
 ```
+
+> *Ghi chú:* Các mã ECN-*, GTM-*, DOM-*, ADPT-* trong sơ đồ là **đề xuất thiết kế**, chưa có số liệu vận hành hoặc phê duyệt thương mại. Gói adapter Đài Loan (ADPT-TW-001) là **tùy chọn** khi phục vụ thị trường Đài Loan, không phải thành phần bắt buộc của lõi. Giá bán, discount và tồn kho vẫn do ERP/POS/Web/App (SoR) cùng chính sách đã được chủ sở hữu phê duyệt quyết định; P_floor chỉ là phép kiểm tra chính sách tùy chọn.
 
 ---
 
@@ -123,18 +142,18 @@ Hệ thống phân định rành mạch giữa 2 nhóm mã hiệu: Nhóm SRS (qu
 | **TC-E2E-001..009**| Kiểm thử chấp nhận hệ thống | 9 Ca kiểm thử E2E: Luồng tín hiệu khép kín, kiểm soát phê duyệt, toàn vẹn giá sàn, bảo mật danh tính, chống trùng lặp, chặn vượt quyền... | [plans/delivery/mvp-and-roadmap.md](plans/delivery/mvp-and-roadmap.md) |
 | **ASM-001..005** | Giả định khóa trước Production | 5 Giả định bắt buộc: Cổng kết nối, KPI baseline, ngưỡng discount, duyệt hoàn tiền, chính sách lưu trữ Customer360 | [plans/delivery/mvp-and-roadmap.md](plans/delivery/mvp-and-roadmap.md) |
 | **P0..P5** | Cổng kỹ thuật lộ trình | 6 Cổng nghiêm ngặt: P0 (Foundation), P1 (Care), P2 (Sales), P3 (Marketing), P4 (Cross-domain), P5 (Controlled Autonomy) | [plans/delivery/mvp-and-roadmap.md](plans/delivery/mvp-and-roadmap.md) |
-| **KPI-*** (5 nhóm) | Bộ chỉ số đo lường hiệu quả | MKT-KPI-01..07 (Tiếp thị), SAL-KPI-01..08 (Bán hàng), CS-KPI-01..06 (CSKH), SUC-KPI-01..07 (Giữ chân), AI-SYS-KPI-01..10 (Hệ thống AI) | [plans/delivery/analytics.md](plans/delivery/analytics.md) |
+| **KPI-*** (5 nhóm) | Bộ chỉ số đo lường hiệu quả | 32 nhóm chuẩn theo SRS Mục 20 (MKT-KPI-01..07, SAL-KPI-01..07, CS-KPI-01..06, SUC-KPI-01..05, AI-SYS-KPI-01..07) cộng các mã mở rộng độc quyền SAL-KPI-08, SUC-KPI-06..07, AI-SYS-KPI-08..10. Hai chỉ số AI-SYS-KPI-03 (vi phạm chính sách) và AI-SYS-KPI-07 (thực thi trùng lặp) là bất biến bắt buộc = 0, không chờ baseline. | [plans/delivery/analytics.md](plans/delivery/analytics.md) |
 
 ### 2. Nhóm Proprietary (Commercial, Economics & Domain Playbooks — Độc quyền)
 
 | Tiền tố / Nhóm mã | Tên nhóm danh mục | Phạm vi định danh chi tiết | Tài liệu chịu trách nhiệm |
 |---|---|---|---|
-| **ECN-001..004** | Động lực kinh tế đơn vị | ECN-001 (Tái phân bổ hoa hồng telesales 5–10%), ECN-002 (Công thức giá sàn toán học P_floor), ECN-003 (Định mức chi phí AI 0,5–1 TWD/phiên), ECN-004 (Ngân sách điểm thưởng & trần Basket Cap) | [plans/delivery/analytics.md](plans/delivery/analytics.md) |
+| **ECN-001..004** | Động lực kinh tế đơn vị | ECN-001 (Tái phân bổ hoa hồng telesales 5–10%, giả định thiết kế), ECN-002 (Phép kiểm tra giá sàn P_floor — mục tiêu thiết kế, không thay thế nguồn giá ERP/SoR), ECN-003 (Định mức chi phí AI 0,5–1 TWD/phiên — mục tiêu thiết kế), ECN-004 (Ngân sách điểm thưởng & trần Basket Cap) | [plans/delivery/analytics.md](plans/delivery/analytics.md) |
 | **DOM-MOB-001..004** | Phân hệ ngành Xe điện O2O | DOM-MOB-001 (Bộ tính trợ cấp chính phủ theo hộ khẩu), DOM-MOB-002 (Định vị trạm pin Gogoro/Ionex bán kính 1km), DOM-MOB-003 (Đặt lịch lái thử showroom & cọc hoàn lại), DOM-MOB-004 (Giới thiệu 2 chiều Tesla & nhắc bảo dưỡng) | [plans/modules/sales.md](plans/modules/sales.md), [plans/modules/customer-support.md](plans/modules/customer-support.md) |
-| **DOM-FMCG-001..005** | Phân hệ ngành Hàng tiêu dùng | DOM-FMCG-001 (Giỏ hàng thông minh & soát giỏ chống mua thừa), DOM-FMCG-002 (Giao định kỳ Subscription 定期購 áp giá sàn P_floor), DOM-FMCG-003 (Bản đồ chọn điểm nhận 7-Eleven CVS COD TTL 10p), DOM-FMCG-004 (Tích điểm tiến độ LINE Points), DOM-FMCG-005 (Bộ tứ định danh chống clone acc & bùng hàng CVS) | [plans/modules/sales.md](plans/modules/sales.md), [plans/modules/customer-support.md](plans/modules/customer-support.md) |
-| **ADPT-TW-001** | Gói Adapter Đài Loan | Tích hợp bản địa Đài Loan: LINE OA + ECPay/NewebPay/LINE Pay + 7-Eleven/FamilyMart CVS COD + Taiwan PDPA GCP Changhua/AWS Taipei | [plans/platform/api-and-integrations.md](plans/platform/api-and-integrations.md), [plans/product-and-packaging.md](plans/product-and-packaging.md) |
+| **DOM-FMCG-001..005** | Phân hệ ngành Hàng tiêu dùng | DOM-FMCG-001 (Giỏ hàng thông minh & soát giỏ chống mua thừa), DOM-FMCG-002 (Giao định kỳ Subscription 定期購 áp giá sàn P_floor), DOM-FMCG-003 (Bản đồ chọn điểm nhận 7-Eleven CVS COD TTL 10p), DOM-FMCG-004 (Tích điểm tiến độ LINE Points), DOM-FMCG-005 (Bộ tứ định danh chống clone acc & bùng hàng CVS — dữ liệu định danh nhạy cảm, chỉ dùng sau khi Data/Legal phê duyệt theo ASM-005) | [plans/modules/sales.md](plans/modules/sales.md), [plans/modules/customer-support.md](plans/modules/customer-support.md) |
+| **ADPT-TW-001** | Gói Adapter Đài Loan (tùy chọn) | Đề xuất tích hợp bản địa Đài Loan khi phục vụ thị trường này: LINE OA + ECPay/NewebPay/LINE Pay + 7-Eleven/FamilyMart CVS COD + Taiwan PDPA GCP Changhua/AWS Taipei (chờ chốt theo ASM-001/ASM-005) | [plans/platform/api-and-integrations.md](plans/platform/api-and-integrations.md), [plans/product-and-packaging.md](plans/product-and-packaging.md) |
 | **ADPT-GL-001..003** | Cổng cắm-rút toàn cầu | ADPT-GL-001 (Communication: WhatsApp/Telegram/Web), ADPT-GL-002 (Payment: Stripe/PayPal/Apple Pay), ADPT-GL-003 (Compliance: GDPR/CCPA/PDPA) | [plans/platform/api-and-integrations.md](plans/platform/api-and-integrations.md), [plans/product-and-packaging.md](plans/product-and-packaging.md) |
-| **GTM-001..003** | Chiến lược Go-To-Market | GTM-001 (Đóng gói Vertical SaaS: GTM-001A Mobility Edition, GTM-001B FMCG Edition), GTM-002 (Shopify & WooCommerce 1-Click App Store), GTM-003 (Đòn bẩy số liệu thực nghiệm Đài Loan làm bằng chứng ROI) | [plans/product-and-packaging.md](plans/product-and-packaging.md) |
+| **GTM-001..003** | Chiến lược Go-To-Market | GTM-001 (Đóng gói Vertical SaaS: GTM-001A Mobility Edition, GTM-001B FMCG Edition), GTM-002 (Shopify & WooCommerce 1-Click App Store — đề xuất, chưa phát hành), GTM-003 (Đòn bẩy kết quả đo lường sau khi khóa baseline — đề xuất, chưa có số liệu) | [plans/product-and-packaging.md](plans/product-and-packaging.md) |
 
 ---
 
@@ -143,7 +162,7 @@ Hệ thống phân định rành mạch giữa 2 nhóm mã hiệu: Nhóm SRS (qu
 | Tài Liệu / Hạng Mục | Đường Dẫn Tương Đối | Định Dạng | Mô Tả Trọng Tâm |
 |---|---|---|---|
 | Báo Cáo Đề Án Thuyết Trình | [BAO_CAO_DE_AN_AI_ECOMMERCE_3_MODULE.pdf](BAO_CAO_DE_AN_AI_ECOMMERCE_3_MODULE.pdf) | PDF (6 Trang) | Đề án tóm lược trực quan dành cho ban lãnh đạo và đối tác |
-| Bản Đặc Tả Kỹ Thuật Nền Tảng | [DAC_TA_KY_THUAT_HE_THONG_AI_AGENT.pdf](DAC_TA_KY_THUAT_HE_THONG_AI_AGENT.pdf) | PDF (10 Trang) | Bản đặc tả kỹ thuật chi tiết đối chiếu 100% đề bài SRS v0.1 |
+| Bản Đặc Tả Kỹ Thuật Nền Tảng | [DAC_TA_KY_THUAT_HE_THONG_AI_AGENT.pdf](DAC_TA_KY_THUAT_HE_THONG_AI_AGENT.pdf) | PDF (10 Trang) | Bản đặc tả kỹ thuật chi tiết theo đề bài SRS v0.1 (bản v0.1; còn giả định ASM-001..005 chờ khóa) |
 | Giao Diện Thuyết Trình | [presentation/index.html](presentation/index.html) | HTML5 / CSS A4 | Mã nguồn giao diện thiết kế báo cáo thuyết trình chuẩn A4 |
 | Giao Diện Đặc Tả Kỹ Thuật | [presentation/tech_spec.html](presentation/tech_spec.html) | HTML5 / CSS A4 | Mã nguồn giao diện thiết kế bản đặc tả kỹ thuật chuẩn A4 |
 | Bộ Kế Hoạch 3 Module | [plans/README.md](plans/README.md) | Markdown | Mục lục điều phối toàn bộ 11 tài liệu kế hoạch chi tiết |
@@ -152,7 +171,7 @@ Hệ thống phân định rành mạch giữa 2 nhóm mã hiệu: Nhóm SRS (qu
 | Gói Sản Phẩm & Định Giá | [plans/product-and-packaging.md](plans/product-and-packaging.md) | Markdown | Chiến lược B2B SaaS, gói GTM-001A/B, kênh phân phối GTM-002/003, Adapter |
 | Kiến Trúc Kỹ Thuật | [plans/platform/architecture.md](plans/platform/architecture.md) | Markdown | Thiết kế kiến trúc tổng thể, Orchestrator 11 bước, Command Center SCR-001..005 |
 | Lộ Trình & Tiêu Chí Nghiệm Thu | [plans/delivery/mvp-and-roadmap.md](plans/delivery/mvp-and-roadmap.md) | Markdown | Lộ trình trục kép (Engineering P0–P5 & Commercial Phase 1–3), DoD 10 thành tố, TC-E2E-001..009 |
-| Kinh Tế Đơn Vị & Đo Lường | [plans/delivery/analytics.md](plans/delivery/analytics.md) | Markdown | Hệ thống KPI SRS Mục 20, động lực kinh tế ECN-001..004, giá sàn P_floor và chi phí AI |
+| Kinh Tế Đơn Vị & Đo Lường | [plans/delivery/analytics.md](plans/delivery/analytics.md) | Markdown | Hệ thống KPI SRS Mục 20 (mục tiêu chờ baseline ASM-002), động lực kinh tế ECN-001..004, P_floor như phép kiểm tra chính sách và mục tiêu chi phí AI |
 | Báo Cáo Thẩm Định Định Kỳ | [reports/09-09-2026/daily-report.md](reports/09-09-2026/daily-report.md) | Markdown | Nhật ký làm việc và báo cáo tiến độ định kỳ |
 
 ---
@@ -162,11 +181,11 @@ Hệ thống phân định rành mạch giữa 2 nhóm mã hiệu: Nhóm SRS (qu
 | Mục Tiêu Kinh Doanh | Nhóm Yêu Cầu SRS | Tài Liệu Phụ Trách | Tiêu Chí Kiểm Chứng Chính |
 |---|---|---|---|
 | **OBJ-001 — Tiếp thị (Marketing)** | MKT-01..06 | [plans/modules/marketing.md](plans/modules/marketing.md) | **PILOT-01** (Marketing → Sales), **TC-E2E-002** (Kiểm soát phê duyệt Human Approval) |
-| **OBJ-002 — Bán hàng (Sales)** | FR-SAL-001..003, SAL-01..05 | [plans/modules/sales.md](plans/modules/sales.md) | **PILOT-02** (Phục hồi giỏ hàng), **TC-E2E-003** (Toàn vẹn giá sàn ERP), **TC-E2E-005** (Chống tạo đơn trùng - Idempotency) |
-| **OBJ-003 — Chăm sóc khách hàng (Customer Care)** | FR-CS-001..003, CS-01..02 | [plans/modules/customer-support.md](plans/modules/customer-support.md) | **PILOT-03** (Tra cứu đơn ERP), **PILOT-04** (Xử lý khiếu nại & Chuyển cấp), **TC-E2E-004** (Xác minh danh tính) |
+| **OBJ-002 — Bán hàng (Sales)** | FR-SAL-001..003, SAL-01..05 | [plans/modules/sales.md](plans/modules/sales.md) | **PILOT-02** (Phục hồi giỏ hàng), **TC-E2E-003** (Giá phải lấy từ nguồn ERP có thẩm quyền và không vượt ngưỡng chính sách giá sàn), **TC-E2E-005** (Chống tạo đơn trùng - Idempotency) |
+| **OBJ-003 — Chăm sóc khách hàng (Customer Care)** | FR-CS-001..003, CS-01..02 | [plans/modules/customer-support.md](plans/modules/customer-support.md) | **PILOT-03** (Tra cứu đơn ERP), **PILOT-04** (Xử lý khiếu nại & Chuyển cấp), **TC-E2E-004** (Xác minh danh tính và cô lập ngữ cảnh khách hàng A/B; cô lập tenant là yêu cầu bổ sung) |
 | **OBJ-004 — Khách hàng thành công & Giữ chân (Retention)** | FR-CS-003 | [plans/modules/customer-support.md](plans/modules/customer-support.md), [plans/customer-lifecycle.md](plans/customer-lifecycle.md) | Quy trình giữ chân (Retention Workflow), Vòng lặp tích điểm đơn 2, Phân tích nguy cơ rời bỏ |
-| **OBJ-005 — Điều phối đa Agent (Revenue Orchestration)** | FR-ORC-001..002 | [plans/platform/architecture.md](plans/platform/architecture.md), [plans/platform/workflows-and-handoffs.md](plans/platform/workflows-and-handoffs.md) | **TC-E2E-001** (Luồng tín hiệu khép kín E2E), **TC-E2E-009** (Truy vết ngược 100%) |
-| **OBJ-006 — Quản trị & Tuân thủ (Governance & Policy)** | BR-001..010, NFR-001..010 | [plans/platform/api-and-integrations.md](plans/platform/api-and-integrations.md), [plans/delivery/mvp-and-roadmap.md](plans/delivery/mvp-and-roadmap.md) | **TC-E2E-002..009** (Kiểm soát phê duyệt, toàn vẹn giá sàn, bảo mật danh tính, chống trùng Idempotency, chặn vượt quyền DENY, triệt tiêu thiếu consent, báo lỗi connector trung thực, truy vết ngược 100%) |
+| **OBJ-005 — Điều phối đa Agent (Revenue Orchestration)** | FR-ORC-001..002 | [plans/platform/architecture.md](plans/platform/architecture.md), [plans/platform/workflows-and-handoffs.md](plans/platform/workflows-and-handoffs.md) | **TC-E2E-001** (Luồng tín hiệu khép kín E2E), **TC-E2E-009** (Truy vết ngược đầy đủ chuỗi Trigger → Context → Decision → Approval → Execution → Evidence → Outcome) |
+| **OBJ-006 — Quản trị & Tuân thủ (Governance & Policy)** | BR-001..010, NFR-001..010 | [plans/platform/api-and-integrations.md](plans/platform/api-and-integrations.md), [plans/delivery/mvp-and-roadmap.md](plans/delivery/mvp-and-roadmap.md) | **TC-E2E-002..009** (Định tuyến phê duyệt AUTH-4 tại SCR-003, giá từ nguồn có thẩm quyền và ngưỡng giá sàn, xác minh danh tính phía máy chủ và cô lập ngữ cảnh khách hàng A/B, chống trùng Idempotency, chặn vượt quyền, triệt tiêu thiếu consent, báo lỗi connector trung thực kèm retry và đối soát trạng thái thực thi, truy vết ngược đầy đủ chuỗi) |
 
 ---
 
@@ -201,8 +220,8 @@ Hệ thống phân định rành mạch giữa 2 nhóm mã hiệu: Nhóm SRS (qu
 ### 4. Dành Cho Nhà Đầu Tư & Tài Chính (Investors, Finance & CFO)
 - Mục tiêu: Thẩm định tính khả thi tài chính, hiệu quả đầu tư và lộ trình hoàn vốn.
 - Trình tự đọc đề xuất:
-  1. [plans/delivery/analytics.md](plans/delivery/analytics.md): Phân tích kinh tế đơn vị (Unit Economics), chi phí vận hành AI trên mỗi đơn hàng.
-  2. [plans/product-and-packaging.md](plans/product-and-packaging.md): Cơ cấu doanh thu từ phí triển khai và phí thuê bao định kỳ.
+  1. [plans/delivery/analytics.md](plans/delivery/analytics.md): Mô hình minh họa kinh tế đơn vị (Unit Economics) và mục tiêu chi phí vận hành AI trên mỗi đơn hàng — chưa có số liệu vận hành, phải khóa baseline (ASM-002/ASM-003) trước khi dùng để quyết định.
+  2. [plans/product-and-packaging.md](plans/product-and-packaging.md): Cấu trúc thương mại 3 tầng đề xuất (phí nền tảng định kỳ, mức sử dụng AI, công triển khai) và các gói ngành dọc — chưa chốt giá; kinh tế ưu đãi và adapter Đài Loan là tùy chọn.
   3. [plans/delivery/mvp-and-roadmap.md](plans/delivery/mvp-and-roadmap.md): Lộ trình 6 cổng kỹ thuật P0–P5 từ mỏ neo Đài Loan đến phát hành toàn cầu.
 
 ---

@@ -1,0 +1,84 @@
+{
+  "id": "UNIT-KB-DRAFT",
+  "title": "Unpublished draft FAQ chunk is never retrieved, cited or answered as company policy",
+  "document": "unit/knowledge-entities.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "SRS-10",
+    "NFR-001"
+  ],
+  "facets": [
+    "kb:/customer-care/faq.md"
+  ],
+  "risk": "An unreviewed draft sentence (same-day free delivery for everyone) reaches a customer as published policy while the approved FAQ still states the real 3 to 5 business day lead time.",
+  "preconditions": [
+    "Tenant T1 corpus loaded in run-t1-kb-unit-kb-draft with the 21 approved documents plus the draft, review and superseded entries of fixtures/offline/knowledge.json",
+    "The draft chunk /customer-care/faq.md#draft-unpublished at source_version v7.0-draft stays in the same collection during the query"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "query": "How fast is delivery and is same-day shipping free?",
+    "draft_candidate": {
+      "file_path": "/customer-care/faq.md#draft-unpublished",
+      "source_version": "v7.0-draft",
+      "document_status": "draft",
+      "owner": "ops-support"
+    },
+    "approved_answer": "3 to 5 business days after payment confirmation",
+    "trap_answer_must_not_appear": "same-day free delivery for every customer"
+  },
+  "steps": [
+    {
+      "action": "Retrieve the delivery-time answer context with the tenant filter fixed to T1",
+      "expected": "the returned context contains the approved /customer-care/faq.md chunk and never the draft chunk"
+    },
+    {
+      "action": "Rank retrieval again with the draft chunk boosted to the top of the candidate list",
+      "expected": "the draft chunk is filtered out by document_status before ranking and cannot enter the context"
+    },
+    {
+      "action": "Ask the agent the exact question the draft chunk answers",
+      "expected": "the reply states the approved lead time and never repeats the draft same-day free-delivery claim"
+    },
+    {
+      "action": "Request a citation for the draft chunk id directly",
+      "expected": "the request is refused with no citation, because a draft has no published provenance"
+    }
+  ],
+  "assertions": [
+    "The retrieval result set contains zero points whose document_status is draft, review or superseded",
+    "The draft file_path /customer-care/faq.md#draft-unpublished never appears as a citation or as answer text",
+    "The trap answer 'same-day free delivery' never appears while the approved lead time 3 to 5 business days does"
+  ],
+  "forbidden": [
+    "Serving, ranking or citing the draft chunk as if it were an approved document",
+    "Falling back to model memory when the approved FAQ chunk is outranked by the draft"
+  ],
+  "evidence": [
+    "Retrieval log with the status filter applied and the draft chunk scored and then excluded",
+    "Answer text plus its citation list showing only the approved faq.md source_version v6.0"
+  ],
+  "cleanup": [
+    "Delete the run-scoped query, context and answer rows under run-t1-kb-unit-kb-draft; the draft entry stays in the corpus"
+  ],
+  "automation": "Query the retrieval API with the fixed tenant while the draft chunk is present and assert on the excluded point and the absence of the draft text in the answer; the draft status is a fixture value, so the result is deterministic.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/03-database-and-memory-schema.md",
+    "plans/platform/data-and-knowledge.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/knowledge.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

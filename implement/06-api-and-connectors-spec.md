@@ -1,15 +1,48 @@
 # API, Connectors, and Adapters Specification
 
-Status: Production Engineering Specification
+Status: Target Blueprint Specification (Gate P0) — **not an implemented system**
 System Component: API Gateway, Core Connectors (API-001..003), and Adapters (ADPT-TW-001, ADPT-GL-001..003)
 Document Version: 1.0.0
 Target Directory: `implement/06-api-and-connectors-spec.md`
+
+> **BLUEPRINT STATUS — Gate P0 target design, not an inventory of existing files.**
+> The OpenAPI document, DTOs, webhook handlers, retry logic, and adapter classes below are **target
+> contracts for the Gate P0 (Foundation) build** (SRS AI-REV-SRS-001 §24). No gateway, endpoint, connector,
+> or adapter currently exists in this repository, and no request below can be served today. Paths, payloads,
+> field names, and status codes are design proposals. Numeric latency, throughput, and cost figures are
+> **provisional design targets pending ASM-002 and the NFR-009 benchmark**, and connector/provider
+> availability remains **[UNCONFIRMED][ASM-001]**.
 
 ---
 
 ## 1. OpenAPI 3.1 Specification for Core REST APIs
 
-The platform exposes four foundational REST endpoints governed by strict tenant isolation, cryptographic idempotency, and asynchronous durable task execution.
+The target platform exposes four foundational REST endpoints governed by strict tenant isolation, cryptographic idempotency, and asynchronous durable task execution.
+
+**Idempotency contract (NFR-003, BR-005, BR-006) — applies to every mutating endpoint that carries an idempotency key (`idempotency_key`) or execution key (`effect_key`):**
+
+1. **First delivery** — the effect is executed once; its receipt (`task_id` / `provider_reference` / execution record) is cached under `(tenant_id, effect_key)`.
+2. **Identical replay** — a repeated request whose canonical payload is byte-identical returns the **cached receipt** with the original identifiers and status. The external effect is **not** executed a second time and the response is not an error.
+3. **Payload mismatch** — the same key presented with a *different* canonical payload returns **HTTP 409 `IDEMPOTENCY_CONFLICT`**. A 409 is never returned for an identical replay.
+4. Concurrent in-flight duplicates wait on the same key lock and then receive the cached receipt.
+
+**Path convention.** The Core Engine Gateway serves every route under the base path **`/api/v1`**. Relative paths used throughout this specification (`/conversations`, `/approvals/{id}/decision`, …) are therefore absolute as `/api/v1/conversations`, `/api/v1/approvals/{id}/decision`. The Command Center UI and the Storefront Widget call exactly these absolute paths — there is no unprefixed or `/v1`-only variant.
+
+**SCR-003 approval routing.** The single authoritative approval endpoint is `POST /api/v1/approvals/{id}/decision`. It accepts the five baseline SCR-003 actions — `APPROVE`, `REJECT`, `MODIFY`, `PAUSE`, `CANCEL` — and is the route the Command Center UI calls (see `07-human-command-center-ui.md` §4.3). There is no separate `/execute` route.
+
+**SCR-005 conversation control routing.** The authoritative routes are `POST /api/v1/conversations/{id}/takeover` (operator takes over, per SCR-005), `POST /api/v1/conversations/{id}/takeover/heartbeat` (renews the operator lease while the takeover is active), and `POST /api/v1/conversations/{id}/resume` (operator returns the conversation to the agent, per SCR-005 "trả lại Agent"; this is also the only release path for the lease). Session identity is the `conversation_id`; there is no parallel `/sessions/{id}` resource and no separate DELETE/release route.
+
+### 1.1. Gateway route registry (blueprint — none of these routes exists today)
+
+Beyond the eight REST routes specified in the OpenAPI document below, the Command Center UI and the Storefront Widget use the following target routes. They are part of the same `/api/v1` gateway surface and inherit its tenant isolation, authentication, and idempotency rules.
+
+| Route | Transport | Purpose | Caller / authority |
+|---|---|---|---|
+| `GET /api/v1/telemetry/stream` | Server-Sent Events (HTTP/2) | Executive and operational telemetry stream consumed by SCR-001 and SCR-002 (`?metric=` selects the series, e.g. `revenue_attribution`) | Authenticated operator session, read-only (AUTH-0 equivalent) |
+| `WS /api/v1/ws/stream` | WebSocket | Bidirectional operator channel: live conversation monitoring, Copilot draft delivery, lease/lock notifications for SCR-005 | Authenticated operator session |
+| `POST /api/v1/storefront/stream` | HTTP with streamed (chunked) response | One Storefront Widget chat turn: binds the widget session to a conversation and streams the reply. Body is `PostMessageRequest` plus an optional `session_id` for first-turn binding; server-side it delegates to `POST /api/v1/conversations` + `POST /api/v1/conversations/{id}/messages`, inheriting their consent, channel, and idempotency rules. An identical replay of the same `idempotency_key` returns the cached receipt, not a second turn | First-party widget; AUTH-0..AUTH-3 per policy |
+| `POST /api/v1/storefront/events` | HTTP | First-party storefront event ingestion (API-002, §3). Same envelope and same deduplication rule as `POST /api/v1/events` (`event_id` identical replay → cached receipt; same `event_id` with a different payload → `409 IDEMPOTENCY_CONFLICT`). The gateway derives `canonical_event` from the granular `event_type` (§3.0) | First-party widget / app |
+| `POST /api/v1/operations/runs/{run_id}/retry` | HTTP | Operator-initiated re-dispatch of a **failed** run from SCR-002. Permitted only when the failure is verified side-effect-free (schema/validation failure, authority `DENY`, `FAIL_CLOSED`, or a provider rejection received before dispatch). The retry reuses the run's original `effect_key`, so BR-005/BR-006 still hold and no second external effect can be produced. A run whose external effect outcome is **unknown** (timeout after dispatch, provider ambiguity, missing acknowledgement) is refused with `409` and routed to reconciliation — an unknown outcome is never resolved with a blind retry | Authenticated operator session + tenant RBAC |
 
 ```yaml
 openapi: 3.1.0
@@ -18,8 +51,9 @@ info:
   version: 1.0.0
   description: Foundation APIs for conversation orchestration, durable task inspection, and event ingestion.
 servers:
-  - url: https://api.platform.internal/v1
-    description: Production Core Engine Gateway
+  # Base path /api/v1 is mandatory: the paths below are relative to it (§1 path convention).
+  - url: https://api.platform.internal/api/v1
+    description: Production Core Engine Gateway (base path /api/v1)
 paths:
   /conversations:
     post:
@@ -70,7 +104,11 @@ paths:
               $ref: '#/components/schemas/PostMessageRequest'
       responses:
         '202':
-          description: Message accepted for asynchronous durable execution
+          description: >-
+            Message accepted for asynchronous durable execution. On an identical replay of the same
+            idempotency_key with a byte-identical payload, the cached receipt (original task_id) is
+            returned and no new task is created. A 409 is reserved exclusively for the same key with a
+            different payload.
           content:
             application/json:
               schema:
@@ -110,6 +148,10 @@ paths:
     post:
       summary: Ingest external webhooks and operator decisions
       operationId: ingestPlatformEvent
+      description: >-
+        Idempotent on event_id. An identical replay of the same event_id returns the cached
+        EventIngestionResponse; the same event_id with a different payload returns 409
+        IDEMPOTENCY_CONFLICT.
       security:
         - WebhookHmacAuth: []
         - TenantHeader: []
@@ -121,7 +163,7 @@ paths:
               $ref: '#/components/schemas/PlatformEventEnvelope'
       responses:
         '202':
-          description: Event accepted for processing
+          description: Event accepted for processing, or cached receipt returned for an identical replay
           content:
             application/json:
               schema:
@@ -130,10 +172,17 @@ paths:
           $ref: '#/components/responses/400BadRequest'
         '401':
           $ref: '#/components/responses/401Unauthorized'
+        '409':
+          $ref: '#/components/responses/409Conflict'
 
   /approvals/{id}/decision:
     post:
-      summary: Submit human operator approval, rejection, or modification decision (SCR-003)
+      summary: Submit human operator decision for a pending AUTH-4 approval (SCR-003 — Approve, Reject, Modify, Pause, Cancel)
+      description: >-
+        The single approval route used by the SCR-003 Approval Center. decision=APPROVE releases the signed
+        payload for execution; REJECT terminates the task; MODIFY replaces the payload and re-validates it
+        before approval; PAUSE freezes the workflow without aborting it; CANCEL irrevocably aborts the run and
+        releases held reservations. PAUSE and CANCEL are first-class decisions, not task-state edits.
       operationId: submitApprovalDecision
       parameters:
         - name: id
@@ -153,7 +202,7 @@ paths:
               $ref: '#/components/schemas/ApprovalDecisionRequest'
       responses:
         '200':
-          description: Decision accepted and orchestrated task resumed
+          description: Decision accepted and orchestrated task resumed (APPROVED/MODIFIED), frozen (PAUSED), or terminated (REJECTED/CANCELLED)
           content:
             application/json:
               schema:
@@ -172,6 +221,12 @@ paths:
   /conversations/{id}/takeover:
     post:
       summary: Human operator initiates takeover of an active conversation (SCR-005)
+      description: >-
+        Acquires the exclusive operator lease for the conversation. While held, outbound AI messages for the
+        conversation are hard-locked and routed to the human operator; the agent may still produce internal
+        AUTH-2 copilot drafts that are never sent to the customer. The lease is renewable via
+        /conversations/{id}/takeover/heartbeat and ends on /conversations/{id}/resume or lease expiry.
+        A second operator attempting takeover while the lease is held receives 409.
       operationId: takeoverConversation
       parameters:
         - name: id
@@ -205,9 +260,56 @@ paths:
         '404':
           $ref: '#/components/responses/404NotFound'
 
+  /conversations/{id}/takeover/heartbeat:
+    post:
+      summary: Renew the operator takeover lease on a conversation (SCR-005)
+      description: >-
+        The take-over mutex is held under a short, renewable lease. While an operator is actively handling the
+        conversation, the Command Center renews the lease on this route (the UI heartbeat runs every 30 s
+        against a 60 s lease). The heartbeat is only valid for the operator who currently holds the lease;
+        lease expiry or an explicit resume returns control to the agent. The lease is never unbounded, so a
+        crashed operator tab cannot lock a customer conversation forever.
+      operationId: heartbeatConversationTakeover
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Conversation session identifier
+      security:
+        - BearerAuth: []
+        - TenantHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConversationTakeoverHeartbeatRequest'
+      responses:
+        '200':
+          description: Lease renewed; conversation remains locked to the human operator
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationTakeoverHeartbeatResponse'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '403':
+          $ref: '#/components/responses/403Forbidden'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '409':
+          $ref: '#/components/responses/409Conflict'
+
   /conversations/{id}/resume:
     post:
-      summary: Resume autonomous agent orchestration after human intervention (SCR-005)
+      summary: Return the conversation to the agent after human intervention (SCR-005 "return to agent")
+      description: >-
+        Releases the operator takeover lease and returns the conversation to autonomous agent control. Before
+        autonomous replies resume, the platform re-validates consent, customer context, and any pending
+        order/action state so that the hand-back is audited and safe. Only the operator holding the lease (or an
+        authorized supervisor) may resume.
       operationId: resumeConversation
       parameters:
         - name: id
@@ -282,7 +384,10 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
     409Conflict:
-      description: Idempotency conflict or concurrent mutation
+      description: >-
+        Idempotency conflict (same key/event_id presented with a different payload), concurrent mutation, or a
+        conversation control action (takeover/resume) that conflicts with the current lease holder. An identical
+        replay is NOT a conflict: it returns the cached receipt with 2xx.
       content:
         application/json:
           schema:
@@ -301,7 +406,11 @@ components:
       properties:
         channel:
           type: string
-          enum: [WEB_CHAT, LINE, WHATSAPP, MESSENGER, INSTAGRAM, ZALO, TIKTOK]
+          description: >-
+            Communication channel. The SRS API-003 baseline set is WEB_CHAT (Web/App Chat), MESSENGER
+            (Facebook), TIKTOK, ZALO, EMAIL and SMS. APP_CHAT, LINE, WHATSAPP and INSTAGRAM are supported as
+            extension channels beyond the baseline minimum and remain subject to ASM-001.
+          enum: [WEB_CHAT, APP_CHAT, MESSENGER, INSTAGRAM, TIKTOK, ZALO, EMAIL, SMS, LINE, WHATSAPP]
         customer_identifier:
           type: string
         metadata:
@@ -318,6 +427,11 @@ components:
           type: string
         status:
           type: string
+          description: >-
+            ACTIVE = autonomous agent control (rendered as AI_CONTROLLED in SCR-005); HUMAN_TAKEOVER = an
+            operator holds the takeover lease and AI outbound replies are suppressed; CLOSED = conversation
+            ended. This is the authoritative status enum; the UI state names AI_CONTROLLED / HUMAN_TAKEOVER
+            map onto it.
           enum: [ACTIVE, HUMAN_TAKEOVER, CLOSED]
         created_at:
           type: string
@@ -452,11 +566,17 @@ components:
       properties:
         decision:
           type: string
-          enum: [APPROVE, REJECT, MODIFY]
+          description: >-
+            Baseline SCR-003 action set. APPROVE signs and releases the payload; REJECT terminates the task;
+            MODIFY replaces the payload (see modified_payload) and re-validates it before approval; PAUSE
+            freezes the durable workflow without aborting it; CANCEL irrevocably aborts the run and releases
+            held reservations.
+          enum: [APPROVE, REJECT, MODIFY, PAUSE, CANCEL]
         operator_id:
           type: string
         reason:
           type: string
+          description: Mandatory rationale; for REJECT a standardized rejection code is required.
         modified_payload:
           type: object
           description: Optional modified payload when decision is MODIFY
@@ -472,7 +592,10 @@ components:
           type: string
         status:
           type: string
-          enum: [APPROVED, REJECTED, MODIFIED]
+          description: >-
+            APPROVED / MODIFIED release the task back to execution; PAUSED holds the task in a durable paused
+            state; REJECTED / CANCELLED terminate it.
+          enum: [APPROVED, REJECTED, MODIFIED, PAUSED, CANCELLED]
         decided_at:
           type: string
           format: date-time
@@ -505,6 +628,38 @@ components:
         taken_over_at:
           type: string
           format: date-time
+        lease_expires_at:
+          type: string
+          format: date-time
+          description: Moment at which the takeover lease expires unless renewed by the heartbeat route.
+
+    ConversationTakeoverHeartbeatRequest:
+      type: object
+      required: [operator_id, extend_seconds]
+      properties:
+        operator_id:
+          type: string
+          description: Must match the operator currently holding the takeover lease.
+        extend_seconds:
+          type: integer
+          minimum: 1
+          maximum: 300
+          description: Lease extension requested by the operator console (UI default 60 s, renewed every 30 s).
+
+    ConversationTakeoverHeartbeatResponse:
+      type: object
+      required: [conversation_id, status, operator_id, lease_expires_at]
+      properties:
+        conversation_id:
+          type: string
+        status:
+          type: string
+          enum: [HUMAN_TAKEOVER]
+        operator_id:
+          type: string
+        lease_expires_at:
+          type: string
+          format: date-time
 
     ConversationResumeRequest:
       type: object
@@ -535,7 +690,7 @@ components:
 
 ## 2. API-001 (ERP/POS Connector) Standard Interface DTOs
 
-API-001 represents the authoritative System of Record connection. It guarantees read/write integrity with existing client systems (SAP, Oracle NetSuite, 91APP, SHOPLINE, Cyberbiz).
+API-001 represents the authoritative System of Record connection. It guarantees read/write integrity with existing client systems (SAP, Oracle NetSuite, 91APP, SHOPLINE, Cyberbiz) — these vendor names are illustrative **provider choices that remain [UNCONFIRMED][ASM-001]** until the production connector audit closes.
 
 ```typescript
 /**
@@ -798,9 +953,26 @@ export interface InvoiceIssuanceRequestDTO {
 
 ---
 
-## 3. API-002 (Event Ingestion) Stream Specification (< 200ms)
+## 3. API-002 (Event Ingestion) Stream Specification
 
-API-002 ingests high-throughput digital events from Storefront Widgets and Native Mobile Apps directly into Kafka/Redis Streams, achieving p95 processing latency $< 200\text{ms}$.
+API-002 ingests high-throughput digital events from Storefront Widgets and Native Mobile Apps directly into Kafka/Redis Streams. The p95 processing latency target (illustrative value: $< 200\text{ms}$) is **provisional pending the NFR-009 benchmark**.
+
+### 3.0. Canonical event contract (SRS §15 API-002) and aliases
+
+SRS API-002 defines exactly seven canonical events: **`session`, `product_view`, `search`, `click`, `add_to_cart`, `checkout`, `purchase`**. The stream payload keeps granular `event_type` values (needed for fine-grained analytics and the C360 timeline) but every event MUST also carry the derived `canonical_event` so downstream consumers can rely on the baseline set:
+
+| Baseline canonical event | Granular `event_type` alias(es) emitted by this blueprint | Notes |
+|---|---|---|
+| `session` | `session.start`, `session.end` | Session lifecycle; `session.end` also closes the anonymous session window. |
+| `product_view` | `product.view` | PDP/SKU detail view. |
+| `search` | `search.query` | Query text + result count. |
+| `click` | `element.click` | Generic UI element click (CTA, banner, nav, recommendation widget). |
+| `add_to_cart` | `cart.add` | Cart addition. |
+| `checkout` | `checkout.start` | Checkout funnel entry. |
+| `purchase` | `order.placed` | Order confirmation from SoR. |
+| — (extension) | `cart.remove` | **Not** part of the baseline canonical set; retained as an extension event for analytics only and never used as a purchase/abandonment trigger on its own. |
+
+Events whose `event_type` has no canonical parent are marked `canonical_event: null` and treated as extension telemetry. The mapping is deterministic and versioned; a granular alias may never be silently re-pointed at a different canonical event.
 
 ```
                  [Storefront / App Webhook]
@@ -843,6 +1015,10 @@ export interface BaseEventEnvelope<T = unknown> {
   readonly customer_id?: string;
   readonly anonymous_id: string;
   readonly session_id: string;
+  /**
+   * Granular alias emitted by the widget/app. Retained for analytics; never the sole contract for
+   * downstream canonical consumers (see §3.0 alias table).
+   */
   readonly event_type:
     | 'session.start'
     | 'session.end'
@@ -853,6 +1029,19 @@ export interface BaseEventEnvelope<T = unknown> {
     | 'cart.remove'
     | 'checkout.start'
     | 'order.placed';
+  /**
+   * Baseline SRS §15 API-002 canonical event derived by the Stream Normalizer from event_type.
+   * Extension events with no baseline parent carry null.
+   */
+  readonly canonical_event:
+    | 'session'
+    | 'product_view'
+    | 'search'
+    | 'click'
+    | 'add_to_cart'
+    | 'checkout'
+    | 'purchase'
+    | null;
   readonly occurred_at: string;
   readonly context: {
     readonly user_agent: string;
@@ -915,9 +1104,26 @@ export interface EventOrderPlacedData {
 
 ## 4. API-003 (Communication Connectors) Webhook Interfaces
 
-API-003 standardizes bidirectional messaging across Facebook, TikTok, Zalo, LINE, WhatsApp, Email, SMS, and Web Chat.
+### 4.0. Baseline channel contract
+
+SRS API-003 requires a connector architecture covering **Facebook, TikTok, Zalo, Email, SMS and Web/App Chat**. All six are first-class members of this contract and of the `channel` enum on `POST /api/v1/conversations`:
+
+| Baseline channel (SRS API-003) | Contract channel ID | Direction | Provider examples (illustrative — **[UNCONFIRMED][ASM-001]**) |
+|---|---|---|---|
+| Facebook | `MESSENGER` (and `INSTAGRAM` for the Meta family) | Bidirectional | Meta Send API / Graph webhooks |
+| TikTok | `TIKTOK` | Bidirectional | TikTok Open Platform Messaging API |
+| Zalo | `ZALO` | Bidirectional | Zalo OA OpenAPI / ZNS |
+| Email | `EMAIL` | Mostly outbound, inbound replies via webhook | SendGrid / Mailgun / SMTP |
+| SMS | `SMS` | Outbound, inbound via gateway webhook | Twilio / Chunghwa Telecom / SMS gateway |
+| Web/App Chat | `WEB_CHAT`, `APP_CHAT` | Bidirectional (SSE/WSS) | First-party widget + platform API |
+
+**Extension channels** beyond the baseline minimum: `LINE` (LINE OA) and `WHATSAPP` (WhatsApp Business Cloud API), plus the Global/Taiwan adapters in §5. These are optional, configurable additions — they are not required by the baseline and their availability is unconfirmed pending the ASM-001 connector audit.
+
+API-003 standardizes bidirectional messaging across all the channels above; each channel MUST satisfy the inbound verification and outbound protocol contract below.
 
 ### 4.1. Channel Webhook Ingestion & Verification Specs
+
+The provider names and provider-specific verification schemes in this table (Meta, TikTok, Zalo, SendGrid/Mailgun, Twilio/Chunghwa Telecom, LINE, WhatsApp) are **provider choices that remain [UNCONFIRMED][ASM-001]**; only the six baseline channel identities of SRS API-003 (Facebook, TikTok, Zalo, Email, SMS, Web/App Chat) are fixed by the requirement.
 
 | Channel | Inbound Verification Scheme | Core Payload Extract | Outbound Protocol |
 |---|---|---|---|
@@ -988,15 +1194,22 @@ export class ChannelWebhookVerifier {
 
 ## 5. Plug-and-Play Adapters Specification
 
+> **Optional extension layer.** Everything in §5 is **beyond the SRS API-003 baseline** (Facebook, TikTok,
+> Zalo, Email, SMS, Web/App Chat). The Taiwan (ADPT-TW-*) and Global (ADPT-GL-*) adapters are configurable,
+> tenant-opt-in proposals: provider contracts, fees, quotas, and regulatory behaviour are **illustrative and
+> unconfirmed** until the ASM-001 connector audit locks them. None of them is implemented.
+
 ---
 
-### 5.1. ADPT-TW-001: Taiwan Localization Adapter
+### 5.1. ADPT-TW-001: Taiwan Localization Adapter (optional extension)
 
 ADPT-TW-001 encapsulates Taiwanese commerce specifics: LINE OA, LINE Pay, ECPay / NewebPay, and CVS COD (超商取貨付款) electronic convenience store mapping (7-Eleven / FamilyMart).
 
 #### 5.1.1. Safe Cross-Origin `postMessage` Bridge for CVS COD E-Map
 
 When a user selects a convenience store, the Storefront Widget (running in Shadow DOM $< 20\text{ KB}$) opens the 3rd-party logistics map via an iframe or popup. The map completes and transmits back the selected store info (`cvs_store_id`, `cvs_store_name`, `cvs_address`) using `window.postMessage`.
+
+**Origin contract (both directions).** Inbound messages are accepted only when `event.origin` is an exact member of the partner whitelist below (never a prefix or wildcard match). Outbound messages — including the open/close commands and the nonce handshake the widget sends to the E-Map frame — are posted with the **exact partner origin as `targetOrigin`**; `'*'` is never used as a `targetOrigin`, in this bridge or in the Storefront Widget's host-page bridge (`07-human-command-center-ui.md` §7.3).
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
@@ -1439,7 +1652,12 @@ export interface DSARResponse {
 
 ---
 
-## 6. Domain-Specific Commerce Connectors & DTOs
+## 6. Domain-Specific Commerce Connectors & DTOs (optional vertical extensions)
+
+> **Extension notice.** The EV Mobility (DOM-MOB-*) and FMCG (DOM-FMCG-*) connectors below are optional
+> vertical proposals outside the SRS API-001..003 baseline. Their fields, thresholds (e.g. the 20 % CVS
+> non-pickup rule) and regulatory assumptions are **illustrative and configurable per tenant**, and are
+> unconfirmed until the ASM-001 connector audit and the owning business unit lock them.
 
 Specialized business domains require tailored schema contracts to capture localized industry processes while remaining decoupled from generic ERP layers.
 
@@ -1630,15 +1848,20 @@ export interface CVSCODFraudEvaluationResponseDTO {
 
 ## 7. End-to-End Connector Testing Matrix
 
+All latency figures in this matrix are **provisional design targets pending the NFR-009 benchmark**; the
+matrix defines the behaviour to assert, not a measured SLA.
+
 | Suite ID | Subsystem | Test Objective | Pass Criteria |
 |---|---|---|---|
-| `TC-CON-001` | Core REST APIs | Submit consultation message via `/conversations/{id}/messages`. | Returns `202 Accepted` with valid `task_id` and `correlation_id` in $< 50\text{ms}$. |
-| `TC-CON-002` | API-001 ERP | Execute real-time stock lookup under high concurrency. | Returns ATP counts per warehouse in $< 200\text{ms}$; fail closed on timeout. |
-| `TC-CON-003` | API-002 Stream | Ingest $10,000$ telemetry events into event stream. | End-to-end ingestion and C360 Timeline write completes with p95 $< 200\text{ms}$. |
+| `TC-CON-001` | Core REST APIs | Submit consultation message via `/api/v1/conversations/{id}/messages`. | Returns `202 Accepted` with valid `task_id` and `correlation_id` (target $< 50\text{ms}$, provisional). |
+| `TC-CON-002` | API-001 ERP | Execute real-time stock lookup under high concurrency. | Returns ATP counts per warehouse (target $< 200\text{ms}$, provisional); fail closed on timeout. |
+| `TC-CON-003` | API-002 Stream | Ingest $10,000$ telemetry events into event stream. | End-to-end ingestion and C360 Timeline write completes (target p95 $< 200\text{ms}$, provisional). |
 | `TC-CON-004` | API-003 Webhook | Inbound message with tampered HMAC signature. | Gateway rejects with `401 Unauthorized` before invoking agents. |
 | `TC-CON-005` | ADPT-TW-001 | CVS E-Map `postMessage` bridge with unwhitelisted origin. | PostMessage listener discards event; logs `[SECURITY]` warning. |
 | `TC-CON-006` | ADPT-TW-002 | Line OA push dispatched when monthly quota reaches 100%. | Hard block triggers; rejects push and falls back to Web Chat / reply token. |
-| `TC-CON-007` | ADPT-GL-001 | Attempt sending free-form WhatsApp message at 25 hours. | WhatsApp Guard rejects free-form with `AUTH-5`; forces pre-approved template. |
+| `TC-CON-007` | ADPT-GL-001 | Attempt sending free-form WhatsApp message at 25 hours. | WhatsApp Guard rejects free-form; forces pre-approved template. |
 | `TC-CON-008` | ADPT-GL-002 | FX rate changes by $-5\%$ during checkout session. | Locked quote rate buffer holds; prevents conversion breach of $P_{floor}$. |
-| `TC-CON-009` | Core Gateway | Operator approves task via `/approvals/{id}/decision` (SCR-003). | Returns `200 OK`, transitions task to `RUNNING` from `AWAITING_HUMAN`. |
+| `TC-CON-009` | Core Gateway | Operator submits each SCR-003 decision via `/api/v1/approvals/{id}/decision`. | `APPROVE`/`MODIFY` return `200` and resume the task; `PAUSE` returns `200` with `PAUSED`; `REJECT`/`CANCEL` return `200` with `REJECTED`/`CANCELLED`; no other approval route exists. |
 | `TC-CON-010` | DOM Connectors | Evaluate FMCG customer with $> 20\%$ CVS non-pickup rate (DOM-FMCG-003). | `allow_cvs_cod` returns `false`, forces `REQUIRE_PREPAYMENT` action. |
+| `TC-CON-011` | Core Gateway | Replay the same `idempotency_key`/`effect_key`: (a) byte-identical payload, (b) mutated payload. | (a) returns the cached receipt with the original `task_id` and executes no second external effect; (b) returns `409 IDEMPOTENCY_CONFLICT`. |
+| `TC-CON-012` | SCR-005 Control | Operator takes over, heartbeats, then resumes the conversation. | Takeover locks AI outbound replies; heartbeat extends `lease_expires_at`; resume returns status `ACTIVE` (agent control) and releases the lease. |

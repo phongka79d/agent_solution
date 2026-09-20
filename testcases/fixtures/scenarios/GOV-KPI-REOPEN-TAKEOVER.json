@@ -1,0 +1,100 @@
+{
+  "id": "GOV-KPI-REOPEN-TAKEOVER",
+  "title": "No double counting: a reopened case counts one outcome and a takeover is not AI-resolved",
+  "document": "governance/kpi.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P1",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SRS-20",
+    "FR-CS-002",
+    "NFR-007"
+  ],
+  "facets": [
+    "kpi:AI Resolution Rate",
+    "kpi:Reopen Rate",
+    "kpi:Human Override Rate"
+  ],
+  "risk": "A reopened case is counted twice and a taken-over session is still credited to the AI, so the automation rate improves exactly as human effort increases.",
+  "preconditions": [
+    "Namespace gov-kpi-<case_id>-<worker_id>; the metric is computed by the real reporting code over fixtures/offline/governance.json kpi_dataset and never copied from the dashboard payload.",
+    "Frozen clock 2026-01-15T10:00:00Z with the reporting window 2026-01-01T00:00:00Z .. 2026-02-01T00:00:00Z as a half-open interval; the stored aggregate is recomputed independently from the raw counter rows.",
+    "kpi_edge.reopen_and_takeover describes one reopened case and three taken-over sessions inside the same window.",
+    "The case model keeps a single case identity across a reopen, and a takeover transfers the affected leg's credit to the human."
+  ],
+  "inputs": {
+    "reopen_and_takeover": {
+      "reopened_case_final_outcomes": 1,
+      "human_takeover_sessions": 3,
+      "expected": "one final outcome per reopened case and no AI-resolved credit for a taken-over session"
+    },
+    "care_counters": {
+      "cases_total": 20,
+      "ai_closed": 12,
+      "reopened_within_72h": 2,
+      "human_takeover_sessions": 3
+    },
+    "expected": {
+      "final_outcome_per_case": 1,
+      "ai_resolved_credit_for_takeover": 0,
+      "ai_resolution_rate": "60.0%",
+      "reopen_rate": "16.7%"
+    }
+  },
+  "steps": [
+    {
+      "action": "Reopen the closed case and close it again with a final outcome",
+      "expected": "The case keeps one identity, the reopen is recorded once with its delta from the AI closure, and the final outcome replaces the earlier outcome instead of adding a second one."
+    },
+    {
+      "action": "Read the AI resolution numerator after the reopen",
+      "expected": "The case is not counted twice; if a human resolved the reopened case, the AI resolution numerator loses it."
+    },
+    {
+      "action": "Take over three sessions and re-read the counters",
+      "expected": "Those sessions are credited to the human, the AI resolution numerator does not gain them, and the human override counter increases by the number of overridden sessions."
+    },
+    {
+      "action": "Attempt to count the reopened case as a new case",
+      "expected": "The attempt is refused, and the case count plus the reopen flag stay consistent with the case identity."
+    }
+  ],
+  "assertions": [
+    "Each case contributes exactly one final outcome, so the case count does not grow when a case is reopened.",
+    "A taken-over session is never credited to AI resolution, and the transferred weight is visible on the human side.",
+    "The reopen rate uses AI-closed cases as its denominator and counts a reopen only once, within 72 hours of the AI closure.",
+    "AI resolution rate and human override rate move in opposite directions when a takeover happens, so the two metrics cannot both improve from the same event."
+  ],
+  "forbidden": [
+    "Counting a reopened case as a second case to inflate the closure count.",
+    "Crediting a taken-over session to the AI because the AI handled the early turns.",
+    "Dropping the reopen flag after the second closure so the quality signal disappears."
+  ],
+  "evidence": [
+    "Case identity history with the reopen delta and the final outcome.",
+    "AI resolution and human override counters before and after the takeover.",
+    "Reopen report listing the case once with its flag."
+  ],
+  "cleanup": [
+    "Delete gov- case history, takeover records and aggregate rows after export."
+  ],
+  "automation": "The reporting service and the metric dictionary run as real code under test over the frozen KPI dataset; the dashboard is a consumer whose displayed value must equal the independently recomputed value. Waits are condition-based on the stored aggregate row, metric values are never supplied as inputs, and no vendor boundary is involved in the arithmetic.",
+  "prerequisites": [],
+  "references": [
+    "plans/delivery/analytics.md",
+    "implement/07-human-command-center-ui.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/customers.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

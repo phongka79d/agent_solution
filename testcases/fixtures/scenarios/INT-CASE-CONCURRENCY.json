@@ -1,0 +1,91 @@
+{
+  "id": "INT-CASE-CONCURRENCY",
+  "title": "Two concurrent transitions on one case admit exactly one winner",
+  "document": "integration/case-fsm.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P1",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "CS-01",
+    "NFR-002",
+    "NFR-006"
+  ],
+  "facets": [
+    "entity:Service Case",
+    "memory:Agent Operational Memory",
+    "stage:ACTION"
+  ],
+  "risk": "Two operators act on the same case simultaneously, so the case ends in an impossible state and one operator's work silently disappears.",
+  "preconditions": [
+    "An IN_PROGRESS case CASE-T1-0010 for cust-a in namespace cd-race-*",
+    "Two concurrent transition requests issued at 2026-01-15T10:00:00Z by CS-01 (to RESOLVED) and op-7 (to WAITING_CUSTOMER)"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "case_number": "CASE-T1-0010",
+    "requests": [
+      {
+        "actor": "CS-01",
+        "to": "RESOLVED",
+        "resolution_code": "refund_approved"
+      },
+      {
+        "actor": "op-7",
+        "to": "WAITING_CUSTOMER",
+        "reason": "awaiting_photo"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Issue both transitions concurrently against the same case version",
+      "expected": "exactly one request succeeds and the other is rejected as a stale/concurrent transition"
+    },
+    {
+      "action": "Read the resulting case state and its version",
+      "expected": "the case holds exactly one of the two target states and the version advanced by exactly one"
+    },
+    {
+      "action": "Replay the losing request after the winner committed",
+      "expected": "the replay is refused against the new version and still does not change the state"
+    },
+    {
+      "action": "Read the audit trail for the case",
+      "expected": "one accepted transition entry and at least one refused entry exist, each naming its actor"
+    }
+  ],
+  "assertions": [
+    "Exactly one of the two concurrent transitions is accepted; the case version increases by exactly 1",
+    "The losing request is refused without any partial write (no orphan resolution or reason field)",
+    "The audit trail records both the accepted and the refused attempt with actor identity"
+  ],
+  "forbidden": [
+    "Apply both transitions so the case ends with a resolution and a waiting reason at once",
+    "Let the losing request overwrite the winner's fields without a version check"
+  ],
+  "evidence": [
+    "Case state, version and field-level projection after the race",
+    "Audit entries for both attempts with accepted/refused status"
+  ],
+  "cleanup": [
+    "Delete the run-scoped case and its audit entries for the run window cd-race-*"
+  ],
+  "automation": "Issue the two requests from two worker threads against the real case service behind the tenant-scoped wrapper; the version column and the field projection are the oracle, so a last-writer-wins implementation fails.",
+  "prerequisites": [],
+  "references": [
+    "implement/03-database-and-memory-schema.md",
+    "implement/04-core-engine-and-orchestrator.md",
+    "implement/07-human-command-center-ui.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/platform.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

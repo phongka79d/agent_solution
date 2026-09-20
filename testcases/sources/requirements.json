@@ -1,0 +1,1563 @@
+{
+  "schema": "testcases.requirements/1",
+  "description": "Requirement inventory for the acceptance specifications under testcases/. Every requirement token used by a case in sources/{governance,business,platform}.py must be a key of 'requirements' or 'aliases', and every facet token must be listed in 'facets'. Coverage is exact-token membership, never substring matching, so SRS-02 is not satisfied by SRS-020.",
+  "source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "source_note": "IDs and titles are derived from the authoritative SRS v0.1 (baseline blueprint). 'notes' on an entry record only what the SRS states; they are not new contracts.",
+  "alias_note": "SRS-NN tokens are suite-local references to a numbered SRS section and are NOT new authoritative requirement IDs. They exist because several obligations (orchestration stages, KPI set, data model, memory separation, DoD, scope exclusion) are stated as a section-level obligation rather than as an individual ID in the SRS.",
+  "requirements": {
+    "OBJ-001": {
+      "title": "Marketing: detect opportunity, plan, create content, run campaigns, evaluate and optimise",
+      "srs_section": "1",
+      "kind": "objective",
+      "must": false
+    },
+    "OBJ-002": {
+      "title": "Sales: recognise need, advise, nurture, score opportunity, recommend, cross/upsell, recover cart, convert order",
+      "srs_section": "1",
+      "kind": "objective",
+      "must": false
+    },
+    "OBJ-003": {
+      "title": "Customer Care: absorb most customer requests using real transaction data, order support, complaints, aftercare, human handover",
+      "srs_section": "1",
+      "kind": "objective",
+      "must": false
+    },
+    "OBJ-004": {
+      "title": "Customer Success/Retention: detect churn risk, repurchase and expansion opportunity, act next-best-action",
+      "srs_section": "1",
+      "kind": "objective",
+      "must": false
+    },
+    "OBJ-005": {
+      "title": "Orchestration: agents cooperate through workflows instead of acting independently",
+      "srs_section": "1",
+      "kind": "objective",
+      "must": false
+    },
+    "OBJ-006": {
+      "title": "Governance: every AI action carries source, reason, authority, policy, log, evidence and outcome",
+      "srs_section": "1",
+      "kind": "objective",
+      "must": false
+    },
+    "FR-C360-001": {
+      "title": "Unified customer profile holding identity, purchase history, products, Web/App behaviour, marketing interaction, conversations, care tickets, feedback, cart, offer, recency, frequency, value, consent and lifecycle",
+      "srs_section": "5",
+      "kind": "requirement",
+      "must": true
+    },
+    "FR-C360-002": {
+      "title": "Unified traceable customer timeline: View / Search / Click / Chat / Add to cart / Purchase / Delivery / Support / Review / Repurchase",
+      "srs_section": "5",
+      "kind": "requirement",
+      "must": true
+    },
+    "FR-C360-003": {
+      "title": "Evidence separation FACT / SIGNAL / HYPOTHESIS / DECISION / ACTION, and an AI hypothesis is never written back as a customer fact",
+      "srs_section": "5",
+      "kind": "requirement",
+      "must": true
+    },
+    "MKT-01": {
+      "title": "Marketing Strategist: business goal analysis, marketing plan, campaign, audience, channel, KPI, priority",
+      "srs_section": "6",
+      "kind": "agent",
+      "must": false
+    },
+    "MKT-02": {
+      "title": "Audience Intelligence Agent: cohort/segment from behaviour and transaction data without sensitive or unauthorised profiling",
+      "srs_section": "6",
+      "kind": "agent",
+      "must": false
+    },
+    "MKT-03": {
+      "title": "Content Agent: content per brief and brand policy for social, short video, ads, email, landing page, SMS/Zalo, product",
+      "srs_section": "6",
+      "kind": "agent",
+      "must": false
+    },
+    "MKT-04": {
+      "title": "Brand Guardian: tone of voice, terminology, brand facts, claims, price, promotion and prohibited content control",
+      "srs_section": "6",
+      "kind": "agent",
+      "must": false
+    },
+    "MKT-05": {
+      "title": "Campaign Agent workflow: Brief, Audience, Content, Review, Approval, Publish, Monitor, Optimize",
+      "srs_section": "6",
+      "kind": "agent",
+      "must": false
+    },
+    "MKT-06": {
+      "title": "Marketing Analyst: impressions, reach, click, lead, conversion, CAC, revenue, repeat purchase, attribution",
+      "srs_section": "6",
+      "kind": "agent",
+      "must": false
+    },
+    "SAL-01": {
+      "title": "Lead Qualification Agent: new/returning customer, need, product interest, readiness, latest behaviour, purchase history, opportunity",
+      "srs_section": "7",
+      "kind": "agent",
+      "must": false
+    },
+    "FR-SAL-001": {
+      "title": "Qualification output must carry reason and evidence",
+      "srs_section": "7",
+      "kind": "requirement",
+      "must": true
+    },
+    "SAL-02": {
+      "title": "AI Sales Advisor: ask about need, search/compare products, check stock, check price, explain policy, recommend products and add-ons",
+      "srs_section": "7",
+      "kind": "agent",
+      "must": false
+    },
+    "FR-SAL-002": {
+      "title": "Price and stock must come from authoritative data sources and must never be inferred",
+      "srs_section": "7",
+      "kind": "requirement",
+      "must": true
+    },
+    "SAL-03": {
+      "title": "Recommendation Agent: product recommendation, cross-sell, upsell, substitute, replenishment and bundle",
+      "srs_section": "7",
+      "kind": "agent",
+      "must": false
+    },
+    "FR-SAL-003": {
+      "title": "Every recommendation carries customer, product, reason, evidence, eligibility, confidence and expected outcome",
+      "srs_section": "7",
+      "kind": "requirement",
+      "must": true
+    },
+    "SAL-04": {
+      "title": "Cart Recovery Agent: detect abandoned cart, check customer, consent, stock, price and suppression rules, choose channel, act and measure conversion",
+      "srs_section": "7",
+      "kind": "agent",
+      "must": false
+    },
+    "SAL-05": {
+      "title": "Reorder/Replenishment Agent: buying-cycle analysis, and no send when marketing is refused, product discontinued, stock unsuitable, recent repurchase or suppressed",
+      "srs_section": "7",
+      "kind": "agent",
+      "must": false
+    },
+    "CS-01": {
+      "title": "Omnichannel Customer Care Agent: Web Chat, App, social inbox, Zalo, email and approved connectors",
+      "srs_section": "8",
+      "kind": "agent",
+      "must": false
+    },
+    "FR-CS-001": {
+      "title": "Recognise at least the ten required intents: product, price, stock, order status, shipping, return/exchange, payment, complaint, usage support, human request",
+      "srs_section": "8",
+      "kind": "requirement",
+      "must": true
+    },
+    "FR-CS-002": {
+      "title": "Agent knows when to answer, when to look up, when to act, when to hand to another agent and when a human must take over",
+      "srs_section": "8",
+      "kind": "requirement",
+      "must": true
+    },
+    "CS-02": {
+      "title": "Retention/Customer Success Agent: inactivity, falling purchase frequency, dissatisfaction, failed order, repeated complaint, replenishment and win-back opportunity",
+      "srs_section": "8",
+      "kind": "agent",
+      "must": false
+    },
+    "FR-CS-003": {
+      "title": "Retention workflow: Signal, Hypothesis, Recommended Action, Eligibility Check, Execution/Approval, Outcome",
+      "srs_section": "8",
+      "kind": "requirement",
+      "must": true
+    },
+    "FR-ORC-001": {
+      "title": "Routing decides which agent handles, which skill is used, which data is accessed, which tool is called and whether approval is needed",
+      "srs_section": "9",
+      "kind": "requirement",
+      "must": true
+    },
+    "FR-ORC-002": {
+      "title": "Multi-agent workflow across agents without losing customer context",
+      "srs_section": "9",
+      "kind": "requirement",
+      "must": true
+    },
+    "AUTH-0": {
+      "title": "Observe: read data only",
+      "srs_section": "12",
+      "kind": "authority",
+      "must": false
+    },
+    "AUTH-1": {
+      "title": "Recommend: analyse and propose",
+      "srs_section": "12",
+      "kind": "authority",
+      "must": false
+    },
+    "AUTH-2": {
+      "title": "Draft: create draft content or action",
+      "srs_section": "12",
+      "kind": "authority",
+      "must": false
+    },
+    "AUTH-3": {
+      "title": "Bounded Execute: execute within an approved scope",
+      "srs_section": "12",
+      "kind": "authority",
+      "must": false
+    },
+    "AUTH-4": {
+      "title": "Approval Required: prepare the action, a human approval is required",
+      "srs_section": "12",
+      "kind": "authority",
+      "must": false
+    },
+    "AUTH-5": {
+      "title": "Prohibited: must never be executed",
+      "srs_section": "12",
+      "kind": "authority",
+      "must": false
+    },
+    "BR-001": {
+      "title": "AI must not create a product price",
+      "srs_section": "13",
+      "kind": "rule",
+      "must": true
+    },
+    "BR-002": {
+      "title": "AI must not change price or discount outside policy",
+      "srs_section": "13",
+      "kind": "rule",
+      "must": true
+    },
+    "BR-003": {
+      "title": "Price and stock must come from an authoritative transaction source",
+      "srs_section": "13",
+      "kind": "rule",
+      "must": true
+    },
+    "BR-004": {
+      "title": "No marketing send without the matching customer consent",
+      "srs_section": "13",
+      "kind": "rule",
+      "must": true
+    },
+    "BR-005": {
+      "title": "An action with an external effect requires a unique execution ID",
+      "srs_section": "13",
+      "kind": "rule",
+      "must": true
+    },
+    "BR-006": {
+      "title": "Retry must not create a duplicate action",
+      "srs_section": "13",
+      "kind": "rule",
+      "must": true
+    },
+    "BR-007": {
+      "title": "Financial or high-risk actions require approval",
+      "srs_section": "13",
+      "kind": "rule",
+      "must": true
+    },
+    "BR-008": {
+      "title": "An agent must not exceed its authority even when the LLM asks",
+      "srs_section": "13",
+      "kind": "rule",
+      "must": true
+    },
+    "BR-009": {
+      "title": "Customer-supplied prompt or content cannot raise agent authority",
+      "srs_section": "13",
+      "kind": "rule",
+      "must": true
+    },
+    "BR-010": {
+      "title": "Every important execution must produce evidence",
+      "srs_section": "13",
+      "kind": "rule",
+      "must": true
+    },
+    "API-001": {
+      "title": "ERP/POS read under permission for product, SKU, price, inventory, customer, order, invoice and sales history; mutations only through controlled API/action",
+      "srs_section": "15",
+      "kind": "api",
+      "must": false
+    },
+    "API-002": {
+      "title": "Web/App events: session, product_view, search, click, add_to_cart, checkout, purchase",
+      "srs_section": "15",
+      "kind": "api",
+      "must": false
+    },
+    "API-003": {
+      "title": "Communication connector architecture for Facebook, TikTok, Zalo, Email, SMS and Web/App Chat",
+      "srs_section": "15",
+      "kind": "api",
+      "must": false
+    },
+    "SCR-001": {
+      "title": "Executive Dashboard: revenue, leads, conversion, active campaigns, AI generated revenue, CS status, retention, AI actions, approval pending, abnormal events",
+      "srs_section": "18",
+      "kind": "screen",
+      "must": false
+    },
+    "SCR-002": {
+      "title": "Agent Operations: agent online/offline, current task, run history, error, tool call, cost and KPI",
+      "srs_section": "18",
+      "kind": "screen",
+      "must": false
+    },
+    "SCR-003": {
+      "title": "Approval Center: Approve / Reject / Modify / Pause / Cancel",
+      "srs_section": "18",
+      "kind": "screen",
+      "must": false
+    },
+    "SCR-004": {
+      "title": "Customer 360 screen: one customer on a unified timeline with related evidence",
+      "srs_section": "18",
+      "kind": "screen",
+      "must": false
+    },
+    "SCR-005": {
+      "title": "Conversation Console: view AI chat, takeover, return to agent, edit answer, evaluate outcome",
+      "srs_section": "18",
+      "kind": "screen",
+      "must": false
+    },
+    "NFR-001": {
+      "title": "Security: agents reach data and tools only under authority; no test case may allow crossing an authority boundary",
+      "srs_section": "19",
+      "kind": "nfr",
+      "must": true
+    },
+    "NFR-002": {
+      "title": "Auditability: 100% of externally changing actions carry an audit/evidence record",
+      "srs_section": "19",
+      "kind": "nfr",
+      "must": true
+    },
+    "NFR-003": {
+      "title": "Idempotency: repeating the same execution request must not create a second unintended transaction",
+      "srs_section": "19",
+      "kind": "nfr",
+      "must": true
+    },
+    "NFR-004": {
+      "title": "Availability: important workflows have retry, timeout and recovery",
+      "srs_section": "19",
+      "kind": "nfr",
+      "must": false
+    },
+    "NFR-005": {
+      "title": "Explainability: important decisions store reason and evidence",
+      "srs_section": "19",
+      "kind": "nfr",
+      "must": false
+    },
+    "NFR-006": {
+      "title": "Data isolation: customer A data never appears in customer B context",
+      "srs_section": "19",
+      "kind": "nfr",
+      "must": false
+    },
+    "NFR-007": {
+      "title": "Human override: a human can pause or take over a workflow",
+      "srs_section": "19",
+      "kind": "nfr",
+      "must": false
+    },
+    "NFR-008": {
+      "title": "Failure safety: when price, stock, authority or consent cannot be verified the system fails closed",
+      "srs_section": "19",
+      "kind": "nfr",
+      "must": true
+    },
+    "NFR-009": {
+      "title": "Performance: normal conversation is designed for near real-time response; the official SLA is locked after benchmarking",
+      "srs_section": "19",
+      "kind": "nfr",
+      "must": false
+    },
+    "NFR-010": {
+      "title": "Cost observability: token, model, API/tool cost, cost per run, cost per customer and cost per conversion",
+      "srs_section": "19",
+      "kind": "nfr",
+      "must": false
+    },
+    "PILOT-01": {
+      "title": "Marketing to Sales: signal, segment, campaign, content, approval, publish, response, sales conversation, recommendation, order, revenue evidence",
+      "srs_section": "21",
+      "kind": "pilot",
+      "must": false
+    },
+    "PILOT-02": {
+      "title": "Cart recovery: abandoned cart, customer context, eligibility, recommendation, message, conversion, order, attribution",
+      "srs_section": "21",
+      "kind": "pilot",
+      "must": false
+    },
+    "PILOT-03": {
+      "title": "Customer care: question, intent detection, identification, ERP/order lookup, AI resolution, response, case outcome",
+      "srs_section": "21",
+      "kind": "pilot",
+      "must": false
+    },
+    "PILOT-04": {
+      "title": "Escalation: complaint, classification, policy check, AI unable or unauthorised, human escalation, resolution, outcome",
+      "srs_section": "21",
+      "kind": "pilot",
+      "must": false
+    },
+    "TC-E2E-001": {
+      "title": "One signal travels Signal, Decision, Action, Execution, Evidence, Outcome",
+      "srs_section": "22",
+      "kind": "acceptance",
+      "must": false
+    },
+    "TC-E2E-002": {
+      "title": "A marketing agent cannot publish without the required authority/approval",
+      "srs_section": "22",
+      "kind": "acceptance",
+      "must": false
+    },
+    "TC-E2E-003": {
+      "title": "A sales agent cannot quote a price absent from the official source",
+      "srs_section": "22",
+      "kind": "acceptance",
+      "must": false
+    },
+    "TC-E2E-004": {
+      "title": "A care agent only looks up data for the verified customer",
+      "srs_section": "22",
+      "kind": "acceptance",
+      "must": false
+    },
+    "TC-E2E-005": {
+      "title": "Retry of an action does not create a duplicate message or order",
+      "srs_section": "22",
+      "kind": "acceptance",
+      "must": false
+    },
+    "TC-E2E-006": {
+      "title": "An agent trying to exceed authority is DENY-ed and produces an audit event",
+      "srs_section": "22",
+      "kind": "acceptance",
+      "must": false
+    },
+    "TC-E2E-007": {
+      "title": "A customer without matching consent is suppressed",
+      "srs_section": "22",
+      "kind": "acceptance",
+      "must": false
+    },
+    "TC-E2E-008": {
+      "title": "A connector failure becomes failure/retry and never a fake success",
+      "srs_section": "22",
+      "kind": "acceptance",
+      "must": false
+    },
+    "TC-E2E-009": {
+      "title": "Every successful action traces back Trigger, Context, Decision, Approval, Execution, Evidence, Outcome",
+      "srs_section": "22",
+      "kind": "acceptance",
+      "must": false
+    },
+    "ASM-001": {
+      "title": "Production connector list (owner: Product/IT)",
+      "srs_section": "26",
+      "kind": "assumption",
+      "must": false
+    },
+    "ASM-002": {
+      "title": "KPI baseline and target (owner: Business)",
+      "srs_section": "26",
+      "kind": "assumption",
+      "must": false
+    },
+    "ASM-003": {
+      "title": "Discount/promotion thresholds the AI may use (owner: Business/Finance)",
+      "srs_section": "26",
+      "kind": "assumption",
+      "must": false
+    },
+    "ASM-004": {
+      "title": "Refund/compensation types requiring approval (owner: Finance/Operations)",
+      "srs_section": "26",
+      "kind": "assumption",
+      "must": false
+    },
+    "ASM-005": {
+      "title": "Customer 360 data allowed to be stored long term (owner: Data/Legal/Product)",
+      "srs_section": "26",
+      "kind": "assumption",
+      "must": false
+    }
+  },
+  "aliases": {
+    "SRS-02": {
+      "title": "Scope principles: do not rebuild the core transactional systems; the AI platform integrates and uses them",
+      "srs_section": "2",
+      "kind": "section-alias"
+    },
+    "SRS-08": {
+      "title": "Customer Care and Customer Success AI: omnichannel care, case management FSM and retention workflow",
+      "srs_section": "8",
+      "kind": "section-alias"
+    },
+    "SRS-09": {
+      "title": "Revenue Orchestrator: central coordination and the eleven-stage lifecycle SIGNAL..LEARNING",
+      "srs_section": "9",
+      "kind": "section-alias"
+    },
+    "SRS-10": {
+      "title": "Knowledge Base / Second Brain: the twenty-one required knowledge paths",
+      "srs_section": "10",
+      "kind": "section-alias"
+    },
+    "SRS-11": {
+      "title": "Skill System: skill contract fields including validation, retry, timeout, audit and test cases",
+      "srs_section": "11",
+      "kind": "section-alias"
+    },
+    "SRS-14": {
+      "title": "Core data model: the twenty-eight canonical entities",
+      "srs_section": "14",
+      "kind": "section-alias"
+    },
+    "SRS-16": {
+      "title": "AI memory separation: working memory, customer context, organisational knowledge, agent operational memory, learning memory",
+      "srs_section": "16",
+      "kind": "section-alias"
+    },
+    "SRS-17": {
+      "title": "Observability and audit: minimum Agent Run record fields",
+      "srs_section": "17",
+      "kind": "section-alias"
+    },
+    "SRS-20": {
+      "title": "KPI system: the thirty-two metrics across five groups",
+      "srs_section": "20",
+      "kind": "section-alias"
+    },
+    "SRS-23": {
+      "title": "Out of scope: ERP, POS, warehouse, accounting, web commerce core, payment core, delivery apps and master product system are not rebuilt",
+      "srs_section": "23",
+      "kind": "section-alias"
+    },
+    "SRS-24": {
+      "title": "Delivery gates P0..P5 with their exit criteria",
+      "srs_section": "24",
+      "kind": "section-alias"
+    },
+    "SRS-27": {
+      "title": "Definition of Done: real data, agent, skill, tool, policy, approval, execution, evidence, outcome and test",
+      "srs_section": "27",
+      "kind": "section-alias"
+    }
+  },
+  "facets": {
+    "skill": {
+      "description": "Agent skills. Token form: skill:<full skill id> e.g. skill:skill.mkt.analyze_market_signal.",
+      "srs_section": "11",
+      "mandatory": true,
+      "items": [
+        {
+          "token": "skill.mkt.analyze_market_signal",
+          "title": "skill.mkt.analyze_market_signal",
+          "requires": [
+            "MKT-01"
+          ],
+          "srs_section": "11"
+        },
+        {
+          "token": "skill.mkt.segment_audience",
+          "title": "skill.mkt.segment_audience",
+          "requires": [
+            "MKT-02"
+          ],
+          "srs_section": "11"
+        },
+        {
+          "token": "skill.mkt.check_consent",
+          "title": "skill.mkt.check_consent",
+          "requires": [
+            "MKT-02"
+          ],
+          "srs_section": "11"
+        },
+        {
+          "token": "skill.mkt.generate_content",
+          "title": "skill.mkt.generate_content",
+          "requires": [
+            "MKT-03"
+          ],
+          "srs_section": "11"
+        },
+        {
+          "token": "skill.mkt.audit_brand_compliance",
+          "title": "skill.mkt.audit_brand_compliance",
+          "requires": [
+            "MKT-04"
+          ],
+          "srs_section": "11"
+        },
+        {
+          "token": "skill.mkt.dispatch_campaign",
+          "title": "skill.mkt.dispatch_campaign",
+          "requires": [
+            "MKT-05"
+          ],
+          "srs_section": "11"
+        },
+        {
+          "token": "skill.mkt.evaluate_attribution",
+          "title": "skill.mkt.evaluate_attribution",
+          "requires": [
+            "MKT-06"
+          ],
+          "srs_section": "11"
+        },
+        {
+          "token": "skill.sales.search_product",
+          "title": "skill.sales.search_product",
+          "requires": [
+            "SAL-02"
+          ],
+          "srs_section": "11"
+        },
+        {
+          "token": "skill.sales.check_stock",
+          "title": "skill.sales.check_stock",
+          "requires": [
+            "SAL-02"
+          ],
+          "srs_section": "11"
+        },
+        {
+          "token": "skill.sales.check_price",
+          "title": "skill.sales.check_price",
+          "requires": [
+            "SAL-02"
+          ],
+          "srs_section": "11"
+        },
+        {
+          "token": "skill.sales.retrieve_customer",
+          "title": "skill.sales.retrieve_customer",
+          "requires": [
+            "SAL-01"
+          ],
+          "srs_section": "11"
+        },
+        {
+          "token": "skill.sales.recommend_product",
+          "title": "skill.sales.recommend_product",
+          "requires": [
+            "SAL-03"
+          ],
+          "srs_section": "11"
+        },
+        {
+          "token": "skill.sales.create_cart",
+          "title": "skill.sales.create_cart",
+          "requires": [
+            "SAL-02"
+          ],
+          "srs_section": "11"
+        },
+        {
+          "token": "skill.sales.create_order",
+          "title": "skill.sales.create_order",
+          "requires": [
+            "SAL-02"
+          ],
+          "srs_section": "11"
+        },
+        {
+          "token": "skill.sales.send_message",
+          "title": "skill.sales.send_message",
+          "requires": [
+            "SAL-02"
+          ],
+          "srs_section": "11"
+        },
+        {
+          "token": "skill.care.search_faq",
+          "title": "skill.care.search_faq",
+          "requires": [
+            "CS-01"
+          ],
+          "srs_section": "11"
+        },
+        {
+          "token": "skill.care.lookup_order",
+          "title": "skill.care.lookup_order",
+          "requires": [
+            "CS-01"
+          ],
+          "srs_section": "11"
+        },
+        {
+          "token": "skill.care.track_shipping",
+          "title": "skill.care.track_shipping",
+          "requires": [
+            "CS-01"
+          ],
+          "srs_section": "11"
+        },
+        {
+          "token": "skill.care.manage_case",
+          "title": "skill.care.manage_case",
+          "requires": [
+            "CS-01"
+          ],
+          "srs_section": "11"
+        },
+        {
+          "token": "skill.care.initiate_return",
+          "title": "skill.care.initiate_return",
+          "requires": [
+            "CS-01"
+          ],
+          "srs_section": "11"
+        },
+        {
+          "token": "skill.care.escalate_to_human",
+          "title": "skill.care.escalate_to_human",
+          "requires": [
+            "CS-01"
+          ],
+          "srs_section": "11"
+        },
+        {
+          "token": "skill.care.analyze_churn_risk",
+          "title": "skill.care.analyze_churn_risk",
+          "requires": [
+            "CS-02"
+          ],
+          "srs_section": "11"
+        },
+        {
+          "token": "skill.care.issue_retention_offer",
+          "title": "skill.care.issue_retention_offer",
+          "requires": [
+            "CS-02"
+          ],
+          "srs_section": "11"
+        }
+      ]
+    },
+    "kb": {
+      "description": "Knowledge base paths that must exist with content, version, provenance and a test query. Token form: kb:<absolute path>.",
+      "srs_section": "10",
+      "mandatory": true,
+      "items": [
+        {
+          "token": "/company/company.md",
+          "title": "/company/company.md",
+          "srs_section": "10"
+        },
+        {
+          "token": "/company/positioning.md",
+          "title": "/company/positioning.md",
+          "srs_section": "10"
+        },
+        {
+          "token": "/customer/customer.md",
+          "title": "/customer/customer.md",
+          "srs_section": "10"
+        },
+        {
+          "token": "/customer/segmentation.md",
+          "title": "/customer/segmentation.md",
+          "srs_section": "10"
+        },
+        {
+          "token": "/product/products.md",
+          "title": "/product/products.md",
+          "srs_section": "10"
+        },
+        {
+          "token": "/product/pricing.md",
+          "title": "/product/pricing.md",
+          "srs_section": "10"
+        },
+        {
+          "token": "/product/promotion-policy.md",
+          "title": "/product/promotion-policy.md",
+          "srs_section": "10"
+        },
+        {
+          "token": "/brand/voice.md",
+          "title": "/brand/voice.md",
+          "srs_section": "10"
+        },
+        {
+          "token": "/brand/terminology.md",
+          "title": "/brand/terminology.md",
+          "srs_section": "10"
+        },
+        {
+          "token": "/brand/prohibited-claims.md",
+          "title": "/brand/prohibited-claims.md",
+          "srs_section": "10"
+        },
+        {
+          "token": "/marketing/playbook.md",
+          "title": "/marketing/playbook.md",
+          "srs_section": "10"
+        },
+        {
+          "token": "/marketing/content-guidelines.md",
+          "title": "/marketing/content-guidelines.md",
+          "srs_section": "10"
+        },
+        {
+          "token": "/marketing/campaign-rules.md",
+          "title": "/marketing/campaign-rules.md",
+          "srs_section": "10"
+        },
+        {
+          "token": "/sales/sales-playbook.md",
+          "title": "/sales/sales-playbook.md",
+          "srs_section": "10"
+        },
+        {
+          "token": "/sales/qualification.md",
+          "title": "/sales/qualification.md",
+          "srs_section": "10"
+        },
+        {
+          "token": "/sales/objection-handling.md",
+          "title": "/sales/objection-handling.md",
+          "srs_section": "10"
+        },
+        {
+          "token": "/customer-care/faq.md",
+          "title": "/customer-care/faq.md",
+          "srs_section": "10"
+        },
+        {
+          "token": "/customer-care/support-policy.md",
+          "title": "/customer-care/support-policy.md",
+          "srs_section": "10"
+        },
+        {
+          "token": "/customer-care/escalation.md",
+          "title": "/customer-care/escalation.md",
+          "srs_section": "10"
+        },
+        {
+          "token": "/policy/authority.md",
+          "title": "/policy/authority.md",
+          "srs_section": "10"
+        },
+        {
+          "token": "/policy/approval.md",
+          "title": "/policy/approval.md",
+          "srs_section": "10"
+        }
+      ]
+    },
+    "entity": {
+      "description": "Canonical data model entities, exact SRS display names. Token form: entity:<display name>.",
+      "srs_section": "14",
+      "mandatory": true,
+      "items": [
+        {
+          "token": "Customer",
+          "title": "Customer",
+          "srs_section": "14"
+        },
+        {
+          "token": "Customer Identity",
+          "title": "Customer Identity",
+          "srs_section": "14"
+        },
+        {
+          "token": "Consent",
+          "title": "Consent",
+          "srs_section": "14"
+        },
+        {
+          "token": "Customer Event",
+          "title": "Customer Event",
+          "srs_section": "14"
+        },
+        {
+          "token": "Product",
+          "title": "Product",
+          "srs_section": "14"
+        },
+        {
+          "token": "SKU",
+          "title": "SKU",
+          "srs_section": "14"
+        },
+        {
+          "token": "Price",
+          "title": "Price",
+          "srs_section": "14"
+        },
+        {
+          "token": "Inventory",
+          "title": "Inventory",
+          "srs_section": "14"
+        },
+        {
+          "token": "Order",
+          "title": "Order",
+          "srs_section": "14"
+        },
+        {
+          "token": "Invoice",
+          "title": "Invoice",
+          "srs_section": "14"
+        },
+        {
+          "token": "Conversation",
+          "title": "Conversation",
+          "srs_section": "14"
+        },
+        {
+          "token": "Lead",
+          "title": "Lead",
+          "srs_section": "14"
+        },
+        {
+          "token": "Opportunity",
+          "title": "Opportunity",
+          "srs_section": "14"
+        },
+        {
+          "token": "Campaign",
+          "title": "Campaign",
+          "srs_section": "14"
+        },
+        {
+          "token": "Segment",
+          "title": "Segment",
+          "srs_section": "14"
+        },
+        {
+          "token": "Offer",
+          "title": "Offer",
+          "srs_section": "14"
+        },
+        {
+          "token": "Recommendation",
+          "title": "Recommendation",
+          "srs_section": "14"
+        },
+        {
+          "token": "Service Case",
+          "title": "Service Case",
+          "srs_section": "14"
+        },
+        {
+          "token": "Agent",
+          "title": "Agent",
+          "srs_section": "14"
+        },
+        {
+          "token": "Skill",
+          "title": "Skill",
+          "srs_section": "14"
+        },
+        {
+          "token": "Workflow",
+          "title": "Workflow",
+          "srs_section": "14"
+        },
+        {
+          "token": "Decision",
+          "title": "Decision",
+          "srs_section": "14"
+        },
+        {
+          "token": "Action",
+          "title": "Action",
+          "srs_section": "14"
+        },
+        {
+          "token": "Approval",
+          "title": "Approval",
+          "srs_section": "14"
+        },
+        {
+          "token": "Execution",
+          "title": "Execution",
+          "srs_section": "14"
+        },
+        {
+          "token": "Evidence",
+          "title": "Evidence",
+          "srs_section": "14"
+        },
+        {
+          "token": "Outcome",
+          "title": "Outcome",
+          "srs_section": "14"
+        },
+        {
+          "token": "Learning",
+          "title": "Learning",
+          "srs_section": "14"
+        }
+      ]
+    },
+    "memory": {
+      "description": "AI memory classes that must stay separated. Token form: memory:<exact name>.",
+      "srs_section": "16",
+      "mandatory": true,
+      "items": [
+        {
+          "token": "Working Memory",
+          "title": "Working Memory",
+          "srs_section": "16"
+        },
+        {
+          "token": "Customer Context",
+          "title": "Customer Context",
+          "srs_section": "16"
+        },
+        {
+          "token": "Organizational Knowledge",
+          "title": "Organizational Knowledge",
+          "srs_section": "16"
+        },
+        {
+          "token": "Agent Operational Memory",
+          "title": "Agent Operational Memory",
+          "srs_section": "16"
+        },
+        {
+          "token": "Learning Memory",
+          "title": "Learning Memory",
+          "srs_section": "16"
+        }
+      ]
+    },
+    "intent": {
+      "description": "Customer care intents the agent must recognise. Token form: intent:<intent>.",
+      "srs_section": "8",
+      "mandatory": true,
+      "items": [
+        {
+          "token": "product_info",
+          "title": "product_info",
+          "requires": [
+            "FR-CS-001"
+          ],
+          "srs_section": "8"
+        },
+        {
+          "token": "price",
+          "title": "price",
+          "requires": [
+            "FR-CS-001"
+          ],
+          "srs_section": "8"
+        },
+        {
+          "token": "stock",
+          "title": "stock",
+          "requires": [
+            "FR-CS-001"
+          ],
+          "srs_section": "8"
+        },
+        {
+          "token": "order_status",
+          "title": "order_status",
+          "requires": [
+            "FR-CS-001"
+          ],
+          "srs_section": "8"
+        },
+        {
+          "token": "shipping",
+          "title": "shipping",
+          "requires": [
+            "FR-CS-001"
+          ],
+          "srs_section": "8"
+        },
+        {
+          "token": "return_refund",
+          "title": "return_refund",
+          "requires": [
+            "FR-CS-001"
+          ],
+          "srs_section": "8"
+        },
+        {
+          "token": "payment",
+          "title": "payment",
+          "requires": [
+            "FR-CS-001"
+          ],
+          "srs_section": "8"
+        },
+        {
+          "token": "complaint",
+          "title": "complaint",
+          "requires": [
+            "FR-CS-001"
+          ],
+          "srs_section": "8"
+        },
+        {
+          "token": "usage",
+          "title": "usage",
+          "requires": [
+            "FR-CS-001"
+          ],
+          "srs_section": "8"
+        },
+        {
+          "token": "human_escalation",
+          "title": "human_escalation",
+          "requires": [
+            "FR-CS-001"
+          ],
+          "srs_section": "8"
+        }
+      ]
+    },
+    "event": {
+      "description": "Canonical Web/App events accepted by API-002. Token form: event:<event>.",
+      "srs_section": "15",
+      "mandatory": true,
+      "items": [
+        {
+          "token": "session",
+          "title": "session",
+          "requires": [
+            "API-002"
+          ],
+          "srs_section": "15"
+        },
+        {
+          "token": "product_view",
+          "title": "product_view",
+          "requires": [
+            "API-002"
+          ],
+          "srs_section": "15"
+        },
+        {
+          "token": "search",
+          "title": "search",
+          "requires": [
+            "API-002"
+          ],
+          "srs_section": "15"
+        },
+        {
+          "token": "click",
+          "title": "click",
+          "requires": [
+            "API-002"
+          ],
+          "srs_section": "15"
+        },
+        {
+          "token": "add_to_cart",
+          "title": "add_to_cart",
+          "requires": [
+            "API-002"
+          ],
+          "srs_section": "15"
+        },
+        {
+          "token": "checkout",
+          "title": "checkout",
+          "requires": [
+            "API-002"
+          ],
+          "srs_section": "15"
+        },
+        {
+          "token": "purchase",
+          "title": "purchase",
+          "requires": [
+            "API-002"
+          ],
+          "srs_section": "15"
+        }
+      ]
+    },
+    "channel": {
+      "description": "Communication channels of the connector architecture. Token form: channel:<CHANNEL>.",
+      "srs_section": "15",
+      "mandatory": true,
+      "items": [
+        {
+          "token": "FACEBOOK",
+          "title": "FACEBOOK",
+          "requires": [
+            "API-003"
+          ],
+          "srs_section": "15"
+        },
+        {
+          "token": "TIKTOK",
+          "title": "TIKTOK",
+          "requires": [
+            "API-003"
+          ],
+          "srs_section": "15"
+        },
+        {
+          "token": "ZALO",
+          "title": "ZALO",
+          "requires": [
+            "API-003"
+          ],
+          "srs_section": "15"
+        },
+        {
+          "token": "EMAIL",
+          "title": "EMAIL",
+          "requires": [
+            "API-003"
+          ],
+          "srs_section": "15"
+        },
+        {
+          "token": "SMS",
+          "title": "SMS",
+          "requires": [
+            "API-003"
+          ],
+          "srs_section": "15"
+        },
+        {
+          "token": "WEB_APP_CHAT",
+          "title": "WEB_APP_CHAT",
+          "requires": [
+            "API-003"
+          ],
+          "srs_section": "15"
+        }
+      ]
+    },
+    "stage": {
+      "description": "The eleven orchestration lifecycle stages. Token form: stage:<STAGE>.",
+      "srs_section": "9",
+      "mandatory": true,
+      "items": [
+        {
+          "token": "SIGNAL",
+          "title": "SIGNAL",
+          "requires": [
+            "FR-ORC-002",
+            "SRS-09"
+          ],
+          "srs_section": "9"
+        },
+        {
+          "token": "CONTEXT",
+          "title": "CONTEXT",
+          "requires": [
+            "FR-ORC-002",
+            "SRS-09"
+          ],
+          "srs_section": "9"
+        },
+        {
+          "token": "HYPOTHESIS",
+          "title": "HYPOTHESIS",
+          "requires": [
+            "FR-ORC-002",
+            "SRS-09"
+          ],
+          "srs_section": "9"
+        },
+        {
+          "token": "DECISION",
+          "title": "DECISION",
+          "requires": [
+            "FR-ORC-002",
+            "SRS-09"
+          ],
+          "srs_section": "9"
+        },
+        {
+          "token": "PLAN",
+          "title": "PLAN",
+          "requires": [
+            "FR-ORC-002",
+            "SRS-09"
+          ],
+          "srs_section": "9"
+        },
+        {
+          "token": "ACTION",
+          "title": "ACTION",
+          "requires": [
+            "FR-ORC-002",
+            "SRS-09"
+          ],
+          "srs_section": "9"
+        },
+        {
+          "token": "APPROVAL",
+          "title": "APPROVAL",
+          "requires": [
+            "FR-ORC-002",
+            "SRS-09"
+          ],
+          "srs_section": "9"
+        },
+        {
+          "token": "EXECUTION",
+          "title": "EXECUTION",
+          "requires": [
+            "FR-ORC-002",
+            "SRS-09"
+          ],
+          "srs_section": "9"
+        },
+        {
+          "token": "EVIDENCE",
+          "title": "EVIDENCE",
+          "requires": [
+            "FR-ORC-002",
+            "SRS-09"
+          ],
+          "srs_section": "9"
+        },
+        {
+          "token": "OUTCOME",
+          "title": "OUTCOME",
+          "requires": [
+            "FR-ORC-002",
+            "SRS-09"
+          ],
+          "srs_section": "9"
+        },
+        {
+          "token": "LEARNING",
+          "title": "LEARNING",
+          "requires": [
+            "FR-ORC-002",
+            "SRS-09"
+          ],
+          "srs_section": "9"
+        }
+      ]
+    },
+    "kpi": {
+      "description": "KPI metrics of SRS section 20, exact English names. Token form: kpi:<metric name>.",
+      "srs_section": "20",
+      "mandatory": true,
+      "items": [
+        {
+          "token": "Campaign Revenue",
+          "title": "Campaign Revenue",
+          "group": "Marketing",
+          "srs_section": "20"
+        },
+        {
+          "token": "Lead Conversion",
+          "title": "Lead Conversion",
+          "group": "Marketing",
+          "srs_section": "20"
+        },
+        {
+          "token": "CAC",
+          "title": "CAC",
+          "group": "Marketing",
+          "srs_section": "20"
+        },
+        {
+          "token": "ROAS",
+          "title": "ROAS",
+          "group": "Marketing",
+          "srs_section": "20"
+        },
+        {
+          "token": "Cost per Lead",
+          "title": "Cost per Lead",
+          "group": "Marketing",
+          "srs_section": "20"
+        },
+        {
+          "token": "Engagement",
+          "title": "Engagement",
+          "group": "Marketing",
+          "srs_section": "20"
+        },
+        {
+          "token": "Qualified Lead Rate",
+          "title": "Qualified Lead Rate",
+          "group": "Marketing",
+          "srs_section": "20"
+        },
+        {
+          "token": "Lead-to-Order Conversion",
+          "title": "Lead-to-Order Conversion",
+          "group": "Sales",
+          "srs_section": "20"
+        },
+        {
+          "token": "Cart Recovery Rate",
+          "title": "Cart Recovery Rate",
+          "group": "Sales",
+          "srs_section": "20"
+        },
+        {
+          "token": "Recommendation Conversion",
+          "title": "Recommendation Conversion",
+          "group": "Sales",
+          "srs_section": "20"
+        },
+        {
+          "token": "Upsell Revenue",
+          "title": "Upsell Revenue",
+          "group": "Sales",
+          "srs_section": "20"
+        },
+        {
+          "token": "Cross-sell Revenue",
+          "title": "Cross-sell Revenue",
+          "group": "Sales",
+          "srs_section": "20"
+        },
+        {
+          "token": "Average Order Value",
+          "title": "Average Order Value",
+          "group": "Sales",
+          "srs_section": "20"
+        },
+        {
+          "token": "Sales Cycle",
+          "title": "Sales Cycle",
+          "group": "Sales",
+          "srs_section": "20"
+        },
+        {
+          "token": "First Response Time",
+          "title": "First Response Time",
+          "group": "Customer Care",
+          "srs_section": "20"
+        },
+        {
+          "token": "Resolution Time",
+          "title": "Resolution Time",
+          "group": "Customer Care",
+          "srs_section": "20"
+        },
+        {
+          "token": "AI Resolution Rate",
+          "title": "AI Resolution Rate",
+          "group": "Customer Care",
+          "srs_section": "20"
+        },
+        {
+          "token": "Escalation Rate",
+          "title": "Escalation Rate",
+          "group": "Customer Care",
+          "srs_section": "20"
+        },
+        {
+          "token": "Reopen Rate",
+          "title": "Reopen Rate",
+          "group": "Customer Care",
+          "srs_section": "20"
+        },
+        {
+          "token": "Customer Satisfaction",
+          "title": "Customer Satisfaction",
+          "group": "Customer Care",
+          "srs_section": "20"
+        },
+        {
+          "token": "Repeat Purchase",
+          "title": "Repeat Purchase",
+          "group": "Customer Success",
+          "srs_section": "20"
+        },
+        {
+          "token": "Retention",
+          "title": "Retention",
+          "group": "Customer Success",
+          "srs_section": "20"
+        },
+        {
+          "token": "Reactivation",
+          "title": "Reactivation",
+          "group": "Customer Success",
+          "srs_section": "20"
+        },
+        {
+          "token": "Churn",
+          "title": "Churn",
+          "group": "Customer Success",
+          "srs_section": "20"
+        },
+        {
+          "token": "Customer Lifetime Value",
+          "title": "Customer Lifetime Value",
+          "group": "Customer Success",
+          "srs_section": "20"
+        },
+        {
+          "token": "Autonomous Completion Rate",
+          "title": "Autonomous Completion Rate",
+          "group": "AI System",
+          "srs_section": "20"
+        },
+        {
+          "token": "Human Override Rate",
+          "title": "Human Override Rate",
+          "group": "AI System",
+          "srs_section": "20"
+        },
+        {
+          "token": "Policy Violation Rate",
+          "title": "Policy Violation Rate",
+          "group": "AI System",
+          "srs_section": "20"
+        },
+        {
+          "token": "Hallucination/Error Rate",
+          "title": "Hallucination/Error Rate",
+          "group": "AI System",
+          "srs_section": "20"
+        },
+        {
+          "token": "Cost per Successful Outcome",
+          "title": "Cost per Successful Outcome",
+          "group": "AI System",
+          "srs_section": "20"
+        },
+        {
+          "token": "Failed Execution",
+          "title": "Failed Execution",
+          "group": "AI System",
+          "srs_section": "20"
+        },
+        {
+          "token": "Duplicate Execution",
+          "title": "Duplicate Execution",
+          "group": "AI System",
+          "srs_section": "20"
+        }
+      ]
+    }
+  },
+  "derivation": {
+    "named_ids": "SRS section 1 (OBJ), 5 (FR-C360), 6 (MKT), 7 (SAL, FR-SAL), 8 (CS, FR-CS), 9 (FR-ORC), 12 (AUTH), 13 (BR), 15 (API), 18 (SCR), 19 (NFR), 21 (PILOT), 22 (TC-E2E), 26 (ASM).",
+    "section_aliases": "SRS sections 2, 8, 9, 10, 11, 14, 16, 17, 20, 23, 24, 27.",
+    "facets": "skill 23 (section 11 model, named per MKT/SAL/CS agent duties), kb 21 (section 10 tree), entity 28 (section 14 list), memory 5 (section 16), intent 10 (FR-CS-001), event 7 (API-002), channel 6 (API-003), stage 11 (section 9 lifecycle), kpi 32 (section 20, five groups).",
+    "limitation": "Policy numbers, thresholds, connector lists, retention windows and KPI targets are NOT in the SRS; cases use synthetic test configuration only (ASM-001..005 remain unconfirmed and fail closed)."
+  }
+}

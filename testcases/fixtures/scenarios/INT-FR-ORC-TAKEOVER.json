@@ -1,0 +1,83 @@
+{
+  "id": "INT-FR-ORC-TAKEOVER",
+  "title": "Human takeover stops the run immediately and no late dispatch escapes",
+  "document": "integration/sales-care-orchestrator.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P1",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "NFR-007",
+    "SCR-005",
+    "TC-E2E-001"
+  ],
+  "facets": [
+    "stage:ACTION",
+    "entity:Conversation",
+    "kpi:Human Override Rate"
+  ],
+  "risk": "An agent keeps messaging a customer after a human operator takes over, so the customer receives conflicting answers from a bot and a person.",
+  "preconditions": [
+    "Three-step plan for sess-a-1 in run orc-takeover-* where step 1 already completed",
+    "Operator takeover event delivered between step 1 and step 2 at 2026-01-15T10:05:00Z"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "run_id": "run-orc-takeover-1",
+    "session_id": "sess-a-1",
+    "plan_steps": 3,
+    "takeover_at": "2026-01-15T10:05:00Z"
+  },
+  "steps": [
+    {
+      "action": "Deliver the takeover event and then let the worker attempt step 2",
+      "expected": "step 2 is never dispatched, the task reaches the stopped state and the takeover lock is present for the session"
+    },
+    {
+      "action": "Attempt a third dispatch through the messaging adapter with the same run",
+      "expected": "the dispatch is refused because the takeover check is re-evaluated before every step and retry"
+    },
+    {
+      "action": "Return the conversation to the agent with a resume event",
+      "expected": "the takeover lock is released, the conversation returns to auto routing and the stopped run stays terminal"
+    },
+    {
+      "action": "Send a new inbound signal for the session",
+      "expected": "a fresh run starts with its own run id and does not resume the stopped run"
+    }
+  ],
+  "assertions": [
+    "Exactly one step (step 1) was dispatched before the takeover; steps 2 and 3 produced zero dispatches",
+    "The takeover lock exists while the operator holds the session and is gone after the resume event",
+    "The post-takeover signal produces a new run id distinct from the stopped one"
+  ],
+  "forbidden": [
+    "Dispatch any message while the takeover lock is held",
+    "Resurrect the stopped run after the operator returns the conversation to the agent"
+  ],
+  "evidence": [
+    "Per-step dispatch log for the run with the takeover timestamp marked",
+    "Takeover lock presence before and after resume plus the new run id record"
+  ],
+  "cleanup": [
+    "Release the takeover lock and delete the run-scoped rows for orc-takeover-*; keep audit entries"
+  ],
+  "automation": "Drive the real session-control and step engine with a recording messaging adapter; the oracle is the per-step dispatch log around the takeover timestamp, not a lock-configuration read.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/04-core-engine-and-orchestrator.md",
+    "implement/07-human-command-center-ui.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/platform.json",
+    "fixtures/offline/events.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

@@ -1,0 +1,101 @@
+{
+  "id": "INT-SCR-005-LEASE-EXPIRY",
+  "title": "SCR-005 crashed operator tab: the 60 second lease expires and the agent recovers",
+  "document": "integration/command-center.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P1",
+  "basis": "extension",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SCR-005",
+    "NFR-007",
+    "NFR-004"
+  ],
+  "facets": [
+    "entity:Conversation",
+    "stage:EXECUTION"
+  ],
+  "risk": "An operator closes their laptop mid-conversation and the customer is locked out permanently, or the lease expires while the operator is still typing and the bot interrupts them.",
+  "preconditions": [
+    "Namespace gov-scr-<case_id>-<worker_id>; the operator UI runs against the offline gateway and mock SSE/telemetry streams.",
+    "Operator session bound to tenant T1 and an explicit operator_id from fixtures/offline/governance.json; frozen clock 2026-01-15T10:00:00Z.",
+    "Lease TTL 60 s and heartbeat interval 30 s from the fixture; the clock is injected so expiry is deterministic."
+  ],
+  "inputs": {
+    "phases": [
+      {
+        "t": 0,
+        "action": "takeover"
+      },
+      {
+        "t": 30,
+        "action": "heartbeat"
+      },
+      {
+        "t": 60,
+        "action": "no heartbeat (tab crashed)"
+      },
+      {
+        "t": 125,
+        "action": "expect lease gone"
+      },
+      {
+        "t": 200,
+        "action": "operator returns and attempts takeover again"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Take over and heartbeat once at t=30",
+      "expected": "The lease expiry advances past t=60 and the conversation stays HUMAN_TAKEOVER."
+    },
+    {
+      "action": "Stop heartbeating and advance the injected clock past the TTL",
+      "expected": "At t=125 the lease key is absent, the conversation returns to ACTIVE and agent tasks are permitted again."
+    },
+    {
+      "action": "Attempt an operator message at t=130 with no valid lease",
+      "expected": "The message is refused because the operator no longer holds the lease, and the refusal is recorded."
+    },
+    {
+      "action": "Take over again at t=200",
+      "expected": "Takeover succeeds with a fresh lease, proving recovery rather than permanent lockout."
+    }
+  ],
+  "assertions": [
+    "The lease always carries a bounded TTL; there is no unbounded takeover.",
+    "After TTL expiry with no heartbeat the conversation returns to agent control without manual intervention.",
+    "A stale operator cannot send after losing the lease.",
+    "Death of the operator tab does not require an administrative unlock to restore service."
+  ],
+  "forbidden": [
+    "An unbounded lease that permanently locks the customer conversation.",
+    "Expiry that silently changes the operator identity or drops the conversation state.",
+    "Allowing the stale operator to keep sending because the client still holds local state."
+  ],
+  "evidence": [
+    "Lease key lifecycle log with expiry timestamps under the injected clock.",
+    "Conversation status at each phase.",
+    "Refusal record for the stale operator send."
+  ],
+  "cleanup": [
+    "Ensure no lease remains for the namespace and delete gov- conversation rows."
+  ],
+  "automation": "Command Center React components and the gateway routes run as real code under test; ERP, channel and telemetry providers are replaced by the offline mock sinks whose call logs are the oracle. UI assertions use accessible roles and names rather than CSS classes, and stream waits are condition-based. Clock advancement is injected; the case never sleeps 125 real seconds.",
+  "prerequisites": [],
+  "references": [
+    "implement/07-human-command-center-ui.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

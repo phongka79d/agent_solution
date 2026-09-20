@@ -1,0 +1,98 @@
+{
+  "id": "INT-SCR-001",
+  "title": "SCR-001 Executive Dashboard: all ten baseline indicators with honest no-data semantics",
+  "document": "integration/command-center.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SCR-001",
+    "SRS-17",
+    "NFR-002",
+    "OBJ-001"
+  ],
+  "facets": [
+    "stage:OUTCOME"
+  ],
+  "risk": "An executive reads a dashboard that silently zero-fills a metric whose source is missing, concluding revenue collapsed or that a channel performs when it is simply unmeasured.",
+  "preconditions": [
+    "Namespace gov-scr-<case_id>-<worker_id>; the operator UI runs against the offline gateway and mock SSE/telemetry streams.",
+    "Operator session bound to tenant T1 and an explicit operator_id from fixtures/offline/governance.json; frozen clock 2026-01-15T10:00:00Z.",
+    "Telemetry sink seeded with T1 revenue and AI-action aggregates; the CAC source is deliberately absent."
+  ],
+  "inputs": {
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/telemetry/executive",
+      "tenant": "T1"
+    },
+    "seeded": {
+      "revenue_twd": 250000,
+      "leads": 120,
+      "conversion_rate": 0.083,
+      "active_campaigns": 4,
+      "ai_generated_revenue_twd": 62000,
+      "cs_status": "NORMAL",
+      "retention": 0.71,
+      "ai_actions": 1840,
+      "approval_pending": 3,
+      "abnormal_events": 1
+    },
+    "missing_source": "CAC"
+  },
+  "steps": [
+    {
+      "action": "Fetch the executive payload as an authenticated T1 operator",
+      "expected": "Payload contains exactly the ten baseline indicators, each with its own value and a source/freshness marker."
+    },
+    {
+      "action": "Compare the returned values with the seeded aggregates",
+      "expected": "The nine sourced indicators match the seeded values exactly (revenue 250000, leads 120, ai_actions 1840, approval_pending 3)."
+    },
+    {
+      "action": "Inspect the CAC indicator whose source feed was not seeded",
+      "expected": "CAC is reported as NO_DATA with the missing source named; it is not 0 and not a computed guess."
+    },
+    {
+      "action": "Render the dashboard and re-read the indicators from the DOM",
+      "expected": "Ten indicator labels are visible with an explicit no-data affordance on CAC."
+    }
+  ],
+  "assertions": [
+    "Exactly ten baseline indicators are present: Revenue, Leads, Conversion, Active Campaigns, AI Generated Revenue, CS status, Retention, AI Actions, Approval Pending, Abnormal Events.",
+    "A metric with no source returns NO_DATA, never 0 and never a stale value without a timestamp.",
+    "Each indicator carries a source and an observed-at timestamp so staleness is detectable by the reader.",
+    "Seeded values round-trip exactly; no display rounding changes the stored aggregate."
+  ],
+  "forbidden": [
+    "Zero-filling an unavailable metric.",
+    "Omitting the absent metric entirely so the dashboard looks complete.",
+    "Blaming the missing metric on the upstream provider without surfacing the state."
+  ],
+  "evidence": [
+    "Raw executive payload JSON with the NO_DATA marker.",
+    "Dashboard screenshot plus the accessibility tree snapshot listing the ten labels.",
+    "Telemetry sink log showing which sources were queried."
+  ],
+  "cleanup": [
+    "Clear the gov- telemetry namespace keys; the mock sink data is restored to its fixture state."
+  ],
+  "automation": "Command Center React components and the gateway routes run as real code under test; ERP, channel and telemetry providers are replaced by the offline mock sinks whose call logs are the oracle. UI assertions use accessible roles and names rather than CSS classes, and stream waits are condition-based.",
+  "prerequisites": [],
+  "references": [
+    "implement/07-human-command-center-ui.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/orders.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

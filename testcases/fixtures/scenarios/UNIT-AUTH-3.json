@@ -1,0 +1,108 @@
+{
+  "id": "UNIT-AUTH-3",
+  "title": "AUTH-3 Bounded Execute: in-cap action permitted, over-cap action routes to approval",
+  "document": "unit/authority.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "AUTH-3",
+    "BR-007",
+    "BR-008",
+    "NFR-008",
+    "ASM-003"
+  ],
+  "facets": [
+    "entity:Agent",
+    "stage:ACTION",
+    "stage:APPROVAL"
+  ],
+  "risk": "An agent executes an action above the tenant autonomy limit without human approval, or a within-limit action is wrongly blocked, breaking throughput or governance.",
+  "preconditions": [
+    "Namespace gov-unit-auth-<case_id>-<worker_id>; no shared mutable state with other cases.",
+    "PolicyEnforcementPoint loaded with fixtures/offline/governance.json skill_authority_registry and agents[]; clock frozen at 2026-01-15T10:00:00Z.",
+    "Synthetic test lock T1_SYNTHETIC_TEST_LOCK loaded (reminder cap 2, discount cap 0.15) purely to exercise boundary arithmetic; it is NOT an owner approval."
+  ],
+  "inputs": {
+    "agent_id": "CS-01",
+    "assigned_authority": "AUTH-3",
+    "in_cap": {
+      "skill": "skill.sales.send_message",
+      "payload": {
+        "purpose": "transactional",
+        "reminder_count": 2,
+        "customer_id": "cust-a"
+      }
+    },
+    "over_cap": {
+      "skill": "skill.sales.send_message",
+      "payload": {
+        "purpose": "marketing",
+        "reminder_count": 3,
+        "customer_id": "cust-a"
+      }
+    },
+    "unknown_limit": {
+      "skill": "skill.mkt.dispatch_campaign",
+      "payload": {
+        "audience_size": 12000
+      }
+    }
+  },
+  "steps": [
+    {
+      "action": "Submit the in-cap action (reminder_count 2 equals the synthetic cap)",
+      "expected": "authorized=true with decisionCode PERMIT and the message is dispatched once."
+    },
+    {
+      "action": "Submit the over-cap action (reminder_count 3)",
+      "expected": "authorized=false with decisionCode LIMIT_EXCEEDED; no additional dispatch occurs."
+    },
+    {
+      "action": "Submit the action whose governing limit is undefined (T1_UNLOCKED audience size)",
+      "expected": "decisionCode REQUIRE_HUMAN_APPROVAL and an approval ticket id is returned; nothing is dispatched."
+    },
+    {
+      "action": "Read the audit rows for all three proposals",
+      "expected": "Three rows with authority AUTH-3, statuses success / denied / denied, and the routed one carries an approval ticket reference."
+    }
+  ],
+  "assertions": [
+    "The boundary is inclusive: reminder_count 2 permits, reminder_count 3 does not.",
+    "An undefined policy limit never means unlimited: the action is routed to approval rather than executed.",
+    "Adapter dispatch counter is exactly 1 across all three actions.",
+    "LIMIT_EXCEEDED and REQUIRE_HUMAN_APPROVAL are distinct decision codes on the two blocked actions."
+  ],
+  "forbidden": [
+    "Treating an unset limit as unlimited and executing the broadcast.",
+    "Silently dropping the over-cap message instead of returning a typed decision and routing it.",
+    "Reusing the within-cap action result as the over-cap result (mock echo)."
+  ],
+  "evidence": [
+    "PEP decision JSON for the three proposals including decisionCode and approvalTicketId.",
+    "Adapter dispatch counter and audit rows for the run.",
+    "Approval queue snapshot showing exactly one new AWAITING_HUMAN item."
+  ],
+  "cleanup": [
+    "Cancel the created approval ticket through the sandbox approval API; delete the gov- message rows."
+  ],
+  "automation": "Real PEP boundary check with a tenant policy source; the message adapter is a substituted boundary exposing a counter. Synthetic lock is supplied through the policy source, never hardcoded in the rule engine.",
+  "prerequisites": [
+    "Owner-approved autonomy limits do not exist; this case runs only against the labelled synthetic test lock and must not be reported as policy acceptance."
+  ],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/08-security-governance-nfr.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

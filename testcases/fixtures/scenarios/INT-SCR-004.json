@@ -1,0 +1,91 @@
+{
+  "id": "INT-SCR-004",
+  "title": "SCR-004 Customer 360: unified timeline with evidence-class separation",
+  "document": "integration/command-center.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SCR-004",
+    "FR-C360-002",
+    "FR-C360-003",
+    "NFR-006"
+  ],
+  "facets": [
+    "entity:Customer",
+    "entity:Evidence",
+    "memory:Customer Context",
+    "stage:EVIDENCE"
+  ],
+  "risk": "The timeline collapses facts, signals, hypotheses, decisions and actions into one undifferentiated feed, so an operator treats a churn hypothesis as an established fact about the customer.",
+  "preconditions": [
+    "Namespace gov-scr-<case_id>-<worker_id>; the operator UI runs against the offline gateway and mock SSE/telemetry streams.",
+    "Operator session bound to tenant T1 and an explicit operator_id from fixtures/offline/governance.json; frozen clock 2026-01-15T10:00:00Z.",
+    "cust-a timeline seeded with one entry of each class and a hypothesis whose confidence is 0.68."
+  ],
+  "inputs": {
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/customers/cust-a/360",
+      "tenant": "T1"
+    },
+    "seeded_classes": [
+      "FACT",
+      "SIGNAL",
+      "HYPOTHESIS",
+      "DECISION",
+      "ACTION"
+    ]
+  },
+  "steps": [
+    {
+      "action": "Fetch the Customer 360 payload for cust-a",
+      "expected": "Timeline entries are ordered by event time and each carries exactly one evidence class from the five baseline classes."
+    },
+    {
+      "action": "Inspect the hypothesis entry",
+      "expected": "It is labelled HYPOTHESIS with a confidence value and its supporting evidence references; it is never rendered as FACT."
+    },
+    {
+      "action": "Follow the evidence references on one ACTION entry",
+      "expected": "The referenced receipts resolve to the same run and effect_key that produced the action."
+    }
+  ],
+  "assertions": [
+    "All five classes are represented and mutually exclusive per entry.",
+    "A hypothesis retains its class and confidence after a page refresh and is not upgraded to fact by the UI.",
+    "Every action entry links to at least one evidence reference that resolves to a real record.",
+    "Timeline ordering is by business event time, not by ingestion time."
+  ],
+  "forbidden": [
+    "Flattening the timeline into FACT and HYPOTHESIS only.",
+    "Rendering a hypothesis with fact wording.",
+    "Showing an action without its evidence reference."
+  ],
+  "evidence": [
+    "Customer 360 payload with classes and evidence references.",
+    "Screenshot plus accessibility tree of the timeline.",
+    "Resolved evidence record for one action entry."
+  ],
+  "cleanup": [
+    "Remove the gov- timeline and evidence rows for cust-a."
+  ],
+  "automation": "Command Center React components and the gateway routes run as real code under test; ERP, channel and telemetry providers are replaced by the offline mock sinks whose call logs are the oracle. UI assertions use accessible roles and names rather than CSS classes, and stream waits are condition-based.",
+  "prerequisites": [],
+  "references": [
+    "implement/07-human-command-center-ui.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/events.json",
+    "fixtures/offline/customers.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

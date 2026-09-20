@@ -1,0 +1,100 @@
+{
+  "id": "GOV-KPI-FAILED-EXECUTION-UNKNOWN",
+  "title": "Failed Execution excludes unknown outcomes and never counts a blind resend as a duplicate",
+  "document": "governance/kpi.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SRS-20",
+    "NFR-008",
+    "BR-006",
+    "TC-E2E-008"
+  ],
+  "facets": [
+    "kpi:Failed Execution",
+    "kpi:Duplicate Execution",
+    "kpi:Autonomous Completion Rate"
+  ],
+  "risk": "An unknown outcome after a dropped response is filed as a failure, or a blind resend is hidden as a vendor artifact, so the failure rate and the zero-duplicate invariant are both wrong at the same time.",
+  "preconditions": [
+    "Namespace gov-kpi-<case_id>-<worker_id>; the metric is computed by the real reporting code over fixtures/offline/governance.json kpi_dataset and never copied from the dashboard payload.",
+    "Frozen clock 2026-01-15T10:00:00Z with the reporting window 2026-01-01T00:00:00Z .. 2026-02-01T00:00:00Z as a half-open interval; the stored aggregate is recomputed independently from the raw counter rows.",
+    "The dataset separates failed executions, unknown outcomes and duplicate executions into three counters that must not be merged.",
+    "A variant injects one unknown outcome and one blind resend whose effect already occurred, so the case can prove the buckets stay distinct."
+  ],
+  "inputs": {
+    "counters": {
+      "executions_total": 1000,
+      "executions_failed": 3,
+      "policy_violations": 0,
+      "duplicate_executions": 0
+    },
+    "expected": {
+      "failed_execution_rate": "0.3%",
+      "unknown_outcome_bucket": "separate counter, excluded from both failure and success",
+      "duplicate_counter_after_blind_resend": 0
+    },
+    "injected_variant": {
+      "unknown_outcomes": 1,
+      "blind_resends": 1,
+      "second_effect_created": false,
+      "expected": "UNKNOWN_BUCKET_INCREMENTED_ONCE"
+    }
+  },
+  "steps": [
+    {
+      "action": "Compute Failed Execution over the dataset",
+      "expected": "The rate is 0.3% from three failed executions out of one thousand, and unknown outcomes are reported in their own counter rather than inside the failure numerator."
+    },
+    {
+      "action": "Inject the unknown outcome and the blind resend",
+      "expected": "The unknown counter increments once, the failure numerator is unchanged, and the blind resend resolves through reconciliation without creating a second external effect."
+    },
+    {
+      "action": "Read the duplicate-execution invariant after the blind resend",
+      "expected": "The invariant stays exactly 0 because no second effect occurred, and the extra attempt is visible as an attempt rather than as a duplicate."
+    },
+    {
+      "action": "Attempt to publish the failure threshold as an approved limit",
+      "expected": "The publication is refused: the threshold remains a proposed design target awaiting the ASM-002 baseline, while the zero-duplicate invariant continues to apply immediately."
+    }
+  ],
+  "assertions": [
+    "Failed Execution counts failed or errored executions only; unknown outcomes live in their own bucket and are excluded from both the failure and the success numerators.",
+    "The duplicate-execution invariant is unaffected by a retry that produced no second effect, and by a blind resend that was reconciled before dispatch.",
+    "A retry that later succeeds does not retroactively remove the earlier failure record.",
+    "The failure threshold is labelled as an unapproved design target, while the zero-duplicate invariant is applied immediately without waiting for a baseline."
+  ],
+  "forbidden": [
+    "Counting an unknown outcome as a failure to make the failure rate look conservative.",
+    "Hiding a blind resend so a second effect is never investigated.",
+    "Removing an earlier failure record after a successful retry."
+  ],
+  "evidence": [
+    "Execution ledger with the three counters and the retry links.",
+    "Unknown-outcome and reconciliation records for the injected variant.",
+    "Invariant evaluation rows before and after the blind resend."
+  ],
+  "cleanup": [
+    "Delete gov- execution, unknown-outcome and evaluation rows after export."
+  ],
+  "automation": "The reporting service and the metric dictionary run as real code under test over the frozen KPI dataset; the dashboard is a consumer whose displayed value must equal the independently recomputed value. Waits are condition-based on the stored aggregate row, metric values are never supplied as inputs, and no vendor boundary is involved in the arithmetic.",
+  "prerequisites": [],
+  "references": [
+    "plans/delivery/analytics.md",
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

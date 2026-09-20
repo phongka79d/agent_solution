@@ -1,0 +1,103 @@
+{
+  "id": "INT-API-IDEMP",
+  "title": "An identical replay returns the stored response while a changed payload on the same key returns 409 with one effect",
+  "document": "integration/api-connectors.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "API-003",
+    "BR-005"
+  ],
+  "facets": [
+    "stage:ACTION",
+    "entity:Execution"
+  ],
+  "risk": "A retried request duplicates an order or a message, or a mismatched payload is silently accepted as the original so the customer receives an action other than the one confirmed.",
+  "preconditions": [
+    "Tenant T1 connector with the idempotency store enabled in namespace run-t1-api-idem",
+    "The connector endpoint is a test sink counting physical effects per idempotency key"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "idempotency_key": "idem-a-1",
+    "first_request": {
+      "action": "create_order",
+      "payload": {
+        "order_number": "ORD-A-1",
+        "sku_id": "SKU-OK",
+        "quantity": 1
+      }
+    },
+    "identical_replay": {
+      "action": "create_order",
+      "payload": {
+        "order_number": "ORD-A-1",
+        "sku_id": "SKU-OK",
+        "quantity": 1
+      }
+    },
+    "conflicting_replay": {
+      "action": "create_order",
+      "payload": {
+        "order_number": "ORD-A-1",
+        "sku_id": "SKU-OK",
+        "quantity": 2
+      }
+    },
+    "fresh_key": "idem-a-2"
+  },
+  "steps": [
+    {
+      "action": "Submit the first request with idempotency key idem-a-1",
+      "expected": "one effect is applied and the response carries the created resource reference and the key"
+    },
+    {
+      "action": "Replay the byte-identical request with the same key",
+      "expected": "the stored response is returned unchanged and the effect count stays one"
+    },
+    {
+      "action": "Replay with the same key but a payload that differs in quantity",
+      "expected": "the request is rejected with HTTP 409 and the payload hash mismatch, and the effect count stays one"
+    },
+    {
+      "action": "Submit the same payload under the fresh key idem-a-2",
+      "expected": "a second effect is applied and both effects are independently attributable to their keys"
+    }
+  ],
+  "assertions": [
+    "The provider test-sink effect count for idem-a-1 is exactly one after the identical replay",
+    "The identical replay response body equals the first response including the resource reference",
+    "The conflicting replay returns 409 and leaves the persisted effect count at one",
+    "The fresh key idem-a-2 produces its own single effect"
+  ],
+  "forbidden": [
+    "Applying a second physical effect for a repeated idempotency key",
+    "Returning the stored success for a key whose payload hash no longer matches"
+  ],
+  "evidence": [
+    "Effect-count log per idempotency key from the connector test sink",
+    "Response bodies of the first request, the identical replay and the 409 conflict with their status codes"
+  ],
+  "cleanup": [
+    "Delete the run-scoped idempotency records and effects for idem-a-1 and idem-a-2 under run-t1-api-idem; keep the audit entries"
+  ],
+  "automation": "Drive the real idempotency middleware against a connector test sink and assert the effect count and the 409 conflict; the payload-hash comparison is the real code path.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/06-api-and-connectors-spec.md",
+    "plans/platform/api-and-integrations.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/orders.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

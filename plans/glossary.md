@@ -42,8 +42,9 @@ Dùng từ tiếng Việt trong diễn giải. Giữ tên viết tắt, tên ri�
 | Thuật ngữ | Nghĩa trong kế hoạch |
 |---|---|
 | Customer360 | Hồ sơ liên kết thông tin được phép của khách qua các mô-đun, không thay hệ thống gốc |
+| Cô lập ngữ cảnh khách hàng (NFR-006) | Dữ liệu khách A không được xuất hiện trong ngữ cảnh, prompt hay bộ nhớ phiên của khách B; xác minh danh tính phía máy chủ trước khi tra cứu dữ liệu riêng. Cô lập đa doanh nghiệp (tenant) là lớp phòng vệ bổ sung, không thay thế NFR-006 |
 | Doanh nghiệp tách biệt (tenant) | Một tổ chức có dữ liệu, quyền và cấu hình riêng trong hệ thống dùng chung |
-| Nguồn xác nhận gốc (source of truth) | Hệ thống được thỏa thuận giữ giá trị chính thức cho một loại dữ liệu |
+| Nguồn xác nhận gốc (source of truth) | Hệ thống được thỏa thuận giữ giá trị chính thức cho một loại dữ liệu; với giá, SKU, tồn kho, đơn hàng và hóa đơn là ERP/POS/Web/App |
 | API | Cách phần mềm gửi yêu cầu/nhận dữ liệu có cấu trúc |
 | Bộ kết nối (connector/adapter) | Phần ánh xạ và gọi API của một nhà cung cấp theo quyền được cấp |
 | Bộ mã tích hợp (SDK) | Mã giúp nhúng/kết nối giao diện, không phải toàn bộ AI hoặc máy chủ |
@@ -56,7 +57,7 @@ Dùng từ tiếng Việt trong diễn giải. Giữ tên viết tắt, tên ri�
 | Tiến trình nền (worker) | Thành phần tiếp tục xử lý công việc/lịch chờ sau khi API đã trả lời |
 | Bộ hẹn giờ (timer) | Thời điểm đánh thức bước đang chờ; không tự cấp quyền gửi |
 | Bàn giao (handoff) | Chuyển trách nhiệm, cần bên nhận chấp nhận; không chỉ gửi thông báo |
-| Người duyệt/tiếp quản (human-in-the-loop) | Nhân viên quyết định hành động hoặc nhận xử lý ở bước cần người |
+| Người duyệt/tiếp quản (human-in-the-loop) | Nhân viên quyết định hành động hoặc nhận xử lý ở bước cần người. AUTH-4 là tuyến chờ duyệt; AUTH-5 là cấm tuyệt đối (DENY), không phải cấp superuser |
 | Kho kiến thức (KB) | Tài liệu/hướng dẫn đã được duyệt theo quyền và phiên bản |
 | Câu hỏi thường gặp (FAQ) | Bộ câu hỏi và câu trả lời phổ biến đã được duyệt |
 | Trả lời dựa truy xuất (RAG) | Tìm nguồn phù hợp trước khi trả lời; không bảo đảm đúng nếu nguồn/quyền sai |
@@ -84,7 +85,7 @@ Dùng từ tiếng Việt trong diễn giải. Giữ tên viết tắt, tên ri�
 | Từ viết tắt/khái niệm | Nghĩa |
 |---|---|
 | Lãi đóng góp | Doanh thu theo cơ sở đã chốt trừ chi phí biến đổi/phục vụ được tính; chưa phải lợi nhuận ròng |
-| Giá sàn | Mức thấp nhất máy chủ chấp nhận sau khi xét chi phí, lãi tối thiểu và hạn ưu đãi |
+| Giá sàn | Phép kiểm tra chính sách tùy chọn phía máy chủ, dùng giá/chi phí từ nguồn gốc và tham số chủ sở hữu phê duyệt (ASM-003); không phải nguồn giá song song và không thay thế ERP/POS/Web/App |
 | Biên trên doanh thu / cộng trên giá vốn | Hai cơ sở tính khác nhau, không dùng thay nhau |
 | CAC / CPL | Chi phí thu hút một khách mua / một khách quan tâm theo phạm vi chốt |
 | LTV | Giá trị khách trong thời gian; dự báo phải ghi là ước tính |

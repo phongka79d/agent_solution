@@ -1,0 +1,94 @@
+{
+  "id": "INT-SCR-003-REJECT",
+  "title": "SCR-003 REJECT: standardized reason code terminates the task with no side effect",
+  "document": "integration/command-center.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SCR-003",
+    "AUTH-4",
+    "NFR-007"
+  ],
+  "facets": [
+    "entity:Approval",
+    "stage:APPROVAL"
+  ],
+  "risk": "A rejected campaign still executes because rejection only changed a UI label, or the rejection reason is free text that cannot be aggregated for brand and margin analysis.",
+  "preconditions": [
+    "Namespace gov-scr-<case_id>-<worker_id>; the operator UI runs against the offline gateway and mock SSE/telemetry streams.",
+    "Operator session bound to tenant T1 and an explicit operator_id from fixtures/offline/governance.json; frozen clock 2026-01-15T10:00:00Z.",
+    "APV-CAMP-15 is AWAITING_HUMAN with a mock EMAIL adapter counting sends."
+  ],
+  "inputs": {
+    "requests": [
+      {
+        "label": "missing code",
+        "body": {
+          "decision": "REJECT",
+          "operator_id": "OP-APPROVER-T1",
+          "reason": "not now"
+        }
+      },
+      {
+        "label": "valid code",
+        "body": {
+          "decision": "REJECT",
+          "operator_id": "OP-APPROVER-T1",
+          "reason_code": "BUDGET_EXCEEDED",
+          "reason": "Estimated budget above the approved monthly envelope."
+        }
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Submit REJECT without a standardized reason code",
+      "expected": "HTTP 400 with a validation error naming reason_code; the approval state is unchanged (still AWAITING_HUMAN)."
+    },
+    {
+      "action": "Submit REJECT with reason_code BUDGET_EXCEEDED",
+      "expected": "HTTP 200 with status REJECTED and decided_at; the task is terminated."
+    },
+    {
+      "action": "Wait beyond the decision and read the adapter log and audit rows",
+      "expected": "Zero sends occurred; the audit row records the rejection with the standardized code and the operator identity."
+    }
+  ],
+  "assertions": [
+    "A REJECT without a standardized code never mutates state.",
+    "After a valid rejection the adapter call count is 0 and the task is terminal.",
+    "The audit row carries reason_code BUDGET_EXCEEDED so rejections are aggregable.",
+    "The rejected payload is retained for review rather than deleted."
+  ],
+  "forbidden": [
+    "Treating a missing reason code as an empty string and rejecting anyway.",
+    "Executing the task after rejection.",
+    "Losing the rejection code on the audit row."
+  ],
+  "evidence": [
+    "400 validation body and the unchanged approval state.",
+    "Audit row with the rejection code and operator id.",
+    "Adapter counter log showing zero sends."
+  ],
+  "cleanup": [
+    "Delete gov- approval rows; the rejected payload copy is retained in the evidence export."
+  ],
+  "automation": "Command Center React components and the gateway routes run as real code under test; ERP, channel and telemetry providers are replaced by the offline mock sinks whose call logs are the oracle. UI assertions use accessible roles and names rather than CSS classes, and stream waits are condition-based.",
+  "prerequisites": [],
+  "references": [
+    "implement/07-human-command-center-ui.md",
+    "implement/06-api-and-connectors-spec.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

@@ -1,0 +1,116 @@
+{
+  "id": "UNIT-AUTH-0",
+  "title": "AUTH-0 Observe grant: verified read permitted, every mutating tool denied",
+  "document": "unit/authority.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "AUTH-0",
+    "BR-008",
+    "NFR-001",
+    "TC-E2E-006"
+  ],
+  "facets": [
+    "entity:Agent",
+    "stage:DECISION"
+  ],
+  "risk": "An observe-only agent silently gains a write path and mutates customer data or sends a message while claiming to be read-only.",
+  "preconditions": [
+    "Namespace gov-unit-auth-<case_id>-<worker_id>; no shared mutable state with other cases.",
+    "PolicyEnforcementPoint loaded with fixtures/offline/governance.json skill_authority_registry and agents[]; clock frozen at 2026-01-15T10:00:00Z."
+  ],
+  "inputs": {
+    "agent_id": "SAL-01",
+    "assigned_authority": "AUTH-0",
+    "session_customer": "cust-a",
+    "proposals": [
+      {
+        "skill": "skill.sales.retrieve_customer",
+        "tool": "API-001.CustomerConnector",
+        "payload": {
+          "customer_id": "cust-a"
+        }
+      },
+      {
+        "skill": "skill.sales.check_price",
+        "tool": "API-001.PricingConnector",
+        "payload": {
+          "sku_id": "SKU-OK"
+        }
+      },
+      {
+        "skill": "skill.sales.create_cart",
+        "tool": "API-001.CartConnector",
+        "payload": {
+          "customer_id": "cust-a",
+          "sku_id": "SKU-OK",
+          "qty": 1
+        }
+      },
+      {
+        "skill": "skill.sales.send_message",
+        "tool": "ADPT-EMAIL-001",
+        "payload": {
+          "customer_id": "cust-a",
+          "template": "order_status"
+        }
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Authenticate SAL-01 and assert the enforcement context reports agentAssignedAuthority AUTH-0",
+      "expected": "Context shows AUTH-0; authority is read from the server-side agent record, not the proposal."
+    },
+    {
+      "action": "Submit the two read proposals (retrieve_customer, check_price) in order",
+      "expected": "Both return authorized=true with decisionCode PERMIT and the connector is called exactly twice."
+    },
+    {
+      "action": "Submit the two mutating proposals (create_cart, send_message)",
+      "expected": "Both return authorized=false; the mutating connectors are never invoked (zero calls recorded at the connector test sink)."
+    },
+    {
+      "action": "Inspect the audit rows written for all four proposals",
+      "expected": "Four rows exist; the two mutating rows carry authority AUTH-0 and execution_status denied, the two read rows carry success."
+    }
+  ],
+  "assertions": [
+    "Exactly 2 read connector calls and 0 mutating connector calls are observed at the connector test sink.",
+    "Both mutating proposals return decisionCode DENY_* / authorized=false with rationale naming AUTH-0, not AUTH-5.",
+    "No cart row and no outbound message row exists in the mock SoR after the run.",
+    "Audit rows record execution_status denied for the rejected pair without fabricating an outcome field."
+  ],
+  "forbidden": [
+    "A write executed at AUTH-0 because the proposal declared a higher required authority.",
+    "A denied read (over-blocking) that would break the AUTH-0 read path.",
+    "Treating AUTH-0 as a lower rank that can be silently upgraded by the LLM."
+  ],
+  "evidence": [
+    "PEP decision JSON for the 4 proposals (authorized, decisionCode, rationale).",
+    "Connector test-sink call log with call counts and tool names, redacted.",
+    "agentos.audit_records rows for the run (18 fields, customer pseudonymized)."
+  ],
+  "cleanup": [
+    "Delete the gov- run namespace rows (audit retention copy exported first); leave pre-existing sandbox rows untouched."
+  ],
+  "automation": "Real PEP interceptor and Business Rules Engine under test; API-001 connectors substituted by the offline mock SoR whose call log is the oracle. Deterministic: no sleeps, proposals submitted sequentially with awaited receipts.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/08-security-governance-nfr.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/customers.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

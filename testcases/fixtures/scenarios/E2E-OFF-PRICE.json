@@ -1,0 +1,106 @@
+{
+  "id": "E2E-OFF-PRICE",
+  "title": "TC-E2E-003: price from the authorised source only, refreshed on change (mocked SoR)",
+  "document": "e2e/offline.md",
+  "layer": "e2e",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P2",
+  "basis": "blueprint",
+  "pair": "E2E-LIVE-PRICE",
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "TC-E2E-003",
+    "OBJ-002",
+    "BR-001",
+    "BR-002",
+    "BR-003",
+    "FR-SAL-002",
+    "NFR-008",
+    "SRS-11"
+  ],
+  "facets": [
+    "skill:skill.sales.check_price",
+    "intent:price",
+    "stage:CONTEXT",
+    "stage:DECISION",
+    "kpi:Hallucination/Error Rate",
+    "kpi:Average Order Value"
+  ],
+  "risk": "A customer receives a price the ERP never published (or a stale one), creating loss-making orders and disputes.",
+  "preconditions": [
+    "run_id=RUN-E2E-OFF-PRICE, case_id=E2E-OFF-PRICE, worker=w-biz-e2e; the ERP mock serves SKU-NOPRICE without any price and SKU-OK at 1000 TWD",
+    "a mid-session ERP change for SKU-OK (1000 -> 1050 TWD) is scripted after the first quote so staleness is observable"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "customer_id": "cust-a",
+    "sku_probes": [
+      "SKU-NOPRICE",
+      "SKU-OK",
+      "SKU-OK after the ERP change"
+    ],
+    "requested_discount_percent": 30,
+    "quote_ttl_seconds": 600
+  },
+  "steps": [
+    {
+      "action": "Ask for the price of the SKU that has no ERP price",
+      "expected": "the advisor refuses on this path: no number is produced, no fallback to a model guess or a cached price, and the customer is offered a human/quote request"
+    },
+    {
+      "action": "Ask for SKU-OK and capture the quote",
+      "expected": "the answer states 1000 TWD sourced from the ERP response and carries a signed quote_token with a 10-minute expiry"
+    },
+    {
+      "action": "Attempt a 30% discount in the same dialogue",
+      "expected": "check_price returns discount_allowed=false with final_price at list price; no discounted number is spoken and no below-floor quote is created"
+    },
+    {
+      "action": "Change the ERP price and re-ask",
+      "expected": "the second answer uses the refreshed 1050 TWD value (or explicitly asks to refresh) and the earlier quote_token is not reused for the new price"
+    },
+    {
+      "action": "Try to spend the stale or tampered quote",
+      "expected": "create_order with the pre-change or a tampered token is refused before ERP dispatch, so no order exists at the stale price"
+    },
+    {
+      "action": "Collect the pricing audit trail for the dialogue",
+      "expected": "each spoken value maps to an ERP response id and timestamp captured during the run, the refused discount and the rejected stale token are audited, and no quote token issued in this dialogue is still valid for pricing"
+    }
+  ],
+  "assertions": [
+    "every price shown equals an ERP response captured during the run and the refusal path produces no number at all (BR-001, BR-003)",
+    "final_price >= p_floor (850 TWD synthetic) holds for every response and the refused discount leaves the price at list",
+    "the quote used by the order path matches the current ERP price; a stale or tampered token is rejected before any order row exists",
+    "the customer-visible outcome contains no price, discount or ETA the run did not receive from the authorised source"
+  ],
+  "forbidden": [
+    "answering with a price the ERP did not return, including a remembered one",
+    "creating an order at a price that no valid quote supports"
+  ],
+  "evidence": [
+    "ERP pricing responses per probe with timestamps and the p_floor configuration version",
+    "issued quote_token metadata (redacted signature) plus the refused below-floor attempt",
+    "order-path refusal record for the stale token and the empty order list"
+  ],
+  "cleanup": [
+    "invalidate/expire the case quote tokens in the mock and drop run RUN-E2E-OFF-PRICE; keep the audit trail"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. Pricing engine and authority guard are real; the ERP pricing adapter is mocked and scriptable per attempt.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/05-skill-system-specifications.md",
+    "plans/modules/sales.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/catalog.json",
+    "fixtures/offline/customers.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

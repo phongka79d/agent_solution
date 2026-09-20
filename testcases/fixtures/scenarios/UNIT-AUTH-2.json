@@ -1,0 +1,89 @@
+{
+  "id": "UNIT-AUTH-2",
+  "title": "AUTH-2 Draft: draft stored in internal state store, outbound dispatch blocked",
+  "document": "unit/authority.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "AUTH-2",
+    "MKT-03",
+    "BR-008",
+    "NFR-001"
+  ],
+  "facets": [
+    "entity:Agent",
+    "stage:PLAN",
+    "channel:EMAIL"
+  ],
+  "risk": "Draft campaign copy is transmitted to a customer or ad network directly from the drafting skill, bypassing Brand Guardian review and approval.",
+  "preconditions": [
+    "Namespace gov-unit-auth-<case_id>-<worker_id>; no shared mutable state with other cases.",
+    "PolicyEnforcementPoint loaded with fixtures/offline/governance.json skill_authority_registry and agents[]; clock frozen at 2026-01-15T10:00:00Z."
+  ],
+  "inputs": {
+    "agent_id": "MKT-05",
+    "assigned_authority": "AUTH-2",
+    "draft": {
+      "campaign_id": "CMP-DRAFT-1",
+      "channel": "EMAIL",
+      "subject": "January restock",
+      "body": "Synthetic body referencing brand/voice.md and prohibited-claims.md"
+    },
+    "dispatch_attempt": {
+      "channel": "EMAIL",
+      "audience_size": 500
+    }
+  },
+  "steps": [
+    {
+      "action": "Submit skill.mkt.generate_content for CMP-DRAFT-1",
+      "expected": "Returns authorized=true, PERMIT, and the payload is written to the internal draft state store keyed by tenant and campaign."
+    },
+    {
+      "action": "Attempt to dispatch the draft to the EMAIL adapter",
+      "expected": "Enforcement returns authorized=false; the outbound dispatch path is never entered."
+    },
+    {
+      "action": "Attempt a second dispatch through the connector directly (bypassing the PEP entry point)",
+      "expected": "The gateway rejects the call before the adapter is reached; the adapter call counter stays at 0."
+    }
+  ],
+  "assertions": [
+    "Draft exists in the internal store with status draft and no provider message id.",
+    "0 outbound calls at the EMAIL adapter test sink across both dispatch attempts.",
+    "Audit contains one success row (draft) and two denied rows, all with authority AUTH-2.",
+    "No customer-visible artifact exists for CMP-DRAFT-1."
+  ],
+  "forbidden": [
+    "Draft state being treated as a published campaign.",
+    "A direct connector call succeeding when it did not come through the PEP.",
+    "Counting a blocked dispatch as a delivered message."
+  ],
+  "evidence": [
+    "Draft state-store object dump for the run namespace.",
+    "Gateway rejection response bodies for the direct connector call.",
+    "Adapter test-sink counter output."
+  ],
+  "cleanup": [
+    "Purge the gov- draft state-store keys and namespace; keep audit rows."
+  ],
+  "automation": "Real PEP and draft state store under test; the EMAIL adapter and the gateway allowlist are substituted boundaries whose call counters are the oracle. No timing dependence.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/08-security-governance-nfr.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/knowledge.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

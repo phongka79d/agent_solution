@@ -1,0 +1,105 @@
+{
+  "id": "GOV-NFR-006",
+  "title": "NFR-006 data isolation: audit and context stores partition strictly by tenant and customer",
+  "document": "governance/nfr.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "NFR-006",
+    "NFR-002",
+    "TC-E2E-004",
+    "SRS-17"
+  ],
+  "facets": [
+    "entity:Customer",
+    "entity:Evidence",
+    "memory:Customer Context"
+  ],
+  "risk": "A shared cache key, a missing tenant predicate or a global audit chain lets one tenant's activity be read or attributed to another, which is a reportable breach.",
+  "preconditions": [
+    "Namespace gov-nfr-<case_id>-<worker_id>; NFR verification runs against the offline gateway with mock SoR and channel boundaries.",
+    "Frozen clock 2026-01-15T10:00:00Z; failure, outage and crash injections are scripted at the substituted boundary, never faked inside the assertion.",
+    "Two tenants T1 and T2 each have one pinned customer and one run; the harness can enumerate keys and query both schemas."
+  ],
+  "inputs": {
+    "cross_checks": [
+      {
+        "label": "context cache",
+        "action": "read T1 key from a T2 session",
+        "expected": "MISS_OR_DENIED"
+      },
+      {
+        "label": "audit chain",
+        "action": "verify a mixed-tenant chain",
+        "expected": "REJECTED"
+      },
+      {
+        "label": "vector search",
+        "action": "T2 query for a T1 document",
+        "expected": "ZERO_HITS"
+      },
+      {
+        "label": "customer context",
+        "action": "cust-a session requesting cust-t2",
+        "expected": "DENIED"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Attempt each of the four cross-boundary reads",
+      "expected": "Every attempt is denied or returns an empty result; no foreign record appears in any response."
+    },
+    {
+      "action": "Inspect the storage partitioning evidence",
+      "expected": "Cache keys include the tenant, RLS is enabled on the tenant-scoped tables, and the audit chain is partitioned per tenant."
+    },
+    {
+      "action": "Verify a deliberately mixed-tenant chain",
+      "expected": "Chain verification rejects the sequence rather than passing it."
+    },
+    {
+      "action": "Scan every response body produced during the case",
+      "expected": "Zero foreign identifiers, order ids or phone digits appear in any body."
+    }
+  ],
+  "assertions": [
+    "All four cross-boundary reads fail closed with no foreign data returned.",
+    "Tenant isolation is enforced at the storage layer (keying and RLS), not only in application filters, which the partitioning evidence shows.",
+    "A mixed-tenant audit chain is rejected by the verifier.",
+    "Zero foreign identifiers appear in any serialized response."
+  ],
+  "forbidden": [
+    "Relying on application-level filters only.",
+    "Sharing one audit chain across tenants.",
+    "Returning a generic error while still serializing the foreign record."
+  ],
+  "evidence": [
+    "Four refusal/empty responses with correlation ids.",
+    "Partitioning evidence: cache key samples, RLS configuration readout, chain partition check.",
+    "Serialized response scan results."
+  ],
+  "cleanup": [
+    "Delete gov- cache keys and run rows for both tenants."
+  ],
+  "automation": "Core PEP, rules engine, audit writer, idempotency store and worker lease logic run as real code under test; only ERP/WMS, channel gateways, Redis and the model provider are substituted. Faults are injected at those boundaries and waits are condition-based on persisted state.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/customers.json",
+    "fixtures/offline/tenants.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

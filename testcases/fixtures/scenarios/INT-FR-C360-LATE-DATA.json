@@ -1,0 +1,85 @@
+{
+  "id": "INT-FR-C360-LATE-DATA",
+  "title": "Late arriving data backfills the timeline without rewriting settled state",
+  "document": "integration/customer-360.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "medium",
+  "gate": "P1",
+  "basis": "extension",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "FR-C360-002",
+    "NFR-005",
+    "NFR-006"
+  ],
+  "facets": [
+    "entity:Customer Event",
+    "event:product_view",
+    "stage:OUTCOME"
+  ],
+  "risk": "Late telemetry rewrites a settled funnel state, so reporting and attribution change retroactively after a decision was already taken. Blueprint is silent on the resequencing window; the window used here is proposed configuration.",
+  "preconditions": [
+    "Tenant T1 where checkout and purchase for cust-a were processed before the product_view arrived",
+    "Late evt_late_view_1 (occurred_at 09:58:30Z, ingested_at 10:04:00Z) delivered in namespace run-t1-late-*"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "late_event": "evt_late_view_1",
+    "settled_state": {
+      "funnel_stage": "purchase",
+      "decided_at": "2026-01-15T09:59:40Z"
+    },
+    "proposed_resequencing_window_seconds": 900
+  },
+  "steps": [
+    {
+      "action": "Ingest the late product_view and query the timeline and funnel projection",
+      "expected": "the timeline gains the view at its occurred_at position while the funnel stage stays purchase"
+    },
+    {
+      "action": "Re-run the decision stage for the same correlation id",
+      "expected": "no new decision is produced for the already-decided step, and the late signal does not re-open the run"
+    },
+    {
+      "action": "Deliver the same late event twice and once with a mutated occurred_at",
+      "expected": "the duplicate adds no entry and the mutated payload is rejected as a conflict instead of silently replacing history"
+    },
+    {
+      "action": "Read the attribution record for the purchase",
+      "expected": "attribution still points at the original decision and cites the settled evidence record"
+    }
+  ],
+  "assertions": [
+    "The settled funnel stage is still purchase and the decision timestamp is unchanged",
+    "Exactly one timeline entry exists for evt_late_view_1 at 09:58:30Z",
+    "The attribution record still references the original decision and evidence chain hash"
+  ],
+  "forbidden": [
+    "Re-open or re-decide a settled run because of late telemetry",
+    "Rewrite an existing timeline entry in place with a late payload"
+  ],
+  "evidence": [
+    "Timeline entries and funnel projection before/after the late delivery",
+    "Attribution record linkage (decision id, evidence chain hash) after the late delivery"
+  ],
+  "cleanup": [
+    "Delete the run-scoped late-event rows for run-t1-late-*; the append-only event log entry stays"
+  ],
+  "automation": "Inject the late event through the real normalizer with a frozen clock gap; the resequencing window is declared as proposed configuration because the blueprint does not fix it.",
+  "prerequisites": [],
+  "references": [
+    "implement/03-database-and-memory-schema.md",
+    "implement/06-api-and-connectors-spec.md",
+    "plans/platform/data-and-knowledge.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/events.json",
+    "fixtures/offline/platform.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

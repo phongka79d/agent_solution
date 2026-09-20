@@ -1,0 +1,95 @@
+{
+  "id": "UNIT-BR-010-AUDIT-LINK",
+  "title": "BR-010: audit row field 14 must reference the same evidence record that carries the receipt",
+  "document": "unit/business-rules.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "BR-010",
+    "NFR-002",
+    "SRS-17"
+  ],
+  "facets": [
+    "entity:Evidence",
+    "entity:Action",
+    "stage:EVIDENCE"
+  ],
+  "risk": "The audit row points at a different or stale evidence record, so a later audit follows the link and verifies the wrong transaction.",
+  "preconditions": [
+    "Namespace gov-unit-br-<case_id>-<worker_id>; Business Rules Engine loaded with no cross-case state.",
+    "Frozen clock 2026-01-15T10:00:00Z; agent fixture context loaded from fixtures/offline/governance.json.",
+    "Two evidence records exist in the namespace: one for the run under test and one from an earlier sibling run."
+  ],
+  "inputs": {
+    "task": {
+      "task_id": "task-gov-3",
+      "effect_key": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+    },
+    "evidence_records": [
+      {
+        "evidence_id": "EV-CORRECT",
+        "receipt": {
+          "tracking_number": "TWP-0001"
+        },
+        "effect_key": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+      },
+      {
+        "evidence_id": "EV-SIBLING",
+        "receipt": {
+          "tracking_number": "TWP-9999"
+        },
+        "effect_key": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Complete the task and read the audit row field 14",
+      "expected": "The referenced evidence id is EV-CORRECT, matching the task effect_key."
+    },
+    {
+      "action": "Follow the reference and compare receipts",
+      "expected": "The receipt tracking number matches the one produced by this task, and the effect keys agree."
+    },
+    {
+      "action": "Attempt completion when only the sibling evidence record exists",
+      "expected": "Completion is refused; a mismatched effect_key is not accepted as evidence."
+    }
+  ],
+  "assertions": [
+    "The audit row references the evidence record whose effect_key equals the task effect_key.",
+    "Crossing the reference to a sibling record is refused rather than silently accepted.",
+    "Receipt content in the referenced record matches the task, so following the link yields the correct transaction.",
+    "No duplicate evidence record is created to satisfy the link."
+  ],
+  "forbidden": [
+    "Referencing the most recent evidence row instead of the matching one.",
+    "Matching on tenant alone so a sibling record qualifies.",
+    "Copying the sibling receipt into a new row to make the check pass."
+  ],
+  "evidence": [
+    "Audit row field 14 values for both attempts.",
+    "The two evidence records with their effect keys and receipts."
+  ],
+  "cleanup": [
+    "Delete gov- task and evidence rows."
+  ],
+  "automation": "Real BusinessRulesEngine and PEP under test; only ERP/POS/connector boundaries are substituted by the offline mock whose call log and receipts are the oracle. Rules are evaluated in sequence and halt on the first failure, so each case asserts the first failing rule code rather than a bag of errors.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

@@ -1,0 +1,93 @@
+{
+  "id": "GOV-APV-DOUBLE-DECISION",
+  "title": "Concurrent decisions: exactly one wins, the loser receives 409 and changes nothing",
+  "document": "governance/approval.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SCR-003",
+    "AUTH-4",
+    "NFR-007",
+    "TC-E2E-002"
+  ],
+  "facets": [
+    "entity:Approval",
+    "stage:APPROVAL"
+  ],
+  "risk": "Two operators (or one double-click) both succeed, so the campaign executes once and is also cancelled, or two conflicting decisions are both recorded.",
+  "preconditions": [
+    "Namespace gov-apv-<case_id>-<worker_id>; approval queue seeded from fixtures/offline/governance.json.",
+    "Operator identities and roles resolved from the fixture operator registry; every decision goes through POST /api/v1/approvals/{id}/decision, the only approval route.",
+    "APV-CAMP-15 is AWAITING_HUMAN with payload_hash recorded and no prior decision."
+  ],
+  "inputs": {
+    "concurrent_requests": [
+      {
+        "operator_id": "OP-APPROVER-T1",
+        "decision": "APPROVE",
+        "reason": "Reviewed evidence."
+      },
+      {
+        "operator_id": "OP-SECOND-T1",
+        "decision": "CANCEL",
+        "reason": "Campaign postponed."
+      }
+    ],
+    "dispatch": "both submitted before either response is awaited"
+  },
+  "steps": [
+    {
+      "action": "Submit APPROVE and CANCEL concurrently against APV-CAMP-15",
+      "expected": "Exactly one returns HTTP 200 with its status; the other returns 409 with a conflict reason and no status change."
+    },
+    {
+      "action": "Read the final approval record",
+      "expected": "The record holds exactly one terminal status (APPROVED or CANCELLED) with one decided_at and one operator identity."
+    },
+    {
+      "action": "Read the audit rows",
+      "expected": "One decision audit row exists for the winner; the loser has a rejected-decision row and no execution row."
+    },
+    {
+      "action": "Check the adapter and reservation ledger",
+      "expected": "If APPROVE won, exactly one send and no reservation release; if CANCEL won, zero sends and reservations released - never both outcomes."
+    }
+  ],
+  "assertions": [
+    "The approval reaches exactly one terminal state; there is no interleaved outcome.",
+    "Exactly one decision audit row carries a status change; the loser is recorded as a conflict, not as a decision.",
+    "Side effects match the winning decision alone: one send xor full reservation release.",
+    "The losing operator receives an explicit 409, never a silent no-op."
+  ],
+  "forbidden": [
+    "Recording both decisions and letting the last writer win.",
+    "Executing after a concurrent cancel committed.",
+    "Returning 200 to both callers so both operators believe they acted."
+  ],
+  "evidence": [
+    "Both HTTP responses with correlation ids.",
+    "Final approval record and the decision audit rows.",
+    "Adapter and reservation ledger snapshots."
+  ],
+  "cleanup": [
+    "Delete gov- approval rows; restore the reservation ledger to its fixture state and report the simulated send as non-recallable."
+  ],
+  "automation": "Real approval state machine and persistence under test with a deterministic barrier that releases both requests together; the adapter is the substituted boundary. No sleeps: the barrier is a latch.",
+  "prerequisites": [],
+  "references": [
+    "implement/07-human-command-center-ui.md",
+    "implement/06-api-and-connectors-spec.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

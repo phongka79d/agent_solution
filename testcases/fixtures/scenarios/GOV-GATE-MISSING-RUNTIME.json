@@ -1,0 +1,102 @@
+{
+  "id": "GOV-GATE-MISSING-RUNTIME",
+  "title": "A missing runtime is reported NOT_RUN for every gate instead of being skipped",
+  "document": "governance/gates.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SRS-24",
+    "SRS-27",
+    "NFR-009"
+  ],
+  "facets": [
+    "stage:EXECUTION",
+    "entity:Execution"
+  ],
+  "risk": "A gate is silently skipped rather than reported NOT_RUN, so the roadmap shows progress that no evidence supports and the missing runtime is discovered after a pilot date has been committed.",
+  "preconditions": [
+    "Namespace gov-gate-<case_id>-<worker_id>; the gate registry and the evidence registry are read from fixtures/offline/governance.json (gate_registry, gate_evidence_state) and no evidence may be created, simulated or back-dated inside the run.",
+    "Frozen clock 2026-01-15T10:00:00Z; every required evidence artifact is classified as runtime, mock or design before any status is written.",
+    "gate_evidence_state.runtime_available is false, so none of the six gates can produce a runtime artifact.",
+    "The run is required to emit one status row per gate, and a skipped gate must be visible as NOT_RUN with its missing artifacts."
+  ],
+  "inputs": {
+    "gates": [
+      "P0",
+      "P1",
+      "P2",
+      "P3",
+      "P4",
+      "P5"
+    ],
+    "runtime_available": false,
+    "expected_status_per_gate": {
+      "P0": "NOT_RUN",
+      "P1": "NOT_RUN",
+      "P2": "NOT_RUN",
+      "P3": "NOT_RUN",
+      "P4": "NOT_RUN",
+      "P5": "NOT_RUN"
+    },
+    "silent_skip_allowed": false,
+    "pass_allowed": false
+  },
+  "steps": [
+    {
+      "action": "Evaluate all six gates against the registry with no runtime present",
+      "expected": "Every gate produces a status row; each is NOT_RUN and names the runtime artifacts it lacks."
+    },
+    {
+      "action": "Check that no gate is missing from the report",
+      "expected": "Six rows exist, one per gate; a gate that cannot be evaluated is still reported rather than omitted."
+    },
+    {
+      "action": "Attempt to mark an unevaluated gate as passed by omission",
+      "expected": "The attempt is refused and the report explicitly states that absent evidence is not a pass; the roadmap figure counts zero passed gates."
+    },
+    {
+      "action": "Attempt to run the gates against the mock environment to produce a status",
+      "expected": "The mock environment produces specification coverage only; the gate statuses stay NOT_RUN because no runtime artifact exists."
+    }
+  ],
+  "assertions": [
+    "All six gates appear in the run report with the status NOT_RUN and the list of missing runtime artifacts.",
+    "No gate is silently skipped, and no unevaluated gate is counted as passed in any summary or roadmap figure.",
+    "Mock-environment results are recorded as specification coverage and do not change a gate status.",
+    "The missing runtime is named once per gate with the owning role, so the blocker is actionable rather than a generic failure."
+  ],
+  "forbidden": [
+    "Omitting a gate from the report because it could not be evaluated.",
+    "Counting an unevaluated gate as passed by default.",
+    "Substituting a mock environment result for a runtime gate status."
+  ],
+  "evidence": [
+    "Run-report rows for all six gates with the NOT_RUN status and the missing artifacts.",
+    "Roadmap summary showing zero gates passed.",
+    "Specification-coverage report kept separate from the gate record."
+  ],
+  "cleanup": [
+    "Delete gov- gate-report rows after export."
+  ],
+  "automation": "The gate-evaluation code and the run-report writer run as real code under test while the evidence registry is data. The oracle is the pair (evidence registry, run-report status): a gate that reads PASS without a real artifact fails the case, and a missing runtime is reported NOT_RUN instead of being allowed to fall through to PASS.",
+  "prerequisites": [
+    "The repository contains no application runtime, so all six gates are NOT_RUN; a PASS for any gate here would be a reporting defect and is BLOCKED_PREREQUISITE."
+  ],
+  "references": [
+    "implement/09-sprint-roadmap-and-pilots.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/live/env.example"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

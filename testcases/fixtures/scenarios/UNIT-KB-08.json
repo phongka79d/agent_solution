@@ -1,0 +1,86 @@
+{
+  "id": "UNIT-KB-08",
+  "title": "Second Brain /brand/voice.md answers only from its approved chunk and cites path, version and owner",
+  "document": "unit/knowledge-entities.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "SRS-10",
+    "NFR-001"
+  ],
+  "facets": [
+    "kb:/brand/voice.md"
+  ],
+  "risk": "The agent answers without a citable approved chunk, or cites one whose text does not support the claim, and an invented sentence reaches a customer as company policy.",
+  "preconditions": [
+    "Tenant T1 corpus loaded in run-t1-kb-unit-kb-08 with the 21 approved documents of fixtures/offline/knowledge.json",
+    "The draft, review and superseded entries and the T2 price list stay in the same collection during the query"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "query": "What tone must outbound copy use?",
+    "expected_citation": {
+      "file_path": "/brand/voice.md",
+      "namespace": "brand",
+      "source_version": "v1.6",
+      "document_status": "approved",
+      "owner": "ops-brand"
+    },
+    "cited_chunk_must_support": "warm, plain and specific with no superlatives and no pressure tactics",
+    "trap_answer_must_not_appear": "urgency or superlative copy invented by the model"
+  },
+  "steps": [
+    {
+      "action": "Retrieve the answer context for the question with the tenant filter fixed to T1",
+      "expected": "the top citation is /brand/voice.md at document_status approved and the cited chunk text carries the claim"
+    },
+    {
+      "action": "Repeat the retrieval while the draft, review, superseded and foreign-tenant entries remain in the collection",
+      "expected": "no non-approved, superseded or foreign-tenant point enters the returned context"
+    },
+    {
+      "action": "Read every provenance field of the returned chunk",
+      "expected": "file_path, namespace, source_version, owner, updated_at, heading and chunk_index are present and match the fixture document"
+    },
+    {
+      "action": "Re-run the query with a neighbouring question this document does not cover",
+      "expected": "the agent cites another approved document or explicitly refuses; it never answers from model memory"
+    }
+  ],
+  "assertions": [
+    "The resolved citation is /brand/voice.md@v1.6 with document_status approved",
+    "The cited chunk text supports the claim: warm, plain and specific with no superlatives and no pressure tactics",
+    "The trap answer never appears because no citation backs it: urgency or superlative copy invented by the model",
+    "Every sentence of the reply is backed by at least one approved-corpus citation"
+  ],
+  "forbidden": [
+    "Answering from LLM memory with no citation, or attaching a citation whose chunk does not contain the claim",
+    "Citing a draft, review, superseded or foreign-tenant chunk in place of /brand/voice.md"
+  ],
+  "evidence": [
+    "Retrieval log of the run: tenant filter, returned point ids, scores and full payload of each point",
+    "Answer text with its citation list resolved against the corpus (file_path, source_version, owner)"
+  ],
+  "cleanup": [
+    "Delete the run-scoped query, context and answer rows under run-t1-kb-unit-kb-08; the seeded corpus stays"
+  ],
+  "automation": "Call the retrieval API with the fixed tenant and query and assert on the returned citation set, the provenance fields and the absence of non-approved points; the corpus is a fixture, so the expected document is deterministic.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/03-database-and-memory-schema.md",
+    "plans/platform/data-and-knowledge.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/knowledge.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

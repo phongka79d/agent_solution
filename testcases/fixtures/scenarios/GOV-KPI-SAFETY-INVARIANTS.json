@@ -1,0 +1,115 @@
+{
+  "id": "GOV-KPI-SAFETY-INVARIANTS",
+  "title": "AI-SYS-KPI-03 and AI-SYS-KPI-07 must be exactly 0 and are not baseline-dependent",
+  "document": "governance/kpi.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SRS-20",
+    "NFR-001",
+    "NFR-003",
+    "BR-008"
+  ],
+  "facets": [
+    "kpi:Policy Violation Rate",
+    "kpi:Duplicate Execution",
+    "kpi:Hallucination/Error Rate",
+    "kpi:Failed Execution"
+  ],
+  "risk": "The two zero-tolerance invariants are treated as targets that may be missed while the baseline is pending, so an authority violation or a duplicate send is filed as a metric miss and the release proceeds.",
+  "preconditions": [
+    "Namespace gov-kpi-<case_id>-<worker_id>; the metric is computed by the real reporting code over fixtures/offline/governance.json kpi_dataset and never copied from the dashboard payload.",
+    "Frozen clock 2026-01-15T10:00:00Z with the reporting window 2026-01-01T00:00:00Z .. 2026-02-01T00:00:00Z as a half-open interval; the stored aggregate is recomputed independently from the raw counter rows.",
+    "policy_violations and duplicate_executions are both 0 in the synthetic dataset, and the invariant is defined as a hard requirement rather than a target.",
+    "A second variant injects one violation row and one duplicate effect so the case proves a non-zero value blocks the release instead of being reported."
+  ],
+  "inputs": {
+    "invariants": {
+      "AI-SYS-KPI-03": {
+        "name": "Policy Violation Rate",
+        "required": 0,
+        "fixture_value": 0
+      },
+      "AI-SYS-KPI-07": {
+        "name": "Duplicate Execution",
+        "required": 0,
+        "fixture_value": 0
+      }
+    },
+    "monitoring_metrics": {
+      "AI-SYS-KPI-04": {
+        "name": "Hallucination/Error Rate",
+        "fixture_value": "1.0%",
+        "threshold_kind": "proposed design target pending ASM-002"
+      },
+      "AI-SYS-KPI-06": {
+        "name": "Failed Execution",
+        "fixture_value": "0.3%",
+        "threshold_kind": "proposed design target pending ASM-002"
+      }
+    },
+    "injected_violation_variant": {
+      "policy_violations": 1,
+      "duplicate_executions": 1,
+      "expected": "RELEASE_BLOCKING_ERROR"
+    }
+  },
+  "steps": [
+    {
+      "action": "Read the two invariants from the dataset",
+      "expected": "Both are reported as exactly 0 and the report states that zero is required, not a target that may be missed."
+    },
+    {
+      "action": "Inject one violation row and one duplicate effect and re-evaluate",
+      "expected": "Both metrics become non-zero and the run reports a release-blocking error; no ASM-002 exemption is applied and no threshold is consulted."
+    },
+    {
+      "action": "Compare with the two monitoring metrics",
+      "expected": "Hallucination/Error Rate and Failed Execution are reported as measured values with their proposed design targets explicitly labelled as unapproved, so they are not mistaken for pass/fail bars."
+    },
+    {
+      "action": "Attempt to weaken the invariants via the assumption registry",
+      "expected": "The attempt is refused: ASM-002 cannot loosen a safety invariant, and an unlocked KPI baseline does not convert the invariant into a measurable target."
+    }
+  ],
+  "assertions": [
+    "Policy Violation Rate and Duplicate Execution are exactly 0 in the accepted run, and any non-zero value is a release-blocking error rather than a metric miss.",
+    "The two invariants are independent of the ASM-002 baseline: an unlocked baseline cannot relax, weight or defer them.",
+    "The monitoring metrics are visibly separated from the invariants and their proposed thresholds are labelled as unapproved design targets.",
+    "A blocked violation attempt still counts in the invariant numerator, so a control that fires is not evidence of a clean record."
+  ],
+  "forbidden": [
+    "Reporting the invariants as targets that may be missed.",
+    "Applying an ASM-002 exemption to an authority violation or a duplicate send.",
+    "Excluding a violation because execution was blocked before it took effect."
+  ],
+  "evidence": [
+    "Invariant evaluation rows for both metrics with the fixture values.",
+    "Release-blocking error record from the injected variant with the offending row ids.",
+    "Monitoring metric report showing the unapproved threshold labels."
+  ],
+  "cleanup": [
+    "Delete gov- evaluation rows and the injected variant rows after export."
+  ],
+  "automation": "The reporting service and the metric dictionary run as real code under test over the frozen KPI dataset; the dashboard is a consumer whose displayed value must equal the independently recomputed value. Waits are condition-based on the stored aggregate row, metric values are never supplied as inputs, and no vendor boundary is involved in the arithmetic.",
+  "prerequisites": [
+    "ASM-002 is unlocked, which affects targets only: the two zero-tolerance invariants remain hard requirements and must be evaluated regardless of the baseline."
+  ],
+  "references": [
+    "plans/delivery/analytics.md",
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

@@ -1,0 +1,93 @@
+{
+  "id": "GOV-NFR-010",
+  "title": "NFR-010 Cost observability: token, model, tool and cost/run are measured and attributable",
+  "document": "governance/nfr.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "NFR-010",
+    "SRS-17",
+    "ASM-002"
+  ],
+  "facets": [
+    "stage:EVIDENCE"
+  ],
+  "risk": "AI spend is invisible until the invoice arrives, and no one can attribute cost to a run, a customer or a conversion, so unit economics cannot be managed.",
+  "preconditions": [
+    "Namespace gov-nfr-<case_id>-<worker_id>; NFR verification runs against the offline gateway with mock SoR and channel boundaries.",
+    "Frozen clock 2026-01-15T10:00:00Z; failure, outage and crash injections are scripted at the substituted boundary, never faked inside the assertion.",
+    "The mock model provider returns canned token usage so cost arithmetic is deterministic."
+  ],
+  "inputs": {
+    "run": {
+      "run_id": "run-nfr-10",
+      "customer_id": "cust-a",
+      "provider_usage": {
+        "prompt_tokens": 1200,
+        "completion_tokens": 400,
+        "model": "mock-llm-1"
+      },
+      "pricing_config": {
+        "per_1k_prompt_twd": 0.01,
+        "per_1k_completion_twd": 0.02
+      },
+      "tool_calls": 4,
+      "tool_cost_twd": 0.002
+    }
+  },
+  "steps": [
+    {
+      "action": "Execute one run and read the cost record",
+      "expected": "The record contains prompt tokens, completion tokens, model identity and a cost_twd value per the audit schema field 17."
+    },
+    {
+      "action": "Recompute the cost from the recorded usage and the pricing configuration",
+      "expected": "Recomputed cost equals 1200/1000*0.01 + 400/1000*0.02 + 0.002 = 0.022 TWD, matching the stored value."
+    },
+    {
+      "action": "Aggregate cost by run and by customer",
+      "expected": "Cost per run and cost per customer are both derivable, and the per-customer total equals the sum of that customer's runs."
+    },
+    {
+      "action": "Check the dashboard display",
+      "expected": "The displayed figures come from the stored records and are labelled with the measurement source; no target value is substituted."
+    }
+  ],
+  "assertions": [
+    "Cost is computed from recorded token usage and tool cost, and the arithmetic is reproducible to the stored value.",
+    "Cost is attributable at run, customer and tenant level, with sums that reconcile.",
+    "No displayed cost is a target, default or estimate presented as measured.",
+    "Token counts are the provider-reported values, not local estimates, when the provider reports them."
+  ],
+  "forbidden": [
+    "Recording a flat estimated cost per run.",
+    "Omitting tool or connector cost so only tokens are counted.",
+    "Attributing a customer's cost to a shared pool that cannot be reconciled."
+  ],
+  "evidence": [
+    "Cost record for the run with usage and split cost fields.",
+    "Aggregation report by run and by customer.",
+    "Provider usage payload used as the input."
+  ],
+  "cleanup": [
+    "Delete gov- cost rows after export."
+  ],
+  "automation": "Core PEP, rules engine, audit writer, idempotency store and worker lease logic run as real code under test; only ERP/WMS, channel gateways, Redis and the model provider are substituted. Faults are injected at those boundaries and waits are condition-based on persisted state.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

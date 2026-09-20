@@ -1,0 +1,110 @@
+{
+  "id": "UNIT-AUTH-VERDICT-MAP",
+  "title": "Verdict-to-audit mapping: each enforcement outcome lands on the right execution status",
+  "document": "unit/authority.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "AUTH-0",
+    "AUTH-4",
+    "AUTH-5",
+    "NFR-002",
+    "SRS-17"
+  ],
+  "facets": [
+    "entity:Decision",
+    "entity:Action",
+    "stage:EVIDENCE"
+  ],
+  "risk": "Operators and auditors cannot tell whether an action was executed, refused or is waiting, so dashboards and post-incident reviews draw the wrong conclusion.",
+  "preconditions": [
+    "Namespace gov-unit-auth-<case_id>-<worker_id>; no shared mutable state with other cases.",
+    "PolicyEnforcementPoint loaded with fixtures/offline/governance.json skill_authority_registry and agents[]; clock frozen at 2026-01-15T10:00:00Z."
+  ],
+  "inputs": {
+    "agent_id": "CS-01",
+    "assigned_authority": "AUTH-3",
+    "expected_mapping": {
+      "PERMIT": "success",
+      "DENY_PROHIBITED": "denied",
+      "REQUIRE_HUMAN_APPROVAL": "denied",
+      "LIMIT_EXCEEDED": "denied",
+      "FAIL_CLOSED": "failed",
+      "UNKNOWN_OUTCOME": "pending"
+    },
+    "probes": [
+      {
+        "skill": "skill.sales.check_price",
+        "payload": {
+          "sku_id": "SKU-OK"
+        }
+      },
+      {
+        "skill": "skill.governance.raw_dataset_export",
+        "payload": {}
+      },
+      {
+        "skill": "skill.care.initiate_return",
+        "payload": {
+          "order_id": "ORD-A-1"
+        }
+      },
+      {
+        "skill": "skill.sales.send_message",
+        "payload": {
+          "reminder_count": 9
+        }
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Submit the four probes and collect the four verdicts",
+      "expected": "Verdicts are PERMIT, DENY_PROHIBITED, REQUIRE_HUMAN_APPROVAL and LIMIT_EXCEEDED respectively."
+    },
+    {
+      "action": "Read the four audit rows",
+      "expected": "execution_status values are success, denied, denied, denied; APPROVAL-PENDING is represented as denied plus an approval reference, never as success."
+    },
+    {
+      "action": "Force a connector failure and an unknown-outcome timeout in two extra probes",
+      "expected": "Failure maps to failed and unknown outcome maps to pending or a dedicated reconciliation state, never to success."
+    }
+  ],
+  "assertions": [
+    "Every verdict maps to exactly one execution_status and the mapping is total over the six outcomes.",
+    "No probe produces success when it was not permitted and externally executed.",
+    "REQUIRE_HUMAN_APPROVAL rows carry an approval ticket reference so the pause is traceable.",
+    "The six mapping entries are enforceable as data, not hardcoded in the assertion (changing the fixture changes the expectation)."
+  ],
+  "forbidden": [
+    "Mapping an unknown outcome to success because the request returned 200.",
+    "Collapsing denial and approval-pending into one status.",
+    "Writing a success row for a probe that never reached a connector."
+  ],
+  "evidence": [
+    "Verdict JSON and audit row pairs for all six probes.",
+    "Connector call log showing which probes actually dispatched."
+  ],
+  "cleanup": [
+    "Delete gov- run rows after exporting the mapping table."
+  ],
+  "automation": "Real PEP verdict emission, audit mapping and reconciliation state machine under test; connector behaviour is substituted with an injectable failure/timeout stub. Deterministic clock drives the timeout.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

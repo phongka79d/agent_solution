@@ -1,0 +1,101 @@
+{
+  "id": "UNIT-care.issue_retention_offer-HAPPY",
+  "title": "skill.care.issue_retention_offer happy path and boundary — floor-price-safe retention voucher with 30-day quota",
+  "document": "unit/skills.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P3",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "CS-02",
+    "FR-CS-003",
+    "BR-001",
+    "BR-002",
+    "BR-007",
+    "SRS-11"
+  ],
+  "facets": [
+    "skill:skill.care.issue_retention_offer",
+    "kpi:Retention",
+    "intent:return_refund",
+    "stage:DECISION",
+    "memory:Learning Memory"
+  ],
+  "risk": "Unbounded, duplicated or below-floor compensation silently drains margin (FR-CS-003).",
+  "preconditions": [
+    "isolated namespace run_id=RUN-care.issue_retention_offer-HAPPY, case_id=UNIT-care.issue_retention_offer-HAPPY, worker=w-biz-unit; no shared mutable session with any other case",
+    "skill registry row for skill.care.issue_retention_offer registered with test_cases TC-SKILL-01..05 plus >=1 skill-specific case and asserted registrable before the run",
+    "in-memory adapters loaded from the case fixtures for tenant T1 only; frozen clock 2026-01-15T10:00:00Z"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "customer_id": "cust-dormant",
+    "offer_scenario": "CART_RETENTION_VOUCHER",
+    "target_cart_id": "CART-D-0115-01",
+    "max_discount_value": 120,
+    "effect_key": "EK-RET-D-0115-01",
+    "caller_agent": "CS-02",
+    "granted_authority": "AUTH-3"
+  },
+  "steps": [
+    {
+      "action": "Route the call through the orchestrator",
+      "expected": "Orchestrator resolves caller CS-02 -> skill.care.issue_retention_offer; the registry row exposes required_authority=AUTH-3, allowed_agents=[CS-02], tool=PromotionEngine.FloorPriceGuard, timeout_ms=3000, retry_policy={max_retries:1, backoff_multiplier:1.0, retry_on_timeout:False}"
+    },
+    {
+      "action": "Invoke with the case input payload",
+      "expected": "Input validator (additionalProperties:false) accepts it; adapter PromotionEngine.FloorPriceGuard is invoked exactly once with the tenant binding 11111111-1111-1111-1111-111111111111"
+    },
+    {
+      "action": "Inspect the returned payload",
+      "expected": "offer_id='OFF-0115-01', offer_scenario='CART_RETENTION_VOUCHER', voucher_code='RET-0115-01', compensation_amount=120 TWD, currency='TWD', expires_at=2026-01-29T10:00:00Z (14 days), effect_key echo; cart subtotal 900 TWD stays >= p_floor 850"
+    },
+    {
+      "action": "Re-run the boundary/validation probe",
+      "expected": "max_discount_value=200 on a 900 TWD cart (would reach 700 < p_floor 850) -> P_FLOOR_BREACH (non-retryable), no voucher; a second offer for the same customer inside 30 days -> RETENTION_QUOTA_EXCEEDED; PRICE_PROTECTION_14D_ECN_004 with an order outside 14 days or new_price >= historical_price -> ORDER_OUTSIDE_14D_WINDOW / refused"
+    },
+    {
+      "action": "Collect the evidence and audit trail",
+      "expected": "Evidence card EV_RETENTION_VOUCHER is written with mask=['customer_id'] and latency; the run record chains run_id -> skill -> tool -> decision -> execution_status (SRS-17)"
+    }
+  ],
+  "assertions": [
+    "the issued voucher keeps the cart subtotal >= p_floor and its value never exceeds the tenant authorization limit without an AUTH-4 approval row",
+    "exactly one retention offer per customer per 30 days; the quota counter increments once for a replayed effect_key",
+    "compensation_amount/price_difference are computed from the ERP/order data, not chosen by the model, and the customer is never promised an amount before the voucher exists",
+    "adapter PromotionEngine.FloorPriceGuard invocation count is exactly 1 for this run and the skill step ends execution_status='success' with latency recorded",
+    "the run audit ties run_id, caller CS-02, skill skill.care.issue_retention_offer, decision and evidence card EV_RETENTION_VOUCHER into one record; no component reports success for another component's work"
+  ],
+  "forbidden": [
+    "issuing a voucher that breaches the floor price or the budget/quota limits",
+    "promising compensation in chat before the voucher record exists"
+  ],
+  "evidence": [
+    "run record for skill.care.issue_retention_offer with the 18 SRS-17 fields and the case run_id",
+    "evidence card EV_RETENTION_VOUCHER payload, redacted (mask: ['customer_id'])",
+    "adapter call log for PromotionEngine.FloorPriceGuard: invocation count, input digest, latency"
+  ],
+  "cleanup": [
+    "release in-memory namespace RUN-care.issue_retention_offer-HAPPY: drop mock rows created by this case, release any effect reservation, keep audit/evidence rows required by retention"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. Adapter PromotionEngine.FloorPriceGuard substituted; the SLA deadline is observed on the virtual clock.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/05-skill-system-specifications.md",
+    "plans/modules/customer-support.md",
+    "plans/delivery/analytics.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/customers.json",
+    "fixtures/offline/catalog.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

@@ -4,6 +4,10 @@
 
 Trạng thái: mô hình đo lường đề xuất, chưa có số liệu vận hành. Các phép tính là minh họa thiết kế, phải được người phụ trách tài chính kiểm tra bằng dữ liệu thực trước khi dùng để quyết định giá.
 
+**Thẩm quyền dữ liệu:** ERP/POS/Web/App hiện có (System of Record) là nguồn có thẩm quyền cho sản phẩm, SKU, **giá**, tồn kho, khách hàng và đơn hàng; chính sách giá/khuyến mãi do chủ sở hữu phê duyệt là nguồn có thẩm quyền cho discount. Công thức giá sàn $P_{floor}$ trong tài liệu này là **phép kiểm tra chính sách tùy chọn** (guardrail), không phải nguồn dữ liệu song song và không thay thế ERP hay quyết định của người có thẩm quyền.
+
+Mọi chỉ tiêu định lượng trong tài liệu (chi phí AI, tỷ lệ tự động hóa, ngưỡng lỗi, KPI) là **mục tiêu thiết kế giả thuyết**, chưa được đo lường; chỉ được xem là cam kết sau khi khóa baseline theo ASM-002 và các ngưỡng discount/hoàn tiền theo ASM-003/ASM-004. Ngoại lệ duy nhất là hai **bất biến an toàn** (0 vi phạm chính sách, 0 thực thi trùng lặp): đây là yêu cầu bắt buộc của NFR-001/NFR-003/BR-006/BR-008, không chờ baseline và không được nới.
+
 <a id=section-20></a>
 
 ## 1. Đo giá trị, không chỉ đo hoạt động
@@ -18,7 +22,7 @@ Mục tiêu chính là giải quyết đúng nhu cầu với chi phí hợp lý 
 | Vận hành | Tự động hóa có đáng tin và tiết kiệm không? | Lỗi, hành động bị chặn, thời gian nhân viên, chi phí AI và kết nối |
 | Doanh nghiệp | Tăng trưởng có chất lượng không? | Mua lại, giới thiệu, lãi theo kênh, chi phí thu hút, giá trị khách theo thời gian |
 
-P1 chỉ báo các chỉ số từ nguồn đã kết nối. Chi phí quảng cáo, doanh thu, hoa hồng, giá trị vòng đời hay hiệu quả đối tác chưa có nguồn thì để chưa có dữ liệu, không tự ước lượng như số thực.
+Giai đoạn 1 (Phase 1) chỉ báo cáo các chỉ số từ nguồn đã kết nối. Chi phí quảng cáo, doanh thu, hoa hồng, giá trị vòng đời hay hiệu quả đối tác chưa có nguồn thì để chưa có dữ liệu, không tự ước lượng như số thực.
 
 ## 2. Sự kiện và nguồn xác nhận
 
@@ -45,9 +49,18 @@ Chống trùng theo doanh nghiệp + nguồn + mã sự kiện; đếm đơn/v�
 
 ## 3. Từ điển chỉ số KPI theo chuẩn SRS v0.1
 
-Chốt múi giờ, khoảng báo cáo dạng [bắt đầu, kết thúc), nhóm quan sát và thời hạn theo dõi trước khi bắt đầu đo lường. Với các chỉ số tỷ lệ, tử số phải thuộc đúng tập mẫu của mẫu số. Toàn bộ các chỉ số dưới đây tuân thủ phân nhóm chuẩn tại Mục 20 của SRS (AI-REV-SRS-001):
+Chốt múi giờ, khoảng báo cáo dạng [bắt đầu, kết thúc), nhóm quan sát và thời hạn theo dõi trước khi bắt đầu đo lường. Với các chỉ số tỷ lệ, tử số phải thuộc đúng tập mẫu của mẫu số. Toàn bộ các chỉ số dưới đây tuân thủ phân nhóm chuẩn tại Mục 20 của SRS (AI-REV-SRS-001). Mục 20 định nghĩa 32 nhóm chỉ số thuộc 5 nhóm; từ điển của nền tảng bổ sung một số mã mở rộng độc quyền — **SAL-KPI-08** (đặt lịch O2O), **SUC-KPI-06..07** (tích điểm, giới thiệu), **AI-SYS-KPI-08..10** (chi phí theo phiên/lượt chạy/khách hàng) — các mã này phải được báo cáo tách riêng và không được gộp chung vào 32 nhóm chuẩn SRS:
 
 **[UNCONFIRMED][ASM-002]** Các chỉ tiêu (target) số lượng cụ thể bắt buộc phải được thiết lập và phê duyệt sau khi thu thập đầy đủ dữ liệu đường cơ sở (baseline) thực tế từ đối tác mỏ neo.
+
+**Ngoại lệ không phụ thuộc baseline:** hai chỉ số an toàn dưới đây là **bất biến bắt buộc**, không phải mục tiêu kinh doanh chờ ASM-002. Chúng được đo và báo cáo dưới dạng đạt/không đạt, và mọi giá trị khác 0 là lỗi chặn phát hành:
+
+- **AI-SYS-KPI-03 — Tỷ lệ vi phạm chính sách = 0** (NFR-001, BR-008, SRS Mục 22).
+- **AI-SYS-KPI-07 — Tỷ lệ thực thi trùng lặp = 0** (NFR-003, BR-005, BR-006).
+
+Các chỉ số còn lại (bao gồm cả AI-SYS-KPI-04 ảo giác/ lỗi và AI-SYS-KPI-06 tỷ lệ thực thi thất bại) là chỉ số theo dõi có ngưỡng đề xuất, chờ baseline ASM-002.
+
+Một số dòng dưới đây có ghi kèm con số (ví dụ < 0,1% thực thi thất bại, 0,5–1 TWD/phiên). Đó là **mục tiêu thiết kế đề xuất**, không phải kết quả đã đo hay SLA đã cam kết; phải khóa lại theo ASM-002 sau baseline. Hai bất biến an toàn (AI-SYS-KPI-03 và AI-SYS-KPI-07 = 0) là ngoại lệ: chúng là yêu cầu bắt buộc, không phải mục tiêu chờ baseline.
 
 ### 3.1. Chỉ số Tiếp thị (Marketing KPIs)
 
@@ -103,12 +116,12 @@ Chốt múi giờ, khoảng báo cáo dạng [bắt đầu, kết thúc), nhóm 
 |---|---|---|---|
 | **AI-SYS-KPI-01** | Tỷ lệ hoàn thành tự chủ | Autonomous Completion Rate | Số chuỗi tác vụ AI tự động thực thi thành công từ Signal đến Outcome / Tổng số tác vụ được phân công. |
 | **AI-SYS-KPI-02** | Tỷ lệ người can thiệp | Human Override Rate | Tỷ lệ phiên hoặc quyết định AI bị nhân viên con người chỉnh sửa, chặn lại hoặc giành quyền tiếp quản. |
-| **AI-SYS-KPI-03** | Tỷ lệ vi phạm chính sách | Policy Violation Rate | Số lần AI vi phạm ranh giới thẩm quyền hoặc bộ quy tắc giá/dữ liệu (Mục tiêu bắt buộc = 0%). |
+| **AI-SYS-KPI-03** | Tỷ lệ vi phạm chính sách | Policy Violation Rate | Số lần AI vi phạm ranh giới thẩm quyền hoặc bộ quy tắc giá/dữ liệu. **Bất biến an toàn bắt buộc: 0** — yêu cầu cứng của NFR-001, BR-008 và SRS Mục 22 ("không có test case cho phép vượt authority boundary"); đây không phải chỉ tiêu chờ baseline và không được nới theo ASM-002. Mọi giá trị khác 0 là lỗi chặn phát hành, không phải mục tiêu cần tối ưu. |
 | **AI-SYS-KPI-04** | Tỷ lệ ảo giác & phát sinh lỗi | Hallucination / Error Rate | Tỷ lệ câu trả lời bịa đặt thông tin, sai giá catalog hoặc sai chính sách được phát hiện qua audit log. |
 | **AI-SYS-KPI-05** | Chi phí / kết quả thành công | Cost per Successful Outcome | Tổng chi phí API AI + hạ tầng / Số đơn hàng hoặc vụ việc CSKH được giải quyết thành công. |
-| **AI-SYS-KPI-06** | Tỷ lệ thực thi thất bại | Failed Execution Rate | Số lượt gọi công cụ/kết nối bên ngoài bị thất bại hoặc lỗi hệ thống / Tổng số lượt thực thi (Target < 0.1%). |
-| **AI-SYS-KPI-07** | Tỷ lệ thực thi trùng lặp | Duplicate Execution Rate | Số hành động gửi tin hoặc tạo đơn bị trùng lặp do lỗi Idempotency (Mục tiêu bắt buộc = 0%). |
-| **AI-SYS-KPI-08** | Ngân sách AI trên mỗi phiên | AI Cost per Session | Chi phí token và API model thực tế trên mỗi phiên tư vấn đầy đủ (Định mức mục tiêu: **0,5–1 TWD/phiên**). |
+| **AI-SYS-KPI-06** | Tỷ lệ thực thi thất bại | Failed Execution Rate | Số lượt gọi công cụ/kết nối bên ngoài bị thất bại hoặc lỗi hệ thống / Tổng số lượt thực thi (mục tiêu thiết kế đề xuất < 0,1%; chưa xác nhận — khóa sau baseline theo ASM-002). |
+| **AI-SYS-KPI-07** | Tỷ lệ thực thi trùng lặp | Duplicate Execution Rate | Số hành động gửi tin hoặc tạo đơn bị trùng lặp do lỗi Idempotency. **Bất biến bắt buộc: 0** — yêu cầu cứng của NFR-003, BR-005 và BR-006; không phải chỉ tiêu chờ baseline và không được nới theo ASM-002. Mọi hành động trùng lặp là lỗi chặn phát hành. |
+| **AI-SYS-KPI-08** | Ngân sách AI trên mỗi phiên | AI Cost per Session | Chi phí token và API model thực tế trên mỗi phiên tư vấn đầy đủ (định mức thiết kế đề xuất: **0,5–1 TWD/phiên** theo ECN-003; chưa có số đo thực tế — khóa sau baseline theo ASM-002). |
 | **AI-SYS-KPI-09** | Chi phí trên mỗi lượt chạy | Cost per Run | Tổng chi phí token mô hình, chi phí gọi API và tài nguyên connector trong một Agent Run đơn lẻ theo NFR-010. |
 | **AI-SYS-KPI-10** | Chi phí trên mỗi khách hàng | Cost per Customer | Tổng chi phí AI tích lũy phân bổ cho một khách hàng định danh (Customer ID) trong toàn bộ chu kỳ tương tác theo NFR-010. |
 
@@ -158,30 +171,30 @@ Khi một hành trình chuyển đổi đơn hàng có sự tham gia phối hợ
 
 <a id=unit-economics></a>
 
-## 4. Kinh tế ưu đãi và giá sàn (Unit Economics & Pricing Engine)
+## 4. Kinh tế ưu đãi và giá sàn (Unit Economics & Floor-Policy Check — mô hình đề xuất, chưa kiểm chứng)
 
 ### 4.1. ECN-001 — Tái phân bổ hoa hồng bán hàng (Sales Commission Reallocation)
 
 PDF đề xuất chuyển phần hoa hồng bán hàng tiết kiệm thành giảm tiền cho khách. Kế hoạch chuẩn hóa thành nguyên lý tái phân bổ hoa hồng có kiểm soát toán học:
 
-1. **Trích hoa hồng telesales 5–10% thành Quỹ trợ cấp chốt đơn động (Dynamic Closing Subsidy Pool)**: Trong các kênh bán hàng truyền thống, chi phí hoa hồng đội ngũ telesales hoặc đại lý trung gian thường chiếm từ 5% đến 10% (hoặc cao hơn) trên giá bán niêm yết $P_{base}$. Khi thay thế hoặc tăng cường bằng AI Sales Advisor (SAL-02), phần hoa hồng biến đổi thực tế tránh được (Avoided Variable Commission) được trích một phần vào Quỹ trợ cấp chốt đơn, cho phép AI cấp ưu đãi tức thời nhằm tăng chuyển đổi mà không bào mòn biên lợi nhuận gốc của doanh nghiệp.
+1. **Trích hoa hồng telesales 5–10% thành Quỹ trợ cấp chốt đơn động (Dynamic Closing Subsidy Pool)**: Trong các kênh bán hàng truyền thống, chi phí hoa hồng đội ngũ telesales hoặc đại lý trung gian thường chiếm từ 5% đến 10% (hoặc cao hơn) trên giá bán niêm yết $P_{base}$ — **giả định thị trường cần kiểm chứng, chưa có số liệu đo**. Khi thay thế hoặc tăng cường bằng AI Sales Advisor (SAL-02), phần hoa hồng biến đổi thực tế tránh được (Avoided Variable Commission) được trích một phần vào Quỹ trợ cấp chốt đơn, cho phép AI đề xuất ưu đãi tức thời trong hạn mức đã phê duyệt (ASM-003).
 2. **Nguyên tắc chi phí tránh được**: Chỉ tính chi phí thực sự tránh được theo từng đơn phát sinh; lương cố định của nhân sự văn phòng không tự biến mất.
 3. **Chi phí vận hành mới**: Vẫn phải khấu trừ chi phí AI (ECN-003), chi phí nhân viên hỗ trợ tiếp quản, phí cổng thanh toán, phí giao vận, dự phòng rủi ro gian lận, đổi trả và hoa hồng đối tác giới thiệu (B2B2C Affiliate).
 4. **Tách bạch hoa hồng đối tác**: Hoa hồng đối tác giới thiệu là nghĩa vụ chi trả bằng tiền thật cho bên thứ ba, không được nhầm lẫn với phần hoa hồng nhân viên nội bộ đã tiết kiệm.
-5. **Đánh giá lãi đóng góp**: Bắt buộc phải so sánh lãi đóng góp (Contribution Margin) trước và sau khi áp dụng trợ cấp, bảo toàn 100% mục tiêu tài chính sau chi phí cố định.
+5. **Đánh giá lãi đóng góp**: Bắt buộc phải so sánh lãi đóng góp (Contribution Margin) trước và sau khi áp dụng trợ cấp; ngưỡng mục tiêu do Finance khóa theo ASM-003/ASM-004. Đây là **mục tiêu thiết kế**, chưa phải kết quả đã đo.
 
-### 4.2. ECN-002 — Công thức xác định giá sàn máy chủ (Deterministic Floor Price Formula P_floor)
+### 4.2. ECN-002 — Phép kiểm tra giá sàn theo chính sách phía máy chủ (Deterministic Floor-Policy Check P_floor)
 
-Hệ thống bảo toàn tuyệt đối 100% biên lãi ròng (Net Profit Margin) và lãi đóng góp thông qua công thức xác định giá sàn toán học chạy hoàn toàn phía máy chủ (Server-side deterministic validation). AI chỉ đóng vai trò thu nhận tín hiệu nhạy cảm giá và đề xuất mức giảm; **máy chủ là nơi duy nhất có thẩm quyền duyệt và chốt giá cuối**.
+Đề xuất dùng công thức giá sàn xác định như một **phép kiểm tra chính sách tùy chọn phía máy chủ** (server-side deterministic check) để giữ mục tiêu lãi đóng góp do Finance phê duyệt (ASM-003/ASM-004). Đây là mục tiêu thiết kế, không phải cam kết đã đo lường. AI chỉ thu nhận tín hiệu nhạy cảm giá và đề xuất mức giảm trong hạn mức; **giá bán, discount và tồn kho có thẩm quyền vẫn thuộc ERP/POS/Web/App (SoR) cùng chính sách do chủ sở hữu phê duyệt — P_floor chỉ chặn các đề xuất vượt chính sách, không tạo nguồn giá song song**.
 
 Các biến dưới đây dùng cùng loại tiền tệ và cơ sở **chưa thuế gián thu**; các yếu tố thuế/kế toán phải được người phụ trách tài chính xác nhận:
 
 | Biến | Tên biến | Ý nghĩa và Quy tắc đo lường |
 |---|---|---|
 | $P$ | Doanh thu thực tế | Giá bán sản phẩm sau ưu đãi/trợ cấp, chưa thuế; không gồm phí vận chuyển thu riêng. |
-| $C$ | Chi phí biến đổi trên đơn | Chi phí không phụ thuộc tỷ lệ $P$: giá vốn hàng bán (COGS), chi phí xử lý đơn hàng, chi phí vận hành AI (ngân sách định mức **0,5–1 TWD/phiên tư vấn** theo ECN-003), chi phí giao hàng sau trừ cước thu khách, dự phòng hoàn/hủy và chi phí khác đã xác định. |
+| $C$ | Chi phí biến đổi trên đơn | Chi phí không phụ thuộc tỷ lệ $P$: giá vốn hàng bán (COGS), chi phí xử lý đơn hàng, chi phí vận hành AI (định mức thiết kế đề xuất **0,5–1 TWD/phiên tư vấn** theo ECN-003, chưa xác nhận), chi phí giao hàng sau trừ cước thu khách, dự phòng hoàn/hủy và chi phí khác đã xác định. |
 | $r$ | Tỷ lệ chi phí theo doanh thu | Tổng tỷ lệ phần trăm chi phí tính trực tiếp trên $P$ (ví dụ: phí cổng thanh toán thẻ/LINE Pay/ECPay 2–3%, hoa hồng đối tác tiếp thị liên kết nếu tính theo % doanh thu). |
-| $L$ | Lãi đóng góp tối thiểu yêu cầu | Số tiền lãi cố định tối thiểu bắt buộc phải thu về trên mỗi đơn hàng (nhằm bảo toàn 100% biên lãi ròng sau khi phân bổ chi phí cố định). |
+| $L$ | Lãi đóng góp tối thiểu yêu cầu | Số tiền lãi cố định tối thiểu bắt buộc phải thu về trên mỗi đơn hàng, nhằm giữ mục tiêu lãi đóng góp sau khi phân bổ chi phí cố định (ngưỡng do Finance khóa — ASM-003). |
 | $P_{base}$ | Giá niêm yết cơ sở | Giá sản phẩm cơ sở hiện hành trên cùng phạm vi đơn, chưa thuế và chưa gồm phí vận chuyển thu riêng. |
 | $D$ | Tổng mức trợ cấp giảm giá | Tổng mức giảm tiền trực tiếp so với $P_{base}$, bao gồm toàn bộ voucher, trợ cấp AI và khuyến mãi kết hợp ($0 \le D \le D_{cap}$). |
 | $D_{cap}$ | Trần trợ cấp tối đa | Hạn mức giảm giá tối đa của đơn hàng do người có thẩm quyền tài chính phê duyệt (ASM-003). |
@@ -206,12 +219,12 @@ Quy tắc làm tròn: Luôn làm tròn sàn lên (Ceil) theo đơn vị tiền t
 ### 4.3. ECN-003 — Định mức kinh tế chi phí AI trên mỗi phiên (Unit AI Session Cost Economics)
 
 Nhằm đảm bảo chi phí AI không làm xói mòn lợi nhuận đơn hàng:
-1. **Định mức chi phí AI**: Mỗi phiên tư vấn bán hàng hoặc CSKH hoàn chỉnh có ngân sách định mức mục tiêu là **0,5–1 TWD / phiên** (tương đương ~400–800 VNĐ hoặc ~0,016–0,032 USD).
+1. **Định mức chi phí AI**: Mỗi phiên tư vấn bán hàng hoặc CSKH hoàn chỉnh có ngân sách định mức **mục tiêu thiết kế** là **0,5–1 TWD / phiên** (tương đương ~400–800 VNĐ hoặc ~0,016–0,032 USD) — chưa có số đo thực tế, phải khóa lại theo ASM-002.
 2. **Chiến lược tối ưu hóa token**:
    - Sử dụng mô hình nhẹ, phản hồi nhanh (ví dụ: Flash/Mini models) cho các tác vụ phân loại ý định (Intent Detection), routing và tra cứu FAQ.
    - Chỉ gọi mô hình suy luận sâu (Reasoning models) cho các tình huống so sánh cấu hình phức tạp hoặc xử lý khiếu nại nhạy cảm.
    - Cache kho kiến thức doanh nghiệp (Prompt Caching) và giới hạn context window để giảm thiểu chi phí input token.
-3. **Tính toán trực tiếp vào giá sàn**: Khoản chi phí 0,5–1 TWD này được tính gộp trực tiếp vào thành phần $C$ trong công thức tính $P_{floor}$ của ECN-002, đảm bảo 100% chi phí AI được bù đắp và bảo vệ tuyệt đối biên lãi ròng của từng giao dịch.
+3. **Tính toán trực tiếp vào giá sàn**: Khoản chi phí 0,5–1 TWD này được đưa vào thành phần $C$ khi tính $P_{floor}$ của ECN-002, nhằm giữ mục tiêu lãi đóng góp đã phê duyệt cho từng giao dịch (mục tiêu thiết kế, không phải kết quả đã đo).
 
 ### 4.4. ECN-004 — Kiểm soát ngân sách điểm thưởng & Phiếu ưu đãi (Dynamic Loyalty Points & Voucher Budgeting)
 
@@ -221,16 +234,16 @@ Nhằm đảm bảo chi phí AI không làm xói mòn lợi nhuận đơn hàng:
                                     − Chi phí AI & vận hành phát sinh thêm)
    ```
 2. **Kiểm soát trần giỏ hàng và mốc đổi điểm (Basket Cap & Thresholds)**:
-   - Áp dụng trần giỏ hàng (Basket Cap 1.000–2.000 TWD hoặc 1.000.000–2.000.000 VNĐ) đối với các voucher giảm theo tỷ lệ %, chặn việc gom hàng sỉ của các đại lý không chính thức.
+   - Áp dụng trần giỏ hàng (Basket Cap 1.000–2.000 TWD hoặc 1.000.000–2.000.000 VNĐ — ngưỡng do tenant cấu hình, chờ chốt theo ASM-003) đối với các voucher giảm theo tỷ lệ %, chặn việc gom hàng sỉ của các đại lý không chính thức.
    - Điều kiện chi tiêu tối thiểu (Min Spend): Đơn hàng đầu tiên tích lũy điểm phải đạt ngưỡng giá trị tối thiểu để tránh tình trạng tạo đơn ảo trục lợi điểm mở đầu.
    - Cấm áp dụng voucher giảm % cho các sản phẩm giá trị cao (High-Ticket EV Scooter), chỉ áp dụng voucher tiền mặt cố định hoặc quà tặng bảo dưỡng/thuê pin.
 3. **Chống gian lận trục lợi ưu đãi (Anti-Sybil & Anti-Exploit)**:
-   - Sử dụng Bộ tứ định danh: SĐT/LINE OA OTP, vân tay thiết bị (Device Fingerprint), mã băm thanh toán/lịch sử nhận hàng siêu thị (CVS COD History) và đối soát địa chỉ trùng lặp.
+   - Sử dụng Bộ tứ định danh: SĐT/LINE OA OTP, vân tay thiết bị (Device Fingerprint), mã băm thanh toán/lịch sử nhận hàng siêu thị (CVS COD History) và đối soát địa chỉ trùng lặp. **Lưu ý [PENDING LEGAL REVIEW][ASM-005]:** vân tay thiết bị và mã băm thanh toán là dữ liệu nhạy cảm; chỉ được dùng sau khi có cơ sở pháp lý và cơ chế consent được Data/Legal phê duyệt.
    - Tự động thu hồi điểm thưởng (`loyalty.points_revoked`) khi đơn hàng bị hoàn tiền hoặc hủy.
 
-### 4.5. Ví dụ số để kiểm tra thực nghiệm
+### 4.5. Ví dụ số minh họa (mô phỏng, không phải dữ liệu vận hành)
 
-Giả định cho một đơn hàng: $P_{base} = 1.000.000$ đồng; Chi phí $C = 780.000$ đồng (đã gồm chi phí AI 800 đồng); Tỷ lệ phí thanh toán $r = 2\%$; Lãi đóng góp tối thiểu yêu cầu $L = 120.000$ đồng; Trần giảm giá $D_{cap} = 50.000$ đồng (trích từ quỹ tiết kiệm hoa hồng telesales theo ECN-001).
+Giả định cho một đơn hàng: $P_{base} = 1.000.000$ đồng; Chi phí $C = 780.000$ đồng (đã gồm chi phí AI 800 đồng); Tỷ lệ phí thanh toán $r = 2\%$; Lãi đóng góp tối thiểu yêu cầu $L = 120.000$ đồng; Trần giảm giá $D_{cap} = 50.000$ đồng (trích từ quỹ tiết kiệm hoa hồng telesales theo ECN-001). Các con số dưới đây chỉ để kiểm tra công thức.
 
 ```text
 Sàn theo lãi đóng góp yêu cầu = (780.000 + 120.000) / (1 − 0,02) = 900.000 / 0,98 ≈ 918.368 đồng
@@ -240,7 +253,7 @@ Giá sàn áp dụng cuối cùng (max) = 950.000 đồng
 Kiểm tra hiệu quả kinh tế tại giá sàn áp dụng:
 Doanh thu thực thu P = 950.000 đồng
 Lãi đóng góp thực tế thu về = 950.000 × (1 − 0,02) − 780.000 = 931.000 − 780.000 = 151.000 đồng
-Mức lãi thực tế (151.000 đồng) > Mức lãi tối thiểu L (120.000 đồng) ➔ Đạt chuẩn bảo toàn biên lợi nhuận ròng.
+Mức lãi thực tế (151.000 đồng) > Mức lãi tối thiểu L (120.000 đồng) ➔ Thỏa ngưỡng lãi đóng góp tối thiểu trong ví dụ minh họa (không phải kết quả đo thực tế).
 ```
 
 Nếu khách hàng hoặc bot AI yêu cầu mức giá 940.000 đồng: dù mức này vẫn đạt lãi đóng góp (141.200 đồng > 120.000 đồng), nhưng vì vượt trần giảm giá $D_{cap} = 50.000$ đồng, hệ thống từ chối ngay lập tức. Cả hai điều kiện an toàn kinh tế phải đồng thời thỏa mãn.
@@ -254,7 +267,7 @@ Nếu khách hàng hoặc bot AI yêu cầu mức giá 940.000 đồng: dù mứ
 5. Báo quy mô mẫu, độ bất định và sai lệch chọn nhóm; thiếu mẫu thì kết luận chưa đủ, không tuyên bố chiến thắng.
 6. Dừng ngay khi có hành động trái quyền nghiêm trọng, rò dữ liệu hoặc giá dưới sàn; dừng thử thương mại theo ngưỡng ngân sách/lãi/khiếu nại đã duyệt.
 
-P1 không bắt buộc chứng minh tác động nhân quả hay xây hệ thống dự báo. Có thể bắt đầu từ kiểm tra chất lượng và đường cơ sở; phép thử đối chứng dành cho giai đoạn đủ dữ liệu.
+Giai đoạn 1 (Phase 1) không bắt buộc chứng minh tác động nhân quả hay xây hệ thống dự báo. Có thể bắt đầu từ kiểm tra chất lượng và đường cơ sở; phép thử đối chứng dành cho giai đoạn đủ dữ liệu.
 
 ## 6. Chất lượng dữ liệu và trách nhiệm
 

@@ -1,0 +1,117 @@
+{
+  "id": "E2E-OFF-001",
+  "title": "TC-E2E-001 closed loop: one signal through all eleven stages (mocked SoR)",
+  "document": "e2e/offline.md",
+  "layer": "e2e",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "blueprint",
+  "pair": "E2E-LIVE-001",
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "TC-E2E-001",
+    "OBJ-005",
+    "FR-ORC-001",
+    "FR-ORC-002",
+    "NFR-002",
+    "BR-010",
+    "SRS-09",
+    "SRS-17"
+  ],
+  "facets": [
+    "stage:SIGNAL",
+    "stage:CONTEXT",
+    "stage:HYPOTHESIS",
+    "stage:DECISION",
+    "stage:PLAN",
+    "stage:ACTION",
+    "stage:APPROVAL",
+    "stage:EXECUTION",
+    "stage:EVIDENCE",
+    "stage:OUTCOME",
+    "stage:LEARNING",
+    "skill:skill.sales.send_message",
+    "skill:skill.mkt.check_consent",
+    "event:add_to_cart",
+    "channel:EMAIL"
+  ],
+  "risk": "A run only looks complete: the orchestrator reports an outcome while decision, approval or evidence never happened, so nobody can prove why a customer was contacted.",
+  "preconditions": [
+    "run_id=RUN-E2E-OFF-001, case_id=E2E-OFF-001, worker=w-biz-e2e; tenant T1 state restored from fixtures; all HTTP intercepted into the in-memory SoR",
+    "cust-a holds EMAIL marketing consent; cart CART-A-0115-01 was abandoned 30 minutes before the frozen clock; no other case shares the cart or session"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "customer_id": "cust-a",
+    "signal": "cart_abandoned",
+    "cart_id": "CART-A-0115-01",
+    "channel": "EMAIL",
+    "effect_key": "EK-E2E001-0115-01",
+    "abandon_minutes": 30,
+    "consent_check": "allowed=true (cust-a, EMAIL, marketing)"
+  },
+  "steps": [
+    {
+      "action": "Emit the signal and wait for the decision stage",
+      "expected": "the orchestrator opens one run with SIGNAL (the abandoned-cart event) then CONTEXT from the Customer 360 read; no stage is skipped"
+    },
+    {
+      "action": "Wait for the plan/action and approval stages",
+      "expected": "HYPOTHESIS ('cart abandoned, recovery likely') stays hypothesis-tagged, DECISION selects the cart-recovery action, PLAN names skill+channel, APPROVAL records AUTO_APPROVED for this low-risk reminder with the authority used"
+    },
+    {
+      "action": "Wait for execution",
+      "expected": "EXECUTION reserves EK-E2E001-0115-01 and the mocked channel adapter delivers exactly one message; the stage stores the provider reference"
+    },
+    {
+      "action": "Wait for the outcome and learning stages",
+      "expected": "OUTCOME is populated from the scripted customer response/order condition (not from the send) and LEARNING appends the observed result"
+    },
+    {
+      "action": "Assert the stage chain and the evidence links",
+      "expected": "all eleven stages exist exactly once, in order, for one run_id, each linked to the records that justify it (event ids, consent row, decision record, receipt)"
+    },
+    {
+      "action": "Interrupt a second sub-run at the approval boundary",
+      "expected": "the parked run leaves zero sends and resumes from the same run_id without duplicating the signal or the action"
+    }
+  ],
+  "assertions": [
+    "the run exposes exactly one of each stage SIGNAL..LEARNING in canonical order for a single run_id and every stage references its justifying record",
+    "exactly one customer message is delivered for EK-E2E001-0115-01; a replayed signal cannot produce a second send",
+    "the EVIDENCE stage contains the trigger -> context -> decision -> approval -> execution -> outcome chain and OUTCOME is written only when its condition is met",
+    "no stage claims work another stage did not do: the execution receipt is produced by the adapter boundary, not by the model"
+  ],
+  "forbidden": [
+    "recording OUTCOME without an execution receipt or a defined observation window",
+    "skipping CONTEXT or APPROVAL when the action carries consent/authority implications"
+  ],
+  "evidence": [
+    "the eleven stage records for RUN-E2E-OFF-001 with their foreign keys",
+    "outbound message receipt from the mock connector + the effect reservation row",
+    "SRS-17 run audit with all 18 fields plus the Customer 360 timeline entries written by the run"
+  ],
+  "cleanup": [
+    "delete the mock run, cart, message and derived outcome rows; keep the audit/evidence rows required by retention"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. All stage records come from the real orchestrator/PEP/evidence writer; only the channel adapter and the SoR are mocked.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/04-core-engine-and-orchestrator.md",
+    "plans/customer-lifecycle.md",
+    "plans/platform/workflows-and-handoffs.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/catalog.json",
+    "fixtures/offline/customers.json",
+    "fixtures/offline/consents.json",
+    "fixtures/offline/events.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

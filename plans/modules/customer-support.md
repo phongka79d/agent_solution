@@ -2,7 +2,7 @@
 
 [Mục lục](../README.md) · [Hành trình](../customer-lifecycle.md) · [Thuật ngữ](../glossary.md)
 
-Trạng thái: thiết kế đề xuất. P1 bao gồm hỏi đáp FAQ, tra cứu trạng thái đơn hàng qua ERP có evidence (lookup-order - PILOT-03), hướng dẫn giới hạn và bàn giao (escalation); các tác vụ phiếu bù giá, đổi trả và tích hợp logistics chuyên sâu cần kết nối/nghiệm thu sau.
+Trạng thái: thiết kế đề xuất. P1 bao gồm hỏi đáp FAQ, tra cứu trạng thái đơn hàng qua ERP có evidence (`skill.care.lookup_order` - PILOT-03), hướng dẫn giới hạn và bàn giao (escalation); các tác vụ phiếu bù giá, đổi trả và tích hợp logistics chuyên sâu cần kết nối/nghiệm thu sau.
 
 <a id=section-8></a>
 
@@ -12,7 +12,7 @@ Trạng thái: thiết kế đề xuất. P1 bao gồm hỏi đáp FAQ, tra cứ
 
 Giúp khách dùng sản phẩm thành công, xử lý vấn đề nhất quán và được gặp nhân viên khi cần. Hỗ trợ là một phần của sản phẩm, không phải điểm cuối sau bán (khớp mục tiêu **OBJ-003** và **OBJ-004** trong SRS).
 
-Chăm sóc có thể nhận câu hỏi trước mua. Câu hỏi công dụng chung dùng nguồn đã duyệt; khi khách cần đề xuất thương mại hoặc mua hàng, bàn giao Bán hàng (SAL-02) nếu bật, nếu không thì chuyển nhân viên. Không trì hoãn giải quyết khiếu nại để bán thêm. Mọi hành vi tra cứu phải tuân thủ nguyên tắc cô lập dữ liệu khách hàng (**NFR-006**) và xử lý an toàn thất bại (**NFR-008 - Fail Closed**).
+Chăm sóc có thể nhận câu hỏi trước mua. Câu hỏi công dụng chung dùng nguồn đã duyệt; khi khách cần đề xuất thương mại hoặc mua hàng, bàn giao Bán hàng (SAL-02) nếu bật, nếu không thì chuyển nhân viên. Không trì hoãn giải quyết khiếu nại để bán thêm. Mọi hành vi tra cứu phải tuân thủ nguyên tắc cô lập ngữ cảnh khách hàng (**NFR-006**: dữ liệu khách A không được xuất hiện trong ngữ cảnh khách B), cô lập đa doanh nghiệp theo `tenant_id` (lớp phòng vệ bổ sung, tách biệt với NFR-006) và xử lý an toàn thất bại (**NFR-008 - Fail Closed**). Việc xác minh định danh khách hàng (TC-E2E-004) bắt buộc hoàn tất trước khi tra cứu hồ sơ khách hàng hoặc đơn hàng.
 
 ## 2. Hệ thống Agent Chăm sóc & Giữ chân khách hàng chuẩn SRS (CS-01 & CS-02)
 
@@ -71,8 +71,8 @@ Chủ động phát hiện các nguy cơ rời bỏ hoặc cơ hội mở rộng
 
 ## 3. Hệ thống Quản lý Vụ việc (Case Management State Machine)
 
-Mọi yêu cầu hỗ trợ hoặc khiếu nại đều được theo dõi dưới dạng Case có cấu trúc, vận hành theo State Machine chuẩn bao gồm đường chuyển tiếp mở lại vụ việc (REOPENED):
-`NEW → CLASSIFIED → ASSIGNED → IN_PROGRESS → WAITING_CUSTOMER → RESOLVED → CLOSED / REOPENED`
+Mọi yêu cầu hỗ trợ hoặc khiếu nại đều được theo dõi dưới dạng Case có cấu trúc, vận hành theo State Machine chuẩn gồm 7 trạng thái cơ bản theo baseline, kèm đường chuyển tiếp mở lại vụ việc (REOPENED):
+`NEW → CLASSIFIED → ASSIGNED → IN_PROGRESS → WAITING_CUSTOMER → RESOLVED → CLOSED` + nhánh `REOPENED` (quay về IN_PROGRESS/ASSIGNED)
 
 ```text
 [NEW] ──► [CLASSIFIED] ──► [ASSIGNED] ──► [IN_PROGRESS] ──► [WAITING_CUSTOMER] ──► [RESOLVED] ──► [CLOSED]
@@ -91,7 +91,7 @@ Mọi yêu cầu hỗ trợ hoặc khiếu nại đều được theo dõi dư�
 5. **WAITING_CUSTOMER:** Tạm dừng tính SLA chờ phản hồi hoặc cung cấp thêm thông tin từ phía khách hàng.
 6. **RESOLVED:** Đã cung cấp giải pháp hoặc hoàn tất xử lý; chờ xác nhận hài lòng từ khách hàng.
 7. **CLOSED:** Khách hàng xác nhận hài lòng hoặc quá thời gian quy định sau giải quyết mà không có khiếu nại thêm.
-8. **REOPENED:** Vụ việc được mở lại khi khách hàng tiếp tục khiếu nại, phản hồi chưa hài lòng hoặc phát sinh vấn đề liên quan từ trạng thái RESOLVED hoặc CLOSED. Hệ thống chuyển tiếp Case quay lại IN_PROGRESS/ASSIGNED, giữ nguyên mã Case ID cũ và bảo toàn toàn bộ lịch sử bằng chứng (Evidence).
+8. **REOPENED:** Vụ việc được mở lại khi khách hàng tiếp tục khiếu nại, phản hồi chưa hài lòng hoặc phát sinh vấn đề liên quan từ trạng thái RESOLVED hoặc CLOSED. Hệ thống chuyển tiếp Case quay lại IN_PROGRESS/ASSIGNED, giữ nguyên mã Case ID cũ và bảo toàn lịch sử bằng chứng (Evidence) theo đúng thời hạn lưu trữ do chính sách dữ liệu của tenant quy định (**[UNCONFIRMED][ASM-005]**).
 
 ### 3.2. Cấu trúc dữ liệu Case bắt buộc
 Mỗi Case phải lưu trữ tối thiểu các trường dữ liệu:
@@ -102,16 +102,18 @@ Tuyệt đối không đóng Case đơn phương khi chưa có xác nhận hoặ
 
 Theo Mục 11 của SRS, các Agent CS-01 và CS-02 gọi các Skill chuyên trách thông qua Orchestrator với hợp đồng kiểm soát nghiêm ngặt:
 
-| Mã Skill (Skill ID) | Mục đích (Purpose) | Agent được phép dùng | Quyền hạn yêu cầu | Tool / Connector | Quy tắc kiểm tra (Validation) & Audit |
+| Mã Skill (Skill ID) | Mục đích (Purpose) | Agent được phép dùng | Quyền hạn yêu cầu | Tool / Connector (interface) | Quy tắc kiểm tra (Validation) & Audit |
 |---|---|---|---|---|---|
-| `search-faq` | Tra cứu FAQ và chính sách bảo hành, đổi trả đã được duyệt từ Second Brain | CS-01 | AUTH-0 (Observe) | Knowledge Base (/customer-care) | Chỉ trích dẫn tài liệu trạng thái `approved`; không bịa chính sách |
-| `lookup-order` | Tra cứu thông tin đơn hàng, trạng thái xử lý và thanh toán từ ERP/OMS | CS-01 | AUTH-0 (Observe) | ERP Connector (API-001) | Bắt buộc xác minh danh tính khách hàng (Customer Verification - TC-E2E-004) |
-| `track-shipping` | Tra cứu hành trình vận chuyển thực tế và mã bưu gửi siêu thị CVS | CS-01 | AUTH-0 (Observe) | Logistics / CVS Adapter (ADPT-TW-001) | Trả về dữ liệu hành trình vật lý từ nhà vận chuyển; ghi log tra cứu |
-| `manage-case` | Khởi tạo, cập nhật trạng thái hoặc đóng/mở lại vụ việc theo State Machine chuẩn (kèm REOPENED) | CS-01 | AUTH-3 (Bounded Execute) | Case Management Store | Tuân thủ nghiêm ngặt chuyển tiếp trạng thái; không đóng case đơn phương |
-| `initiate-return` | Khởi tạo yêu cầu đổi/trả hàng nháp, thu thập hình ảnh và lý do khiếu nại | CS-01 | AUTH-2 (Draft) / AUTH-4 (Refund) | Returns API / Core Engine | Kiểm tra điều kiện thời hạn đổi trả; hoàn tiền bắt buộc người duyệt (AUTH-4) |
-| `escalate-to-human` | Bàn giao phiên chat và vụ việc sang hàng đợi nhân viên tại SCR-005 | CS-01 | AUTH-3 (Bounded Execute) | Conversation Console (SCR-005) | Kích hoạt khóa phiên (Session Mutex Lock); AI ngừng trả lời nghiệp vụ |
-| `analyze-churn-risk` | Nhận diện tín hiệu bất thường (ngừng mua, giảm tần suất) trên Customer 360 | CS-02 | AUTH-1 (Recommend) | Customer 360 Analytics Layer | Ghi nhận dưới dạng HYPOTHESIS; không ghi đè thành FACT (FR-C360-003) |
-| `issue-retention-offer` | Phát hành ưu đãi/voucher giữ chân hoặc điểm thưởng trong hạn mức ngân sách | CS-02 | AUTH-3 (trong hạn mức) / AUTH-4 (vượt trần) | Promotion Engine / Loyalty Store | Kiểm tra hạn mức ngân sách và trần ưu đãi ($D_{cap}$); gắn mã `effect_key` |
+| `skill.care.search_faq` (bí danh hiển thị: `search-faq`) | Tra cứu FAQ và chính sách bảo hành, đổi trả đã được duyệt từ Second Brain | CS-01 | AUTH-0 (Observe) | Knowledge Base interface (`/customer-care`) | Chỉ trích dẫn tài liệu trạng thái `approved`; không bịa chính sách |
+| `skill.care.lookup_order` (bí danh hiển thị: `lookup-order`) | Tra cứu thông tin đơn hàng, trạng thái xử lý và thanh toán từ ERP/OMS (**chỉ sau khi đã xác minh danh tính khách hàng**) | CS-01 | AUTH-0 (Observe) | Order Connector interface (API-001) | Bắt buộc xác minh danh tính khách hàng (Customer Verification - TC-E2E-004) **trước** khi tra cứu |
+| `skill.care.track_shipping` (bí danh hiển thị: `track-shipping`) | Tra cứu hành trình vận chuyển thực tế và mã bưu gửi siêu thị CVS | CS-01 | AUTH-0 (Observe) | Logistics Connector interface; adapter cụ thể theo thị trường (ví dụ ADPT-TW-001) là hiện thực tùy chọn **[UNCONFIRMED][ASM-001]** | Trả về dữ liệu hành trình vật lý từ nhà vận chuyển; ghi log tra cứu |
+| `skill.care.manage_case` (bí danh hiển thị: `manage-case`) | Khởi tạo, cập nhật trạng thái hoặc đóng/mở lại vụ việc theo State Machine chuẩn (kèm REOPENED) | CS-01 | AUTH-3 (Bounded Execute) | Case Management Store | Tuân thủ nghiêm ngặt chuyển tiếp trạng thái; không đóng case đơn phương |
+| `skill.care.initiate_return` (bí danh hiển thị: `initiate-return`) | Khởi tạo yêu cầu đổi/trả hàng nháp, thu thập hình ảnh và lý do khiếu nại | CS-01 | AUTH-2 (Draft) / AUTH-4 (Refund) | Returns API / Core Engine | Kiểm tra điều kiện thời hạn đổi trả; hoàn tiền bắt buộc người duyệt (AUTH-4 quy tắc cố định theo BR-007, ASM-004) |
+| `skill.care.escalate_to_human` (bí danh hiển thị: `escalate-to-human`) | Bàn giao phiên chat và vụ việc sang hàng đợi nhân viên tại SCR-005 | CS-01 | AUTH-3 (Bounded Execute) | Conversation Console interface (SCR-005) | Kích hoạt khóa phiên (Session Mutex Lock); AI ngừng trả lời nghiệp vụ |
+| `skill.care.analyze_churn_risk` (bí danh hiển thị: `analyze-churn-risk`) | Nhận diện tín hiệu bất thường (ngừng mua, giảm tần suất) trên Customer 360 | CS-02 | AUTH-1 (Recommend) | Customer 360 Analytics Layer | Ghi nhận dưới dạng HYPOTHESIS; không ghi đè thành FACT (FR-C360-003) |
+| `skill.care.issue_retention_offer` (bí danh hiển thị: `issue-retention-offer`) | Phát hành ưu đãi/voucher giữ chân hoặc điểm thưởng trong hạn mức ngân sách | CS-02 | AUTH-3 (trong hạn mức do tenant cấu hình) / AUTH-4 (vượt trần **[UNCONFIRMED][ASM-003]**) | Promotion Engine / Loyalty Store | Kiểm tra hạn mức ngân sách và trần ưu đãi ($D_{cap}$); gắn mã `effect_key` |
+
+**Phân tách quyền đọc và quyền trả lời:** các skill chỉ tra cứu (`skill.care.search_faq`, `skill.care.lookup_order`, `skill.care.track_shipping`) khai báo `AUTH-0 (Observe)` vì chỉ đọc dữ liệu. Việc phát câu trả lời ra kênh ngoài hoặc thao tác ghi có hạn mức là hành động riêng ở `AUTH-3` (ví dụ `skill.care.manage_case`, `skill.care.escalate_to_human`), chịu kiểm tra consent, hạn mức và `effect_key`. Mã kebab trần chỉ là bí danh hiển thị; ID chuẩn dùng trong Registry, hợp đồng skill và audit log là `skill.<domain>.<action>`.
 
 ## 4. Năng lực được hợp nhất
 
@@ -119,7 +121,7 @@ Theo Mục 11 của SRS, các Agent CS-01 và CS-02 gọi các Skill chuyên tr�
 |---|---|---|
 | Hỏi đáp và hướng dẫn | Tìm tài liệu đã duyệt, giải thích có nguồn | P1 |
 | Gợi ý câu hỏi theo ngữ cảnh | Vài câu ngắn dựa trên trang/sản phẩm hợp lệ; dữ liệu riêng cần xác minh | P1 nếu giao diện hỗ trợ |
-| Tra cứu trạng thái đơn/giao hàng qua ERP (lookup-order) | Kết nối ERP/OMS (API-001), xác minh danh tính khách hàng (TC-E2E-004), hiển thị trạng thái thực tế và thời điểm đối soát có evidence | P1 (PILOT-03) |
+| Tra cứu trạng thái đơn/giao hàng qua ERP (`skill.care.lookup_order`; bí danh hiển thị: `lookup-order`) | Kết nối ERP/OMS (API-001), xác minh danh tính khách hàng (TC-E2E-004), hiển thị trạng thái thực tế và thời điểm đối soát có evidence | P1 (PILOT-03) |
 | Nút liên hệ người giao | Chỉ hiển thị thông tin nguồn cho phép và người mua có quyền xem | P2 |
 | Phiếu hỗ trợ và ưu tiên thời gian | Tạo/cập nhật có xác nhận, bàn giao người nhận | P2 |
 | Bù giá bằng phiếu mua lần sau | Chính sách, ngân sách, kiểm tra điều kiện, duyệt/cấp một lần | P2 thử có người duyệt; P3 tự động giới hạn |
@@ -149,7 +151,7 @@ Khách hàng có trải nghiệm tốt có thể được mời đánh giá, mua
 | Tình huống | Kết quả bắt buộc | Mã kiểm thử SRS |
 |---|---|---|
 | Câu hỏi chung (FAQ, tính năng) | Trả lời từ tài liệu đúng phiên bản; không ép khai số điện thoại | PILOT-03 |
-| Khách chưa xác minh hỏi đơn hàng | Tuyệt đối không tiết lộ dữ liệu riêng; yêu cầu OTP/đăng nhập | TC-E2E-004, NFR-006 |
+| Khách chưa xác minh hỏi đơn hàng | Tuyệt đối không tiết lộ dữ liệu riêng; yêu cầu OTP/đăng nhập (xác minh định danh bắt buộc trước mọi tra cứu); cô lập ngữ cảnh khách hàng (NFR-006) | TC-E2E-004, NFR-006 |
 | Khách hợp lệ tra cứu đơn hàng | Gọi API ERP/WMS lấy trạng thái thực; hiển thị thời gian đối soát | PILOT-03, FR-CS-001 |
 | Thiếu nguồn, mâu thuẫn hoặc rủi ro | Bàn giao hàng đợi nhân viên kèm ngữ cảnh; không suy đoán bịa đặt | PILOT-04, NFR-008 |
 | Vụ việc đang xử lý | Khách chưa xác nhận thì giữ WAITING/IN_PROGRESS; không tự đóng | FR-CS-002 |
@@ -181,6 +183,8 @@ Mọi thao tác hoàn tiền, hủy đơn, đổi trả hoặc thay đổi thôn
 ---
 
 # PHẦN 2: KỊCH BẢN CHĂM SÓC & GIỮ CHÂN THỰC CHIẾN (DOMAIN PLAYBOOKS)
+
+Ghi chú: mọi con số trong phần này (mệnh giá voucher, tỷ lệ giảm, số ngày, hạn mức, trần ngân sách) là **giá trị minh họa** của thiết kế đề xuất, chưa được phê duyệt. Ngưỡng thực tế do tenant cấu hình và chỉ có hiệu lực sau khi khóa **[UNCONFIRMED][ASM-003]** / **[UNCONFIRMED][ASM-004]**.
 
 ## DOM-FMCG-004: Endowed Progress Loyalty Engine — Điểm thưởng tiến độ trao sẵn, kích hoạt mua lại qua LINE/Zalo
 

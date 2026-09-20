@@ -1,0 +1,133 @@
+{
+  "id": "E2E-OFF-CART",
+  "title": "PILOT-02 + TC-E2E-007: cart recovery with floor-price guard and consent suppression (mocked SoR)",
+  "document": "e2e/offline.md",
+  "layer": "e2e",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P2",
+  "basis": "blueprint",
+  "pair": "E2E-LIVE-CART",
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "PILOT-02",
+    "TC-E2E-007",
+    "SAL-04",
+    "SAL-05",
+    "FR-SAL-002",
+    "FR-SAL-003",
+    "BR-002",
+    "BR-004",
+    "BR-005",
+    "BR-006",
+    "NFR-003",
+    "NFR-008",
+    "SRS-11"
+  ],
+  "facets": [
+    "skill:skill.sales.recommend_product",
+    "skill:skill.sales.check_price",
+    "skill:skill.sales.send_message",
+    "skill:skill.mkt.check_consent",
+    "event:add_to_cart",
+    "event:checkout",
+    "event:purchase",
+    "channel:EMAIL",
+    "stage:PLAN",
+    "stage:ACTION",
+    "stage:APPROVAL",
+    "stage:EXECUTION",
+    "stage:OUTCOME",
+    "kpi:Cart Recovery Rate",
+    "kpi:Duplicate Execution"
+  ],
+  "risk": "An abandoned-cart reminder reaches a customer who opted out, or is sent with a discount below the owner-approved floor — either way the company either harasses a customer or sells at a loss because the recovery message bypassed the policy guards.",
+  "preconditions": [
+    "run_id=RUN-E2E-OFF-CART, case_id=E2E-OFF-CART, worker=w-biz-e2e; tenant T1 with cart-a-1 abandoned 30 minutes before the frozen clock for cust-a (EMAIL marketing consent granted); the mock channel counts sends per effect_key",
+    "cust-b is opted out (BR-004 suppression) and the pricing policy for SKU-OK holds list_price 1000 TWD with a mathematical floor of 800 TWD and D_cap 200 TWD for this synthetic run"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "customer_id": "cust-a",
+    "cart_id": "cart-a-1",
+    "signal": "cart_abandoned",
+    "abandon_minutes": 30,
+    "channel": "EMAIL",
+    "sku_id": "SKU-OK",
+    "list_price_twd": 1000,
+    "p_floor_twd": 800,
+    "d_cap_twd": 200,
+    "proposed_discount_twd": 300,
+    "effect_key": "EK-CART-0115-01-EMAIL",
+    "opt_out_customer": "cust-b",
+    "response_script": "scripted reply then checkout of ORD-CART-0115-01 at 1000 TWD"
+  },
+  "steps": [
+    {
+      "action": "Fire the abandonment signal and build the eligibility context",
+      "expected": "the orchestrator opens one run with SIGNAL = abandoned cart, CONTEXT from the customer and cart fixtures, and the eligibility check returns eligible=true for cust-a citing the consent row it was based on"
+    },
+    {
+      "action": "Propose the recovery offer",
+      "expected": "recommend_product returns the 7-field recommendation (customer, product, reason, evidence, eligibility, confidence, expected outcome) referring to cart-a-1, and the abandoned-intent reading stays a hypothesis rather than a stated fact"
+    },
+    {
+      "action": "Attempt the below-floor discount",
+      "expected": "a 300 TWD discount on the 1000 TWD list price (offered 700 < P_floor 800) is rejected by the floor guard: no discounted price is quoted, the list price is preserved, and the proposal is routed to the approval path with the ASM-003 threshold cited as unset"
+    },
+    {
+      "action": "Send the in-policy reminder exactly once",
+      "expected": "with a discount inside D_cap the reservation for EK-CART-0115-01-EMAIL moves RESERVED, the channel adapter delivers exactly one message, and the execution stores the provider reference"
+    },
+    {
+      "action": "Replay the signal to test duplicate suppression",
+      "expected": "the replayed abandonment cannot produce a second send: the reserve outcome is REPLAY with the stored receipt and the adapter send count stays 1 (BR-005, BR-006)"
+    },
+    {
+      "action": "Run the same journey for the opted-out customer",
+      "expected": "for cust-b the consent check returns allowed=false with ERR_CONSENT_SUPPRESSED, the dispatch is suppressed, the adapter send count for that effect_key is 0, and the suppression is written to the audit store instead of a message"
+    },
+    {
+      "action": "Convert and attribute the recovered cart",
+      "expected": "the scripted customer response leads to checkout of ORD-CART-0115-01 and the attribution links the recovered order back to the recovery effect_key"
+    }
+  ],
+  "assertions": [
+    "zero messages reach a customer without matching consent: cust-b's send count is 0 and the suppression is auditable (BR-004, TC-E2E-007)",
+    "every recovery message carries a price at or above P_floor and inside D_cap, and the below-floor attempt produced no quote and no send",
+    "the identical abandonment replayed produces exactly one delivered message, with the second attempt returning the stored receipt rather than re-dispatching",
+    "the recovered order and its attribution reference the same customer, cart and effect_key as the message, so the outcome is not claimed from the send alone"
+  ],
+  "forbidden": [
+    "dispatching any reminder to an opted-out or unconsented customer",
+    "quoting or sending a price below the floor or above the discount cap"
+  ],
+  "evidence": [
+    "consent check results for both customers plus the suppression audit entry",
+    "channel adapter send log with the single provider reference and the replay receipt",
+    "pricing/floor guard verdicts (list price, P_floor, D_cap) and the recovered order with its attribution record"
+  ],
+  "cleanup": [
+    "withdraw the mock reminder and receipt references and drop run RUN-E2E-OFF-CART; keep the suppression and attribution audit rows and reset the cart state"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. Consent check, pricing/floor guard, recommendation, effect reservation and the channel adapter boundary are exercised as real components over the mocked commerce/ERP boundary.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/05-skill-system-specifications.md",
+    "plans/modules/sales.md",
+    "plans/customer-lifecycle.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/catalog.json",
+    "fixtures/offline/customers.json",
+    "fixtures/offline/consents.json",
+    "fixtures/offline/events.json",
+    "fixtures/offline/orders.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

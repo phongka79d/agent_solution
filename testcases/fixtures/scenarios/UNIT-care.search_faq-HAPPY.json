@@ -1,0 +1,96 @@
+{
+  "id": "UNIT-care.search_faq-HAPPY",
+  "title": "skill.care.search_faq happy path and boundary — approved-corpus FAQ answer for a return-window question",
+  "document": "unit/skills.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "CS-01",
+    "FR-CS-001",
+    "FR-CS-002",
+    "SRS-10",
+    "SRS-11"
+  ],
+  "facets": [
+    "skill:skill.care.search_faq",
+    "kb:/customer-care/faq.md",
+    "kb:/customer-care/support-policy.md",
+    "memory:Organizational Knowledge",
+    "intent:usage"
+  ],
+  "risk": "Customers receive invented return/warranty policy and the company is bound by it.",
+  "preconditions": [
+    "isolated namespace run_id=RUN-care.search_faq-HAPPY, case_id=UNIT-care.search_faq-HAPPY, worker=w-biz-unit; no shared mutable session with any other case",
+    "skill registry row for skill.care.search_faq registered with test_cases TC-SKILL-01..05 plus >=1 skill-specific case and asserted registrable before the run",
+    "in-memory adapters loaded from the case fixtures for tenant T1 only; frozen clock 2026-01-15T10:00:00Z"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "query_text": "Toi co the doi tra trong bao lau?",
+    "top_k": 3,
+    "caller_agent": "CS-01",
+    "granted_authority": "AUTH-0"
+  },
+  "steps": [
+    {
+      "action": "Route the call through the orchestrator",
+      "expected": "Orchestrator resolves caller CS-01 -> skill.care.search_faq; the registry row exposes required_authority=AUTH-0, allowed_agents=[CS-01], tool=SecondBrain.FAQEngine, timeout_ms=1500, retry_policy={max_retries:3, backoff_multiplier:1.5, retry_on_timeout:True}"
+    },
+    {
+      "action": "Invoke with the case input payload",
+      "expected": "Input validator (additionalProperties:false) accepts it; adapter SecondBrain.FAQEngine is invoked exactly once with the tenant binding 11111111-1111-1111-1111-111111111111"
+    },
+    {
+      "action": "Inspect the returned payload",
+      "expected": "answers[1] {faq_id:'FAQ-RETURN-002', question:'Return window', approved_answer:'...', source_file:'/customer-care/faq.md'} with match_confidence=0.91; the answer cites the approved KB path only"
+    },
+    {
+      "action": "Re-run the boundary/validation probe",
+      "expected": "query with no approved match ('chinh sach bao hanh vinh vien') -> answers=[] with match_confidence below threshold and no synthesised policy; top_k=6 -> validation failure (maximum 5); top_k omitted -> default 3"
+    },
+    {
+      "action": "Collect the evidence and audit trail",
+      "expected": "Evidence card EV_FAQ_QUERY is written with mask=no masked fields and latency; the run record chains run_id -> skill -> tool -> decision -> execution_status (SRS-17)"
+    }
+  ],
+  "assertions": [
+    "every returned answer carries a source_file inside the 21 approved KB paths plus faq_id; no answer is produced when the corpus has no match",
+    "the draft/ unpublished KB block is unreachable from this skill",
+    "match_confidence is the engine's score and gates presentation, so a low-confidence match is not forwarded to the customer",
+    "adapter SecondBrain.FAQEngine invocation count is exactly 1 for this run and the skill step ends execution_status='success' with latency recorded",
+    "the run audit ties run_id, caller CS-01, skill skill.care.search_faq, decision and evidence card EV_FAQ_QUERY into one record; no component reports success for another component's work"
+  ],
+  "forbidden": [
+    "answering from LLM prior knowledge when the corpus has no match",
+    "citing a KB document that is not in state approved"
+  ],
+  "evidence": [
+    "run record for skill.care.search_faq with the 18 SRS-17 fields and the case run_id",
+    "evidence card EV_FAQ_QUERY payload, redacted (mask: no masked fields)",
+    "adapter call log for SecondBrain.FAQEngine: invocation count, input digest, latency"
+  ],
+  "cleanup": [
+    "release in-memory namespace RUN-care.search_faq-HAPPY: drop mock rows created by this case, release any effect reservation, keep audit/evidence rows required by retention"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. Adapter SecondBrain.FAQEngine substituted; the SLA deadline is observed on the virtual clock.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/05-skill-system-specifications.md",
+    "plans/modules/customer-support.md",
+    "implement/03-database-and-memory-schema.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/knowledge.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

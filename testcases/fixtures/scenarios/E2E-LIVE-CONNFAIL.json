@@ -1,0 +1,112 @@
+{
+  "id": "E2E-LIVE-CONNFAIL",
+  "title": "TC-E2E-008: connector 504/500 exhaustion, reconciliation and one real success (approved sandbox)",
+  "document": "e2e/live.md",
+  "layer": "e2e",
+  "environment": "live",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "blueprint",
+  "pair": "E2E-OFF-CONNFAIL",
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "TC-E2E-008",
+    "NFR-004",
+    "NFR-008",
+    "BR-006",
+    "BR-010",
+    "NFR-002",
+    "NFR-005",
+    "SRS-09"
+  ],
+  "facets": [
+    "skill:skill.sales.create_order",
+    "event:checkout",
+    "memory:Working Memory",
+    "stage:EXECUTION",
+    "stage:EVIDENCE",
+    "stage:OUTCOME",
+    "kpi:Failed Execution",
+    "kpi:Duplicate Execution"
+  ],
+  "risk": "A flaky upstream connector is recorded as a success (or blindly retried) so the customer is told an order exists that the ERP never created — or is charged twice.",
+  "preconditions": [
+    "run_id=RUN-E2E-LIVE-CONNFAIL, case_id=E2E-LIVE-CONNFAIL, worker=w-biz-e2e-live; the sandbox order is created for the sandbox customer with the sandbox SKU and a sandbox-only amount",
+    "the sandbox provider account is a dedicated test account so the order count for the effect_key is observable through the sandbox API"
+  ],
+  "inputs": {
+    "tenant_id": "LIVE_TENANT_ID",
+    "customer_id": "LIVE_CUSTOMER_A_SANDBOX_ID",
+    "sku_id": "LIVE_SKU_OK",
+    "skill_id": "skill.sales.create_order",
+    "effect_key": "EK-E2E-LIVE-CONNFAIL-<run_id>",
+    "request_id": "sandbox inbound event id",
+    "connector_fault_matrix": "sandbox-injected timeout/5xx then success",
+    "sandbox_amount": "sandbox-only amount"
+  },
+  "steps": [
+    {
+      "action": "Inject the sandbox fault and take the first failure",
+      "expected": "the first sandbox attempt fails with the injected timeout/5xx and is persisted as a failed attempt carrying the injected status, never as a success"
+    },
+    {
+      "action": "Exhaust the sandbox retry budget",
+      "expected": "the remaining budget is consumed honestly, the failure reaches the operator surface, and no sandbox order is reported"
+    },
+    {
+      "action": "Reconcile against the sandbox provider",
+      "expected": "the lookup by effect_key returns no order, the reservation is released, and the reconciliation is recorded with its own entry"
+    },
+    {
+      "action": "Resume and create the real sandbox order",
+      "expected": "the resumed attempt produces exactly one sandbox order whose id is returned by the sandbox API, and the reservation settles once"
+    },
+    {
+      "action": "Replay the live request",
+      "expected": "the replay returns the stored receipt and the sandbox order count for the effect_key stays 1"
+    },
+    {
+      "action": "Verify fault-injection did not leak a false success",
+      "expected": "the sandbox provider test sink and the audit trail agree: one order, three attempts, and zero fabricated order ids for the failed attempts — a denied action has no provider receipt to show: the case records the decision, the zero-call sink and the audit entry, and never presents a receipt, order id or message id the provider did not return"
+    }
+  ],
+  "assertions": [
+    "the sandbox provider holds exactly one order for the effect_key and its id equals the receipt the engine returned",
+    "the failed attempts resolve to persisted entries with the injected upstream status and no order id",
+    "the sandbox reconciliation lookup, not an in-process HTTP result, decided that the effect was absent before the resume",
+    "the exhausted-budget path surfaced the injected failure to the operator instead of silently retrying beyond the declared budget"
+  ],
+  "forbidden": [
+    "creating a second sandbox order for the same inbound request",
+    "treating a sandbox HTTP 200 without a provider order record as delivery"
+  ],
+  "evidence": [
+    "sandbox provider order record for the effect_key plus its id",
+    "sandbox per-attempt audit entries with the injected upstream statuses",
+    "provider test-sink call log for the failed attempts (no order created) and the operator notification (retained)"
+  ],
+  "cleanup": [
+    "Retire the sandbox artefacts created by this run through the supported sandbox APIs (cancel/withdraw the created cart, campaign, case and voucher references); delete nothing immutable — sent messages, provider receipts and audit rows are retained and reported as non-deletable rather than pretending they were unsent"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. Same components with sandbox fault injection; the sandbox provider receipt, not the HTTP result, decides success.",
+  "prerequisites": [
+    "ASM-001 approved connector lock is present (LIVE_CONNECTORS_LOCK points at the approved connector list) — without it this case is SKIP_ASM_001, never PASS",
+    "Per-case sandbox authorization: the run_id of this case is registered in the approved sandbox allowlist with its sandbox tenant/customer/SKU mapping before execution; credentials live outside the repository (env.local) and are never printed in evidence",
+    "The sandbox ordering endpoint can be fault-injected through the approved sandbox facility and supports lookup by effect_key; if fault injection is unsupported the retry matrix sub-step is BLOCKED_PREREQUISITE, never PASS"
+  ],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/04-core-engine-and-orchestrator.md",
+    "implement/05-skill-system-specifications.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/catalog.json",
+    "fixtures/offline/customers.json",
+    "fixtures/offline/orders.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

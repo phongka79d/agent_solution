@@ -34,7 +34,7 @@ Mô-đun Bán hàng vận hành với cấu trúc 5 Agent chuyên trách theo ch
 
 ### 2.1. Quy trình phối hợp xử lý bán hàng chuẩn (Sales Coordination Flow)
 
-1. **Tiếp nhận & Xác thực:** Kiểm tra quyền, mô-đun bật, xác minh định danh khách trước khi truy cập dữ liệu mua hàng riêng biệt.
+1. **Tiếp nhận & Xác thực:** Kiểm tra quyền, mô-đun bật, xác minh định danh khách (Customer Verification - TC-E2E-004) bắt buộc hoàn tất trước khi truy cập dữ liệu mua hàng riêng biệt; tra cứu khi chưa xác minh phải fail closed (NFR-008).
 2. **Định chuẩn nhu cầu (SAL-01):** Khai thác thông tin tối thiểu theo hành trình, ghi nhận bằng chứng hành vi, không gán nhãn suy diễn.
 3. **Tra cứu thời gian thực (SAL-02):** Gọi các Skill kiểm tra giá và tồn kho trực tiếp từ System of Record (ERP/POS); tuyệt đối không bịa thông số hoặc giá bán (**BR-001**, **BR-003**).
 4. **Cá nhân hóa đề xuất (SAL-03):** Đề xuất giải pháp đủ dùng, nêu rõ đánh đổi; chỉ đưa gợi ý kèm đầy đủ 7 trường thông tin bắt buộc (Reason + Evidence + Confidence).
@@ -58,16 +58,18 @@ Theo yêu cầu bắt buộc **FR-SAL-003 - MUST**, mọi đề xuất sản ph�
 
 Theo Mục 11 của SRS, Agent (lớp nhận thức/hội thoại) và Skill (lớp thực thi tác vụ) được tách biệt hoàn toàn. Các Sales Agent gọi 8 Skill chuẩn thông qua Orchestrator với hợp đồng kiểm soát nghiêm ngặt:
 
-| Mã Skill (Skill ID) | Mục đích (Purpose) | Agent được phép dùng | Quyền hạn yêu cầu | Tool / Connector | Quy tắc kiểm tra (Validation) & Audit |
+| Mã Skill (Skill ID) | Mục đích (Purpose) | Agent được phép dùng | Quyền hạn yêu cầu | Tool / Connector (interface) | Quy tắc kiểm tra (Validation) & Audit |
 |---|---|---|---|---|---|
-| `search-product` | Tra cứu danh mục, thông số, biến thể theo từ khóa/nhu cầu | SAL-02, SAL-03 | AUTH-0 (Observe) | Catalog Search API / Vector DB | Lọc theo trạng thái đang bán (Active SKU); ghi log truy vấn |
-| `check-stock` | Kiểm tra tồn kho khả dụng theo SKU và vị trí kho gần nhất | SAL-02, SAL-03, SAL-04, SAL-05 | AUTH-0 (Observe) | WMS / ERP Inventory API | Xác thực SKU tồn tại; fail closed nếu hệ thống kho mất kết nối |
-| `check-price` | Tra cứu bảng giá niêm yết, chính sách giá và thuế/phí chính thức | SAL-02, SAL-03, SAL-04 | AUTH-0 (Observe) | ERP Pricing Engine | Bắt buộc đọc từ System of Record; không cho phép AI tự tạo giá (**BR-001**) |
-| `retrieve-customer` | Đọc Customer 360: lịch sử mua, giỏ hàng, điểm tín nhiệm, consent | SAL-01, SAL-03, SAL-04, SAL-05 | AUTH-0 (Observe) | Customer 360 Ingestion Layer | Bắt buộc xác minh định danh (Customer Verification); cô lập dữ liệu khách (**NFR-006**) |
-| `recommend-product` | Sinh danh sách đề xuất (cross/up/substitute/bundle) | SAL-03 | AUTH-1 (Recommend) | Recommendation Engine | Đủ 7 trường dữ liệu bắt buộc (Reason, Evidence, Eligibility...); kiểm tra tương thích |
-| `create-cart` | Khởi tạo giỏ hàng hoặc thêm SKU vào phiên mua sắm của khách | SAL-02, SAL-04 | AUTH-3 (Bounded Execute) | E-commerce Core Cart API | Kiểm tra tồn kho trước khi thêm; chống trùng thao tác bằng idempotency key |
-| `create-order` | Tạo đơn hàng nháp hoặc đơn đặt cọc chính thức vào ERP | SAL-02 | AUTH-4 (Approval / Server Verified) | ERP / POS Order API | Yêu cầu chữ ký xác thực giá máy chủ; gắn Unique Execution ID (**BR-005**) |
-| `send-message` | Gửi tin tư vấn, nhắc giỏ qua Web, App, Zalo, LINE OA | SAL-02, SAL-04, SAL-05 | AUTH-3 (Bounded Execute) | Communication Gateway | Kiểm tra trạng thái Consent và quy tắc Suppression (**BR-004**); chống spam |
+| `skill.sales.search_product` (bí danh hiển thị: `search-product`) | Tra cứu danh mục, thông số, biến thể theo từ khóa/nhu cầu | SAL-02, SAL-03 | AUTH-0 (Observe) | Catalog Connector interface | Lọc theo trạng thái đang bán (Active SKU); ghi log truy vấn |
+| `skill.sales.check_stock` (bí danh hiển thị: `check-stock`) | Kiểm tra tồn kho khả dụng theo SKU và vị trí kho gần nhất | SAL-02, SAL-03, SAL-04, SAL-05 | AUTH-0 (Observe) | Inventory Connector interface (API-001) | Xác thực SKU tồn tại; fail closed nếu hệ thống kho mất kết nối |
+| `skill.sales.check_price` (bí danh hiển thị: `check-price`) | Tra cứu bảng giá niêm yết, chính sách giá và thuế/phí chính thức | SAL-02, SAL-03, SAL-04 | AUTH-0 (Observe) | Pricing Connector interface (API-001) | Bắt buộc đọc từ System of Record; không cho phép AI tự tạo giá (**BR-001**) |
+| `skill.sales.retrieve_customer` (bí danh hiển thị: `retrieve-customer`) | Đọc Customer 360: lịch sử mua, giỏ hàng, điểm tín nhiệm, consent | SAL-01, SAL-03, SAL-04, SAL-05 | AUTH-0 (Observe) | Customer 360 Ingestion Layer | Bắt buộc xác minh định danh (Customer Verification) **trước** khi đọc; cô lập ngữ cảnh khách hàng (**NFR-006**) và cô lập đa doanh nghiệp |
+| `skill.sales.recommend_product` (bí danh hiển thị: `recommend-product`) | Sinh danh sách đề xuất (cross/up/substitute/bundle) | SAL-03 | AUTH-1 (Recommend) | Recommendation Engine | Đủ 7 trường dữ liệu bắt buộc (Reason, Evidence, Eligibility...); kiểm tra tương thích |
+| `skill.sales.create_cart` (bí danh hiển thị: `create-cart`) | Khởi tạo giỏ hàng hoặc thêm SKU vào phiên mua sắm của khách | SAL-02, SAL-04 | AUTH-3 (Bounded Execute) | Commerce Cart Connector interface (API-002) | Kiểm tra tồn kho trước khi thêm; chống trùng thao tác bằng idempotency key |
+| `skill.sales.create_order` (bí danh hiển thị: `create-order`) | Tạo đơn hàng nháp hoặc đơn đặt cọc chính thức vào ERP | SAL-02 | AUTH-4 (Approval / Server Verified) | Order Connector interface (API-001) | Yêu cầu chữ ký xác thực giá máy chủ; gắn Unique Execution ID (**BR-005**) |
+| `skill.sales.send_message` (bí danh hiển thị: `send-message`) | Gửi tin tư vấn, nhắc giỏ qua Web, App, Zalo, LINE OA | SAL-02, SAL-04, SAL-05 | AUTH-3 (Bounded Execute) | Communication Connector interface (API-003) | Kiểm tra trạng thái Consent và quy tắc Suppression (**BR-004**); chống spam |
+
+**Phân tách quyền đọc và quyền trả lời:** các skill chỉ tra cứu (`skill.sales.search_product`, `skill.sales.check_stock`, `skill.sales.check_price`, `skill.sales.retrieve_customer`) khai báo `AUTH-0 (Observe)` vì chỉ đọc dữ liệu. Việc phát trả lời tư vấn ra kênh ngoài hoặc thao tác ghi có hạn mức là hành động riêng ở `AUTH-3` (ví dụ `skill.sales.send_message`, `skill.sales.create_cart`), chịu kiểm tra consent, hạn mức tần suất và `effect_key`. Mã kebab trần chỉ là bí danh hiển thị; ID chuẩn dùng trong Registry, hợp đồng skill và audit log là `skill.<domain>.<action>`.
 
 ### 3.1. Hợp đồng Kỹ năng chuẩn (Skill Contract Schema)
 
@@ -121,7 +123,7 @@ Sales Agent chỉ được kích hoạt tại **Gate P2 (Sales Pilot)** sau khi 
 | Sản phẩm/giá cũ hoặc thiếu | Không đưa giá cuối; làm mới hoặc chuyển người | TC-E2E-003, BR-003 |
 | AI đưa giá không có trong nguồn ERP/POS | Bị chốt chặn chối bỏ (Fail Closed); ghi audit violation | TC-E2E-003, BR-001 |
 | Không có sản phẩm phù hợp | Nêu giới hạn và lựa chọn tiếp theo; không bịa sản phẩm | FR-SAL-002 |
-| Chưa xác minh khách | Chỉ dùng thông tin công khai/phiên hợp lệ; cô lập dữ liệu | NFR-006 |
+| Chưa xác minh khách | Chỉ dùng thông tin công khai/phiên hợp lệ; không tra cứu hồ sơ/đơn hàng trước khi xác minh định danh; cô lập ngữ cảnh khách hàng (NFR-006) và cô lập đa doanh nghiệp | NFR-006, TC-E2E-004 |
 | Ghi CRM hoặc đặt lịch bị hết thời gian chờ | Tra kết quả bằng mã đối soát idempotency; không tạo trùng | NFR-003, BR-006 |
 | Bỏ quên giỏ hàng (Cart Recovery) | Kiểm tra consent → Tồn kho → Giá → Suppression → Tin nhắc cá nhân hóa | PILOT-02, SAL-04 |
 | Đơn lớn, giá ngoại lệ hoặc khách muốn gặp người | Bàn giao có người chịu trách nhiệm, AI tạm dừng | NFR-007 |
@@ -145,6 +147,8 @@ Hiệu quả của hệ thống 5 Sales Agent được đo lường qua các ch�
 ---
 
 # PHẦN 2: KỊCH BẢN THỰC CHIẾN CHUYÊN NGÀNH (DOMAIN PLAYBOOKS)
+
+Ghi chú: mọi con số trong phần này (tỷ lệ chiết khấu, mệnh giá TWD, số ngày, hạn mức trợ cấp) là **giá trị minh họa** của thiết kế đề xuất, chưa được phê duyệt. Ngưỡng thực tế do tenant cấu hình và chỉ có hiệu lực sau khi khóa **[UNCONFIRMED][ASM-003]** / **[UNCONFIRMED][ASM-004]**.
 
 ## ECN-002: Deterministic Floor Price Engine ($P_{floor}$) — Khóa cứng biên lãi ròng
 

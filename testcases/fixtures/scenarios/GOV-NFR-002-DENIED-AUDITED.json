@@ -1,0 +1,90 @@
+{
+  "id": "GOV-NFR-002-DENIED-AUDITED",
+  "title": "NFR-002: denied and aborted actions are audited with the same rigour as successes",
+  "document": "governance/nfr.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "NFR-002",
+    "AUTH-5",
+    "BR-008",
+    "TC-E2E-006"
+  ],
+  "facets": [
+    "entity:Evidence",
+    "stage:EVIDENCE"
+  ],
+  "risk": "Only successes are audited, so a series of denied escalation attempts - the strongest signal of an attack or a misconfiguration - leaves no evidence.",
+  "preconditions": [
+    "Namespace gov-nfr-<case_id>-<worker_id>; NFR verification runs against the offline gateway with mock SoR and channel boundaries.",
+    "Frozen clock 2026-01-15T10:00:00Z; failure, outage and crash injections are scripted at the substituted boundary, never faked inside the assertion."
+  ],
+  "inputs": {
+    "actions": [
+      {
+        "label": "denied prohibited",
+        "skill": "skill.governance.raw_dataset_export"
+      },
+      {
+        "label": "denied authority",
+        "agent_id": "MKT-02",
+        "skill": "skill.sales.send_message"
+      },
+      {
+        "label": "aborted by operator",
+        "skill": "skill.mkt.dispatch_campaign",
+        "abort": "CANCEL"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Trigger the denied prohibited action and the authority-denied action",
+      "expected": "Both are refused and produce audit rows with execution_status denied and the decision code that caused the refusal."
+    },
+    {
+      "action": "Approve then cancel a prepared campaign so the task is aborted",
+      "expected": "The abort produces an audit row recording the operator cancellation and the released reservations."
+    },
+    {
+      "action": "Reconcile the audit store with the observed effects",
+      "expected": "Three audit rows exist, one per attempt, and the adapter effect counter remains 0 for all three."
+    }
+  ],
+  "assertions": [
+    "Denied and aborted attempts each produce exactly one audit row; auditing is not conditional on success.",
+    "Each row records the decision code and the acting authority so the attempt is reconstructable.",
+    "Zero external effects accompany the three rows, so nothing was 'audited as success'.",
+    "The rows participate in the hash chain like any other record."
+  ],
+  "forbidden": [
+    "Skipping audit writes for denied requests.",
+    "Recording a denied attempt as an error telemetry event only, with no audit row.",
+    "Dropping the abort reason."
+  ],
+  "evidence": [
+    "Three audit rows with decision codes and statuses.",
+    "Adapter effect counter and the abort record with released reservations."
+  ],
+  "cleanup": [
+    "Delete gov- rows after export; retain the chain verification output."
+  ],
+  "automation": "Core PEP, rules engine, audit writer, idempotency store and worker lease logic run as real code under test; only ERP/WMS, channel gateways, Redis and the model provider are substituted. Faults are injected at those boundaries and waits are condition-based on persisted state.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

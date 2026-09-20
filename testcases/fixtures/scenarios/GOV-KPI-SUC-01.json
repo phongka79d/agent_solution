@@ -1,0 +1,92 @@
+{
+  "id": "GOV-KPI-SUC-01",
+  "title": "SUC-01 Repeat Purchase: declared formula, numerator and denominator with honest missing-data behaviour",
+  "document": "governance/kpi.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P4",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SRS-20",
+    "OBJ-004",
+    "FR-CS-003"
+  ],
+  "facets": [
+    "kpi:Repeat Purchase",
+    "entity:Customer"
+  ],
+  "risk": "The Repeat Purchase figure is produced under different accounting rules - repeat orders counted instead of repeat customers, or the 30/60/90 day window omitted from the published figure - so the KPI is wrong in the direction that flatters the programme and every decision taken on it inherits the error.",
+  "preconditions": [
+    "Namespace gov-kpi-<case_id>-<worker_id>; the metric is computed by the real reporting code over fixtures/offline/governance.json kpi_dataset and never copied from the dashboard payload.",
+    "Frozen clock 2026-01-15T10:00:00Z with the reporting window 2026-01-01T00:00:00Z .. 2026-02-01T00:00:00Z as a half-open interval; the stored aggregate is recomputed independently from the raw counter rows.",
+    "Metric scope is fixed before measurement: numerator is customers with a valid N+1 order inside the declared 30/60/90 day window; denominator is customers at the start of the observation window.",
+    "The dictionary entry for 'Repeat Purchase' (owner, unit, window, exclusion rule) is loaded read-only and is compared with the recomputation instead of being trusted."
+  ],
+  "inputs": {
+    "metric": "Repeat Purchase",
+    "code": "SUC-01",
+    "group": "Customer Success",
+    "dataset": "kpi_dataset.retention",
+    "formula": "customers with a valid N+1 order inside the declared 30/60/90 day window divided by customers at the start",
+    "window": [
+      "2026-01-01T00:00:00Z",
+      "2026-02-01T00:00:00Z"
+    ],
+    "currency": "TWD",
+    "expected_value": "30.0%",
+    "wrong_value_if_buggy": "repeat orders counted instead of repeat customers, or the 30/60/90 day window omitted from the published figure",
+    "release_blocker": false,
+    "expected_boundary_behaviour": "no customer cohort loaded returns NOT_DEFINED, not 0%"
+  },
+  "steps": [
+    {
+      "action": "Compute Repeat Purchase from the frozen rows in kpi_dataset.retention",
+      "expected": "The stored aggregate reports 30.0% and records the formula, the window and the currency that produced it."
+    },
+    {
+      "action": "Recompute Repeat Purchase independently from the raw counter rows for the same tenant and window",
+      "expected": "The recomputed value equals the stored value 30.0%, and every numerator row lies inside the denominator scope."
+    },
+    {
+      "action": "Force the empty-source variant of the metric (no qualifying row in the window)",
+      "expected": "The metric reports no customer cohort loaded returns NOT_DEFINED, not 0%; the display distinguishes missing source data from a measured zero."
+    },
+    {
+      "action": "Read the dashboard payload and the metric dictionary entry",
+      "expected": "The dashboard renders the stored value with its window, coverage and source, and the dictionary names the owner, unit, numerator and denominator that the recomputation used."
+    }
+  ],
+  "assertions": [
+    "Repeat Purchase equals 30.0% for the frozen window, recomputed from the raw counter rows with numerator scope 'customers with a valid N+1 order inside the declared 30/60/90 day window' and denominator scope 'customers at the start of the observation window'.",
+    "A recomputation that yields repeat orders counted instead of repeat customers, or the 30/60/90 day window omitted from the published figure is detected as wrong: the stored aggregate and the independent recomputation must agree before the figure is published.",
+    "The dashboard payload for the same tenant and window carries the stored value with its window, coverage and measurement source; it substitutes neither a design target nor another metric's value.",
+    "Boundary behaviour: no customer cohort loaded returns NOT_DEFINED, not 0%; missing source data is never rendered as a measured zero."
+  ],
+  "forbidden": [
+    "Omitting the observation window from the published figure.",
+    "Counting the same customer several times for several repeat orders."
+  ],
+  "evidence": [
+    "Cohort table with the N+1 order dates.",
+    "Window declaration recorded with the metric."
+  ],
+  "cleanup": [
+    "Delete gov- aggregate, raw-counter and scenario rows for SUC-01 after exporting the recomputation table."
+  ],
+  "automation": "The reporting service and the metric dictionary run as real code under test over the frozen KPI dataset; the dashboard is a consumer whose displayed value must equal the independently recomputed value. Waits are condition-based on the stored aggregate row, metric values are never supplied as inputs, and no vendor boundary is involved in the arithmetic.",
+  "prerequisites": [],
+  "references": [
+    "plans/delivery/analytics.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

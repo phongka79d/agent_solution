@@ -1,0 +1,93 @@
+{
+  "id": "GOV-APV-STALE-PAYLOAD",
+  "title": "Stale review: a payload changed after review cannot be approved by hash match",
+  "document": "governance/approval.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SCR-003",
+    "AUTH-4",
+    "BR-010",
+    "NFR-008"
+  ],
+  "facets": [
+    "entity:Approval",
+    "entity:Evidence",
+    "stage:APPROVAL"
+  ],
+  "risk": "The reviewer approves a 10 percent discount while the stored payload now carries 40 percent, so an unreviewed commercial commitment executes under an approval that was given for something else.",
+  "preconditions": [
+    "Namespace gov-apv-<case_id>-<worker_id>; approval queue seeded from fixtures/offline/governance.json.",
+    "Operator identities and roles resolved from the fixture operator registry; every decision goes through POST /api/v1/approvals/{id}/decision, the only approval route.",
+    "The operator script loads APV-CAMP-15 and captures payload_hash at review time."
+  ],
+  "inputs": {
+    "review_snapshot_hash": "sha256:7b1f0a1e2d3c4b5a6f70819a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e",
+    "mutation": {
+      "field": "discount_rate",
+      "from": 0.15,
+      "to": 0.4,
+      "at": "after review, before decision"
+    },
+    "decision": {
+      "decision": "APPROVE",
+      "operator_id": "OP-APPROVER-T1",
+      "reason": "Approved as reviewed."
+    }
+  },
+  "steps": [
+    {
+      "action": "Load the approval item and record the reviewed payload_hash",
+      "expected": "The client receives the payload and its hash from the server, not from local storage."
+    },
+    {
+      "action": "Mutate the stored payload discount to 0.40 while the item is still AWAITING_HUMAN",
+      "expected": "The stored payload_hash changes accordingly; the item remains AWAITING_HUMAN."
+    },
+    {
+      "action": "Submit APPROVE carrying the reviewed hash",
+      "expected": "The decision is refused with a stale/conflict response; the item stays AWAITING_HUMAN and nothing executes."
+    },
+    {
+      "action": "Refresh and approve the current payload explicitly",
+      "expected": "The refreshed decision succeeds and the released payload carries the 0.40 discount that was actually reviewed in the refreshed view."
+    }
+  ],
+  "assertions": [
+    "An approval whose reviewed hash differs from the stored payload is refused; no execution occurs on the stale decision.",
+    "The refusal does not mutate the item state, so the work is not lost.",
+    "The released payload after refresh equals the stored payload at release time.",
+    "Both the reviewed and the mutated hash are retained for the audit trail."
+  ],
+  "forbidden": [
+    "Matching on approval id alone and ignoring the payload hash.",
+    "Silently releasing the mutated payload because the item id matched.",
+    "Deleting the mutated payload so the history looks clean."
+  ],
+  "evidence": [
+    "Refusal response with both hashes.",
+    "Approval record history showing the hash change and the later decision.",
+    "Released payload copy matched against the reviewed hash."
+  ],
+  "cleanup": [
+    "Delete gov- approval rows after exporting the hash history."
+  ],
+  "automation": "Real approval hash binding under test; the mutation is applied through the supported sandbox payload update path so the hash genuinely changes. No UI-only mock: the check runs server-side.",
+  "prerequisites": [],
+  "references": [
+    "implement/07-human-command-center-ui.md",
+    "implement/06-api-and-connectors-spec.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

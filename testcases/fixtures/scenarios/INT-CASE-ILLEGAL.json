@@ -1,0 +1,83 @@
+{
+  "id": "INT-CASE-ILLEGAL",
+  "title": "CLOSED to CLASSIFIED is refused as an illegal transition",
+  "document": "integration/case-fsm.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P1",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "CS-01",
+    "FR-CS-002",
+    "NFR-002"
+  ],
+  "facets": [
+    "entity:Service Case",
+    "stage:ACTION"
+  ],
+  "risk": "A closed case silently reopens into classification, so agents work a stale request and the reported reopen rate is understated.",
+  "preconditions": [
+    "A CLOSED case CASE-T1-0007 for cust-a in namespace cd-illegal-*",
+    "Transition request sent by agent CS-01 with target state CLASSIFIED"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "case_number": "CASE-T1-0007",
+    "illegal_transition": {
+      "from": "CLOSED",
+      "to": "CLASSIFIED",
+      "actor": "CS-01"
+    }
+  },
+  "steps": [
+    {
+      "action": "Request CLOSED to CLASSIFIED without an explicit reopen decision",
+      "expected": "the transition is refused with an invalid-transition error and the case stays CLOSED"
+    },
+    {
+      "action": "Request the same illegal transition with an unknown target state",
+      "expected": "the request is also refused and the case target state vocabulary is unchanged"
+    },
+    {
+      "action": "Attempt the illegal transition from tenant T2 against the T1 case",
+      "expected": "the request returns no-row/not-found behavior and the T1 case is untouched"
+    },
+    {
+      "action": "Read the case audit trail after the attempts",
+      "expected": "each refused attempt is recorded with its actor and the illegal previous/new state pair, and no state change entry exists"
+    }
+  ],
+  "assertions": [
+    "The case reports CLOSED after every refusal and its transition history contains no CLOSED to CLASSIFIED entry",
+    "Each refusal produces one audit entry naming the illegal transition pair",
+    "A cross-tenant attempt returns no-row behavior without leaking the T1 case number"
+  ],
+  "forbidden": [
+    "Silently reopen a closed case through the ordinary classification path",
+    "Suppress the refusal audit entry so the illegal attempt is invisible"
+  ],
+  "evidence": [
+    "Case projection and transition count before/after the refusals",
+    "Refusal audit entries with actor and the illegal state pair"
+  ],
+  "cleanup": [
+    "Delete the run-scoped case for cd-illegal-*; keep the refusal audit entries"
+  ],
+  "automation": "Exercise the real state machine directly with illegal transitions; the oracle is the unchanged state plus the refusal audit trail, not the error message wording.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/03-database-and-memory-schema.md",
+    "plans/platform/workflows-and-handoffs.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/platform.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

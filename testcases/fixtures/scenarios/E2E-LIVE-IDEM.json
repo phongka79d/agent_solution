@@ -1,0 +1,106 @@
+{
+  "id": "E2E-LIVE-IDEM",
+  "title": "TC-E2E-005: five identical execution requests produce exactly one effect (approved sandbox)",
+  "document": "e2e/live.md",
+  "layer": "e2e",
+  "environment": "live",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "blueprint",
+  "pair": "E2E-OFF-IDEM",
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "TC-E2E-005",
+    "NFR-003",
+    "BR-005",
+    "BR-006",
+    "NFR-002",
+    "SRS-17"
+  ],
+  "facets": [
+    "skill:skill.sales.send_message",
+    "event:add_to_cart",
+    "channel:EMAIL",
+    "stage:EXECUTION",
+    "stage:EVIDENCE",
+    "kpi:Duplicate Execution",
+    "kpi:Failed Execution"
+  ],
+  "risk": "A retried or redelivered action charges, ships or messages the customer twice because duplicate suppression relied on a cached response instead of a durable effect key.",
+  "preconditions": [
+    "run_id=RUN-E2E-LIVE-IDEM, case_id=E2E-LIVE-IDEM, worker=w-biz-e2e-live; one approved sandbox recipient and a sandbox request_id taken from the inbound sandbox event are used, so the effect_key is reproducible across attempts",
+    "the sandbox provider account is a dedicated test account whose message/order count can be read back through the approved sandbox API"
+  ],
+  "inputs": {
+    "tenant_id": "LIVE_TENANT_ID",
+    "customer_id": "LIVE_CUSTOMER_A_SANDBOX_ID",
+    "channel": "EMAIL",
+    "request_id": "sandbox inbound event id",
+    "effect_key": "deterministic key over (tenant, skill, step, revision, request_id)",
+    "duplicate_requests": 5,
+    "sandbox_recipient": "approved test mailbox only"
+  },
+  "steps": [
+    {
+      "action": "Submit the identical sandbox request five times",
+      "expected": "one sandbox dispatch is observed and the remaining submissions return the stored receipt (REPLAY/IN_FLIGHT) without provider calls"
+    },
+    {
+      "action": "Read the effect count back from the sandbox provider",
+      "expected": "the sandbox provider reports exactly one message/order for the effect_key and its id matches the receipt the engine returned"
+    },
+    {
+      "action": "Replay after a forced sandbox worker restart",
+      "expected": "the recomputed effect_key is identical and the reservation is found before any dispatch, so the outcome is RECONCILE_REQUIRED"
+    },
+    {
+      "action": "Reconcile against the sandbox provider",
+      "expected": "the sandbox lookup confirms the effect exists, the reservation settles once and no second provider call is made"
+    },
+    {
+      "action": "Probe the collision path on the sandbox",
+      "expected": "the differing payload under the same effect_key is rejected with IDEMPOTENCY_CONFLICT and the sandbox provider test sink records no call for it — the provider test sink is the oracle for every denied or refused step: its call log for the run stays empty, no provider id is manufactured for the attempt, and the audit entry records the refusal instead"
+    },
+    {
+      "action": "Collect sandbox attempt records",
+      "expected": "the live audit trail separates the single successful attempt from every duplicate attempt and duplicate-execution metrics for the run are 0"
+    }
+  ],
+  "assertions": [
+    "the sandbox provider holds exactly one external effect for the effect_key after five submissions, a restart and a replay",
+    "every duplicate submission resolves from the reservation path, with the provider message id returned by the engine matching the sandbox record",
+    "the collision attempt produced zero sandbox provider calls and a recorded IDEMPOTENCY_CONFLICT — a denied action has no provider receipt to show: the case records the decision, the zero-call sink and the audit entry, and never presents a receipt, order id or message id the provider did not return",
+    "the live audit trail names each attempt with its outcome and never reports a success for an attempt the sandbox did not confirm"
+  ],
+  "forbidden": [
+    "issuing a second sandbox message or order for the same effect_key",
+    "claiming idempotency from the cache response while the provider record shows a second effect"
+  ],
+  "evidence": [
+    "sandbox provider message/order record for the effect_key (exactly one)",
+    "sandbox reservation history plus the reconciliation lookup result",
+    "provider test-sink call log for the collision attempt (zero calls, retained)"
+  ],
+  "cleanup": [
+    "Retire the sandbox artefacts created by this run through the supported sandbox APIs (cancel/withdraw the created cart, campaign, case and voucher references); delete nothing immutable — sent messages, provider receipts and audit rows are retained and reported as non-deletable rather than pretending they were unsent"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. Same components on the sandbox; the sandbox provider transcript and its duplicate detection are the oracle.",
+  "prerequisites": [
+    "ASM-001 approved connector lock is present (LIVE_CONNECTORS_LOCK points at the approved connector list) — without it this case is SKIP_ASM_001, never PASS",
+    "Per-case sandbox authorization: the run_id of this case is registered in the approved sandbox allowlist with its sandbox tenant/customer/SKU mapping before execution; credentials live outside the repository (env.local) and are never printed in evidence",
+    "The sandbox connector exposes a duplicate-detection or lookup-by-effect_key facility so the effect count can be observed; without it the case is BLOCKED_PREREQUISITE"
+  ],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/04-core-engine-and-orchestrator.md",
+    "implement/08-security-governance-nfr.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/customers.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

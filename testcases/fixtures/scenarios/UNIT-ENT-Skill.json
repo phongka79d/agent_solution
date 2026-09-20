@@ -1,0 +1,83 @@
+{
+  "id": "UNIT-ENT-Skill",
+  "title": "Entity Skill enforces its tenant-scoped identity, invariant and lifecycle for consumers",
+  "document": "unit/knowledge-entities.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "SRS-14",
+    "NFR-006",
+    "SRS-11"
+  ],
+  "facets": [
+    "entity:Skill"
+  ],
+  "risk": "A consumer reads or writes Skill through a path that crosses the tenant boundary or ignores the invariant, so a wrong or foreign record becomes the basis of a customer-facing statement.",
+  "preconditions": [
+    "Tenant T1 seeded in run-t1-unit-ent-skill with the fixture record for Skill identified by its business key",
+    "A tenant T2 record with an equivalent business key exists so cross-tenant reads can be attempted"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "foreign_tenant_id": "22222222-2222-2222-2222-222222222222",
+    "business_key": "(tenant_id, name)",
+    "invariant_under_test": "registration persists purpose, input/output, allowed agent, required authority, tool, validation, retry policy, timeout, audit and test cases as queryable fields",
+    "refused_violation": "a skill registered without a structured retry, audit and test contract is rejected",
+    "downstream_consumer_read": "the runtime reads retry_policy, audit_spec and test_cases from the row before executing the skill"
+  },
+  "steps": [
+    {
+      "action": "Read and re-write the Skill record through the tenant-scoped repository/service using the fixture business key",
+      "expected": "the record round-trips with tenant_id T1, an immutable id and the business key intact"
+    },
+    {
+      "action": "Exercise the consumer path named for this entity",
+      "expected": "the consumer observes the invariant: registration persists purpose, input/output, allowed agent, required authority, tool, validation, retry policy, timeout, audit and test cases as queryable fields"
+    },
+    {
+      "action": "Attempt the refused operation",
+      "expected": "the write is rejected with an explicit domain error and leaves no partial row, no orphan child and no side effect (a skill registered without a structured retry, audit and test contract is rejected)"
+    },
+    {
+      "action": "Repeat the read with the T2 tenant scope and with a caller lacking authority for this entity",
+      "expected": "T1 data is not returned, the T2 copy is unchanged and the denial is recorded rather than silently emptied"
+    }
+  ],
+  "assertions": [
+    "The persisted record carries tenant_id T1 and unique identity under (tenant_id, name)",
+    "The consumer path reflects the invariant: registration persists purpose, input/output, allowed agent, required authority, tool, validation, retry policy, timeout, audit and test cases as queryable fields",
+    "The refused operation returns an explicit error naming the rule, and the prior state is byte-identical afterwards: a skill registered without a structured retry, audit and test contract is rejected",
+    "The T2 read returns no T1 row and the T1 read returns no T2 row"
+  ],
+  "forbidden": [
+    "Accepting the refused operation, or applying it partially before the error: a skill registered without a structured retry, audit and test contract is rejected",
+    "Returning, joining or counting another tenant's row on any consumer path of Skill"
+  ],
+  "evidence": [
+    "Repository read/write responses for both tenants including the business-key and tenant_id fields",
+    "Error code and message of the refused operation plus the unchanged row snapshot taken before and after"
+  ],
+  "cleanup": [
+    "Delete the run-scoped Skill rows and their child rows under run-t1-unit-ent-skill; keep the fixture and the denial audit entry"
+  ],
+  "automation": "Drive the repository/service API with the fixture payloads and assert on the returned projection, the error code of the violation and the cross-tenant read; the entity contract is enforced at the service boundary, so no DDL introspection is needed.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/03-database-and-memory-schema.md",
+    "plans/platform/data-and-knowledge.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/platform.json",
+    "fixtures/offline/customers.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

@@ -1,0 +1,91 @@
+{
+  "id": "GOV-NFR-010-BUDGET",
+  "title": "NFR-010 budget breach: exceeding the session budget throttles instead of silently overspending",
+  "document": "governance/nfr.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "extension",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "NFR-010",
+    "NFR-008",
+    "ASM-002"
+  ],
+  "facets": [
+    "stage:EXECUTION"
+  ],
+  "risk": "A runaway conversation with an unbounded tool loop burns cost with no limit, and the overrun is discovered only after the month closes.",
+  "preconditions": [
+    "Namespace gov-nfr-<case_id>-<worker_id>; NFR verification runs against the offline gateway with mock SoR and channel boundaries.",
+    "Frozen clock 2026-01-15T10:00:00Z; failure, outage and crash injections are scripted at the substituted boundary, never faked inside the assertion.",
+    "A tenant session budget is configured as a labelled synthetic design target of 1.00 TWD per session (ECN-003 provisional)."
+  ],
+  "inputs": {
+    "session": {
+      "conversation_id": "conv-nfr-10b",
+      "budget_twd": 1.0,
+      "accumulating_turns": [
+        0.2,
+        0.25,
+        0.3,
+        0.28,
+        0.15
+      ]
+    }
+  },
+  "steps": [
+    {
+      "action": "Run turns until accumulated cost approaches the budget",
+      "expected": "Cost is accumulated per turn and the session total is visible after each turn."
+    },
+    {
+      "action": "Exceed the budget on the next turn",
+      "expected": "The session is throttled or degraded with a typed budget-breach state; the turn is not silently completed at full cost."
+    },
+    {
+      "action": "Inspect the customer-facing behaviour",
+      "expected": "The customer receives a bounded fallback response (for example escalation to a human) rather than an endless loop."
+    },
+    {
+      "action": "Read the records",
+      "expected": "The breach is recorded with the accumulated cost and the budget used, and the cost rows still sum to the measured total."
+    }
+  ],
+  "assertions": [
+    "The budget breach produces a typed state and a behaviour change, not an unbounded continuation.",
+    "Accumulated cost never exceeds the budget by more than one turn's cost, and the overrun is recorded.",
+    "The customer experience degrades gracefully (escalation or bounded reply) instead of hanging.",
+    "Cost records reconcile to the measured total even across the breach."
+  ],
+  "forbidden": [
+    "Ignoring the budget and logging a warning.",
+    "Cutting the session off with no customer-facing handling.",
+    "Resetting the counter so the session can overspend repeatedly."
+  ],
+  "evidence": [
+    "Session cost accumulation log across turns.",
+    "Budget-breach state record with accumulated and limit values.",
+    "Customer-facing fallback response payload."
+  ],
+  "cleanup": [
+    "Delete gov- session and cost rows."
+  ],
+  "automation": "Core PEP, rules engine, audit writer, idempotency store and worker lease logic run as real code under test; only ERP/WMS, channel gateways, Redis and the model provider are substituted. Faults are injected at those boundaries and waits are condition-based on persisted state.",
+  "prerequisites": [
+    "The 0.5-1 TWD per-session budget is a provisional design target pending the ASM-002 baseline; the case exercises the control, not an approved cap."
+  ],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "plans/delivery/analytics.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

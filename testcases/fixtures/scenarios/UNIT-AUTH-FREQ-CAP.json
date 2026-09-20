@@ -1,0 +1,107 @@
+{
+  "id": "UNIT-AUTH-FREQ-CAP",
+  "title": "AUTH-3 contact-frequency boundary returns LIMIT_EXCEEDED instead of silently dropping",
+  "document": "unit/authority.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "AUTH-3",
+    "BR-008",
+    "NFR-008",
+    "ASM-003"
+  ],
+  "facets": [
+    "entity:Action",
+    "stage:ACTION"
+  ],
+  "risk": "A reminder storm contacts the same customer three or more times because the cap is applied as a soft drop rather than a typed refusal, or the cap silently blocks legitimate transactional messages.",
+  "preconditions": [
+    "Namespace gov-unit-auth-<case_id>-<worker_id>; no shared mutable state with other cases.",
+    "PolicyEnforcementPoint loaded with fixtures/offline/governance.json skill_authority_registry and agents[]; clock frozen at 2026-01-15T10:00:00Z.",
+    "Synthetic cap maxAutonomousReminderCount=2 for T1 (design parameter, not an approved limit)."
+  ],
+  "inputs": {
+    "agent_id": "SAL-02",
+    "assigned_authority": "AUTH-3",
+    "sequence": [
+      {
+        "purpose": "transactional",
+        "template": "order_shipped",
+        "customer_id": "cust-a"
+      },
+      {
+        "purpose": "transactional",
+        "template": "order_shipped",
+        "customer_id": "cust-a"
+      },
+      {
+        "purpose": "transactional",
+        "template": "order_shipped",
+        "customer_id": "cust-a"
+      },
+      {
+        "purpose": "marketing",
+        "template": "win_back",
+        "customer_id": "cust-b"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Send two permitted transactional messages to cust-a",
+      "expected": "Both return PERMIT and the adapter counter reaches 2."
+    },
+    {
+      "action": "Send a third transactional message to the same customer in the same window",
+      "expected": "Verdict is LIMIT_EXCEEDED with a retry-after or window hint; the adapter counter stays at 2."
+    },
+    {
+      "action": "Send a marketing message to cust-b (opt-out in the consents fixture)",
+      "expected": "Verdict is suppressed for consent, which is a different decision code from LIMIT_EXCEEDED so operators can tell the causes apart."
+    },
+    {
+      "action": "Read the audit rows",
+      "expected": "Four rows: two success, one limit-exceeded, one consent-suppressed, each with a distinct decision code."
+    }
+  ],
+  "assertions": [
+    "The cap is enforced at exactly 2 within the window and the boundary is inclusive of the second message.",
+    "LIMIT_EXCEEDED and consent suppression are distinguishable decision codes, not one generic error.",
+    "Adapter counter is 2, never 3, proving the third message was not delivered.",
+    "No message is silently dropped without an audit row and a typed verdict."
+  ],
+  "forbidden": [
+    "Counting a limit-blocked message as delivered.",
+    "Applying the marketing consent check to transactional messages and breaking order notifications.",
+    "Resetting the counter so a retry storm bypasses the cap."
+  ],
+  "evidence": [
+    "PEP decision JSON for the four attempts.",
+    "Adapter counter and the four audit rows.",
+    "Consent evaluation result for cust-b."
+  ],
+  "cleanup": [
+    "Reset the gov- reminder counters and delete the run namespace; no message was actually delivered."
+  ],
+  "automation": "Real PEP limit check with the tenant policy source; the channel adapter is the substituted boundary and exposes the counter. Window arithmetic uses the frozen clock, not sleeps.",
+  "prerequisites": [
+    "Contact-frequency cap is a tenant policy parameter without an owner-approved value; the case is valid only against the labelled synthetic cap."
+  ],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/consents.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

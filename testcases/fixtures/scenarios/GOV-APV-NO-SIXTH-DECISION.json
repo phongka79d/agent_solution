@@ -1,0 +1,103 @@
+{
+  "id": "GOV-APV-NO-SIXTH-DECISION",
+  "title": "Decision enum is closed: no sixth action and no alternate execution route exists",
+  "document": "governance/approval.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SCR-003",
+    "AUTH-4",
+    "API-001",
+    "NFR-007"
+  ],
+  "facets": [
+    "entity:Approval"
+  ],
+  "risk": "An undocumented decision value or a hidden execute route lets an operator force execution without any of the five controlled decisions, so no control is left.",
+  "preconditions": [
+    "Namespace gov-apv-<case_id>-<worker_id>; approval queue seeded from fixtures/offline/governance.json.",
+    "Operator identities and roles resolved from the fixture operator registry; every decision goes through POST /api/v1/approvals/{id}/decision, the only approval route.",
+    "APV-CAMP-15 is pending; the gateway route table is enumerable for the tenant."
+  ],
+  "inputs": {
+    "direct_decision": {
+      "method": "POST",
+      "path": "/api/v1/approvals/APV-CAMP-15/decision",
+      "body": {
+        "decision": "FORCE_EXECUTE",
+        "operator_id": "OP-APPROVER-T1",
+        "reason": "ship it"
+      }
+    },
+    "execute_route": {
+      "method": "POST",
+      "path": "/api/v1/approvals/APV-CAMP-15/execute",
+      "body": {
+        "operator_id": "OP-APPROVER-T1"
+      }
+    },
+    "task_edit_route": {
+      "method": "PATCH",
+      "path": "/api/v1/tasks/task-camp-15",
+      "body": {
+        "status": "queued",
+        "operator_id": "OP-APPROVER-T1"
+      }
+    }
+  },
+  "steps": [
+    {
+      "action": "Submit the unknown decision value",
+      "expected": "HTTP 400 with a validation error listing the five accepted values; the item remains AWAITING_HUMAN."
+    },
+    {
+      "action": "Call the undocumented execute route",
+      "expected": "HTTP 404 or 405; no execution is triggered."
+    },
+    {
+      "action": "Attempt to bypass the gate by editing the task status directly",
+      "expected": "The write is refused and the task state is unchanged; no execution is triggered."
+    },
+    {
+      "action": "Confirm the legitimate path still works",
+      "expected": "A proper APPROVE decision still releases the task, proving the refusals are not a broken endpoint."
+    }
+  ],
+  "assertions": [
+    "The decision enum is closed to the five documented values; unknown values are rejected without state change.",
+    "No alternate route executes a prepared AUTH-4 action; the documented decision route is the only release path.",
+    "Task-state mutation cannot substitute for a decision.",
+    "Adapter counter is 0 during all three bypass attempts and 1 after the legitimate decision."
+  ],
+  "forbidden": [
+    "Registering a debug or admin execute route that survives to production.",
+    "Accepting an unknown decision as APPROVE by falling through a switch default.",
+    "Allowing a direct task status write to release the payload."
+  ],
+  "evidence": [
+    "Three refusal responses with status codes.",
+    "Route inventory for the tenant gateway.",
+    "Adapter counter log across the attempts."
+  ],
+  "cleanup": [
+    "Delete gov- approval and task rows; the single simulated send is reported as non-recallable."
+  ],
+  "automation": "Real gateway routing and validation under test; the route inventory is produced from the running gateway rather than from source text, so a hidden route would be detected.",
+  "prerequisites": [],
+  "references": [
+    "implement/06-api-and-connectors-spec.md",
+    "implement/07-human-command-center-ui.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

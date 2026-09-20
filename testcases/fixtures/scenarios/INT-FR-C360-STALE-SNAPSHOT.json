@@ -1,0 +1,87 @@
+{
+  "id": "INT-FR-C360-STALE-SNAPSHOT",
+  "title": "A stale context snapshot never overrides fresh policy or a fresh consent record",
+  "document": "integration/customer-360.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "NFR-008",
+    "BR-004",
+    "FR-C360-001"
+  ],
+  "facets": [
+    "memory:Customer Context",
+    "entity:Consent",
+    "stage:ACTION"
+  ],
+  "risk": "A run started before a consent withdrawal or a policy change keeps acting on the old snapshot and sends a message that should have been suppressed.",
+  "preconditions": [
+    "Run run-t1-stale-* hydrates context for cust-a at 10:00:00Z while cust-a EMAIL marketing consent is granted",
+    "At 10:02:00Z the consent is withdrawn before the send step executes"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "customer_id": "cust-a",
+    "hydrated_at": "2026-01-15T10:00:00Z",
+    "withdrawal_at": "2026-01-15T10:02:00Z",
+    "step": {
+      "skill_id": "skill.sales.send_message",
+      "channel": "EMAIL",
+      "mutating": true
+    }
+  },
+  "steps": [
+    {
+      "action": "Hydrate the context, then withdraw the EMAIL marketing consent before the send step",
+      "expected": "the run's stored snapshot still shows consent granted, while the consent store shows the withdrawal with its timestamp"
+    },
+    {
+      "action": "Execute the send step",
+      "expected": "the pre-step safety re-verification reads the fresh consent state and blocks the send instead of trusting the snapshot"
+    },
+    {
+      "action": "Query the queued marketing messages for cust-a and the audit trail",
+      "expected": "zero messages were dispatched and a suppression event referencing the withdrawal is recorded"
+    },
+    {
+      "action": "Grant the consent again and re-run the same step with the same request identity",
+      "expected": "the step now proceeds, proving the block was caused by the fresh consent read and not by a broken pipeline"
+    }
+  ],
+  "assertions": [
+    "Zero outbound marketing messages exist for cust-a after the withdrawal",
+    "The decision used the consent read at execution time (timestamp later than the snapshot) and recorded a suppression reason",
+    "After re-granting, exactly one message is produced with the original effect_key"
+  ],
+  "forbidden": [
+    "Dispatch a marketing message from a snapshot whose consent was already withdrawn",
+    "Overwrite the fresh consent record with the older snapshot value"
+  ],
+  "evidence": [
+    "Consent-store read used at execution time with its timestamp",
+    "Suppression audit event plus the outbound message count for cust-a (must be 0)"
+  ],
+  "cleanup": [
+    "Delete the run-scoped messages and restore the fixture consent to its original state for run-t1-stale-*"
+  ],
+  "automation": "Use a deterministic clock to separate hydration and execution, keep the real consent check in the path, and stub only the channel adapter so the assertion is on the dispatched-message count.",
+  "prerequisites": [],
+  "references": [
+    "plans/platform/workflows-and-handoffs.md",
+    "implement/04-core-engine-and-orchestrator.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/consents.json",
+    "fixtures/offline/platform.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

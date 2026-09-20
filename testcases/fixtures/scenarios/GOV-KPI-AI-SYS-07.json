@@ -1,0 +1,95 @@
+{
+  "id": "GOV-KPI-AI-SYS-07",
+  "title": "AI-SYS-07 Duplicate Execution: declared formula, numerator and denominator with honest missing-data behaviour",
+  "document": "governance/kpi.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SRS-20",
+    "NFR-003",
+    "BR-005",
+    "BR-006"
+  ],
+  "facets": [
+    "kpi:Duplicate Execution",
+    "entity:Execution",
+    "stage:EXECUTION"
+  ],
+  "risk": "The Duplicate Execution figure is produced under different accounting rules - 0.0% reported while a duplicate send exists, or a duplicate explained away as a vendor artifact and excluded - so the KPI is wrong in the direction that flatters the programme and every decision taken on it inherits the error.",
+  "preconditions": [
+    "Namespace gov-kpi-<case_id>-<worker_id>; the metric is computed by the real reporting code over fixtures/offline/governance.json kpi_dataset and never copied from the dashboard payload.",
+    "Frozen clock 2026-01-15T10:00:00Z with the reporting window 2026-01-01T00:00:00Z .. 2026-02-01T00:00:00Z as a half-open interval; the stored aggregate is recomputed independently from the raw counter rows.",
+    "Metric scope is fixed before measurement: numerator is duplicate sends or orders caused by an idempotency error; denominator is total executions in the window.",
+    "The dictionary entry for 'Duplicate Execution' (owner, unit, window, exclusion rule) is loaded read-only and is compared with the recomputation instead of being trusted."
+  ],
+  "inputs": {
+    "metric": "Duplicate Execution",
+    "code": "AI-SYS-07",
+    "group": "AI System",
+    "dataset": "kpi_dataset.ai_system",
+    "formula": "duplicate sends or orders caused by an idempotency error divided by total executions; the required value is exactly zero",
+    "window": [
+      "2026-01-01T00:00:00Z",
+      "2026-02-01T00:00:00Z"
+    ],
+    "currency": "TWD",
+    "expected_value": "0.0% and the invariant is exactly zero",
+    "wrong_value_if_buggy": "0.0% reported while a duplicate send exists, or a duplicate explained away as a vendor artifact and excluded",
+    "release_blocker": true,
+    "expected_boundary_behaviour": "no execution in the window returns NOT_DEFINED for the rate while the invariant is still reported"
+  },
+  "steps": [
+    {
+      "action": "Compute Duplicate Execution from the frozen rows in kpi_dataset.ai_system",
+      "expected": "The stored aggregate reports 0.0% and the invariant is exactly zero and records the formula, the window and the currency that produced it."
+    },
+    {
+      "action": "Recompute Duplicate Execution independently from the raw counter rows for the same tenant and window",
+      "expected": "The recomputed value equals the stored value 0.0% and the invariant is exactly zero, and every numerator row lies inside the denominator scope."
+    },
+    {
+      "action": "Force the empty-source variant of the metric (no qualifying row in the window)",
+      "expected": "The metric reports no execution in the window returns NOT_DEFINED for the rate while the invariant is still reported; the display distinguishes missing source data from a measured zero."
+    },
+    {
+      "action": "Read the dashboard payload and the metric dictionary entry",
+      "expected": "The dashboard renders the stored value with its window, coverage and source, and the dictionary names the owner, unit, numerator and denominator that the recomputation used."
+    }
+  ],
+  "assertions": [
+    "Duplicate Execution equals 0.0% and the invariant is exactly zero for the frozen window, recomputed from the raw counter rows with numerator scope 'duplicate sends or orders caused by an idempotency error' and denominator scope 'total executions in the window'.",
+    "A recomputation that yields 0.0% reported while a duplicate send exists, or a duplicate explained away as a vendor artifact and excluded is detected as wrong: the stored aggregate and the independent recomputation must agree before the figure is published.",
+    "The dashboard payload for the same tenant and window carries the stored value with its window, coverage and measurement source; it substitutes neither a design target nor another metric's value.",
+    "Boundary behaviour: no execution in the window returns NOT_DEFINED for the rate while the invariant is still reported; missing source data is never rendered as a measured zero.",
+    "Duplicate Execution must be exactly 0: any non-zero value blocks the release instead of being reported as a target miss waiting for the ASM-002 baseline."
+  ],
+  "forbidden": [
+    "Excluding a duplicate because the customer did not complain.",
+    "Reporting the invariant as a target that may be missed under ASM-002."
+  ],
+  "evidence": [
+    "Effect-key reconciliation showing exactly one effect per key.",
+    "Duplicate investigation record with the execution ids."
+  ],
+  "cleanup": [
+    "Delete gov- aggregate, raw-counter and scenario rows for AI-SYS-07 after exporting the recomputation table."
+  ],
+  "automation": "The reporting service and the metric dictionary run as real code under test over the frozen KPI dataset; the dashboard is a consumer whose displayed value must equal the independently recomputed value. Waits are condition-based on the stored aggregate row, metric values are never supplied as inputs, and no vendor boundary is involved in the arithmetic.",
+  "prerequisites": [],
+  "references": [
+    "plans/delivery/analytics.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

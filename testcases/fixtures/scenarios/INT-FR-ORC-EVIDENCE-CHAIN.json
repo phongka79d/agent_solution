@@ -1,0 +1,87 @@
+{
+  "id": "INT-FR-ORC-EVIDENCE-CHAIN",
+  "title": "Evidence records chain from genesis and reject modification",
+  "document": "integration/sales-care-orchestrator.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P1",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "BR-010",
+    "NFR-002",
+    "NFR-003"
+  ],
+  "facets": [
+    "stage:EVIDENCE",
+    "entity:Evidence",
+    "entity:Execution"
+  ],
+  "risk": "Evidence can be edited or reordered after the fact, so the company cannot prove what was executed or reconstruct a dispute.",
+  "preconditions": [
+    "Tenant T1 run orc-chain-* with three mutating steps producing three evidence records",
+    "HMAC audit secret supplied through the runtime environment outside the repository"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "run_id": "run-orc-chain-1",
+    "genesis_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+    "steps": [
+      1,
+      2,
+      3
+    ],
+    "tamper_target": "raw_payload"
+  },
+  "steps": [
+    {
+      "action": "Run the three mutating steps and read the evidence records",
+      "expected": "record 1 links to the genesis hash, and each later record's previous hash equals the earlier record's chain hash"
+    },
+    {
+      "action": "Recompute the chain hashes from stored fields",
+      "expected": "each recomputed hash matches the stored value, and the payload digest matches the canonical payload"
+    },
+    {
+      "action": "Attempt an UPDATE and a DELETE on an evidence record",
+      "expected": "both are refused by the append-only guard and the record content and chain stay unchanged"
+    },
+    {
+      "action": "Attempt to insert a duplicate chain hash for the same tenant",
+      "expected": "the insert is refused by the uniqueness constraint and the existing chain is untouched"
+    }
+  ],
+  "assertions": [
+    "The chain links record to record from the genesis value with no gap",
+    "Recomputed SHA-256 hashes match the stored chain_hash values for all three records",
+    "UPDATE, DELETE and duplicate-hash inserts are all refused with the chain state unchanged"
+  ],
+  "forbidden": [
+    "Write an evidence record with no signature or with a broken chain link",
+    "Modify an evidence record to match a later narrative"
+  ],
+  "evidence": [
+    "Three evidence records with previous hash, chain hash and payload digest",
+    "Refusal output for the UPDATE, DELETE and duplicate-hash attempts"
+  ],
+  "cleanup": [
+    "Delete the run-scoped evidence rows for orc-chain-* only if retention policy permits; otherwise report them as non-deletable"
+  ],
+  "automation": "Run the real evidence logger with a test HMAC secret provided by the harness environment; assertions recompute the hashes rather than trusting stored values.",
+  "prerequisites": [],
+  "references": [
+    "implement/04-core-engine-and-orchestrator.md",
+    "implement/03-database-and-memory-schema.md",
+    "implement/08-security-governance-nfr.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/platform.json",
+    "fixtures/offline/orders.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

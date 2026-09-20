@@ -1,0 +1,87 @@
+{
+  "id": "UNIT-BR-007",
+  "title": "BR-007: refund without a signed human approval is refused and routed",
+  "document": "unit/business-rules.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "BR-007",
+    "AUTH-4",
+    "ASM-004",
+    "NFR-007"
+  ],
+  "facets": [
+    "entity:Approval",
+    "intent:return_refund",
+    "stage:APPROVAL"
+  ],
+  "risk": "The agent issues a refund autonomously, converting a reversible conversation into an irreversible financial loss that cannot be recalled.",
+  "preconditions": [
+    "Namespace gov-unit-br-<case_id>-<worker_id>; Business Rules Engine loaded with no cross-case state.",
+    "Frozen clock 2026-01-15T10:00:00Z; agent fixture context loaded from fixtures/offline/governance.json.",
+    "Order ORD-A-1 belongs to cust-a and is in status SHIPPED; no refund exists."
+  ],
+  "inputs": {
+    "agent_id": "CS-01",
+    "assigned_authority": "AUTH-3",
+    "action": {
+      "order_id": "ORD-A-1",
+      "refund_amount_twd": 1200,
+      "reason_code": "NOT_AS_DESCRIBED",
+      "effect_key": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    }
+  },
+  "steps": [
+    {
+      "action": "Evaluate the refund action with no approval reference",
+      "expected": "Rule fails with ERR_FINANCIAL_APPROVAL_REQUIRED and an approval ticket is created in AWAITING_HUMAN."
+    },
+    {
+      "action": "Query the payment adapter and the order",
+      "expected": "No refund call reached the payment adapter; ORD-A-1 payment status is unchanged."
+    },
+    {
+      "action": "Approve the ticket with the fixture operator, then re-evaluate with the signed approval",
+      "expected": "The action is released exactly once with the signed ticket referenced in the audit row and effect_key reused."
+    }
+  ],
+  "assertions": [
+    "errorCode is exactly ERR_FINANCIAL_APPROVAL_REQUIRED before any approval exists.",
+    "Payment adapter refund counter is 0 while the ticket is pending and exactly 1 after approval.",
+    "The audit row for the executed refund records approver_id, action and signed_at, plus the effect_key.",
+    "The approval did not change the agent authority level; the agent remains AUTH-3."
+  ],
+  "forbidden": [
+    "Executing the refund because the amount is small or the customer is upset.",
+    "Treating an operator free-text note as a signed approval.",
+    "Issuing the refund twice, once pending and once approved."
+  ],
+  "evidence": [
+    "Approval ticket lifecycle rows for APV-REFUND-450 style items in the run namespace.",
+    "Payment adapter call log and the signed approval record."
+  ],
+  "cleanup": [
+    "Cancel or close the created approval ticket and delete gov- execution rows; the sandbox refund is reversed through the supported sandbox API and, if irreversible, reported as non-deletable."
+  ],
+  "automation": "Real BusinessRulesEngine and PEP under test; only ERP/POS/connector boundaries are substituted by the offline mock whose call log and receipts are the oracle. Rules are evaluated in sequence and halt on the first failure, so each case asserts the first failing rule code rather than a bag of errors.",
+  "prerequisites": [
+    "ASM-004 (which refund types require approval) is unapproved; the case asserts fail-closed routing to approval, using the labelled synthetic refund amount."
+  ],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "implement/06-api-and-connectors-spec.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/orders.json",
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

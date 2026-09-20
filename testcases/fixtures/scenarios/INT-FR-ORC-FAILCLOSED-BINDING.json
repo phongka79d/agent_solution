@@ -1,0 +1,98 @@
+{
+  "id": "INT-FR-ORC-FAILCLOSED-BINDING",
+  "title": "A missing runtime binding fails closed instead of fabricating a decision",
+  "document": "integration/sales-care-orchestrator.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P1",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "NFR-008",
+    "FR-ORC-001",
+    "BR-001",
+    "BR-003"
+  ],
+  "facets": [
+    "stage:HYPOTHESIS",
+    "stage:ACTION",
+    "entity:Decision"
+  ],
+  "risk": "A degraded model or price source silently yields a canned score or a placeholder SKU, and the customer is quoted something no system can justify.",
+  "preconditions": [
+    "Tenant T1 run orc-failclosed-* with the cognitive binding for hypothesis derivation removed",
+    "A second variant with the pricing source unavailable while a price would be needed"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "scenarios": [
+      {
+        "missing": "cognitive_binding",
+        "expect": "fatal_fail_closed"
+      },
+      {
+        "missing": "price_source",
+        "expect": "P_FLOOR_UNAVAILABLE"
+      },
+      {
+        "skill_unregistered": "skill.sales.unknown_skill",
+        "expect": "fatal_fail_closed"
+      }
+    ],
+    "product": {
+      "sku_id": "SKU-OK",
+      "floor": 800
+    }
+  },
+  "steps": [
+    {
+      "action": "Run the pipeline with the hypothesis binding absent",
+      "expected": "the run fails closed with an explicit error and no hypothesis, score or routing decision is fabricated"
+    },
+    {
+      "action": "Run the pipeline where a price is required but the authoritative price source is unavailable",
+      "expected": "the action is refused with P_FLOOR_UNAVAILABLE and no locally derived floor is used"
+    },
+    {
+      "action": "Submit a skill id that is not registered for the tenant",
+      "expected": "the run fails closed and no skill execution record is created"
+    },
+    {
+      "action": "Read the audit trail for the three failures",
+      "expected": "each failure is recorded with its error code and the run state is failed or stopped, never success"
+    }
+  ],
+  "assertions": [
+    "Zero fabricated values exist: no score, no routing decision and no price appear in any artifact of the failed runs",
+    "The three failures are recorded with their exact error codes and terminal states",
+    "No outbound dispatch or order row is created by any failed run"
+  ],
+  "forbidden": [
+    "Return a hard-coded score, routing decision or placeholder SKU when a binding is missing",
+    "Derive a price floor locally when the authoritative source is unavailable"
+  ],
+  "evidence": [
+    "Failure records with error codes and terminal task states",
+    "Artifact scan showing no fabricated score/price plus the zero dispatch evidence"
+  ],
+  "cleanup": [
+    "Delete the run-scoped task and artifact rows for orc-failclosed-*; keep the failure audit entries"
+  ],
+  "automation": "Remove one binding at a time in an isolated run namespace and assert on the absence of fabricated artifacts; the real guard code stays in the path.",
+  "prerequisites": [],
+  "references": [
+    "implement/04-core-engine-and-orchestrator.md",
+    "implement/08-security-governance-nfr.md",
+    "implement/06-api-and-connectors-spec.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/platform.json",
+    "fixtures/offline/catalog.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

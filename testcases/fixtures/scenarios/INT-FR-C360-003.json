@@ -1,0 +1,90 @@
+{
+  "id": "INT-FR-C360-003",
+  "title": "Evidence separation keeps FACT, SIGNAL, HYPOTHESIS, DECISION and ACTION distinct",
+  "document": "integration/customer-360.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "FR-C360-003",
+    "BR-010",
+    "NFR-005"
+  ],
+  "facets": [
+    "entity:Evidence",
+    "entity:Customer",
+    "stage:HYPOTHESIS"
+  ],
+  "risk": "An AI inference is stored or displayed as a verified customer fact, so a human acts on a guess the ERP never confirmed.",
+  "preconditions": [
+    "Tenant T1 in run namespace run-t1-c360-003-* with cust-a and a churn hypothesis from a HYPOTHESIS-class skill",
+    "Hypothesis record and evidence rows inspected at 2026-01-15T10:00:00Z"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "customer_id": "cust-a",
+    "hypothesis": {
+      "intent": "return_refund",
+      "confidence": 0.71,
+      "churn_risk_score": 0.34
+    },
+    "attempted_promotion": {
+      "field": "is_fraud",
+      "value": true,
+      "target": "customers"
+    }
+  },
+  "steps": [
+    {
+      "action": "Emit one hypothesis from the HYPOTHESIS stage and read the produced record",
+      "expected": "the record is stamped classification HYPOTHESIS and exposes intent, confidence, churn_risk_score and derived_from_signals"
+    },
+    {
+      "action": "Attempt to write the hypothesis into the customers row and into the ERP mirror",
+      "expected": "the write is refused with SECURITY_VIOLATION and the mirror row digest is unchanged afterwards"
+    },
+    {
+      "action": "Persist the derived value through the sanctioned path and read it back",
+      "expected": "the durable derived value exists only as an evidences row with taxonomy_type HYPOTHESIS and a _hypothesis-suffixed projection name"
+    },
+    {
+      "action": "Read a FACT (ORD-A-1 SHIPPED), a SIGNAL (evt_a_cart_add_1) and a DECISION/ACTION pair for cust-a",
+      "expected": "each record keeps its own taxonomy label, and the FACT content is not overwritten by the hypothesis or the signal"
+    }
+  ],
+  "assertions": [
+    "The customers row digest for cust-a is unchanged by the hypothesis path (zero FACT writes)",
+    "The persisted derived row carries taxonomy_type HYPOTHESIS and a name ending in _hypothesis",
+    "FACT, SIGNAL, DECISION and ACTION records keep distinct labels and the DECISION exposes reason plus evidence"
+  ],
+  "forbidden": [
+    "Write any hypothesis value into a System-of-Record mirror table",
+    "Present a hypothesis to the customer as a confirmed fact"
+  ],
+  "evidence": [
+    "Before/after digest of the cust-a mirror row plus the created evidences row (redacted)",
+    "SECURITY_VIOLATION audit entry from the refused promotion attempt"
+  ],
+  "cleanup": [
+    "Delete the run-scoped hypothesis and evidence rows for run-t1-c360-003-*; the attempt audit entry stays immutable"
+  ],
+  "automation": "Exercise the real epistemic guard and repository wrapper against fixtures with the ERP adapter stubbed; the oracle is the before/after row digest, not a schema or field-presence check.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/04-core-engine-and-orchestrator.md",
+    "implement/03-database-and-memory-schema.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/customers.json",
+    "fixtures/offline/platform.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

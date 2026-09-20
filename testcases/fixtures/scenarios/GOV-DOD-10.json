@@ -1,0 +1,90 @@
+{
+  "id": "GOV-DOD-10",
+  "title": "DoD pillar 10 AUTOMATED_CI_PASS: Test thật needs the real artifact, not a document",
+  "document": "governance/dod.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SRS-27",
+    "TC-E2E-001",
+    "TC-E2E-009"
+  ],
+  "facets": [
+    "stage:LEARNING"
+  ],
+  "risk": "Test thật is declared done although no real execution, receipt, empirical metric or CI run ever produced evidence, so the programme advances on paper and the gap appears only when a pilot depends on it.",
+  "preconditions": [
+    "Namespace gov-dod-<case_id>-<worker_id>; the DoD pillar registry is read from fixtures/offline/governance.json (dod_pillars, dod_state) and no pillar may be added, removed, merged or re-kinded inside the run.",
+    "Frozen clock 2026-01-15T10:00:00Z; each pillar is scored against its own artifact and kind, so a document cannot stand in for a runtime artifact and mock coverage cannot close any pillar.",
+    "Pillar 10 (AUTOMATED_CI_PASS) is expected to be justified by the artifact 'CI pipeline + full E2E suite executed', which the evidence registry holds in the form 'absent'.",
+    "The repository has no application runtime, so a runtime pillar cannot be closed and a blueprint pillar can only reach DESIGN_ONLY."
+  ],
+  "inputs": {
+    "pillar": 10,
+    "name": "AUTOMATED_CI_PASS",
+    "dod_item": "Test thật",
+    "kind": "runtime",
+    "required_evidence": "CI pipeline + full E2E suite executed",
+    "evidence_state": "absent",
+    "runtime_available": false,
+    "expected_status": "NOT_RUN",
+    "closable_by_mock_or_design": false
+  },
+  "steps": [
+    {
+      "action": "Collect the artifact that would justify pillar 10 (Test thật)",
+      "expected": "The artifact 'CI pipeline + full E2E suite executed' is registered with its kind 'absent', and no real-form artifact of that name exists."
+    },
+    {
+      "action": "Attempt to close the pillar from the artifact as it stands",
+      "expected": "The pillar is reported NOT_RUN; a design artifact cannot close a runtime pillar and a missing artifact cannot close any pillar."
+    },
+    {
+      "action": "Attempt to close the pillar from mock coverage or from another pillar's artifact",
+      "expected": "Both attempts are refused: mock coverage is specification coverage, and a neighbouring pillar's artifact is not evidence for this pillar."
+    },
+    {
+      "action": "Request the missing artifact through the owning role and re-read the DoD summary",
+      "expected": "The gap is recorded against the owning role with the artifact name, and the summary lists pillar 10 exactly once with the status NOT_RUN and no PASS."
+    }
+  ],
+  "assertions": [
+    "Pillar 10 is reported with its own status NOT_RUN: a missing runtime yields NOT_RUN and a design artifact yields DESIGN_ONLY, never PASS.",
+    "Test thật is satisfied only by the artifact 'CI pipeline + full E2E suite executed' in its real form; the current form 'absent' is recorded as a gap rather than as completion.",
+    "Mock or substituted-boundary output and a neighbouring pillar's artifact are both rejected as evidence for this pillar.",
+    "The DoD summary lists each pillar exactly once with a status and the artifact that justifies it, so no pillar inherits another pillar's status."
+  ],
+  "forbidden": [
+    "Declaring the pillar done because a specification or a document exists.",
+    "Reusing another pillar's evidence to close this one.",
+    "Editing a status without the artifact that justifies it."
+  ],
+  "evidence": [
+    "Pillar evidence-registry row with the artifact name, kind and status.",
+    "DoD summary excerpt listing this pillar once with its status and the owning role."
+  ],
+  "cleanup": [
+    "Delete gov- DoD report rows after export; the registry fixture and the design documents are unchanged."
+  ],
+  "automation": "The gate-evaluation code and the run-report writer run as real code under test while the evidence registry is data. The oracle is the pair (evidence registry, run-report status): a gate that reads PASS without a real artifact fails the case, and a missing runtime is reported NOT_RUN instead of being allowed to fall through to PASS.",
+  "prerequisites": [
+    "The repository has no application runtime, so pillar 10 cannot be evidenced here; its status is NOT_RUN and any completion claim is BLOCKED_PREREQUISITE."
+  ],
+  "references": [
+    "implement/09-sprint-roadmap-and-pilots.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/live/env.example"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

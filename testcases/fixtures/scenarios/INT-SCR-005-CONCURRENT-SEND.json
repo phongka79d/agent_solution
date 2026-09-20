@@ -1,0 +1,96 @@
+{
+  "id": "INT-SCR-005-CONCURRENT-SEND",
+  "title": "SCR-005 mutex race: concurrent agent sends during takeover are all denied",
+  "document": "integration/command-center.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P1",
+  "basis": "extension",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SCR-005",
+    "NFR-007",
+    "NFR-003"
+  ],
+  "facets": [
+    "entity:Conversation",
+    "stage:EXECUTION"
+  ],
+  "risk": "A race between takeover and an in-flight agent send lets one bot message slip out after the human took over, contradicting the operator to the customer.",
+  "preconditions": [
+    "Namespace gov-scr-<case_id>-<worker_id>; the operator UI runs against the offline gateway and mock SSE/telemetry streams.",
+    "Operator session bound to tenant T1 and an explicit operator_id from fixtures/offline/governance.json; frozen clock 2026-01-15T10:00:00Z.",
+    "Conversation conv-gov-2 is ACTIVE; five agent message tasks are queued in the same worker pool."
+  ],
+  "inputs": {
+    "race": {
+      "takeover_at": "after_task_2_dispatched",
+      "tasks": [
+        {
+          "id": "t1"
+        },
+        {
+          "id": "t2"
+        },
+        {
+          "id": "t3"
+        },
+        {
+          "id": "t4"
+        },
+        {
+          "id": "t5"
+        }
+      ],
+      "operator": "OP-SUPERVISOR-T1"
+    }
+  },
+  "steps": [
+    {
+      "action": "Dispatch tasks t1 and t2 and confirm both are permitted",
+      "expected": "Two outbound bot messages are delivered and the adapter counter reads 2."
+    },
+    {
+      "action": "Acquire the takeover lease, then let t3, t4 and t5 attempt dispatch",
+      "expected": "All three are denied with 409; the adapter counter stays at 2."
+    },
+    {
+      "action": "Release the lease with resume and dispatch t6",
+      "expected": "t6 is permitted and the counter advances to 3."
+    }
+  ],
+  "assertions": [
+    "No bot message is delivered after the lease is acquired: counter is exactly 2 at that point.",
+    "Every post-takeover task returns 409 with the locked reason, not a generic failure.",
+    "The mutex is checked at dispatch time, so an already-queued task cannot bypass it.",
+    "After resume exactly one further message is delivered, proving the lock was released cleanly."
+  ],
+  "forbidden": [
+    "Checking the lease only at enqueue time so queued tasks slip through.",
+    "Dropping the denied tasks silently with no audit row.",
+    "Double-releasing the lock so two senders proceed concurrently."
+  ],
+  "evidence": [
+    "Adapter message log with timestamps and the counter at each phase.",
+    "409 responses for t3 to t5.",
+    "Lease lifecycle log."
+  ],
+  "cleanup": [
+    "Resume and delete the gov- conversation, task and lease keys."
+  ],
+  "automation": "Command Center React components and the gateway routes run as real code under test; ERP, channel and telemetry providers are replaced by the offline mock sinks whose call logs are the oracle. UI assertions use accessible roles and names rather than CSS classes, and stream waits are condition-based. Task dispatch is ordered deterministically by the harness (each task awaited), and the lease is manipulated only through the supported takeover/resume routes.",
+  "prerequisites": [],
+  "references": [
+    "implement/07-human-command-center-ui.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

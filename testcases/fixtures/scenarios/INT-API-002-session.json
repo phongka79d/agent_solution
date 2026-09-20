@@ -1,0 +1,101 @@
+{
+  "id": "INT-API-002-session",
+  "title": "Inbound session events canonicalize aliases, dedupe replays and keep browser origin out of ERP facts",
+  "document": "integration/api-connectors.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "API-002",
+    "FR-C360-002"
+  ],
+  "facets": [
+    "event:session",
+    "stage:SIGNAL"
+  ],
+  "risk": "An event alias or replay creates a duplicate or a forged behaviour signal, or a browser-origin purchase is promoted into the ERP system of record that governs revenue.",
+  "preconditions": [
+    "Tenant T1 ingest route reachable in namespace run-t1-api-evt-session with the T1 event and ERP fixtures loaded",
+    "The canonical event mapping and the ERP adapter are stubbed by fixtures/offline/events.json and fixtures/offline/orders.json"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "canonical_event": "session",
+    "accepted_aliases": [
+      "session_start",
+      "web.session.started"
+    ],
+    "origin": "browser",
+    "payload": {
+      "event_id": "evt_sess_1",
+      "session_id": "sess-a-1",
+      "customer_ref": "anonymous",
+      "occurred_at": "2026-01-15T09:59:00Z"
+    },
+    "duplicate_delivery": {
+      "event_id": "evt_sess_1",
+      "delivery_attempt": 2
+    },
+    "late_delivery": {
+      "event_id": "evt_sess_1_late",
+      "occurred_at": "2026-01-15T09:50:00Z",
+      "ingested_at": "2026-01-15T10:04:00Z"
+    },
+    "erp_fact_before": null
+  },
+  "steps": [
+    {
+      "action": "Deliver the canonical session event evt_sess_1",
+      "expected": "one event row is stored under the canonical name session with its occurred_at preserved"
+    },
+    {
+      "action": "Deliver the identical payload under the accepted alias session_start",
+      "expected": "the alias is canonicalized to session and no second event row is created"
+    },
+    {
+      "action": "Redeliver the same event_id as a delivery retry",
+      "expected": "the retry is deduplicated: still exactly one row and no duplicate derived signal is emitted"
+    },
+    {
+      "action": "Deliver a late event whose occurred_at precedes events already ingested",
+      "expected": "the late event is stored with its own occurred_at and the tenant timeline is neither reordered nor rewritten"
+    }
+  ],
+  "assertions": [
+    "Exactly one event row exists for evt_sess_1 after the canonical, alias and retry deliveries",
+    "The stored canonical name is session and the raw alias session_start never appears as a stored event name",
+    "The late delivery keeps its own occurred_at and adds only its own single timeline entry",
+    "The event stays a session: the session stays anonymous and no customer identity is fabricated"
+  ],
+  "forbidden": [
+    "Persisting a raw alias name as the canonical event or creating a second row for a retried event_id",
+    "Reordering the timeline so a late event rewrites an outcome already derived from later data",
+    "Allowing a browser-origin event to write an ERP or catalogue fact"
+  ],
+  "evidence": [
+    "Stored event rows with canonical name, event_id, occurred_at and ingested_at for the canonical, alias, replay and late deliveries",
+    "ERP mirror read of ORD-A-1 and the catalogue before and after ingest showing no browser-origin write"
+  ],
+  "cleanup": [
+    "Delete the run-scoped event rows and derived signals under run-t1-api-evt-session; keep the audit entries"
+  ],
+  "automation": "Post the canonical, alias, replay and late payloads to the real ingest route with only the ERP adapter stubbed; the oracle couples the stored row count with the unchanged ERP read.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/06-api-and-connectors-spec.md",
+    "plans/platform/api-and-integrations.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/events.json",
+    "fixtures/offline/platform.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

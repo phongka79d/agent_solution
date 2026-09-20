@@ -1,0 +1,126 @@
+{
+  "id": "E2E-OFF-P4-XDOMAIN",
+  "title": "P4: cross-domain orchestration keeps one customer context across domains (mocked SoR)",
+  "document": "e2e/offline.md",
+  "layer": "e2e",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P4",
+  "basis": "blueprint",
+  "pair": "E2E-LIVE-P4-XDOMAIN",
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "OBJ-005",
+    "OBJ-004",
+    "FR-ORC-001",
+    "FR-ORC-002",
+    "MKT-05",
+    "SAL-02",
+    "SAL-03",
+    "CS-01",
+    "CS-02",
+    "NFR-005",
+    "BR-010",
+    "SRS-09"
+  ],
+  "facets": [
+    "skill:skill.mkt.dispatch_campaign",
+    "skill:skill.sales.recommend_product",
+    "skill:skill.care.escalate_to_human",
+    "skill:skill.care.analyze_churn_risk",
+    "skill:skill.care.issue_retention_offer",
+    "memory:Customer Context",
+    "stage:HYPOTHESIS",
+    "stage:PLAN",
+    "stage:EXECUTION",
+    "stage:OUTCOME",
+    "kpi:Cross-sell Revenue",
+    "kpi:Retention"
+  ],
+  "risk": "A customer is handed from marketing to sales to care to retention and arrives without context, so the next domain repeats questions, contradicts the previous offer, or acts on a stale or mixed customer profile.",
+  "preconditions": [
+    "run_id=RUN-E2E-OFF-P4, case_id=E2E-OFF-P4, worker=w-biz-e2e; tenant T1 holds the cust-a campaign response, order and consent rows needed by all four domains in one conversation context",
+    "the handoff bus captures every package it transfers and the run refuses a package that is missing its customer binding or consent state"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "customer_id": "cust-a",
+    "conversation_id": "conv-x-0115-01",
+    "originating_effect_key": "EK-XDOM-0115-01-EMAIL",
+    "campaign_id": "CAMP-0115-02",
+    "order_ref": "ORD-XDOM-0115-01",
+    "churn_signal": "inactive 75 days with an open complaint",
+    "retention_budget_twd": 200,
+    "claim": {
+      "consent": "granted EMAIL marketing"
+    },
+    "incomplete_package_probe": "handoff without the consent state"
+  },
+  "steps": [
+    {
+      "action": "Start in marketing and hand off to sales",
+      "expected": "the response to the campaign opens one run for the customer and the handoff package carries the customer binding, consent state, conversation id and originating effect_key to Sales (no peer-to-peer agent call)"
+    },
+    {
+      "action": "Act in sales without re-asking for context",
+      "expected": "the recommendation cites the campaign context and the order path uses the same customer and conversation; the customer is not asked to repeat already verified details"
+    },
+    {
+      "action": "Hand off to care within the same conversation",
+      "expected": "the complaint is routed to Care with the same package, the care case references the originating campaign and order, and identity is not re-verified beyond the bound session"
+    },
+    {
+      "action": "Run the retention workflow",
+      "expected": "analyze_churn_risk returns a HYPOTHESIS-tagged score, the eligibility check reads consent, the previous order and the 200 TWD budget, and issue_retention_offer drafts within it (or routes to approval when the threshold is unset)"
+    },
+    {
+      "action": "Prove the single customer context",
+      "expected": "marketing, sales, care and retention records all reference the same tenant_id, customer_id, conversation_id and originating effect_key, and no domain created a second profile copy"
+    },
+    {
+      "action": "Probe an incomplete handoff",
+      "expected": "a handoff package missing the consent state is refused by the receiving domain and surfaced, instead of being processed on partial context"
+    },
+    {
+      "action": "Collect the gate evidence",
+      "expected": "the four handoff packages and the single-context proof are captured as the P4 exit evidence with the audit rows behind them"
+    }
+  ],
+  "assertions": [
+    "every domain hop carries a complete handoff package (customer binding, consent state, conversation id, originating effect_key) and no domain re-asks for data another domain already verified",
+    "all four domains reference the same customer, conversation and originating campaign, proving one customer context rather than four profile copies",
+    "the retention step stays hypothesis-tagged and fails closed when consent or budget cannot be validated (FR-CS-003)",
+    "an incomplete handoff is refused by the receiver and reported, so context is never silently lost or invented"
+  ],
+  "forbidden": [
+    "processing a cross-domain step without its handoff package or on a stale profile copy",
+    "letting one domain overwrite another domain's recorded reason or evidence"
+  ],
+  "evidence": [
+    "the four handoff packages with their ids and the fields they carried",
+    "the single-context proof over customer/conversation/tenant identifiers and the originating effect_key",
+    "the care case and retention offer records plus the campaign attribution link"
+  ],
+  "cleanup": [
+    "withdraw the cross-domain artefacts created by the run (campaign draft, case, offer) in the mock and drop the run namespace; keep the handoff packages and audit rows"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. The orchestrator, handoff bus, context hydration and evidence writer are real; the channel, ERP and knowledge boundaries are substituted.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/04-core-engine-and-orchestrator.md",
+    "plans/platform/workflows-and-handoffs.md",
+    "plans/customer-lifecycle.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/customers.json",
+    "fixtures/offline/consents.json",
+    "fixtures/offline/orders.json",
+    "fixtures/offline/events.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

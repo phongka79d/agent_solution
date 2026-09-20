@@ -1,0 +1,102 @@
+{
+  "id": "GOV-APV-QUEUE-INTEGRITY",
+  "title": "Queue integrity: pending count, ordering and aging match the underlying records",
+  "document": "governance/approval.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "extension",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SCR-003",
+    "SCR-001",
+    "SRS-17",
+    "NFR-002"
+  ],
+  "facets": [
+    "entity:Approval",
+    "stage:APPROVAL"
+  ],
+  "risk": "The dashboard badge and the approval queue disagree, so items silently age past their TTL or operators work on a stale list.",
+  "preconditions": [
+    "Namespace gov-apv-<case_id>-<worker_id>; approval queue seeded from fixtures/offline/governance.json.",
+    "Operator identities and roles resolved from the fixture operator registry; every decision goes through POST /api/v1/approvals/{id}/decision, the only approval route.",
+    "Three items exist for T1: one pending within TTL, one pending close to TTL, one expired. T2 has one pending item."
+  ],
+  "inputs": {
+    "seeded": [
+      {
+        "approval_id": "APV-CAMP-15",
+        "expires_at": "2026-01-15T10:10:00Z",
+        "tenant": "T1"
+      },
+      {
+        "approval_id": "APV-REFUND-450",
+        "expires_at": "2026-01-15T10:25:00Z",
+        "tenant": "T1"
+      },
+      {
+        "approval_id": "APV-OLD-1",
+        "expires_at": "2026-01-15T09:00:00Z",
+        "tenant": "T1"
+      },
+      {
+        "approval_id": "APV-T2-CAMP",
+        "expires_at": "2026-01-15T10:00:00Z",
+        "tenant": "T2"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Fetch the T1 approval queue and the SCR-001 approval_pending indicator",
+      "expected": "Both report the same actionable count (2) and the expired item is excluded or explicitly marked expired, not counted as actionable."
+    },
+    {
+      "action": "Check the ordering",
+      "expected": "Items are ordered by expiry ascending so the soonest-to-expire appears first."
+    },
+    {
+      "action": "Fetch the T1 queue again as an operator and confirm tenant scoping",
+      "expected": "No T2 item appears in the T1 listing."
+    },
+    {
+      "action": "Drive the clock past the second item's expiry and refresh",
+      "expected": "The actionable count drops to 1 and the newly expired item is shown as expired rather than disappearing without trace."
+    }
+  ],
+  "assertions": [
+    "Dashboard indicator and queue listing derive from the same records: counts agree exactly (2, then 1).",
+    "Expired items never count as actionable but remain visible with a terminal marker.",
+    "Ordering is deterministic by expiry so the most urgent item is first.",
+    "Tenant scoping is exact: zero foreign items in the listing."
+  ],
+  "forbidden": [
+    "Computing the badge from a different query than the list.",
+    "Hiding expired items so aging is invisible.",
+    "Including another tenant's items to inflate the queue."
+  ],
+  "evidence": [
+    "Queue payload and SCR-001 indicator values at both clock points.",
+    "Ordered listing with expiry timestamps.",
+    "Expired item states."
+  ],
+  "cleanup": [
+    "Delete gov- approval rows after export."
+  ],
+  "automation": "Real queue query and dashboard projection under test; the clock is injected so aging is deterministic and both surfaces are read from live queries rather than cached copies.",
+  "prerequisites": [],
+  "references": [
+    "implement/07-human-command-center-ui.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

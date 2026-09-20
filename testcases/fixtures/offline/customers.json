@@ -1,0 +1,88 @@
+{
+  "customers": [
+    {
+      "customer_id": "cust-a",
+      "tenant": "T1",
+      "tenant_id": "11111111-1111-1111-1111-111111111111",
+      "resolution": "SESSION_BOUND",
+      "verified_at": "2025-11-02T03:00:00Z",
+      "handles": [
+        {
+          "channel_type": "web",
+          "channel_identifier": "wa_id_a"
+        },
+        {
+          "channel_type": "email",
+          "channel_identifier": "cust-a@example.invalid"
+        }
+      ],
+      "session_id": "sess-a-1",
+      "lifecycle": "active"
+    },
+    {
+      "customer_id": "cust-b",
+      "tenant": "T1",
+      "tenant_id": "11111111-1111-1111-1111-111111111111",
+      "resolution": "CHANNEL_IDENTIFIER_EXACT",
+      "verified_at": "2025-12-01T03:00:00Z",
+      "handles": [
+        {
+          "channel_type": "email",
+          "channel_identifier": "cust-b@example.invalid"
+        }
+      ],
+      "session_id": "sess-b-1",
+      "lifecycle": "active",
+      "marketing_opt_out": true
+    },
+    {
+      "customer_id": "cust-guest",
+      "tenant": "T1",
+      "tenant_id": "11111111-1111-1111-1111-111111111111",
+      "resolution": "UNRESOLVED",
+      "verified_at": null,
+      "handles": [],
+      "session_id": "sess-guest-1",
+      "lifecycle": "anonymous"
+    },
+    {
+      "customer_id": "cust-dormant",
+      "tenant": "T1",
+      "tenant_id": "11111111-1111-1111-1111-111111111111",
+      "resolution": "SESSION_BOUND",
+      "verified_at": "2025-08-11T03:00:00Z",
+      "handles": [
+        {
+          "channel_type": "email",
+          "channel_identifier": "cust-d@example.invalid"
+        }
+      ],
+      "session_id": "sess-d-1",
+      "lifecycle": "dormant",
+      "inactive_days": 120
+    },
+    {
+      "customer_id": "cust-t2",
+      "tenant": "T2",
+      "tenant_id": "22222222-2222-2222-2222-222222222222",
+      "resolution": "SESSION_BOUND",
+      "verified_at": "2025-12-20T03:00:00Z",
+      "handles": [
+        {
+          "channel_type": "email",
+          "channel_identifier": "cust-t2@example2.invalid"
+        }
+      ],
+      "session_id": "sess-t2-1",
+      "lifecycle": "active"
+    }
+  ],
+  "untrusted_client_assertion": {
+    "note": "payload fields a caller may send; never identity proof",
+    "example": {
+      "customer_id": "cust-b",
+      "verification_status": "VERIFIED",
+      "phone": "handle-untrusted-not-identity"
+    }
+  }
+}

@@ -1,0 +1,92 @@
+{
+  "id": "GOV-KPI-SUC-02",
+  "title": "SUC-02 Retention: declared formula, numerator and denominator with honest missing-data behaviour",
+  "document": "governance/kpi.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P4",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SRS-20",
+    "OBJ-004",
+    "FR-CS-003"
+  ],
+  "facets": [
+    "kpi:Retention",
+    "stage:OUTCOME"
+  ],
+  "risk": "The Retention figure is produced under different accounting rules - every customer who ever purchased counted as retained, which reports retention far above the observed cohort - so the KPI is wrong in the direction that flatters the programme and every decision taken on it inherits the error.",
+  "preconditions": [
+    "Namespace gov-kpi-<case_id>-<worker_id>; the metric is computed by the real reporting code over fixtures/offline/governance.json kpi_dataset and never copied from the dashboard payload.",
+    "Frozen clock 2026-01-15T10:00:00Z with the reporting window 2026-01-01T00:00:00Z .. 2026-02-01T00:00:00Z as a half-open interval; the stored aggregate is recomputed independently from the raw counter rows.",
+    "Metric scope is fixed before measurement: numerator is customers still active or purchasing at period end; denominator is customers at the start of the period.",
+    "The dictionary entry for 'Retention' (owner, unit, window, exclusion rule) is loaded read-only and is compared with the recomputation instead of being trusted."
+  ],
+  "inputs": {
+    "metric": "Retention",
+    "code": "SUC-02",
+    "group": "Customer Success",
+    "dataset": "kpi_dataset.retention",
+    "formula": "customers still active or purchasing at the end of the period divided by customers at the start",
+    "window": [
+      "2026-01-01T00:00:00Z",
+      "2026-02-01T00:00:00Z"
+    ],
+    "currency": "TWD",
+    "expected_value": "70.0%",
+    "wrong_value_if_buggy": "every customer who ever purchased counted as retained, which reports retention far above the observed cohort",
+    "release_blocker": false,
+    "expected_boundary_behaviour": "no cohort at the start returns NOT_DEFINED"
+  },
+  "steps": [
+    {
+      "action": "Compute Retention from the frozen rows in kpi_dataset.retention",
+      "expected": "The stored aggregate reports 70.0% and records the formula, the window and the currency that produced it."
+    },
+    {
+      "action": "Recompute Retention independently from the raw counter rows for the same tenant and window",
+      "expected": "The recomputed value equals the stored value 70.0%, and every numerator row lies inside the denominator scope."
+    },
+    {
+      "action": "Force the empty-source variant of the metric (no qualifying row in the window)",
+      "expected": "The metric reports no cohort at the start returns NOT_DEFINED; the display distinguishes missing source data from a measured zero."
+    },
+    {
+      "action": "Read the dashboard payload and the metric dictionary entry",
+      "expected": "The dashboard renders the stored value with its window, coverage and source, and the dictionary names the owner, unit, numerator and denominator that the recomputation used."
+    }
+  ],
+  "assertions": [
+    "Retention equals 70.0% for the frozen window, recomputed from the raw counter rows with numerator scope 'customers still active or purchasing at period end' and denominator scope 'customers at the start of the period'.",
+    "A recomputation that yields every customer who ever purchased counted as retained, which reports retention far above the observed cohort is detected as wrong: the stored aggregate and the independent recomputation must agree before the figure is published.",
+    "The dashboard payload for the same tenant and window carries the stored value with its window, coverage and measurement source; it substitutes neither a design target nor another metric's value.",
+    "Boundary behaviour: no cohort at the start returns NOT_DEFINED; missing source data is never rendered as a measured zero."
+  ],
+  "forbidden": [
+    "Counting a dormant customer as retained because no explicit churn was recorded.",
+    "Comparing a cohort from one period against a cohort from another."
+  ],
+  "evidence": [
+    "Cohort activity table at period end.",
+    "Customer count at period start used as the denominator."
+  ],
+  "cleanup": [
+    "Delete gov- aggregate, raw-counter and scenario rows for SUC-02 after exporting the recomputation table."
+  ],
+  "automation": "The reporting service and the metric dictionary run as real code under test over the frozen KPI dataset; the dashboard is a consumer whose displayed value must equal the independently recomputed value. Waits are condition-based on the stored aggregate row, metric values are never supplied as inputs, and no vendor boundary is involved in the arithmetic.",
+  "prerequisites": [],
+  "references": [
+    "plans/delivery/analytics.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

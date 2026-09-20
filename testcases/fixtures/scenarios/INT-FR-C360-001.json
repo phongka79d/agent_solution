@@ -1,0 +1,110 @@
+{
+  "id": "INT-FR-C360-001",
+  "title": "Customer 360 profile projection exposes every required field group with verified handles only",
+  "document": "integration/customer-360.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "FR-C360-001",
+    "BR-003",
+    "NFR-006"
+  ],
+  "facets": [
+    "entity:Customer",
+    "memory:Customer Context",
+    "stage:CONTEXT"
+  ],
+  "risk": "An agent answers from an incomplete or unverified profile, so a statement about the customer is wrong and a handle the customer never proved is treated as identity.",
+  "preconditions": [
+    "Tenant T1 seeded with cust-a, cust-b, cust-guest, cust-dormant and orders ORD-A-1/ORD-B-1 in run namespace run-t1-c360-001-*",
+    "Projection read through the tenant-scoped repository wrapper at frozen clock 2026-01-15T10:00:00Z; no live connector is called"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "customer_id": "cust-a",
+    "required_field_groups": [
+      "identity",
+      "purchase_history",
+      "products_purchased",
+      "web_app_behavior",
+      "marketing_interactions",
+      "conversations",
+      "support_cases",
+      "feedback",
+      "cart",
+      "vouchers_offers",
+      "last_purchase_at",
+      "purchase_frequency",
+      "total_spent",
+      "consent_state",
+      "lifecycle_state"
+    ],
+    "expected": {
+      "verified_handles": [
+        "wa_id_a",
+        "cust-a@example.invalid"
+      ],
+      "order_ids": [
+        "ORD-A-1"
+      ],
+      "total_spent_twd": 1000,
+      "consent_marketing_email": true
+    }
+  },
+  "steps": [
+    {
+      "action": "Read the Customer 360 projection for (T1, cust-a) and enumerate the returned field groups",
+      "expected": "all 15 required field groups are present with a value or an explicit null; none is silently omitted"
+    },
+    {
+      "action": "Compare the aggregate fields against the ERP order mirror (ORD-A-1, SKU-OK, 1000 TWD)",
+      "expected": "products_purchased contains SKU-OK, last_purchase_at matches ORD-A-1 and total_spent is 1000 TWD from the mirror, not from a model"
+    },
+    {
+      "action": "Read the projection for cust-guest and for cust-dormant",
+      "expected": "cust-guest yields no FACT profile and zero verified handles; cust-dormant exposes inactive_days 120 and lifecycle dormant"
+    },
+    {
+      "action": "Retry the same read under tenant T2 and separately send a client payload asserting verification_status VERIFIED for cust-b",
+      "expected": "the T2 read returns 0 rows for cust-a and the client assertion changes neither verification nor released handles"
+    }
+  ],
+  "assertions": [
+    "The projection returns all 15 required field groups for cust-a and the values match the ERP mirror (ORD-A-1, SKU-OK, 1000 TWD)",
+    "Only handles backed by a server-verified identity row are released; cust-guest returns zero verified handles and no FACT profile",
+    "Derived attributes appear with the _hypothesis suffix and are absent from the customers System-of-Record mirror",
+    "A cross-tenant read of cust-a under T2 returns 0 rows instead of any customer data"
+  ],
+  "forbidden": [
+    "Release a handle that has no verified identity row, for example an address echoed back from the request payload",
+    "Return cust-b profile content inside a cust-a projection read"
+  ],
+  "evidence": [
+    "Redacted projection result for cust-a and cust-guest with the 15-field presence check",
+    "ERP mirror comparison for ORD-A-1 showing the projected aggregates"
+  ],
+  "cleanup": [
+    "Delete the run-scoped projection rows for run-t1-c360-001-*; keep the immutable audit record"
+  ],
+  "automation": "Seed fixture rows in a run namespace and read through the real tenant-scoped repository wrapper with only the ERP adapter stubbed by fixtures/offline/orders.json; assert on returned values, never on schema shape.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/03-database-and-memory-schema.md",
+    "plans/platform/data-and-knowledge.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/customers.json",
+    "fixtures/offline/consents.json",
+    "fixtures/offline/orders.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

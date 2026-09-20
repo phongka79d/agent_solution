@@ -1,0 +1,120 @@
+{
+  "id": "GOV-KPI-ATTRIBUTION-WINDOW",
+  "title": "Attribution windows: late orders become organic and auto-opened messages are excluded",
+  "document": "governance/kpi.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P2",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SRS-20",
+    "SAL-04",
+    "PILOT-02"
+  ],
+  "facets": [
+    "kpi:Cart Recovery Rate",
+    "kpi:Campaign Revenue",
+    "kpi:Engagement"
+  ],
+  "risk": "An order confirmed after the attribution window is credited to the campaign anyway, so organic revenue is counted as AI revenue and the recovery rate is overstated.",
+  "preconditions": [
+    "Namespace gov-kpi-<case_id>-<worker_id>; the metric is computed by the real reporting code over fixtures/offline/governance.json kpi_dataset and never copied from the dashboard payload.",
+    "Frozen clock 2026-01-15T10:00:00Z with the reporting window 2026-01-01T00:00:00Z .. 2026-02-01T00:00:00Z as a half-open interval; the stored aggregate is recomputed independently from the raw counter rows.",
+    "The 24 hour cart-recovery window and the 48 hour campaign-click window are the declared windows for this tenant, measured from the qualifying interaction to the confirmed payment.",
+    "kpi_dataset.attribution marks orders confirmed after the window as organic and excludes messages the customer never answered."
+  ],
+  "inputs": {
+    "windows_hours": {
+      "cart_recovery": 24,
+      "campaign_click": 48
+    },
+    "orders": [
+      {
+        "order_id": "ORD-W-1",
+        "confirmed_after_hours": 6.0,
+        "expected": "ATTRIBUTED"
+      },
+      {
+        "order_id": "ORD-W-2",
+        "confirmed_after_hours": 30.0,
+        "expected": "ORGANIC"
+      },
+      {
+        "order_id": "ORD-W-3",
+        "confirmed_after_hours": 47.9,
+        "expected": "ATTRIBUTED"
+      },
+      {
+        "order_id": "ORD-W-4",
+        "confirmed_after_hours": 48.1,
+        "expected": "ORGANIC"
+      }
+    ],
+    "auto_opened_messages": {
+      "count": 40,
+      "customer_replies": 0,
+      "expected": "EXCLUDED_FROM_ENGAGEMENT"
+    },
+    "late_arrival": {
+      "order_confirmed_at": "2026-02-03T09:00:00Z",
+      "window_end": "2026-02-01T00:00:00Z",
+      "expected": "restated as a late arrival, never silently folded into the closed window"
+    },
+    "window_boundary": "half-open: an order confirmed exactly at the window edge counts as inside"
+  },
+  "steps": [
+    {
+      "action": "Attribute the four orders using the declared windows",
+      "expected": "The two orders inside their window are attributed, and ORD-W-2 and ORD-W-4 are classified as organic revenue and excluded from the campaign denominator."
+    },
+    {
+      "action": "Inspect the boundary orders",
+      "expected": "An order confirmed at 48.0 hours is inside the window and one at 48.1 hours is outside, so the boundary is applied consistently and stated."
+    },
+    {
+      "action": "Aggregate engagement with the 40 auto-opened messages that received no reply",
+      "expected": "All 40 are excluded from the engagement numerator and the engagement denominator keeps its declared impression scope."
+    },
+    {
+      "action": "Attempt to credit an organic order to the campaign to improve the recovery rate",
+      "expected": "The attempt is refused and the order stays organic; the recovery rate numerator does not gain the order."
+    }
+  ],
+  "assertions": [
+    "Every order outside its declared attribution window is classified as organic and excluded from the attributed numerator and denominator.",
+    "The window boundary is applied consistently and the comparison is inclusive of the boundary instant, so no order is both inside and outside.",
+    "Auto-opened messages with no customer reply are excluded, so engagement is not manufactured by the platform's own outgoing traffic.",
+    "The declared window per scenario is published with the metric, so a reader can reproduce the classification.",
+    "An order confirmed after the window end and delivered late is recorded as a late-arrival restatement: the closed window keeps its published figure and the difference is stated, instead of the past being silently rewritten."
+  ],
+  "forbidden": [
+    "Crediting an out-of-window order to the AI to lift the conversion figure.",
+    "Counting an unanswered auto-open as engagement.",
+    "Using one window for cart recovery and campaign clicks so the boundary becomes arbitrary."
+  ],
+  "evidence": [
+    "Per-order classification table with the hours since the qualifying interaction.",
+    "Engagement computation showing the excluded auto-open count.",
+    "Window declaration recorded with the metric."
+  ],
+  "cleanup": [
+    "Delete gov- classification and aggregate rows after export."
+  ],
+  "automation": "The reporting service and the metric dictionary run as real code under test over the frozen KPI dataset; the dashboard is a consumer whose displayed value must equal the independently recomputed value. Waits are condition-based on the stored aggregate row, metric values are never supplied as inputs, and no vendor boundary is involved in the arithmetic.",
+  "prerequisites": [],
+  "references": [
+    "plans/delivery/analytics.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/orders.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

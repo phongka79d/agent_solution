@@ -1,0 +1,95 @@
+{
+  "id": "INT-SCR-004-FOREIGN-DATA",
+  "title": "SCR-004 isolation: a session for one customer renders no other customer's data",
+  "document": "integration/command-center.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SCR-004",
+    "NFR-006",
+    "FR-C360-001"
+  ],
+  "facets": [
+    "entity:Customer",
+    "memory:Customer Context"
+  ],
+  "risk": "A cache key mistake or an unbounded query shows customer B's orders inside customer A's profile, which is a reportable privacy breach.",
+  "preconditions": [
+    "Namespace gov-scr-<case_id>-<worker_id>; the operator UI runs against the offline gateway and mock SSE/telemetry streams.",
+    "Operator session bound to tenant T1 and an explicit operator_id from fixtures/offline/governance.json; frozen clock 2026-01-15T10:00:00Z.",
+    "Two sessions exist: session A verified as cust-a, session B verified as cust-b; ORD-A-1 and ORD-B-1 belong to each respectively."
+  ],
+  "inputs": {
+    "session_a_request": {
+      "method": "GET",
+      "path": "/api/v1/customers/cust-a/360",
+      "session": "sess-a-1"
+    },
+    "session_b_request": {
+      "method": "GET",
+      "path": "/api/v1/customers/cust-b/360",
+      "session": "sess-b-1"
+    },
+    "cross_request": {
+      "method": "GET",
+      "path": "/api/v1/customers/cust-b/360",
+      "session": "sess-a-1"
+    }
+  },
+  "steps": [
+    {
+      "action": "Load the profile in session A",
+      "expected": "The payload contains cust-a identifiers and ORD-A-1; it contains no cust-b identifier or ORD-B-1."
+    },
+    {
+      "action": "Load the profile in session B in a separate browser context",
+      "expected": "The payload contains cust-b identifiers and ORD-B-1 only."
+    },
+    {
+      "action": "In session A, request cust-b profile explicitly",
+      "expected": "The request is refused (authorization or not-found) and no cust-b data appears in the response body."
+    },
+    {
+      "action": "Scan both successful payloads for the other customer's identifiers, orders and phone digits",
+      "expected": "Zero cross-customer occurrences in both payloads."
+    }
+  ],
+  "assertions": [
+    "Each session returns exactly one customer context; cross-request returns no foreign fields.",
+    "Zero occurrences of the other customer's order id, phone digits or session token in either payload.",
+    "Any shared cache key includes the verified customer or session identity, demonstrable by the distinct payloads.",
+    "The refusal is audited rather than being a silent 404 with no trace."
+  ],
+  "forbidden": [
+    "Serving a cached profile without keying on the session identity.",
+    "Returning a generic 403 while the body still contains the foreign profile.",
+    "Falling back to a wildcard tenant query when the customer binding is missing."
+  ],
+  "evidence": [
+    "Both 360 payloads and the refusal response body (redacted).",
+    "Cache key inspection output showing per-session keying.",
+    "Audit row for the refused cross-request."
+  ],
+  "cleanup": [
+    "Clear both gov- session namespaces and any customer context cache entries."
+  ],
+  "automation": "Command Center React components and the gateway routes run as real code under test; ERP, channel and telemetry providers are replaced by the offline mock sinks whose call logs are the oracle. UI assertions use accessible roles and names rather than CSS classes, and stream waits are condition-based.",
+  "prerequisites": [],
+  "references": [
+    "implement/07-human-command-center-ui.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/customers.json",
+    "fixtures/offline/orders.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

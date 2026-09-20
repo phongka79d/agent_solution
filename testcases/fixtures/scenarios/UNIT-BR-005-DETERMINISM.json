@@ -1,0 +1,104 @@
+{
+  "id": "UNIT-BR-005-DETERMINISM",
+  "title": "BR-005: effect_key is a deterministic function of tenant, customer, action type and context",
+  "document": "unit/business-rules.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "BR-005",
+    "NFR-003"
+  ],
+  "facets": [
+    "entity:Action",
+    "entity:Execution"
+  ],
+  "risk": "The idempotency key is random or timestamped, so the same logical action produces different keys and duplicates are never detected.",
+  "preconditions": [
+    "Namespace gov-unit-br-<case_id>-<worker_id>; Business Rules Engine loaded with no cross-case state.",
+    "Frozen clock 2026-01-15T10:00:00Z; agent fixture context loaded from fixtures/offline/governance.json."
+  ],
+  "inputs": {
+    "key_inputs": [
+      {
+        "tenant_id": "11111111-1111-1111-1111-111111111111",
+        "customer_id": "cust-a",
+        "action_type": "send_message",
+        "context_id": "ctx-1"
+      },
+      {
+        "tenant_id": "11111111-1111-1111-1111-111111111111",
+        "customer_id": "cust-a",
+        "action_type": "send_message",
+        "context_id": "ctx-1"
+      },
+      {
+        "tenant_id": "11111111-1111-1111-1111-111111111111",
+        "customer_id": "cust-a",
+        "action_type": "send_message",
+        "context_id": "ctx-2"
+      },
+      {
+        "tenant_id": "11111111-1111-1111-1111-111111111111",
+        "customer_id": "cust-b",
+        "action_type": "send_message",
+        "context_id": "ctx-1"
+      },
+      {
+        "tenant_id": "22222222-2222-2222-2222-222222222222",
+        "customer_id": "cust-a",
+        "action_type": "send_message",
+        "context_id": "ctx-1"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Generate keys for inputs 1 and 2 (identical tuples)",
+      "expected": "Both keys are byte-identical 64-hex-character digests."
+    },
+    {
+      "action": "Generate keys for inputs 3, 4 and 5 (one component differs each)",
+      "expected": "Each key differs from the first, so customer, action type and tenant each participate in the digest."
+    },
+    {
+      "action": "Regenerate all keys a second time in the same process and in a fresh process",
+      "expected": "Values are stable across regenerations and across processes; no timestamp or randomness enters the digest."
+    }
+  ],
+  "assertions": [
+    "The function is pure: identical inputs give identical keys regardless of call order or wall clock.",
+    "Changing any single component changes the digest, so distinct logical actions never collide.",
+    "Digest length and alphabet are fixed at 64 lowercase hex characters.",
+    "No random or time-derived component appears in the key."
+  ],
+  "forbidden": [
+    "Including a timestamp or UUID in the key material.",
+    "Excluding tenant from the digest so two tenants collide.",
+    "Truncating the digest in a way that increases collision probability."
+  ],
+  "evidence": [
+    "Key generation table for the five inputs with the two regenerations.",
+    "Digest sample values for cross-checking the documented construction."
+  ],
+  "cleanup": [
+    "Delete gov- key material and any persisted digest cache."
+  ],
+  "automation": "Real BusinessRulesEngine and PEP under test; only ERP/POS/connector boundaries are substituted by the offline mock whose call log and receipts are the oracle. Rules are evaluated in sequence and halt on the first failure, so each case asserts the first failing rule code rather than a bag of errors.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

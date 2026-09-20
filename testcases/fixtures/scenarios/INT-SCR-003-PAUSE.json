@@ -1,0 +1,84 @@
+{
+  "id": "INT-SCR-003-PAUSE",
+  "title": "SCR-003 PAUSE: workflow freezes durably and can be resumed, with zero side effects",
+  "document": "integration/command-center.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SCR-003",
+    "AUTH-4",
+    "NFR-007"
+  ],
+  "facets": [
+    "entity:Approval",
+    "stage:APPROVAL"
+  ],
+  "risk": "Pause is implemented as a cancellation or as an in-memory flag, so work is either destroyed or silently resumes and executes behind the operator's back.",
+  "preconditions": [
+    "Namespace gov-scr-<case_id>-<worker_id>; the operator UI runs against the offline gateway and mock SSE/telemetry streams.",
+    "Operator session bound to tenant T1 and an explicit operator_id from fixtures/offline/governance.json; frozen clock 2026-01-15T10:00:00Z.",
+    "APV-CAMP-15 pending; the workflow has a step timer observed through the run state."
+  ],
+  "inputs": {
+    "pause": {
+      "decision": "PAUSE",
+      "operator_id": "OP-APPROVER-T1",
+      "reason": "Inventory count in progress at the warehouse."
+    },
+    "resume": {
+      "decision": "APPROVE",
+      "operator_id": "OP-APPROVER-T1",
+      "reason": "Inventory confirmed."
+    }
+  },
+  "steps": [
+    {
+      "action": "Submit PAUSE",
+      "expected": "HTTP 200 with status PAUSED; the task holds a durable paused state and its timer is frozen."
+    },
+    {
+      "action": "Advance the frozen clock beyond the original step deadline and inspect the task",
+      "expected": "The task is still PAUSED (not expired, not executed) and the timer did not advance while paused."
+    },
+    {
+      "action": "Submit APPROVE on the paused item",
+      "expected": "The item resumes and then executes once, proving pause-freeze is resumable rather than terminal."
+    }
+  ],
+  "assertions": [
+    "PAUSE never terminates the run and never releases the prepared payload.",
+    "While paused, zero adapter calls occur even after the original deadline passes.",
+    "The pause is durable across a worker restart (state read from persistence, not process memory).",
+    "Resuming from PAUSE produces exactly one execution."
+  ],
+  "forbidden": [
+    "Implementing pause as cancellation so the work is lost.",
+    "Letting the step timer keep running so the pause silently expires.",
+    "Executing once on pause and once again on resume."
+  ],
+  "evidence": [
+    "Task state snapshots before pause, during pause past the deadline, and after resume.",
+    "Adapter counter log showing zero calls during the pause and one after resume."
+  ],
+  "cleanup": [
+    "Delete gov- approval and execution rows after exporting the state snapshots."
+  ],
+  "automation": "Command Center React components and the gateway routes run as real code under test; ERP, channel and telemetry providers are replaced by the offline mock sinks whose call logs are the oracle. UI assertions use accessible roles and names rather than CSS classes, and stream waits are condition-based. The deadline advance uses the injected clock, not a wall-clock sleep.",
+  "prerequisites": [],
+  "references": [
+    "implement/07-human-command-center-ui.md",
+    "implement/06-api-and-connectors-spec.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

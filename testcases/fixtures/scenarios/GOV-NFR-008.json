@@ -1,0 +1,115 @@
+{
+  "id": "GOV-NFR-008",
+  "title": "NFR-008 Fail closed: unverifiable price, stock, authority or consent halts execution",
+  "document": "governance/nfr.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "NFR-008",
+    "BR-003",
+    "BR-004",
+    "BR-008",
+    "NFR-001"
+  ],
+  "facets": [
+    "entity:Price",
+    "entity:Inventory",
+    "entity:Consent"
+  ],
+  "risk": "The system guesses when verification is impossible, quoting a price it cannot confirm or claiming stock it never checked, and the customer pays for that guess.",
+  "preconditions": [
+    "Namespace gov-nfr-<case_id>-<worker_id>; NFR verification runs against the offline gateway with mock SoR and channel boundaries.",
+    "Frozen clock 2026-01-15T10:00:00Z; failure, outage and crash injections are scripted at the substituted boundary, never faked inside the assertion.",
+    "SKU-NOPRICE has a null list price; the inventory connector is made unreachable; a consent lookup is made to return an unknown state."
+  ],
+  "inputs": {
+    "probes": [
+      {
+        "label": "unverifiable price",
+        "input": {
+          "sku_id": "SKU-NOPRICE"
+        },
+        "expected": "HALT_PRICE_UNVERIFIED"
+      },
+      {
+        "label": "unreachable inventory",
+        "input": {
+          "sku_id": "SKU-OK"
+        },
+        "expected": "HALT_STOCK_UNVERIFIED"
+      },
+      {
+        "label": "indeterminate consent",
+        "input": {
+          "customer_id": "cust-a",
+          "channel": "EMAIL"
+        },
+        "expected": "HALT_CONSENT_UNVERIFIED"
+      },
+      {
+        "label": "unknown authority",
+        "input": {
+          "skill": "skill.sales.experimental_bundle"
+        },
+        "expected": "HALT_AUTHORITY_UNVERIFIED"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Trigger each of the four unverifiable conditions in isolation",
+      "expected": "Each halts before any external dispatch, with a typed reason distinguishing the four causes."
+    },
+    {
+      "action": "Confirm no customer-facing assertion was produced",
+      "expected": "No price, stock or availability claim reaches the channel; the adapter counters remain 0."
+    },
+    {
+      "action": "Confirm each halt routes to a human or terminates cleanly",
+      "expected": "Each halt produces a durable state (human queue item or terminal failure) rather than an error thrown into the void."
+    },
+    {
+      "action": "Confirm unrelated healthy paths still work",
+      "expected": "A price read for SKU-OK and a transactional send for a verified consent still succeed, so fail-closed is scoped."
+    }
+  ],
+  "assertions": [
+    "All four unverifiable conditions halt execution; none produces a guessed value.",
+    "Each halt carries a distinct typed reason so the cause is actionable.",
+    "Fail-closed is scoped: healthy operations in the same tenant continue to work.",
+    "Zero customer-facing assertions and zero adapter calls during the four halts."
+  ],
+  "forbidden": [
+    "Substituting a default price or a cached stock value.",
+    "Treating an indeterminate consent as granted.",
+    "Halting the entire tenant because one dependency is unverifiable."
+  ],
+  "evidence": [
+    "Typed halt records for all four probes.",
+    "Adapter counters and the contrast evidence for the healthy paths.",
+    "Durable queue or terminal states created by each halt."
+  ],
+  "cleanup": [
+    "Delete gov- rows and restore the mock connector scripts."
+  ],
+  "automation": "Core PEP, rules engine, audit writer, idempotency store and worker lease logic run as real code under test; only ERP/WMS, channel gateways, Redis and the model provider are substituted. Faults are injected at those boundaries and waits are condition-based on persisted state.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/catalog.json",
+    "fixtures/offline/consents.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

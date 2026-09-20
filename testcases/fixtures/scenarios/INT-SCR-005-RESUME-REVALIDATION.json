@@ -1,0 +1,100 @@
+{
+  "id": "INT-SCR-005-RESUME-REVALIDATION",
+  "title": "SCR-005 resume re-validates consent, context and pending orders before the agent replies",
+  "document": "integration/command-center.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P1",
+  "basis": "extension",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SCR-005",
+    "BR-004",
+    "NFR-008",
+    "NFR-007"
+  ],
+  "facets": [
+    "entity:Consent",
+    "entity:Conversation",
+    "stage:APPROVAL"
+  ],
+  "risk": "The agent resumes with a stale plan and delivers a message or an offer the customer has since revoked consent for, or that references an order already refunded.",
+  "preconditions": [
+    "Namespace gov-scr-<case_id>-<worker_id>; the operator UI runs against the offline gateway and mock SSE/telemetry streams.",
+    "Operator session bound to tenant T1 and an explicit operator_id from fixtures/offline/governance.json; frozen clock 2026-01-15T10:00:00Z.",
+    "Conv-gov-4 is under human takeover with a queued draft that offers a marketing discount; cust-a revokes EMAIL marketing consent and ORD-A-1 is refunded while the operator holds the lease."
+  ],
+  "inputs": {
+    "revocations": [
+      {
+        "type": "CONSENT_REVOKED",
+        "customer_id": "cust-a",
+        "channel": "EMAIL",
+        "purpose": "marketing"
+      },
+      {
+        "type": "ORDER_REFUNDED",
+        "order_id": "ORD-A-1"
+      }
+    ],
+    "queued_draft": {
+      "text": "Here is your 10 percent win-back code.",
+      "channel": "EMAIL",
+      "purpose": "marketing"
+    }
+  },
+  "steps": [
+    {
+      "action": "Change the underlying state while the conversation is under takeover",
+      "expected": "Consent becomes revoked and ORD-A-1 becomes REFUNDED in the mock SoR."
+    },
+    {
+      "action": "Submit the resume request",
+      "expected": "Resume returns 200 and the console reports a re-validation step (RESUME_AUDIT) whose result is recorded."
+    },
+    {
+      "action": "Attempt to dispatch the queued marketing draft after resume",
+      "expected": "The draft is suppressed by the consent check; the adapter counter for EMAIL marketing stays at 0."
+    },
+    {
+      "action": "Ask for the order status after resume",
+      "expected": "The reply reflects the refunded status of ORD-A-1 rather than the previously cached SHIPPED status."
+    }
+  ],
+  "assertions": [
+    "Resume re-validates consent and context; a stale draft cannot be sent after a revocation.",
+    "The marketing draft produces zero adapter calls, while the transactional order-status reply is still allowed.",
+    "The re-validation outcome is persisted so the operator can see why the draft was dropped.",
+    "The agent context is refreshed: the refunded order state is visible after resume, not the stale one."
+  ],
+  "forbidden": [
+    "Resuming without re-checking consent because the draft was written before takeover.",
+    "Blocking all replies after a marketing revocation, including transactional ones.",
+    "Serving cached order state after resume."
+  ],
+  "evidence": [
+    "Re-validation record produced during resume with its outcome.",
+    "Adapter counter for the marketing channel and the order-status reply payload.",
+    "Consent and order state snapshots used by the check."
+  ],
+  "cleanup": [
+    "Restore the consent fixture state and delete the gov- conversation and draft rows."
+  ],
+  "automation": "Command Center React components and the gateway routes run as real code under test; ERP, channel and telemetry providers are replaced by the offline mock sinks whose call logs are the oracle. UI assertions use accessible roles and names rather than CSS classes, and stream waits are condition-based.",
+  "prerequisites": [],
+  "references": [
+    "implement/07-human-command-center-ui.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/consents.json",
+    "fixtures/offline/orders.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

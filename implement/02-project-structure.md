@@ -1,8 +1,19 @@
 # Project Structure & Monorepo Architecture
 
-## 1. Monorepo Directory Layout (pnpm Workspaces + Turborepo)
+> **BLUEPRINT STATUS — Gate P0 target design, not an inventory of existing files.**
+> This document specifies the **target monorepo layout** for the Gate P0 (Foundation) deliverable in SRS
+> AI-REV-SRS-001 §24. No directory, package, manifest (`package.json`, `pnpm-workspace.yaml`, `turbo.json`),
+> TypeScript config, seed script, or knowledge file listed below currently exists in this documentation-only
+> repository. Every tree entry and configuration snippet is a **blueprint to be created later**, and no
+> package manager, bundler, or build pipeline is installed or runnable here. Numeric latency, throughput,
+> bundle-size, and retention figures are **provisional design targets pending ASM-002 (KPI baseline) and the
+> NFR-009 benchmark**, not committed values.
 
-The platform is architected as an enterprise monorepo managed with **pnpm workspaces** and **Turborepo**. The codebase enforces strict separation of concerns across runnable applications (`apps/`) and reusable, shared internal libraries (`packages/`).
+## 1. Monorepo Directory Layout (pnpm Workspaces + Turborepo) — target blueprint
+
+The target architecture is an enterprise monorepo managed with **pnpm workspaces** and **Turborepo** (the
+platform "applies" the structure described below). The design enforces strict separation of concerns across
+target runnable applications (`apps/`) and reusable, shared internal libraries (`packages/`).
 
 ```text
 agent-solution/
@@ -19,7 +30,7 @@ agent-solution/
 │   │   │   │   │   ├── chat.ts       # Real-time customer chat SSE stream
 │   │   │   │   │   ├── events.ts     # Customer event ingestion (API-002)
 │   │   │   │   │   ├── campaigns.ts  # Marketing campaign management
-│   │   │   │   │   └── webhooks.ts   # LINE, WhatsApp, Stripe webhook ingestion
+│   │   │   │   │   └── webhooks.ts   # API-003 webhook ingestion (Facebook, TikTok, Zalo, Email, SMS, Web/App Chat; LINE/WhatsApp as extensions)
 │   │   │   │   └── index.ts
 │   │   │   ├── server.ts             # Fastify server initialization & graceful shutdown
 │   │   │   └── index.ts
@@ -82,7 +93,7 @@ agent-solution/
 │   │   │   └── 03_tenants.seed.ts    # Default tenant policies, margin floors, and approval thresholds
 │   │   ├── package.json
 │   │   └── tsconfig.json
-│   ├── second-brain/                 # Ground-truth organizational knowledge base (8 folders, 21 markdown files)
+│   ├── second-brain/                 # Ground-truth knowledge base: 8 folders / 21 canonical Markdown files (exact SRS §10 set)
 │   │   ├── company/
 │   │   │   ├── company.md            # Enterprise overview, vision, operating model
 │   │   │   └── positioning.md        # Brand positioning & target market segments
@@ -189,7 +200,8 @@ graph TD
    - Reusable across both synchronous API flows (`apps/api`) and asynchronous durable workers (`apps/worker`).
 
 3. **`@agentos/second-brain`**:
-   - Stores the authoritative 20 Markdown documents across 8 enterprise folders.
+   - Stores the authoritative **21 canonical Markdown files across 8 enterprise folders**, exactly the set enumerated in SRS AI-REV-SRS-001 §10: `/company` 2, `/customer` 2, `/product` 3, `/brand` 3, `/marketing` 3, `/sales` 3, `/customer-care` 3, `/policy` 2. This is the single canonical count; earlier drafts of this document quoted a lower figure and are superseded.
+   - Any customer-specific or Taiwan/vertical addendum document is kept as a **separate, clearly labelled extension** and is never counted in the canonical 21.
    - Provides document loader utilities, metadata frontmatter parsers, and verification schemas ensuring only `status: approved` documents are ingested into Qdrant.
 
 4. **`@agentos/adapters`**:
@@ -198,11 +210,20 @@ graph TD
 
 5. **`@agentos/database`**:
    - The single source of truth for PostgreSQL schema, migrations, connection pools, and Row-Level Security (RLS) policies.
-   - Houses `seeds/` scripts initializing the 13 canonical agents, 20 skills, and tenant policies.
+   - Houses `seeds/` scripts initializing the 13 canonical agents, 23 platform skills, and tenant policies.
 
 6. **`@agentos/storefront-widget`**:
    - Zero runtime dependencies (`dependencies: {}`).
    - Self-contained IIFE build outputting a single script (< 20 KB) registered as a standard Custom Element (`<agentos-chat-widget>`).
+
+7. **Runtime scope (Node core vs. optional Python service)**:
+   - Every application and package in this layout is a **Node.js (TypeScript 5.x)** artifact. There is no Python
+     service in the target structure.
+   - If a Python (FastAPI) auxiliary worker is ever approved for Python-only ML/NLP libraries (see
+     `01-tech-stack-and-environment.md` §5, gated by ASM-001), it is added as an **optional extra `apps/api-py`
+     entry** and does not become a second core runtime. Until that approval exists, this layout is authoritative
+     and the Python snippets in the other specifications remain illustrative.
+   - Neither the Node layout nor any Python alternative is implemented in this repository today.
 
 ---
 
@@ -240,9 +261,14 @@ The platform implements a dual-queue architecture, cleanly dividing responsibili
 | **Primary Use Cases** | 1. Webhook processing & rate limiting<br>2. Real-time outbound messaging<br>3. Async Customer Event Ingestion (API-002)<br>4. Qdrant vector chunk upserts | 1. Omnichannel abandoned cart recovery (15m, 2h, 24h delays)<br>2. Marketing campaign batch dispatch (AUTH-4)<br>3. Human approval pauses at SCR-003 (up to 72h)<br>4. Complex multi-agent order fulfillment sagas |
 | **Failure Handling** | Redis retry with exponential backoff; dead-letter queue (DLQ) | Deterministic event replay from the exact last verified step; zero lost state |
 
+> **Provisional figures.** Latency, throughput, and timing values in this table and diagram (e.g.
+> "Sub-10 milliseconds", "50ms – 150ms per step", the 15m/2h/24h cart-recovery delays, "> 5,000 users",
+> "72h pause gate") are provisional design targets to be re-baselined against the NFR-009 benchmark and the
+> ASM-002 KPI baseline. They are configuration starting points, not measured SLAs.
+
 ---
 
-## 3. Package Configurations
+## 3. Package Configurations (target blueprint — not present files)
 
 ### Root `package.json`
 
@@ -333,7 +359,6 @@ packages:
     "@agentos/database": "workspace:*",
     "ioredis": "^5.4.1",
     "zod": "^3.23.8",
-    "openai": "^4.47.1",
     "@opentelemetry/api": "^1.8.0"
   },
   "devDependencies": {
@@ -373,7 +398,15 @@ export function evaluatePriceFloorConstraint(
   logisticsCost: number = 0,
   basketCapPoints: number = 0
 ): { isValid: boolean; allowedPrice: number; appliedDiscount: number; violationReason?: string } {
-  // P_floor = Math.ceil((C + L + D_cap) / (1 - r))
+  if (platformCommissionRate < 0 || platformCommissionRate >= 1) {
+    return {
+      isValid: false,
+      allowedPrice: basePrice,
+      appliedDiscount: 0,
+      violationReason: `Invalid platform commission rate ${platformCommissionRate}; must be in range [0, 1).`,
+    };
+  }
+  // P_floor = Math.ceil((C + L + D_cap) / (1 - r)) — policy check only; catalog price remains API-001 SoR
   const priceFloor = Math.ceil((costOfGoods + logisticsCost + basketCapPoints) / (1 - platformCommissionRate));
   const proposedFinalPrice = basePrice - proposedDiscount;
   if (proposedFinalPrice < priceFloor) {

@@ -1,0 +1,98 @@
+{
+  "id": "UNIT-AUTH-5-CROSS-TENANT",
+  "title": "Cross-customer context access classified AUTH-5 is denied with a security alert",
+  "document": "unit/authority.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "AUTH-5",
+    "NFR-001",
+    "NFR-006",
+    "TC-E2E-006"
+  ],
+  "facets": [
+    "entity:Agent",
+    "entity:Customer"
+  ],
+  "risk": "An agent reads another customer's or another tenant's data because the requested identifier differs from the session-bound verified identity.",
+  "preconditions": [
+    "Namespace gov-unit-auth-<case_id>-<worker_id>; no shared mutable state with other cases.",
+    "PolicyEnforcementPoint loaded with fixtures/offline/governance.json skill_authority_registry and agents[]; clock frozen at 2026-01-15T10:00:00Z.",
+    "Session is server-verified as cust-a (tenant T1); cust-b belongs to the same tenant and cust-t2 to T2."
+  ],
+  "inputs": {
+    "agent_id": "CS-01",
+    "assigned_authority": "AUTH-3",
+    "probes": [
+      {
+        "label": "session customer",
+        "customer_id": "cust-a"
+      },
+      {
+        "label": "same-tenant foreign customer",
+        "customer_id": "cust-b"
+      },
+      {
+        "label": "cross-tenant customer",
+        "customer_id": "cust-t2",
+        "tenant": "T2"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Request the session-bound customer profile",
+      "expected": "Verdict is PERMIT and the returned profile belongs to cust-a."
+    },
+    {
+      "action": "Request cust-b profile inside the cust-a session",
+      "expected": "Verdict is DENY_PROHIBITED; no cust-b field is returned in any response body."
+    },
+    {
+      "action": "Request cust-t2 profile",
+      "expected": "Verdict is DENY_PROHIBITED and the tenant identifier mismatch is recorded."
+    },
+    {
+      "action": "Inspect the alerting path",
+      "expected": "Each denial emits a security alert record and an audit row with the attempted target pseudonymized."
+    }
+  ],
+  "assertions": [
+    "Exactly one PERMIT; the two foreign reads are DENY_PROHIBITED.",
+    "Zero occurrences of cust-b or cust-t2 attributes in every response body (asserted by scanning the serialized bodies).",
+    "Two security alert records exist for the run, one per denied probe.",
+    "No customer row is cached under the wrong session namespace."
+  ],
+  "forbidden": [
+    "Returning a generic error to the UI while internally loading the foreign profile.",
+    "Trusting a customer_id supplied by the caller as the session identity.",
+    "Recording the cross-tenant attempt only as a 404 without an audit or alert row."
+  ],
+  "evidence": [
+    "PEP decision JSON for the three probes plus the serialized response bodies (redacted).",
+    "Security alert records.",
+    "Audit rows with pseudonymized targets."
+  ],
+  "cleanup": [
+    "Delete the gov- session namespace and any cached profile rows."
+  ],
+  "automation": "Real identity binding, PEP and audit under test; the customer store is the fixture-backed substitute. Assertion scans real serialized payloads rather than a mocked return value.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/customers.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

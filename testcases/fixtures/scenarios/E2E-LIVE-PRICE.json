@@ -1,0 +1,106 @@
+{
+  "id": "E2E-LIVE-PRICE",
+  "title": "TC-E2E-003: price from the authorised source only, refreshed on change (approved sandbox)",
+  "document": "e2e/live.md",
+  "layer": "e2e",
+  "environment": "live",
+  "priority": "critical",
+  "gate": "P2",
+  "basis": "blueprint",
+  "pair": "E2E-OFF-PRICE",
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "TC-E2E-003",
+    "OBJ-002",
+    "BR-001",
+    "BR-002",
+    "BR-003",
+    "FR-SAL-002",
+    "NFR-008",
+    "SRS-11"
+  ],
+  "facets": [
+    "skill:skill.sales.check_price",
+    "intent:price",
+    "stage:CONTEXT",
+    "stage:DECISION",
+    "kpi:Hallucination/Error Rate",
+    "kpi:Average Order Value"
+  ],
+  "risk": "A customer receives a price the ERP never published (or a stale one), creating loss-making orders and disputes.",
+  "preconditions": [
+    "run_id=RUN-E2E-LIVE-PRICE, case_id=E2E-LIVE-PRICE, worker=w-biz-e2e-live; sandbox SKU mapped from LIVE_SKU_OK with the sandbox list price",
+    "a sandbox-only SKU is kept without any price record so the refusal path can be exercised on live data"
+  ],
+  "inputs": {
+    "tenant_id": "LIVE_TENANT_ID",
+    "sku_id": "LIVE_SKU_OK",
+    "customer_id": "LIVE_CUSTOMER_A_SANDBOX_ID",
+    "sku_without_price": "sandbox SKU without a price record",
+    "requested_discount_percent": 30
+  },
+  "steps": [
+    {
+      "action": "Ask for the price of the sandbox SKU with no price record",
+      "expected": "the refusal is explicit with no number and the sandbox ERP confirms no price row"
+    },
+    {
+      "action": "Ask for the sandbox SKU-OK price",
+      "expected": "the spoken price equals the sandbox ERP current price and the quote token is signed by the sandbox service"
+    },
+    {
+      "action": "Stage the sandbox price change and re-ask",
+      "expected": "the refreshed value is picked up and the previous quote is not reused"
+    },
+    {
+      "action": "Attempt the below-floor discount",
+      "expected": "the sandbox pricing service returns discount_allowed=false and no reduced price is spoken"
+    },
+    {
+      "action": "Try the stale quote against the sandbox order path",
+      "expected": "the sandbox order path refuses before creating an order; the sandbox order list for this run stays empty"
+    },
+    {
+      "action": "Collect the sandbox pricing evidence",
+      "expected": "every value observed in the dialogue maps to a sandbox ERP response captured during the run, the sandbox refusals are recorded, and no stale quote remains redeemable on the sandbox"
+    }
+  ],
+  "assertions": [
+    "the spoken prices equal the sandbox ERP values observed during the run and the no-price SKU produces no number",
+    "the stale quote cannot create an order: the sandbox order list for the run is empty and no order id is reported",
+    "the discount refusal is visible as a pricing-service verdict rather than prose-only behaviour",
+    "no price or discount value appears in the transcript without a sandbox ERP response behind it"
+  ],
+  "forbidden": [
+    "quoting a sandbox price the ERP did not publish",
+    "creating an order at a stale or unauthorised price"
+  ],
+  "evidence": [
+    "sandbox ERP pricing responses before/after the change with timestamps",
+    "sandbox order list for the run (expected empty) after the stale-token attempt",
+    "quote token metadata and the refusal verdict"
+  ],
+  "cleanup": [
+    "Retire the sandbox artefacts created by this run through the supported sandbox APIs (cancel/withdraw the created cart, campaign, case and voucher references); delete nothing immutable — sent messages, provider receipts and audit rows are retained and reported as non-deletable rather than pretending they were unsent"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. Same flow against the sandbox ERP pricing endpoint with a staged price change.",
+  "prerequisites": [
+    "ASM-001 approved connector lock is present (LIVE_CONNECTORS_LOCK points at the approved connector list) — without it this case is SKIP_ASM_001, never PASS",
+    "Per-case sandbox authorization: the run_id of this case is registered in the approved sandbox allowlist with its sandbox tenant/customer/SKU mapping before execution; credentials live outside the repository (env.local) and are never printed in evidence",
+    "A sandbox price change must be stageable through the approved sandbox ERP test facility; otherwise the staleness sub-step is BLOCKED_PREREQUISITE and the run reports it rather than inferring behaviour"
+  ],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/05-skill-system-specifications.md",
+    "plans/modules/sales.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/catalog.json",
+    "fixtures/offline/customers.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

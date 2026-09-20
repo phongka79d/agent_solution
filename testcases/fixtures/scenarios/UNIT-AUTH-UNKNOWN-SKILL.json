@@ -1,0 +1,104 @@
+{
+  "id": "UNIT-AUTH-UNKNOWN-SKILL",
+  "title": "Unregistered skill: declared authority is used but the rank check still applies",
+  "document": "unit/authority.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "BR-008",
+    "NFR-001",
+    "AUTH-3"
+  ],
+  "facets": [
+    "entity:Skill",
+    "entity:Agent"
+  ],
+  "risk": "A newly deployed skill missing from the registry becomes an unrestricted execution path because the lookup returns nothing.",
+  "preconditions": [
+    "Namespace gov-unit-auth-<case_id>-<worker_id>; no shared mutable state with other cases.",
+    "PolicyEnforcementPoint loaded with fixtures/offline/governance.json skill_authority_registry and agents[]; clock frozen at 2026-01-15T10:00:00Z.",
+    "skill.sales.experimental_bundle is absent from the registry by construction."
+  ],
+  "inputs": {
+    "agent_id": "SAL-01",
+    "assigned_authority": "AUTH-1",
+    "proposals": [
+      {
+        "skill": "skill.sales.experimental_bundle",
+        "required_authority": "AUTH-1",
+        "payload": {
+          "customer_id": "cust-a"
+        }
+      },
+      {
+        "skill": "skill.sales.experimental_bundle",
+        "required_authority": "AUTH-3",
+        "payload": {
+          "customer_id": "cust-a"
+        }
+      },
+      {
+        "skill": "skill.sales.experimental_bundle",
+        "required_authority": "AUTH-4",
+        "payload": {
+          "customer_id": "cust-a"
+        }
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Submit the unregistered skill declaring AUTH-1 for an AUTH-1 agent",
+      "expected": "Verdict is PERMIT and the call is recorded as registry-miss with declared authority used."
+    },
+    {
+      "action": "Submit the same unregistered skill declaring AUTH-3",
+      "expected": "Verdict is DENY (authority boundary exceeded) because the agent holds AUTH-1."
+    },
+    {
+      "action": "Submit the same unregistered skill declaring AUTH-4",
+      "expected": "Verdict is REQUIRE_HUMAN_APPROVAL; still no execution."
+    },
+    {
+      "action": "Inspect the audit rows",
+      "expected": "Each row records that the authority source was the proposal, flagging the registry gap."
+    }
+  ],
+  "assertions": [
+    "The rank comparison applies to unregistered skills; only the source of the requirement changes.",
+    "No unregistered skill executes above the agent assigned authority.",
+    "Audit rows make the registry miss explicit so the gap is actionable.",
+    "Exactly one of the three probes is permitted."
+  ],
+  "forbidden": [
+    "Fail-open to PERMIT for unknown skills.",
+    "Silently treating an unknown skill as AUTH-0.",
+    "Hiding the registry miss so it never reaches engineering."
+  ],
+  "evidence": [
+    "PEP decision JSON for the three probes including the requirement source field.",
+    "Audit rows for the run.",
+    "Registry content dump proving the skill is absent."
+  ],
+  "cleanup": [
+    "Delete gov- namespace rows."
+  ],
+  "automation": "Real PEP with the fixture registry; the registry is an in-test substitute exposing add/remove so the miss is reproducible.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

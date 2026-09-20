@@ -1,0 +1,146 @@
+{
+  "id": "GOV-ASM-INDEPENDENCE",
+  "title": "All five assumptions unlocked at once: each dependency is blocked for its own reason",
+  "document": "governance/asm.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "ASM-001",
+    "ASM-002",
+    "ASM-003",
+    "ASM-004",
+    "ASM-005",
+    "NFR-001"
+  ],
+  "facets": [
+    "entity:Agent",
+    "stage:DECISION"
+  ],
+  "risk": "One missing assumption is treated as a global outage, or five missing assumptions collapse into a single 'environment not ready' message, so nobody can tell which owner has to act and unrelated work is stopped for no reason.",
+  "preconditions": [
+    "Namespace gov-asm-<case_id>-<worker_id>; the assumption registry is read from fixtures/offline/governance.json assumptions and no lock may be granted, forged, cached or edited inside the run.",
+    "Frozen clock 2026-01-15T10:00:00Z; the harness records exactly one outcome per dependent capability - EXECUTED, BLOCKED_PREREQUISITE or SKIP_ASM_<n> - and refuses to re-label a skip as PASS.",
+    "All five assumptions are unlocked simultaneously and each dependent capability is registered in one run plan.",
+    "A capability that depends on none of the five assumptions is also registered, so the run can prove the blocks are scoped."
+  ],
+  "inputs": {
+    "assumptions": {
+      "ASM-001": {
+        "locked": false
+      },
+      "ASM-002": {
+        "locked": false
+      },
+      "ASM-003": {
+        "locked": false
+      },
+      "ASM-004": {
+        "locked": false
+      },
+      "ASM-005": {
+        "locked": false
+      }
+    },
+    "capabilities": [
+      {
+        "label": "live channel dispatch",
+        "depends_on": [
+          "ASM-001"
+        ],
+        "expected_status": "SKIP_ASM_001"
+      },
+      {
+        "label": "KPI target verdict",
+        "depends_on": [
+          "ASM-002"
+        ],
+        "expected_status": "BLOCKED_PREREQUISITE"
+      },
+      {
+        "label": "autonomous discount",
+        "depends_on": [
+          "ASM-003"
+        ],
+        "expected_status": "BLOCKED_PREREQUISITE"
+      },
+      {
+        "label": "autonomous refund",
+        "depends_on": [
+          "ASM-004"
+        ],
+        "expected_status": "BLOCKED_PREREQUISITE"
+      },
+      {
+        "label": "long-term customer field write",
+        "depends_on": [
+          "ASM-005"
+        ],
+        "expected_status": "BLOCKED_PREREQUISITE"
+      },
+      {
+        "label": "authority unit case",
+        "depends_on": [],
+        "expected_status": "EXECUTED"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Resolve all five assumptions for the run",
+      "expected": "Every one is reported unlocked with its owner, and each dependent capability carries the identifier of the assumption it needs."
+    },
+    {
+      "action": "Run the five dependent capabilities",
+      "expected": "Each is blocked with its own reason naming its own assumption and owner; no capability reports a generic environment failure and none reports PASS."
+    },
+    {
+      "action": "Run the capability that depends on none of the assumptions",
+      "expected": "It executes normally, proving the blocks are scoped per assumption rather than a global stop."
+    },
+    {
+      "action": "Attempt to unblock one capability by editing the registry from the run",
+      "expected": "The registry write is refused and the capability stays blocked, so a lock can only come from the owning human outside the platform."
+    }
+  ],
+  "assertions": [
+    "Each of the five blockers is reported separately with its own assumption identifier and owner; no two capabilities share a blanket failure reason.",
+    "A capability with no dependency executes while five assumptions are unlocked, so the fail-closed behaviour is scoped and does not become a tenant-wide outage.",
+    "The skip for ASM-001 remains SKIP_ASM_001 rather than a blocked or passed status, and no dependent capability is summarised as PASS.",
+    "No run path can flip an assumption to locked or persisted, which keeps the human owner in control of the decision."
+  ],
+  "forbidden": [
+    "Collapsing five blockers into one generic error.",
+    "Disabling capabilities that depend on none of the unlocked assumptions.",
+    "Letting the platform grant its own lock so the run can proceed."
+  ],
+  "evidence": [
+    "Run-report rows for the six capabilities with their per-assumption reasons.",
+    "Assumption registry snapshot for all five assumptions with owners.",
+    "Registry write-attempt refusal record."
+  ],
+  "cleanup": [
+    "Delete gov- run-report rows after export; the registry itself is left unchanged."
+  ],
+  "automation": "The policy-parameter resolver, the PEP and the run-report writer run as real code under test; the unlocked assumption is configuration, not a substituted boundary. The oracle is the run-report status plus the adapter effect counters, so a capability that executes while its assumption is unlocked fails the case instead of passing it. Capabilities that do not depend on the unlocked assumption run in the same pass, so the case can distinguish 'blocked because the lock is missing' from 'everything was switched off'.",
+  "prerequisites": [
+    "All five assumptions are unlocked in this repository, so every dependent capability is SKIP_ASM_001 or BLOCKED_PREREQUISITE and only the independent capability may execute."
+  ],
+  "references": [
+    "implement/09-sprint-roadmap-and-pilots.md",
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/live/env.example"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

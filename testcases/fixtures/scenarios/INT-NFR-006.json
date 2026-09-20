@@ -1,0 +1,91 @@
+{
+  "id": "INT-NFR-006",
+  "title": "Customer A context never appears in customer B or in an anonymous context",
+  "document": "integration/customer-360.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "NFR-006",
+    "FR-C360-001",
+    "OBJ-006"
+  ],
+  "facets": [
+    "entity:Customer",
+    "memory:Working Memory",
+    "stage:CONTEXT"
+  ],
+  "risk": "Cross-customer data bleeding exposes one customer's orders, addresses or conversations to another customer or to an unrelated visitor.",
+  "preconditions": [
+    "Two concurrent sessions sess-a-1 (cust-a) and sess-b-1 (cust-b) in tenant T1 plus one anonymous session sess-guest-1",
+    "Working-memory keys tenant:{tid}:wm:{sid} seeded for both sessions with distinct synthetic content"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "sessions": [
+      "sess-a-1",
+      "sess-b-1",
+      "sess-guest-1"
+    ],
+    "probe_terms": [
+      "ORD-A-1",
+      "SKU-OK",
+      "1000",
+      "cust-a@example.invalid"
+    ]
+  },
+  "steps": [
+    {
+      "action": "Hydrate context for sess-b-1 and scan the hydrated context, citations and working-memory payload for cust-a identifiers",
+      "expected": "zero occurrences of ORD-A-1, cust-a handles or cust-a amounts in the sess-b-1 context"
+    },
+    {
+      "action": "Hydrate context for the anonymous sess-guest-1",
+      "expected": "customer is null, no Customer 360 FACT is attached and the working-memory bucket is its own session-scoped key"
+    },
+    {
+      "action": "Issue the same knowledge query for tenant T1 and inspect the returned chunks",
+      "expected": "only T1-approved chunks are returned; the T2 pricing variant and any cust-a-derived chunk are absent"
+    },
+    {
+      "action": "Open a transaction that omits the tenant context setting",
+      "expected": "the wrapper raises TENANT_CONTEXT_REQUIRED and returns no rows"
+    }
+  ],
+  "assertions": [
+    "Occurrence count of cust-a identifiers inside the cust-b hydrated context is exactly 0",
+    "The anonymous context has customer = null with a session-isolated working-memory key and zero shared buckets",
+    "The unscoped transaction is refused with TENANT_CONTEXT_REQUIRED rather than returning cross-tenant rows"
+  ],
+  "forbidden": [
+    "Reuse one working-memory bucket for two anonymous sessions",
+    "Serve cust-a order data from the sess-b-1 prompt or from its citation set"
+  ],
+  "evidence": [
+    "Redacted hydrated context dumps for sess-b-1 and sess-guest-1 with probe-term counts",
+    "Audit entry for the refused unscoped transaction carrying TENANT_CONTEXT_REQUIRED"
+  ],
+  "cleanup": [
+    "Delete the run-scoped working-memory keys and context snapshots for run-t1-nfr006-*; keep audit records"
+  ],
+  "automation": "Two parallel real hydration calls with per-key prefixing and a stubbed ERP/vector boundary; the oracle is a probe-term scan over returned context, not a configuration inspection.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/04-core-engine-and-orchestrator.md",
+    "implement/03-database-and-memory-schema.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/customers.json",
+    "fixtures/offline/orders.json",
+    "fixtures/offline/platform.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

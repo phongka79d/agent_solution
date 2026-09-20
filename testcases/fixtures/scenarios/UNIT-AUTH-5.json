@@ -1,0 +1,101 @@
+{
+  "id": "UNIT-AUTH-5",
+  "title": "AUTH-5 verdict: hard deny, never queued, security alert audited",
+  "document": "unit/authority.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "AUTH-5",
+    "BR-008",
+    "NFR-001",
+    "TC-E2E-006",
+    "NFR-002"
+  ],
+  "facets": [
+    "entity:Agent",
+    "stage:APPROVAL"
+  ],
+  "risk": "A prohibited action such as raw cross-tenant dataset export is queued for human approval and then approved, converting a terminal prohibition into a normal workflow.",
+  "preconditions": [
+    "Namespace gov-unit-auth-<case_id>-<worker_id>; no shared mutable state with other cases.",
+    "PolicyEnforcementPoint loaded with fixtures/offline/governance.json skill_authority_registry and agents[]; clock frozen at 2026-01-15T10:00:00Z."
+  ],
+  "inputs": {
+    "agent_id": "MKT-05",
+    "assigned_authority": "AUTH-3",
+    "proposals": [
+      {
+        "skill": "skill.governance.raw_dataset_export",
+        "payload": {
+          "tenant_id": "11111111-1111-1111-1111-111111111111",
+          "tables": [
+            "customers"
+          ]
+        }
+      },
+      {
+        "skill": "skill.sales.check_price",
+        "declared_authority": "AUTH-5",
+        "payload": {
+          "sku_id": "SKU-OK"
+        }
+      }
+    ],
+    "approval_queue_before": 3
+  },
+  "steps": [
+    {
+      "action": "Submit the prohibited raw export proposal",
+      "expected": "authorized=false with decisionCode DENY_PROHIBITED and a rationale naming the hard lock."
+    },
+    {
+      "action": "Submit a benign read whose payload self-declares required authority AUTH-5",
+      "expected": "Same DENY_PROHIBITED verdict; the declared value is not treated as an approvable request."
+    },
+    {
+      "action": "Count approval-queue rows before and after both calls",
+      "expected": "Queue count is unchanged (3), so neither action was routed to a human."
+    },
+    {
+      "action": "Read the security audit records for the run",
+      "expected": "Two denied rows with a security violation marker and authority AUTH-5; no executed action row exists."
+    }
+  ],
+  "assertions": [
+    "denyCode is DENY_PROHIBITED and never REQUIRE_HUMAN_APPROVAL for an AUTH-5 class.",
+    "Approval queue length delta is exactly 0 - a prohibited action is not a human decision waiting to happen.",
+    "Both audit rows exist with execution_status denied and an alert/severity marker.",
+    "No dataset export file or row set is produced."
+  ],
+  "forbidden": [
+    "Any code path that lets an operator approve an AUTH-5 action.",
+    "Accumulating AUTH-3 privileges until the requirement is satisfied.",
+    "Downgrading AUTH-5 to AUTH-4 so the action can be queued."
+  ],
+  "evidence": [
+    "PEP decision JSON for both proposals with the security violation marker.",
+    "Approval queue counts before and after (3 and 3).",
+    "Audit rows plus the security alert emission record."
+  ],
+  "cleanup": [
+    "Delete the gov- run rows and namespace keys; retain the alert record copy for evidence."
+  ],
+  "automation": "Real PEP hard-lock branch and approval persistence under test; the dataset connector is a substituted boundary whose absence of output is asserted. No timing dependence.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/08-security-governance-nfr.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

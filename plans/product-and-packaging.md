@@ -2,7 +2,7 @@
 
 [Mục lục](README.md) · [Bản dễ hiểu](plan-easy-read-flow.md) · [Thuật ngữ](glossary.md)
 
-Trạng thái: đề xuất. Định hướng ngành, mức giá, ngân sách và hiệu quả cần doanh nghiệp thử nghiệm xác nhận.
+Trạng thái: đề xuất. Định hướng ngành, mức giá, ngân sách và hiệu quả cần doanh nghiệp thử nghiệm xác nhận. **Chưa có sản phẩm chạy thật, chưa có khách hàng trả tiền và chưa có số liệu thực nghiệm/ROI**; mọi con số dưới đây là mục tiêu thiết kế giả thuyết, phải khóa theo ASM-001..005 trước khi dùng để chào bán. Giá bán và discount có thẩm quyền thuộc ERP/POS/Web/App (SoR) cùng chính sách đã được chủ sở hữu phê duyệt.
 
 <a id=section-1></a>
 
@@ -21,15 +21,15 @@ Hệ thống được thiết kế theo mô hình **B2B SaaS đa doanh nghiệp 
 1. **Hàng tiêu dùng (FMCG)**: Tối ưu cho tốc độ, giảm giá theo combo/định kỳ (定期購 / Subscription), tích điểm LINE Points và nhận hàng qua chuỗi siêu thị tiện lợi (7-Eleven / FamilyMart CVS COD).
 2. **Xe máy điện (High-Ticket EV)**: Tối ưu cho mô hình O2O (Online-to-Offline), tích hợp bộ tính trợ cấp chính phủ theo hộ khẩu (政府補助), bản đồ mạng lưới trạm đổi pin (Gogoro/Ionex), và đặt lịch lái thử tại showroom (預約試乘) kèm cọc giữ chỗ có hoàn lại.
 
-Toàn bộ giải pháp vận hành theo nguyên tắc tách rời: **Lõi thông minh dùng chung (Core Engine)** và **Tầng kết nối địa phương hóa (Taiwan Localization Adapter)**.
+Toàn bộ giải pháp vận hành theo nguyên tắc tách rời: **Lõi thông minh dùng chung (Core Engine)** và **tầng kết nối bản địa hóa tùy chọn** — Gói Adapter Đài Loan (ADPT-TW-001) chỉ cần khi phục vụ thị trường Đài Loan; các thị trường khác dùng bộ cổng kết nối toàn cầu (ADPT-GL-001..003). Danh sách cổng kết nối thực tế phải chốt theo ASM-001.
 
 ### Chiến lược 4 bước nhân rộng B2B SaaS ra toàn cầu
 
 Để nhân rộng giải pháp từ mô hình khách hàng mỏ neo Đài Loan ra $N$ doanh nghiệp toàn cầu, hệ thống triển khai 4 bước chiến lược chuẩn hóa:
 
 1. **Cơ chế Phích cắm bản địa (Plug-and-Play Adapters)**:
-   - Giữ nguyên 100% Lõi AI (Core AI Engine), Customer360, máy chủ tính giá sàn toán học ($P_{floor}$) và máy trạng thái quy trình.
-   - Hoán đổi giữa Gói adapter Đài Loan (**ADPT-TW-001**) và các Cổng kết nối toàn cầu (**ADPT-GL-001..003**):
+   - Giữ nguyên lõi AI (Core AI Engine), Customer360 và máy trạng thái quy trình; chỉ hoán đổi lớp adapter theo khu vực. Phép kiểm tra chính sách $P_{floor}$ là **thành phần tùy chọn** (bật theo quyết định của chủ doanh nghiệp), không phải nguồn giá song song.
+   - Đề xuất hoán đổi giữa Gói adapter Đài Loan (**ADPT-TW-001**, tùy chọn) và các Cổng kết nối toàn cầu (**ADPT-GL-001..003**); từng cổng phải được duyệt theo ASM-001 trước khi coi là khả dụng:
      - *Cổng giao tiếp (Communication Port - ADPT-GL-001)*: Đài Loan dùng LINE Official Account (LINE OA) + Web Widget; Thị trường quốc tế hoán đổi sang WhatsApp Business API, Telegram hoặc Web Widget đa ngôn ngữ.
      - *Cổng thanh toán & đối soát (Payment Port - ADPT-GL-002)*: Đài Loan dùng ECPay, NewebPay, LINE Pay và 7-Eleven/FamilyMart CVS COD; Thị trường quốc tế hoán đổi sang Stripe, PayPal, Apple Pay, Google Pay hoặc COD bưu điện nội địa.
      - *Cổng pháp lý & hạ tầng dữ liệu (Compliance Port - ADPT-GL-003)*: Đài Loan tuân thủ Taiwan PDPA lưu trữ tại cụm máy chủ GCP Changhua / AWS Taipei; Thị trường quốc tế chuyển sang GDPR (Châu Âu), CCPA (Mỹ), PDPA (Singapore) với các module quản lý cookie và thu thập đồng ý (Consent Management).
@@ -37,17 +37,16 @@ Toàn bộ giải pháp vận hành theo nguyên tắc tách rời: **Lõi thôn
 2. **GTM-001: Đóng gói thành 2 sản phẩm chuyên ngành (Vertical SaaS Packaging)**:
    - Thay vì bán nền tảng chung chung, giải pháp được đóng gói thành 2 sản phẩm chuyên biệt:
      - **GTM-001A: AgentOS Mobility Edition**: Dành cho ngành xe điện và phương tiện giao thông O2O giá trị cao (tích hợp DOM-MOB-001..004: luồng O2O, bộ tính trợ cấp chính phủ theo hộ khẩu, bản đồ trạm sạc & đổi pin thời gian thực, luồng đặt lịch lái thử tại showroom với cọc giữ chỗ hoàn lại và thẩm định sơ bộ hồ sơ mua trả góp).
-     - **GTM-001B: AgentOS FMCG Edition**: Dành cho thương mại điện tử hàng tiêu dùng nhanh, subscription và CVS COD (tích hợp DOM-FMCG-001..005: thuật toán giỏ hàng thông minh, tư vấn combo tương thích, cơ chế mua hàng định kỳ Subscription / 定期購 tự động áp mức giá sàn P_floor, chọn điểm nhận siêu thị tiện lợi CVS COD, tích điểm tiến độ Endowed Progress LINE Points và bộ lọc chống bùng hàng siêu thị).
+     - **GTM-001B: AgentOS FMCG Edition**: Dành cho thương mại điện tử hàng tiêu dùng nhanh, subscription và CVS COD (tích hợp DOM-FMCG-001..005: thuật toán giỏ hàng thông minh, tư vấn combo tương thích, cơ chế mua hàng định kỳ Subscription / 定期購 áp mức giá ưu đãi theo chính sách đã phê duyệt (có thể kiểm tra bằng P_floor nếu bật), chọn điểm nhận siêu thị tiện lợi CVS COD, tích điểm tiến độ Endowed Progress LINE Points và bộ lọc chống bùng hàng siêu thị).
 
 3. **GTM-002: Phân phối quy mô qua Shopify & WooCommerce 1-Click App Store Integration**:
-   - Đóng gói giải pháp thành ứng dụng cài đặt 1-chạm (1-click install app) trên hai kho ứng dụng thương mại điện tử lớn nhất toàn cầu: **Shopify App Store** và **WooCommerce Marketplace**.
-   - Tự động đồng bộ sản phẩm, bảng giá sàn, đơn hàng và tồn kho qua Shopify GraphQL Admin API và WooCommerce REST API.
-   - Tiếp cận hàng trăm nghìn nhà bán lẻ trực tuyến toàn cầu (Global Merchants) theo mô hình Tăng trưởng dựa trên sản phẩm (Product-Led Growth - PLG) với chi phí thu hút khách hàng (CAC) tối thiểu, không cần đội ngũ kinh doanh bán hàng trực tiếp (sales tay).
+   - Đề xuất đóng gói giải pháp thành ứng dụng cài đặt 1-chạm (1-click install app) trên hai kho ứng dụng thương mại điện tử lớn: **Shopify App Store** và **WooCommerce Marketplace** (chưa phát hành; phụ thuộc phê duyệt của nền tảng và ASM-001).
+   - Đồng bộ sản phẩm, giá và tồn kho theo nguồn có thẩm quyền (ERP/POS là SoR) qua Shopify GraphQL Admin API và WooCommerce REST API; giá/discount vẫn theo chính sách đã phê duyệt.
+   - Kỳ vọng (chưa kiểm chứng): tiếp cận tệp nhà bán lẻ trực tuyến toàn cầu theo mô hình Tăng trưởng dựa trên sản phẩm (Product-Led Growth - PLG) với chi phí thu hút khách hàng (CAC) thấp hơn bán hàng trực tiếp. Quy mô tệp khách và mức CAC cụ thể phải đo bằng dữ liệu thực.
 
-4. **GTM-003: Đòn bẩy số liệu thực nghiệm Đài Loan để bán toàn cầu (Empirical Social Proof Leverage)**:
-   - Sử dụng bộ **Mục tiêu thiết kế giả thuyết (Design Targets)** được định nghĩa và theo dõi tại [analytics.md](delivery/analytics.md): mục tiêu chuyển đổi tăng +25%–40%, độ trễ phản hồi mục tiêu < 1.5 giây, chi phí AI đơn vị định mức 0.5–1 TWD / phiên tư vấn (ECN-003), tỷ lệ tự động hóa CSKH mục tiêu > 65% và bảo toàn 100% biên lợi nhuận ròng (ECN-002).
-   - **Ghi chú bắt buộc theo ASM-002**: Toàn bộ các chỉ số định lượng trên chỉ đóng vai trò là mục tiêu thiết kế giả thuyết ban đầu. Các chỉ số cam kết chính thức sẽ được đo lường, kiểm chứng và khóa lại sau khi thu thập đầy đủ dữ liệu đường cơ sở (Baseline) thực tế từ đối tác mỏ neo Đài Loan.
-   - Xuất bản dữ liệu thực nghiệm sau khi khóa baseline thành Case Study và Whitepaper định lượng làm bằng chứng xã hội (Social Proof) để chào bán cho các doanh nghiệp quốc tế tiếp theo.
+4. **GTM-003: Đòn bẩy kết quả đo lường sau khi khóa baseline (đề xuất, chưa có số liệu)**:
+   - Sau khi đo lường thực tế, có thể dùng kết quả của đối tác mỏ neo Đài Loan làm tư liệu tham chiếu (case study) khi chào bán cho các doanh nghiệp tiếp theo.
+   - **Chưa có số liệu thực nghiệm hay ROI nào được kiểm chứng tại thời điểm này.** Mọi chỉ tiêu định lượng liên quan (tỷ lệ chuyển đổi, độ trễ, tỷ lệ tự động hóa CSKH, chi phí AI, mục tiêu lãi đóng góp) đều là **mục tiêu thiết kế giả thuyết**, theo dõi tại [analytics.md](delivery/analytics.md), và phải khóa lại theo ASM-002/ASM-003 sau khi thu thập đủ dữ liệu đường cơ sở (baseline) từ đối tác mỏ neo.
 
 <a id=section-2></a>
 
@@ -90,11 +89,14 @@ Bán theo hai hình thức đóng gói chính:
    - **GTM-001B: AgentOS FMCG Edition**: Dành cho bán lẻ tiêu dùng, subscription, CVS COD. Đóng gói sẵn toàn bộ nghiệp vụ bán lẻ tiêu dùng (DOM-FMCG-001..005: giỏ hàng thông minh, giao định kỳ Subscription 定期購, chọn điểm nhận siêu thị tiện lợi CVS COD, tích điểm tiến độ LINE Points và bộ lọc chống bùng hàng).
 
 Hình thức triển khai và phân phối:
-- **Tùy biến cho doanh nghiệp lớn (Custom Enterprise)**: Nhúng mã website (`nexus-sales.min.js`), tích hợp API trực tiếp từ máy chủ doanh nghiệp, kết nối LINE OA (ADPT-TW-001) hoặc WhatsApp Business (ADPT-GL-001).
-- **GTM-002: Phân phối tự động 1-chạm (Shopify & WooCommerce 1-Click App Store Integration)**: Cài đặt trực tiếp từ kho ứng dụng cho hàng trăm nghìn nhà bán lẻ trực tuyến toàn cầu, tự động kích hoạt Core Engine và Plug-and-Play Adapter tương ứng theo quốc gia của merchant.
-- **GTM-003: Đòn bẩy số liệu thực nghiệm Đài Loan để bán toàn cầu (Empirical Social Proof Leverage)**: Đòn bẩy kết quả đo lường thực tế từ đối tác mỏ neo Đài Loan sau khi khóa đường cơ sở (Baseline theo ASM-002) và kiểm chứng các mục tiêu thiết kế giả thuyết (tỷ lệ chuyển đổi, độ trễ, tỷ lệ tự động hóa CSKH, chi phí AI 0.5–1 TWD/phiên ECN-003, bảo toàn biên lãi ECN-002).
+- **Tùy biến cho doanh nghiệp lớn (Custom Enterprise)**: Nhúng mã website (`nexus-sales.min.js`), tích hợp API trực tiếp từ máy chủ doanh nghiệp, kết nối LINE OA (ADPT-TW-001, tùy chọn khi phục vụ Đài Loan) hoặc WhatsApp Business (ADPT-GL-001).
+- **GTM-002: Phân phối tự động 1-chạm (Shopify & WooCommerce 1-Click App Store Integration — đề xuất, chưa phát hành)**: Mục tiêu là cài đặt trực tiếp từ kho ứng dụng, tự kích hoạt Core Engine và adapter tương ứng theo quốc gia của merchant. Việc phát hành phụ thuộc phê duyệt của nền tảng và ASM-001; chưa có số liệu về quy mô merchant hay CAC thực tế.
+- **GTM-003: Đòn bẩy kết quả đo lường sau khi khóa baseline (đề xuất)**: Chỉ sau khi đối tác mỏ neo Đài Loan khóa đường cơ sở (Baseline theo ASM-002) và đo lường thực tế thì mới có số liệu để làm case study. Hiện **chưa có số liệu thực nghiệm/ROI**; các mục tiêu thiết kế giả thuyết (tỷ lệ chuyển đổi, độ trễ, tỷ lệ tự động hóa CSKH, định mức chi phí AI ECN-003, mục tiêu lãi đóng góp ECN-002) vẫn đang chờ xác nhận.
 
-Giá thương mại đề xuất gồm phí nền tảng theo tháng (Subscription Tier), mức sử dụng AI và công triển khai (nếu là khách hàng tùy biến doanh nghiệp lớn); chưa chốt số tiền cụ thể.
+**Cấu trúc thương mại 3 tầng đề xuất** (giữ nguyên định hướng, chưa chốt số tiền cụ thể):
+1. Phí nền tảng theo tháng (Subscription Tier).
+2. Phí theo mức sử dụng AI (token/phiên, theo dõi tại [analytics.md](delivery/analytics.md)).
+3. Phí công triển khai/tùy biến (áp dụng cho khách hàng doanh nghiệp lớn).
 
 Hai loại hoa hồng phải tách biệt: hoa hồng nhân viên bán hàng có thể giảm ở một số đơn, còn hoa hồng đối tác giới thiệu vẫn là chi phí thật. Không hứa “không hoa hồng” nếu đơn hàng còn phải trả đối tác.
 
@@ -111,24 +113,24 @@ Bảng điều khiển ban đầu chỉ cần cấu hình, tài liệu, kết n�
 
 ## 5. Danh mục ý tưởng đã chọn lọc
 
-*Lưu ý phân biệt:* Bảng dưới sử dụng P0–P3 theo nghĩa **mức độ ưu tiên xem xét tính năng** (Feature Priority), khác với các **Cổng kỹ thuật lộ trình** (Gate P0: Foundation, Gate P1: Customer Care, Gate P2: Sales, Gate P3: Marketing theo [Lộ trình](delivery/mvp-and-roadmap.md)). Đây là thứ tự ưu tiên xem xét nghiệp vụ, không phải cam kết lịch phát hành.
+*Lưu ý phân biệt:* Bảng dưới sử dụng mã **PRI-0..PRI-3** cho **mức độ ưu tiên xem xét tính năng** (Feature Priority), tách hẳn khỏi các **Cổng kỹ thuật lộ trình** (Gate P0: Foundation, Gate P1: Customer Care, Gate P2: Sales, Gate P3: Marketing, Gate P4: Cross-domain, Gate P5: Controlled Autonomy theo [Lộ trình](delivery/mvp-and-roadmap.md)). Đây là thứ tự ưu tiên xem xét nghiệp vụ, không phải cam kết lịch phát hành.
 
 | Ý tưởng | Nguồn | Ưu tiên | Điều kiện / cách đo |
 |---|---|---|---|
-| Phiếu cơ hội từ tín hiệu trước nhu cầu | Tài liệu thị trường II–XV | P0 thủ công, P2 tự động hỗ trợ | Có nguồn, phân khúc, phép thử và lý do chọn; không thu gom danh sách cá nhân |
-| Đối tác giới thiệu B2B2C | Tài liệu thị trường XI–XIV | P0 giả thuyết, P2 thử nhỏ, P3 mở rộng | Thỏa thuận, đường dẫn/mã nguồn, chi phí đối tác và đơn hợp lệ |
-| Giải thích thông số dễ hiểu | PDF tr. 4–5 | P1 từ nội dung được duyệt | Câu trả lời đúng nguồn, không chuyển đổi số học thành lời hứa hiệu năng |
-| Chọn nhanh và câu hỏi gợi ý theo ngữ cảnh | PDF tr. 2, 5 | P1 tối giản nếu giao diện hỗ trợ | Giảm thao tác; khách bỏ qua được; không cần biểu tượng hay hiệu ứng riêng |
-| Lưu món chưa đăng nhập | PDF tr. 5 | P2 | Chỉ lưu mã sản phẩm trên thiết bị; hợp nhất thành công mới xóa bản tạm |
-| Gợi ý tại chỗ, không đòi số điện thoại | PDF tr. 5–6 | P2 | Không che giỏ/chat; giới hạn tần suất; đo tỷ lệ tắt và rời trang |
-| Mặc cả với giá sàn máy chủ | PDF tr. 2–3 | P2 tính thử, P3 tự động có giới hạn | Đủ dữ liệu chi phí, không cộng dồn ưu đãi ngoài ngân sách |
-| Thanh toán QR / ghi nhớ lựa chọn thanh toán | PDF tr. 5 | P2 | Có đối soát, phương án thay thế, kiểm tra thiết bị và ngân hàng |
-| Bổ sung món đạt ngưỡng miễn phí vận chuyển | PDF tr. 5 | P2 | So tổng tiền hai phương án; không khuyên chi thêm nếu lợi ích không hợp lý |
-| Soát giỏ, khuyên không mua dư | PDF tr. 6; cải tiến hợp nhất | P2 | Phát hiện trùng/không tương thích bằng dữ liệu, khách tự xác nhận sửa |
-| So sánh lý do nâng cấp | PDF tr. 4 | P2 | Đúng mẫu cũ/mới, tối đa vài khác biệt có nguồn; chấp nhận “chưa cần nâng cấp” |
-| Phiếu bù giá trong khoảng theo dõi | PDF tr. 4–5 | P2 có người duyệt, P3 có hạn mức | Chính sách công khai, chi phí dự kiến, chống cấp trùng; 14 ngày chỉ là đề xuất |
-| Theo dõi đơn, khung giờ giao, yêu cầu hóa đơn | PDF tr. 5 | P2 | Từng bộ kết nối xác nhận được; không hứa vị trí trực tiếp hay lịch ngoài khả năng |
-| Xem ảnh/video hỗ trợ đổi trả | PDF tr. 1, 6 | P3 xem xét | Chỉ hỗ trợ nhân viên; phải có quyền lưu, xóa và dữ liệu kiểm chứng |
+| Phiếu cơ hội từ tín hiệu trước nhu cầu | Tài liệu thị trường II–XV | PRI-0 thủ công, PRI-2 tự động hỗ trợ | Có nguồn, phân khúc, phép thử và lý do chọn; không thu gom danh sách cá nhân |
+| Đối tác giới thiệu B2B2C | Tài liệu thị trường XI–XIV | PRI-0 giả thuyết, PRI-2 thử nhỏ, PRI-3 mở rộng | Thỏa thuận, đường dẫn/mã nguồn, chi phí đối tác và đơn hợp lệ |
+| Giải thích thông số dễ hiểu | PDF tr. 4–5 | PRI-1 từ nội dung được duyệt | Câu trả lời đúng nguồn, không chuyển đổi số học thành lời hứa hiệu năng |
+| Chọn nhanh và câu hỏi gợi ý theo ngữ cảnh | PDF tr. 2, 5 | PRI-1 tối giản nếu giao diện hỗ trợ | Giảm thao tác; khách bỏ qua được; không cần biểu tượng hay hiệu ứng riêng |
+| Lưu món chưa đăng nhập | PDF tr. 5 | PRI-2 | Chỉ lưu mã sản phẩm trên thiết bị; hợp nhất thành công mới xóa bản tạm |
+| Gợi ý tại chỗ, không đòi số điện thoại | PDF tr. 5–6 | PRI-2 | Không che giỏ/chat; giới hạn tần suất; đo tỷ lệ tắt và rời trang |
+| Mặc cả trong hạn mức giá sàn theo chính sách đã phê duyệt | PDF tr. 2–3 | PRI-2 tính thử, PRI-3 tự động có giới hạn | Đủ dữ liệu chi phí, không cộng dồn ưu đãi ngoài ngân sách |
+| Thanh toán QR / ghi nhớ lựa chọn thanh toán | PDF tr. 5 | PRI-2 | Có đối soát, phương án thay thế, kiểm tra thiết bị và ngân hàng |
+| Bổ sung món đạt ngưỡng miễn phí vận chuyển | PDF tr. 5 | PRI-2 | So tổng tiền hai phương án; không khuyên chi thêm nếu lợi ích không hợp lý |
+| Soát giỏ, khuyên không mua dư | PDF tr. 6; cải tiến hợp nhất | PRI-2 | Phát hiện trùng/không tương thích bằng dữ liệu, khách tự xác nhận sửa |
+| So sánh lý do nâng cấp | PDF tr. 4 | PRI-2 | Đúng mẫu cũ/mới, tối đa vài khác biệt có nguồn; chấp nhận “chưa cần nâng cấp” |
+| Phiếu bù giá trong khoảng theo dõi | PDF tr. 4–5 | PRI-2 có người duyệt, PRI-3 có hạn mức | Chính sách công khai, chi phí dự kiến, chống cấp trùng; 14 ngày chỉ là đề xuất |
+| Theo dõi đơn, khung giờ giao, yêu cầu hóa đơn | PDF tr. 5 | PRI-2 | Từng bộ kết nối xác nhận được; không hứa vị trí trực tiếp hay lịch ngoài khả năng |
+| Xem ảnh/video hỗ trợ đổi trả | PDF tr. 1, 6 | PRI-3 xem xét | Chỉ hỗ trợ nhân viên; phải có quyền lưu, xóa và dữ liệu kiểm chứng |
 
 ### Ba cải tiến xuyên suốt được đề xuất thêm
 

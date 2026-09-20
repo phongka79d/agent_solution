@@ -1,5 +1,17 @@
 # Implement 08: Security, Governance & Non-Functional Requirements (NFR) Engine
 
+> **BLUEPRINT STATUS — target design (Gate P0), not an inventory of existing code.**
+> Every interface, class, rule, DDL reference, and policy parameter below is a **target blueprint for the
+> Gate P0 (Foundation) build** (SRS AI-REV-SRS-001 §24). None of it exists in this documentation-only
+> repository: no Policy Enforcement Point, audit logger, or floor-price engine is deployed, and no
+> security, isolation, latency, cost, or availability result has been measured.
+> Security, audit, idempotency, and fail-closed requirements (`NFR-001`, `NFR-002`, `NFR-003`,
+> `NFR-007`, `NFR-008`, `BR-001`..`BR-010`, SRS §19) are **mandatory design invariants**.
+> Numeric performance, cost, and uptime figures are **provisional design targets pending the ASM-002
+> baseline and the NFR-009/NFR-010 benchmarks**, and the discount, audience, reminder-frequency, and
+> refund/compensation thresholds are **tenant policy parameters owned by Business/Finance that remain
+> [UNCONFIRMED][ASM-003/004]** (SRS §26) - this blueprint fixes no platform-wide value for them.
+
 ## 1. Authority Model & Policy Enforcement Point (PEP)
 
 The platform operates on a zero-trust execution model where Large Language Models (LLMs) and autonomous agents possess zero direct execution privileges. The Authority Model (AUTH-0 through AUTH-5) establishes strict operational boundaries enforced deterministically by a central Policy Enforcement Point (PEP) interceptor middleware prior to any tool execution or external side effect.
@@ -47,6 +59,8 @@ The platform operates on a zero-trust execution model where Large Language Model
                              +-------------------------------+
 ```
 
+The audit store shown above is the canonical `agentos.audit_records` table (§03 DOMAIN 5, schema in §4.1); `agent_run_logs` is a separate operational log and never substitutes for it. Physical Evidence Records are the separate `agentos.evidence_records` rows referenced by an audit record's `evidence` field (BR-010).
+
 ### 1.1 Formal Authority Taxonomy (AUTH-0 to AUTH-5)
 
 | Authority Level | Nomenclature | Permitted Operations | Prohibited Operations | Interceptor Policy Enforcement |
@@ -54,9 +68,11 @@ The platform operates on a zero-trust execution model where Large Language Model
 | **AUTH-0** | **Observe** | Read public catalogs, knowledge bases, read customer timeline (if verified). | Any write operation, customer profile modification, external messaging. | Rejects any invocation of mutational connectors (`db.write`, `api.post`). |
 | **AUTH-1** | **Recommend** | Calculate match scores, generate product bundles, draft cross-sell hypotheses. | Publishing recommendations to external channels, creating orders. | Interceptor validates output schema; verifies payload is marked as hypothesis. |
 | **AUTH-2** | **Draft** | Generate internal campaign copy, format draft support replies in Copilot mode. | Transmitting drafts to end customers or third-party networks. | Outbound dispatch blocked; stores payload in internal draft state store. |
-| **AUTH-3** | **Bounded Execute** | Send transactional notifications, check real-time stock, query ERP order status. | Exceeding frequency caps, issuing unapproved discounts, modifying order data. | Checks parameter boundaries (e.g., max 2 messages, rate limits, stock thresholds). |
-| **AUTH-4** | **Approval Required**| Propose campaign broadcasts (> 5,000 recipients), discounts > 15%, refunds > 500 TWD. | Autonomous execution without cryptographically signed human approval. | Traps task into `awaiting_human`; dispatches notification to SCR-003 queue. |
-| **AUTH-5** | **Prohibited** | Arbitrary price generation, cross-tenant data access, raw data exfiltration. | Strictly forbidden under all conditions. | Hard server lock. Immediately aborts execution; triggers security audit alert. |
+| **AUTH-3** | **Bounded Execute** | Send transactional notifications, check real-time stock, query ERP order status. | Exceeding frequency caps, issuing unapproved discounts, modifying order data. | Checks parameter boundaries (tenant-configured frequency caps, rate limits, and stock thresholds; the concrete cap values are tenant policy, not platform constants). |
+| **AUTH-4** | **Approval Required**| Prepare campaign broadcasts, discounts, compensations, refunds, and policy overrides that breach the tenant's configured autonomous limits (**[UNCONFIRMED][ASM-003/004]**). | Autonomous execution without cryptographically signed human approval. | Traps task into `awaiting_human`; dispatches notification to SCR-003 queue. |
+| **AUTH-5** | **Prohibited** | **None.** `AUTH-5` is a terminal deny verdict, not a grantable clearance: no proposal is ever permitted at this level. | Arbitrary price generation, cross-customer context access (NFR-006), cross-tenant data access, raw data exfiltration - and every other action classified `AUTH-5`. | Hard server lock. Immediately aborts execution; triggers security audit alert. |
+
+> **AUTH-4 and AUTH-5 are verdicts, not ranks.** Only `AUTH-0`..`AUTH-3` are assignable autonomous clearance levels with a numeric ordering; the database enforces this (`agents.assigned_authority CHECK (assigned_authority IN ('AUTH-0','AUTH-1','AUTH-2','AUTH-3'))`, §03). `AUTH-4` is a routing outcome: the prepared action is sent to the SCR-003 human approval gate and never executed autonomously. `AUTH-5` is an immediate hard deny that always terminates the action and is never reachable by accumulating rank. The concrete limits that push an action from autonomous (`AUTH-3`) to the approval gate (`AUTH-4`) - maximum discount rate, maximum refund/compensation amount, and maximum campaign audience size - are **tenant policy parameters owned by Business/Finance**, not platform constants. They are **not yet approved** and remain **[UNCONFIRMED][ASM-003/004]**; every skill specification that cites a numeric limit must be read as an illustrative placeholder until those owner-approved values are locked.
 
 ### 1.2 Policy Enforcement Point (PEP) Interceptor Implementation
 The PEP interceptor wraps all agent tool executions. It operates as an asynchronous pipeline filter in the Orchestrator runtime.
@@ -70,25 +86,74 @@ The PEP interceptor wraps all agent tool executions. It operates as an asynchron
 export interface SecurityContext {
   readonly tenantId: string;
   readonly agentId: string;
-  readonly agentAssignedAuthority: 'AUTH-0' | 'AUTH-1' | 'AUTH-2' | 'AUTH-3' | 'AUTH-4' | 'AUTH-5';
+  /**
+   * Only AUTH-0..AUTH-3 are ever *assigned* to an agent (see §03
+   * `agents.assigned_authority CHECK`). AUTH-4 is an approval verdict and
+   * AUTH-5 is a deny verdict; neither is a grantable clearance level.
+   */
+  readonly agentAssignedAuthority: 'AUTH-0' | 'AUTH-1' | 'AUTH-2' | 'AUTH-3';
+  /**
+   * Identity of the single customer bound to the current session. It MUST be the
+   * server-verified identity resolved by the Orchestrator (TC-E2E-004), never a
+   * value asserted by the model, the prompt, or the channel payload: private
+   * profile/order lookups (AUTH-0 read of the customer timeline) fail closed
+   * (NFR-008) until that verification completes. Customer A's context is never
+   * loaded into a session verified as customer B (NFR-006, SRS §19).
+   */
   readonly customerId?: string;
   readonly sessionToken?: string;
   readonly correlationId: string;
 }
 
-export const AUTHORITY_HIERARCHY: Readonly<Record<string, number>> = Object.freeze({
+/**
+ * Rank ordering of the four autonomous clearance levels ONLY.
+ * AUTH-4 and AUTH-5 are deliberately absent: they are enforcement verdicts,
+ * not superuser ranks, so no agent can ever "outrank" a denial.
+ */
+export const AUTONOMOUS_AUTHORITY_RANK: Readonly<Record<string, number>> = Object.freeze({
   'AUTH-0': 0,
   'AUTH-1': 1,
   'AUTH-2': 2,
   'AUTH-3': 3,
-  'AUTH-4': 4,
-  'AUTH-5': 5,
 });
+
+/**
+ * Provisional fallback for the contact-frequency suppression cap when a tenant has
+ * not configured its own. A design parameter, not an approved policy value.
+ */
+const DEFAULT_AUTONOMOUS_REMINDER_CAP = 2;
+
+export type AuthorityLevel = 'AUTH-0' | 'AUTH-1' | 'AUTH-2' | 'AUTH-3' | 'AUTH-4' | 'AUTH-5';
+
+/**
+ * Tenant-scoped autonomy limits that move an action from autonomous execution
+ * (AUTH-3) to the AUTH-4 human approval gate. Every field is owned and
+ * approved by the tenant's Business/Finance function and remains
+ * [UNCONFIRMED][ASM-003/004] until locked. `undefined` means "the owner has
+ * not approved a value yet" and MUST be treated as fail-closed (route to
+ * approval), never as "unlimited".
+ */
+export interface TenantPolicyParameters {
+  readonly maxAutonomousDiscountRate?: number;
+  readonly maxAutonomousRefundAmount?: number;
+  readonly maxAutonomousAudienceSize?: number;
+  readonly maxAutonomousReminderCount?: number;
+}
+
+/** Source of tenant policy parameters (owner-approved autonomy limits). */
+export interface TenantPolicySource {
+  get(tenantId: string): TenantPolicyParameters | undefined;
+}
+
+/** Read side of the server-side Skill Registry holding `skills.required_authority` (§03). */
+export interface SkillAuthoritySource {
+  get(skillId: string): AuthorityLevel | undefined;
+}
 
 export interface ActionProposal {
   readonly skillId: string;
   readonly toolName: string;
-  readonly requiredAuthority: 'AUTH-0' | 'AUTH-1' | 'AUTH-2' | 'AUTH-3' | 'AUTH-4' | 'AUTH-5';
+  readonly requiredAuthority: AuthorityLevel;
   readonly payload: Record<string, unknown>;
   readonly proposedAt: string;
 }
@@ -101,6 +166,13 @@ export interface EnforcementDecision {
 }
 
 export class PolicyEnforcementPoint {
+  constructor(
+    /** Loads tenant policy parameters; an unset limit fails closed (routes to approval). */
+    private readonly tenantPolicyStore: TenantPolicySource = { get: () => undefined },
+    /** Server-side Skill Registry; the only authority source the PEP trusts. */
+    private readonly skillRegistry: SkillAuthoritySource = { get: () => undefined }
+  ) {}
+
   /**
    * Evaluates an agent action proposal against authority levels and security policies.
    * Enforces zero bypass: prompt injection cannot escalate privileges.
@@ -110,13 +182,17 @@ export class PolicyEnforcementPoint {
     proposal: ActionProposal
   ): Promise<EnforcementDecision> {
     // 1. Authoritative Server-Side Authority Resolution (BR-008, NFR-001)
-    // Strictly ignore client-asserted permissions; look up authoritative authority from Skill Registry
-    const authoritativeRequiredAuthority = this.lookupSkillAuthority(proposal.skillId) ?? proposal.requiredAuthority;
-    const agentLevel = AUTHORITY_HIERARCHY[context.agentAssignedAuthority] ?? 0;
-    const requiredLevel = AUTHORITY_HIERARCHY[authoritativeRequiredAuthority] ?? 5;
+    //    The Orchestrator - never the agent or the LLM - constructs the proposal, and
+    //    the server-side Skill Registry (`skills.required_authority`, §03) is the
+    //    authoritative source for a skill's required authority. When the skill is
+    //    absent from the registry the declared proposal authority is used; the numeric
+    //    rank check below still stops any agent from exceeding its assigned clearance,
+    //    and the AUTH-4/AUTH-5 verdicts below can never be outranked.
+    const requiredAuthority = this.lookupSkillAuthority(proposal.skillId) ?? proposal.requiredAuthority;
 
-    // 2. Hard Lock: Prohibited operations are immediately terminated
-    if (authoritativeRequiredAuthority === 'AUTH-5') {
+    // 2. Hard Lock: AUTH-5 is an immediate deny verdict, evaluated FIRST and never
+    //    compared against any rank. There is no clearance that unlocks it.
+    if (requiredAuthority === 'AUTH-5') {
       await this.recordSecurityViolation(context, proposal, 'HARD_LOCK_AUTH_5_PROHIBITED');
       return {
         authorized: false,
@@ -125,31 +201,54 @@ export class PolicyEnforcementPoint {
       };
     }
 
-    // 3. High-Risk Gate: Operations requiring human approval (AUTH-4) or exceeding threshold
-    // Evaluated BEFORE autonomous rank comparison so capped agents (max AUTH-3) can submit for human sign-off
-    if (authoritativeRequiredAuthority === 'AUTH-4' || this.isThresholdBreached(proposal)) {
+    // 3. Approval Gate: AUTH-4 is a routing verdict, not a rank. The prepared action is
+    //    handed to SCR-003 for a signed human decision; the agent never executes it.
+    //    Evaluated BEFORE rank comparison so an agent capped at AUTH-0..AUTH-3 can still
+    //    submit high-risk work for sign-off; which agents may submit a given skill at all
+    //    is enforced by the registry's `allowed_agents` binding (§05), not by rank.
+    if (requiredAuthority === 'AUTH-4') {
       const ticketId = await this.routeToApprovalQueue(context, proposal);
       return {
         authorized: false,
         decisionCode: 'REQUIRE_HUMAN_APPROVAL',
-        rationale: 'Action exceeds autonomous threshold and requires human sign-off via SCR-003.',
+        rationale: 'Skill is designated AUTH-4 and requires a signed human decision via SCR-003.',
         approvalTicketId: ticketId,
       };
     }
 
     // 4. Autonomous Privilege Escalation Defense (BR-008, NFR-001)
-    // Verifies that autonomous execution (AUTH-0..3) does not exceed assigned agent rank
-    if (requiredLevel > agentLevel) {
+    //    Applies only to the ranked autonomous levels AUTH-0..AUTH-3, and runs
+    //    BEFORE the tenant-limit branch so an under-privileged agent cannot
+    //    launder an action it was never allowed to propose through the approval
+    //    gate. (AUTH-4 skills already routed above, which is what lets a capped
+    //    agent submit high-risk work for human sign-off.)
+    const agentRank = AUTONOMOUS_AUTHORITY_RANK[context.agentAssignedAuthority];
+    const requiredRank = AUTONOMOUS_AUTHORITY_RANK[requiredAuthority];
+    if (agentRank === undefined || requiredRank === undefined || requiredRank > agentRank) {
       await this.recordSecurityViolation(context, proposal, 'PRIVILEGE_ESCALATION_BLOCKED');
       return {
         authorized: false,
         decisionCode: 'DENY_PROHIBITED',
-        rationale: `Privilege escalation blocked (BR-008): Agent ${context.agentId} has assigned authority ${context.agentAssignedAuthority} (rank ${agentLevel}) but proposed action requires ${authoritativeRequiredAuthority} (rank ${requiredLevel}).`,
+        rationale: `Privilege escalation blocked (BR-008): Agent ${context.agentId} has assigned authority ${context.agentAssignedAuthority} but the action requires ${requiredAuthority}.`,
       };
     }
 
-    // 4. Rate Limit & Bounded Checks for AUTH-3
-    if (proposal.requiredAuthority === 'AUTH-3') {
+    // 5. Tenant autonomy limits: a within-authority action that breaches a
+    //    Business/Finance-approved limit routes to the same AUTH-4 approval gate.
+    //    Unset limits fail closed.
+    const breachedPolicyField = this.findBreachedPolicyField(context, proposal);
+    if (breachedPolicyField !== null) {
+      const ticketId = await this.routeToApprovalQueue(context, proposal);
+      return {
+        authorized: false,
+        decisionCode: 'REQUIRE_HUMAN_APPROVAL',
+        rationale: `Action breaches tenant autonomy limit '${breachedPolicyField}' and requires human sign-off via SCR-003.`,
+        approvalTicketId: ticketId,
+      };
+    }
+
+    // 6. Rate Limit & Bounded Checks for AUTH-3
+    if (requiredAuthority === 'AUTH-3') {
       const bounded = await this.verifyBoundedParameters(context, proposal);
       if (!bounded.valid) {
         return {
@@ -160,7 +259,7 @@ export class PolicyEnforcementPoint {
       }
     }
 
-    // 5. Default Permit for verified AUTH-0..AUTH-3 within authorized bounds
+    // 7. Default Permit for verified AUTH-0..AUTH-3 within authorized bounds
     return {
       authorized: true,
       decisionCode: 'PERMIT',
@@ -168,43 +267,96 @@ export class PolicyEnforcementPoint {
     };
   }
 
-  private isThresholdBreached(proposal: ActionProposal): boolean {
+  /**
+   * Returns the name of the first tenant autonomy limit breached by the payload,
+   * or `null` when the action stays inside every approved limit.
+   *
+   * The thresholds themselves are NEVER hardcoded here: they are tenant policy
+   * parameters owned by Business/Finance ([UNCONFIRMED][ASM-003/004]). An
+   * unapproved (undefined) limit cannot authorize autonomy, so it fails closed
+   * by routing the action to human approval.
+   */
+  private findBreachedPolicyField(context: SecurityContext, proposal: ActionProposal): string | null {
+    const policy = this.resolveTenantPolicy(context.tenantId);
     const payload = proposal.payload;
 
-    // Discount rate threshold (> 15% requires human approval)
-    if (typeof payload.discountRate === 'number' && payload.discountRate > 0.15) {
-      return true;
+    if (typeof payload.discountRate === 'number') {
+      if (
+        policy.maxAutonomousDiscountRate === undefined ||
+        payload.discountRate > policy.maxAutonomousDiscountRate
+      ) {
+        return 'maxAutonomousDiscountRate';
+      }
     }
 
-    // Compensation or refund threshold (> 500 TWD)
-    if (typeof payload.refundAmount === 'number' && payload.refundAmount > 500) {
-      return true;
+    if (typeof payload.refundAmount === 'number') {
+      if (
+        policy.maxAutonomousRefundAmount === undefined ||
+        payload.refundAmount > policy.maxAutonomousRefundAmount
+      ) {
+        return 'maxAutonomousRefundAmount';
+      }
     }
 
-    // Audience scale threshold (> 5,000 customers)
-    if (typeof payload.audienceSize === 'number' && payload.audienceSize > 5000) {
-      return true;
+    if (typeof payload.audienceSize === 'number') {
+      if (
+        policy.maxAutonomousAudienceSize === undefined ||
+        payload.audienceSize > policy.maxAutonomousAudienceSize
+      ) {
+        return 'maxAutonomousAudienceSize';
+      }
     }
 
-    return false;
+    return null;
+  }
+
+  /**
+   * Loads the tenant's owner-approved autonomy limits from tenant configuration.
+   * The runtime binds this to the tenant configuration store; the platform ships
+   * no default thresholds. An empty result means the tenant has not yet approved
+   * any autonomy limit, which fails closed: every thresholded action routes to
+   * human approval rather than executing autonomously.
+   */
+  private resolveTenantPolicy(tenantId: string): TenantPolicyParameters {
+    return this.tenantPolicyStore.get(tenantId) ?? {};
   }
 
   private async verifyBoundedParameters(
     context: SecurityContext,
     proposal: ActionProposal
   ): Promise<{ valid: boolean; reason: string }> {
-    // Example: verify messaging frequency cap (maximum 2 reminder messages)
+    // Example: enforce the tenant's messaging frequency cap. The cap is a
+    // tenant-configured suppression parameter; the fallback is a provisional
+    // design parameter, not an approved policy value.
     if (proposal.skillId === 'skill.sales.send_message') {
       const sentCount = (proposal.payload.previousAttempts as number) || 0;
-      if (sentCount >= 2) {
-        return { valid: false, reason: 'Suppression rule: Maximum of 2 reminder messages exceeded.' };
+      const policy = this.resolveTenantPolicy(context.tenantId);
+      const maxReminders = policy.maxAutonomousReminderCount ?? DEFAULT_AUTONOMOUS_REMINDER_CAP;
+      if (sentCount >= maxReminders) {
+        return {
+          valid: false,
+          reason: `Suppression rule: tenant messaging frequency cap (${maxReminders}) exceeded.`,
+        };
       }
     }
     return { valid: true, reason: '' };
   }
 
+  /**
+   * Creates the PENDING human-authorization row for an AUTH-4 gate and returns the
+   * ticket reference surfaced to SCR-003.
+   *
+   * Per §03, the single canonical record is `agentos.approvals`; `approval_queue`
+   * is a read-only VIEW over its PENDING rows, not a second table. The row is
+   * unique per `(tenant_id, effect_key)` so one approval can never authorize two
+   * executions, and the decision is written in the same transaction that resumes
+   * the durable task.
+   */
   private async routeToApprovalQueue(context: SecurityContext, proposal: ActionProposal): Promise<string> {
-    // Inserts task into approval queue table and returns unique ticket ID
+    // INSERT INTO agentos.approvals (tenant_id, run_id, action_id, effect_key,
+    //   authority_required, payload, reason, decision)
+    // VALUES ($1, $2, $3, $4, 'AUTH-4', $5, $6, 'PENDING')
+    // RETURNING id;
     return `APV-${context.tenantId.substring(0, 4)}-${Date.now()}`;
   }
 
@@ -213,7 +365,26 @@ export class PolicyEnforcementPoint {
     proposal: ActionProposal,
     violationType: string
   ): Promise<void> {
-    // Dispatches immediate security audit event to tamper-evident audit store
+    // Dispatches the security violation as an immutable record to the canonical
+    // agentos.audit_records table (§4.1, execution_status = 'denied') and raises the
+    // security alert; the in-memory chain state for the tenant is not mutated here.
+  }
+
+  /**
+   * Reads the authoritative required authority for a skill from the server-side
+   * Skill Registry (§03 `skills.required_authority`, which accepts
+   * 'AUTH-0'..'AUTH-4'; AUTH-5 is never a requirement, only a deny verdict).
+   *
+   * A missing registry entry returns `undefined`. `enforce` then falls back to the
+   * proposal's own `requiredAuthority`. That fallback is safe - and deliberately not
+   * "trust the model" - because the Orchestrator, never the agent or the LLM,
+   * constructs the proposal; the autonomous rank check and the AUTH-4/AUTH-5 verdict
+   * branches still apply, so an unregistered skill can never be used to exceed the
+   * agent's assigned clearance. Which agents may invoke a registered skill at all is
+   * bound by `skills.allowed_agents` (§03/§05), independently of this lookup.
+   */
+  private lookupSkillAuthority(skillId: string): AuthorityLevel | undefined {
+    return this.skillRegistry.get(skillId);
   }
 }
 ```
@@ -244,13 +415,12 @@ Action Context ---> [ BR-001: Zero Arbitrary Pricing       ] ---> PASS
 - **Enforcement**: Any pricing data present in a response must directly reference an authenticated catalog SKU record. If a price payload lacks a valid ERP/POS catalog reference ID, the action is rejected.
 
 #### BR-002: Hard Floor Price Boundary ($P_{floor}$)
-- **Specification**: No promotional discount, bundle subsidy, or cart recovery coupon may produce an effective net price below the mathematical floor price:
-  $$P < P_{floor}$$
-- **Enforcement**: Server-side pricing engine calculates $P_{floor}$ using authoritative ERP cost metrics. Any transaction with $P < P_{floor}$ is blocked at the database level.
+- **Specification**: No promotional discount, bundle subsidy, or cart recovery coupon may produce an effective net price below the mathematical floor price. The invariant is $P \ge P_{floor}$; any proposed transaction with $P < P_{floor}$ is rejected.
+- **Enforcement**: The floor is derived from the tenant's **owner-approved ERP/POS/Web/App policy inputs** (see §3.1); ERP/POS/Web/App remain the Systems of Record for the actual price, discount, and inventory, and the floor engine is not a parallel source of truth. Any transaction with $P < P_{floor}$ is blocked. When the cost/margin policy inputs are missing or unapproved, the engine fails closed instead of permitting the discount.
 
 #### BR-003: Authoritative System of Record Pricing & Inventory
 - **Specification**: Real-time product pricing, stock availability, and logistics statuses must be fetched synchronously from the System of Record (ERP/WMS via API-001).
-- **Enforcement**: Cached inventory records older than 120 seconds are marked invalid. If the ERP is unreachable, the system fails closed (zero stock assumed).
+- **Enforcement**: Cached inventory records older than the tenant's configured freshness window (a provisional design parameter; the illustrative value is 120 seconds) are marked invalid. If the ERP is unreachable, the system fails closed (zero stock assumed).
 
 #### BR-004: Mandatory Prior Consent Verification & Suppression
 - **Specification**: Outbound marketing communications are strictly forbidden without verified, unrevoked consent for the specified channel.
@@ -267,19 +437,20 @@ Action Context ---> [ BR-001: Zero Arbitrary Pricing       ] ---> PASS
 - **Enforcement**: Retries reuse the identical `effect_key`. Connectors check for prior execution receipts before resending.
 
 #### BR-007: Mandatory Human Approval for Financial & Policy Risk
-- **Specification**: Financial compensations (> 500 TWD), refunds, warranty policy overrides, and mass broadcasts (> 5,000 recipients) strictly require human authorization.
-- **Enforcement**: Interceptor traps execution and generates an approval task in SCR-003 (`AUTH-4`).
+- **Specification**: Financial compensations, refunds, warranty policy overrides, and mass broadcasts strictly require human authorization. Whether a given amount, rate, or audience size is "high risk" is decided by the tenant's own **policy parameters** - maximum autonomous discount rate and broadcast audience (**[UNCONFIRMED][ASM-003]**), and maximum autonomous refund/compensation amount (**[UNCONFIRMED][ASM-004]**) - owned by Business/Finance and **not yet approved**. The blueprint deliberately ships **no** platform-wide numeric thresholds; every cited figure is an illustrative placeholder until those owner-approved values are locked for the tenant.
+- **Enforcement**: The PEP (AUTH-4 gate) traps execution and generates an approval task in SCR-003. An action whose relevant policy parameter is unset fails closed and is routed to approval rather than executed.
 
 #### BR-008: Strict Server-Side Authority Boundaries
-- **Specification**: Agents cannot exceed their designated authority levels (`AUTH-0` to `AUTH-3`), even if the LLM reasoning claims authorization.
-- **Enforcement**: The Orchestrator strictly ignores self-asserted permissions. Authority mapping is statically bound to the authenticated agent definition in PostgreSQL.
+- **Specification**: Agents cannot exceed their designated autonomous authority (`AUTH-0` to `AUTH-3`), even if the LLM reasoning claims authorization. `AUTH-4` and `AUTH-5` are not ranks to be exceeded: `AUTH-4` routes the prepared action to the SCR-003 approval gate, and `AUTH-5` is a hard deny that terminates it. No accumulation of rank ever reaches `AUTH-5`.
+- **Enforcement**: The Orchestrator strictly ignores self-asserted permissions. Authority mapping is statically bound to the authenticated agent definition in PostgreSQL - `agents.assigned_authority` only accepts `AUTH-0`..`AUTH-3` (§03), while `skills.required_authority` accepts `AUTH-0`..`AUTH-4`. The PEP evaluates the `AUTH-5` deny and the `AUTH-4` approval route before it compares the numeric rank of the four autonomous levels, so a capped agent submits high-risk work for human sign-off instead of executing it or being silently escalated.
 
 #### BR-009: Prompt Injection Resilience & Privilege Isolation
 - **Specification**: User-supplied input (e.g., customer chat prompts or uploaded documents) cannot modify system policies, alter floor prices, or grant elevated privileges.
 - **Enforcement**: Multi-layered defense: (1) Inputs are treated strictly as untrusted string literals within isolated data envelopes; (2) Canary token tracking detects boundary leakage; (3) System prompt instructions and tools run in separate execution contexts; (4) Privilege elevation attempts inside prompts are intercepted and neutralized by the PEP prior to tool dispatch.
+
 #### BR-010: Immutable Evidence Record Attachment
 - **Specification**: Every successful business transaction must produce an Evidence Record containing raw upstream API receipts, timestamps, and correlation IDs.
-- **Enforcement**: Orchestrator will not mark a task `completed` unless an Evidence Record with verified source references is committed to the audit store.
+- **Enforcement**: Orchestrator will not mark a task `completed` unless a verified Evidence Record is committed to `agentos.evidence_records` (§03 DOMAIN 5) and referenced from the run's `agentos.audit_records` row (§4.1, field 14 `evidence`).
 
 ### 2.2 Business Rules Pipeline Implementation
 ```typescript
@@ -287,6 +458,18 @@ Action Context ---> [ BR-001: Zero Arbitrary Pricing       ] ---> PASS
  * @file governance/BusinessRulesEngine.ts
  * Deterministic business rules validation pipeline.
  */
+
+import {
+  AUTONOMOUS_AUTHORITY_RANK,
+  type AuthorityLevel,
+  type TenantPolicyParameters,
+} from './PolicyEnforcementPoint';
+
+/**
+ * Provisional fallback for BR-003 when a tenant has not configured its own
+ * inventory freshness window. Not an approved policy value.
+ */
+const DEFAULT_INVENTORY_CACHE_MAX_AGE_MS = 120_000;
 
 export interface RuleEvaluationResult {
   readonly ruleId: string;
@@ -298,8 +481,14 @@ export interface RuleEvaluationResult {
 export interface RuleContext {
   readonly tenantId: string;
   readonly agentId: string;
-  readonly agentAssignedAuthority: 'AUTH-0' | 'AUTH-1' | 'AUTH-2' | 'AUTH-3' | 'AUTH-4' | 'AUTH-5';
-  readonly requiredAuthority?: 'AUTH-0' | 'AUTH-1' | 'AUTH-2' | 'AUTH-3' | 'AUTH-4' | 'AUTH-5';
+  /** Only AUTH-0..AUTH-3 are ever assigned; AUTH-4/AUTH-5 are verdicts, not ranks. */
+  readonly agentAssignedAuthority: 'AUTH-0' | 'AUTH-1' | 'AUTH-2' | 'AUTH-3';
+  readonly requiredAuthority?: AuthorityLevel;
+  /**
+   * Owner-approved tenant autonomy limits ([UNCONFIRMED][ASM-003/004]).
+   * An omitted field means "no approved limit", which fails closed.
+   */
+  readonly tenantPolicy: TenantPolicyParameters;
   readonly customerConsent: {
     readonly marketingAllowed: boolean;
     readonly optOutRecorded: boolean;
@@ -310,6 +499,7 @@ export interface RuleContext {
     readonly floorPrice: number;
     readonly catalogRefId?: string;
     readonly inventoryCacheTimestamp?: number; // Epoch timestamp in ms
+    readonly inventoryCacheMaxAgeMs?: number; // Tenant-configured freshness window
   };
   readonly effectKey?: string;
   readonly priorExecutionReceipt?: {
@@ -375,13 +565,15 @@ export class BusinessRulesEngine {
   private evaluateBR003(ctx: RuleContext): RuleEvaluationResult {
     if (ctx.pricing && ctx.pricing.inventoryCacheTimestamp) {
       const cacheAgeMs = Date.now() - ctx.pricing.inventoryCacheTimestamp;
-      const MAX_CACHE_AGE_MS = 120_000; // 120 seconds TTL
-      if (cacheAgeMs > MAX_CACHE_AGE_MS) {
+      // Tenant-configured freshness window; the fallback is a provisional design
+      // parameter, not a platform-approved policy value.
+      const maxCacheAgeMs = ctx.pricing.inventoryCacheMaxAgeMs ?? DEFAULT_INVENTORY_CACHE_MAX_AGE_MS;
+      if (cacheAgeMs > maxCacheAgeMs) {
         return {
           ruleId: 'BR-003',
           passed: false,
           errorCode: 'ERR_STALE_INVENTORY_CACHE',
-          failureReason: `Inventory cache age (${Math.round(cacheAgeMs / 1000)}s) exceeds 120s TTL threshold. Fail Closed.`,
+          failureReason: `Inventory cache age (${Math.round(cacheAgeMs / 1000)}s) exceeds the configured freshness window (${Math.round(maxCacheAgeMs / 1000)}s). Fail Closed.`,
         };
       }
     }
@@ -426,14 +618,33 @@ export class BusinessRulesEngine {
 
   private evaluateBR007(ctx: RuleContext): RuleEvaluationResult {
     if (ctx.financialRisk) {
-      const { refundAmount = 0, discountRate = 0, policyModification = false, hasSignedApprovalToken = false } = ctx.financialRisk;
-      const isHighRisk = refundAmount > 500 || discountRate > 0.15 || policyModification;
-      if (isHighRisk && !hasSignedApprovalToken) {
+      const { refundAmount, discountRate, policyModification = false, hasSignedApprovalToken = false } = ctx.financialRisk;
+      const policy = ctx.tenantPolicy;
+
+      // A policy modification always needs human sign-off.
+      // Amount/rate limits come from the tenant's approved policy parameters; an
+      // unapproved (undefined) limit cannot authorize autonomy, so it fails closed.
+      const reasons: string[] = [];
+      if (policyModification) {
+        reasons.push('policy modification');
+      }
+      if (refundAmount !== undefined) {
+        if (policy.maxAutonomousRefundAmount === undefined || refundAmount > policy.maxAutonomousRefundAmount) {
+          reasons.push(`refund ${refundAmount} outside approved autonomous limit`);
+        }
+      }
+      if (discountRate !== undefined) {
+        if (policy.maxAutonomousDiscountRate === undefined || discountRate > policy.maxAutonomousDiscountRate) {
+          reasons.push(`discount rate ${discountRate} outside approved autonomous limit`);
+        }
+      }
+
+      if (reasons.length > 0 && !hasSignedApprovalToken) {
         return {
           ruleId: 'BR-007',
           passed: false,
           errorCode: 'ERR_FINANCIAL_APPROVAL_REQUIRED',
-          failureReason: `High-risk financial/policy action (refund: ${refundAmount}, discount: ${discountRate * 100}%, policyMod: ${policyModification}) strictly requires signed human approval (AUTH-4 via SCR-003).`,
+          failureReason: `High-risk financial/policy action (${reasons.join('; ')}) strictly requires signed human approval (AUTH-4 via SCR-003).`,
         };
       }
     }
@@ -441,25 +652,35 @@ export class BusinessRulesEngine {
   }
 
   private evaluateBR008(ctx: RuleContext): RuleEvaluationResult {
-    const hierarchy: Record<string, number> = {
-      'AUTH-0': 0,
-      'AUTH-1': 1,
-      'AUTH-2': 2,
-      'AUTH-3': 3,
-      'AUTH-4': 4,
-      'AUTH-5': 5,
-    };
-    if (ctx.requiredAuthority) {
-      const agentRank = hierarchy[ctx.agentAssignedAuthority] ?? 0;
-      const reqRank = hierarchy[ctx.requiredAuthority] ?? 5;
-      if (reqRank > agentRank) {
-        return {
-          ruleId: 'BR-008',
-          passed: false,
-          errorCode: 'ERR_AUTHORITY_BOUNDARY_EXCEEDED',
-          failureReason: `Agent authority boundary exceeded: ${ctx.agentId} has ${ctx.agentAssignedAuthority} but requires ${ctx.requiredAuthority}.`,
-        };
-      }
+    if (!ctx.requiredAuthority) {
+      return { ruleId: 'BR-008', passed: true };
+    }
+
+    // AUTH-5 is an immediate hard deny and is never reached by rank.
+    if (ctx.requiredAuthority === 'AUTH-5') {
+      return {
+        ruleId: 'BR-008',
+        passed: false,
+        errorCode: 'ERR_PROHIBITED_ACTION',
+        failureReason: 'Action is strictly prohibited by platform security policy (AUTH-5).',
+      };
+    }
+
+    // AUTH-4 is an approval route, not a rank: it is handled by the BR-007 / PEP
+    // approval gate and never evaluated as a numeric privilege comparison.
+    if (ctx.requiredAuthority === 'AUTH-4') {
+      return { ruleId: 'BR-008', passed: true };
+    }
+
+    const agentRank = AUTONOMOUS_AUTHORITY_RANK[ctx.agentAssignedAuthority];
+    const reqRank = AUTONOMOUS_AUTHORITY_RANK[ctx.requiredAuthority];
+    if (agentRank === undefined || reqRank === undefined || reqRank > agentRank) {
+      return {
+        ruleId: 'BR-008',
+        passed: false,
+        errorCode: 'ERR_AUTHORITY_BOUNDARY_EXCEEDED',
+        failureReason: `Agent authority boundary exceeded: ${ctx.agentId} has ${ctx.agentAssignedAuthority} but requires ${ctx.requiredAuthority}.`,
+      };
     }
     return { ruleId: 'BR-008', passed: true };
   }
@@ -501,7 +722,9 @@ export class BusinessRulesEngine {
 ## 3. Mathematical Floor Price Engine (ECN-002 $P_{floor}$)
 
 ### 3.1 Mathematical Specification & Boundary Invariants
-The Floor Price Engine protects 100% of the merchant's net contribution margin. It governs all automated discounting, promotional vouchers, cart recovery offers, and replenishment subscriptions.
+The Floor Price Engine is a **derived guardrail**, not a pricing source. Every input it consumes - catalog base price, unit variable cost, revenue-proportional fees, target margins, and the discount cap - comes from the tenant's **owner-approved ERP/POS/Web/App policy configuration**, and the authoritative price, discount, and inventory values always remain in those Systems of Record. The engine stores no catalog and serves no price of its own; it only rejects a proposed quote whose effective net price would fall below the owner-approved floor. It is therefore not a parallel source of truth, and its inputs remain subject to **[UNCONFIRMED][ASM-003/004]** until Business/Finance lock them for the tenant.
+
+Within the Orchestrator, the engine is intended to guard automated discounting, promotional vouchers, cart recovery offers, and replenishment subscriptions; its ability to preserve contribution margin is a design objective to be validated against measured data, not an achieved result.
 
 #### Governing Equations
 The effective discounted selling price $P$ is bounded by:
@@ -516,13 +739,14 @@ $$P_{floor\_ratio} = \frac{C}{1 - r - m} \quad (\text{for } r + m < 1.0)$$
 $$P_{floor} = \max\left(P_{floor\_abs}, \; P_{floor\_ratio}, \; P_{base} - D_{cap}\right)$$
 
 #### Parameter Definitions & Invariants
-- $P_{base} \in \mathbb{R}^+$: The official base catalog listing price (excluding taxes and separate freight).
-- $C \in \mathbb{R}^+$: Total unit variable cost = $\text{COGS} + \text{Packaging} + \text{Fulfillment} + \text{Allocated AI Compute Cost} + \text{Return Reserve}$.
-  - Allocated AI compute cost is capped at $0.50 - 1.00\text{ TWD}$ ($\approx 400 - 800\text{ VND}$) per consultation session.
-- $r \in [0, 1)$: Variable revenue-proportional deductions (payment gateway transaction fees e.g. 2.5%, marketplace platform fees, affiliate commissions).
-- $L \ge 0$: Minimum mandatory absolute net contribution margin required per unit sold.
-- $m \ge 0$: Minimum required net contribution margin ratio (e.g. $0.15$ for 15% net margin; $r + m < 1$).
-- $D_{cap} \ge 0$: Maximum absolute promotional discount authorized by business finance.
+All parameters below are supplied by the tenant's owner-approved ERP/SoR policy configuration; the engine never invents or defaults them.
+- $P_{base} \in \mathbb{R}^+$: The official base catalog listing price read from the System of Record (excluding taxes and separate freight).
+- $C \in \mathbb{R}^+$: Total unit variable cost = $\text{COGS} + \text{Packaging} + \text{Fulfillment} + \text{Allocated AI Compute Cost} + \text{Return Reserve}$, each component supplied by the owner-approved cost policy.
+  - The allocated AI compute allowance per consultation session (see NFR-010) is a **provisional design target** pending the ASM-002 baseline and the NFR-010 benchmark; it is tenant-configured, not a platform constant.
+- $r \in [0, 1)$: Variable revenue-proportional deductions (payment gateway transaction fees, marketplace platform fees, affiliate commissions), per the tenant's approved fee schedule.
+- $L \ge 0$: Minimum mandatory absolute net contribution margin required per unit sold (owner-approved, **[UNCONFIRMED][ASM-003]**).
+- $m \ge 0$: Minimum required net contribution margin ratio (owner-approved, **[UNCONFIRMED][ASM-003]**; $r + m < 1$).
+- $D_{cap} \ge 0$: Maximum absolute promotional discount authorized by the tenant's finance owner (**[UNCONFIRMED][ASM-003]**).
 
 ```
                              PRICE BOUNDARY CONTINUUM
@@ -535,7 +759,7 @@ $$P_{floor} = \max\left(P_{floor\_abs}, \; P_{floor\_ratio}, \; P_{base} - D_{ca
 ```
 
 ### 3.2 Backend Floor Price Verification Service
-The Floor Price Verification Service runs as an atomic, high-performance module within the Core Engine. It supports cryptographic HMAC signing of price quotes, distributed Redis budget holds, localized currency rounding, and strict Fail Closed enforcement.
+The Floor Price Verification Service runs as a module within the Core Engine. It supports cryptographic HMAC signing of price quotes, distributed Redis budget holds, localized currency rounding, and strict Fail Closed enforcement. It holds **no** cost, margin, or discount-cap defaults: the caller supplies `UnitCostParameters` read from the tenant's owner-approved ERP/SoR policy, and missing or invalid inputs throw rather than defaulting.
 
 ```typescript
 /**
@@ -550,10 +774,10 @@ export interface UnitCostParameters {
   readonly fulfillment: number;
   readonly aiComputeCost: number;
   readonly returnReserve: number;
-  readonly revenueFeeRatio: number; // e.g. 0.025 for 2.5%
-  readonly targetMargin: number; // L: Absolute margin
-  readonly minNetMarginRatio?: number; // m: Ratio margin (e.g. 0.15 for 15%)
-  readonly maxDiscountCap: number; // D_cap
+  readonly revenueFeeRatio: number; // r: revenue-proportional fee ratio, from the tenant's approved fee schedule
+  readonly targetMargin: number; // L: Absolute margin (owner-approved, ASM-003)
+  readonly minNetMarginRatio?: number; // m: Ratio margin (owner-approved, ASM-003); omitted when the owner has not set one
+  readonly maxDiscountCap: number; // D_cap (owner-approved, ASM-003)
 }
 
 export interface QuoteRequest {
@@ -718,45 +942,53 @@ export class FloorPriceEngine {
 
 ### 3.3 Foreign Exchange Safety Cushion (FX Rate Buffer)
 For cross-border e-commerce (e.g., USD/TWD, JPY/TWD), currency fluctuations can erode real-time margins.
-- **Mechanism**: The engine applies an automatic 1.5% to 2.0% safety cushion to the variable cost component $C$:
+- **Mechanism**: The engine applies a configurable safety cushion to the variable cost component $C$:
   $$C_{adjusted} = C \times (1 + \text{FX\_Buffer})$$
-- **Expiration Guard**: If a customer checks out after the 10-minute quote window expires, the system fetches the latest foreign exchange rates from API-001 and recalculates $P_{floor}$ before order creation.
+  The buffer percentage is a tenant-configured parameter approved by Business/Finance (**[UNCONFIRMED][ASM-003]**); the blueprint does not fix a platform-wide value.
+- **Expiration Guard**: If a customer checks out after the quote window expires, the system fetches the latest foreign exchange rates from API-001 and recalculates $P_{floor}$ before order creation.
 
 ---
 
 ## 4. Immutable Audit Logging Service
 
-To satisfy compliance mandates (Taiwan PDPA, GDPR Article 30, CCPA) and system non-functional requirements (NFR-002, NFR-006), every execution of an AI agent is recorded in an immutable, cryptographically chained audit log.
+Taiwan PDPA, GDPR Article 30, and CCPA each impose audit-evidence obligations. The audit service is **designed to produce the evidence those regimes expect, subject to legal review and operational validation**; this blueprint asserts no achieved compliance and no production certification. It serves system non-functional requirements NFR-002 and NFR-006.
 
 ### 4.1 Canonical 18-Field Audit Schema
 
-| Field # | Field Name | Data Type | Description & Compliance Purpose |
+The 18 domain fields below are the SRS §17 audit fields. They are persisted verbatim as columns of `agentos.audit_records` (§03 DOMAIN 5), which additionally carries the surrogate primary key `id`, the event `timestamp`, and the two chaining columns `prev_hash` / `chain_hash`. The table is deliberately distinct from `agent_run_logs`.
+
+| Field # | Column | Data Type | Description & Compliance Purpose |
 |---|---|---|---|
-| **1** | `run_id` | `UUID v4` | Unique execution run identifier. |
-| **2** | `tenant_id` | `UUID v4 / String` | Tenant identity. Mandatory on all records for strict multi-tenant isolation. |
-| **3** | `agent_id` | `String` | Executing agent identifier (`MKT-05`, `SAL-02`, `CS-01`). |
-| **4** | `customer_or_entity_id`| `String (Pseudonymized)`| Salted hash or UUID of the customer/entity. No plaintext PII. |
-| **5** | `trigger` | `String` | Triggering event (`cart.abandoned`, `order.lookup`, `message.received`). |
-| **6** | `context` | `JSON Object` | Snapshot of sanitized input context and verified customer tier. |
-| **7** | `skill` | `String` | Skill invoked (`skill.sales.check_stock`, `skill.care.lookup_order`). |
-| **8** | `tool` | `String` | Downstream connector called (`API-001.InventoryConnector`, `ADPT-TW-001`). |
-| **9** | `decision` | `JSON Object` | Orchestrator decision logic, reasoning summary, and confidence score. |
-| **10**| `authority` | `Enum` | Applied authority level (`AUTH-0` through `AUTH-5`). |
-| **11**| `approval` | `JSON Object \| null` | Human approver record if AUTH-4: `{ approver_id, action, signed_at }`. |
-| **12**| `action` | `JSON Object` | Outbound payload containing unique `effect_key`. |
-| **13**| `execution_status` | `Enum` | Status (`pending`, `executing`, `success`, `failed`, `denied`, `aborted`). |
-| **14**| `evidence` | `JSON Object` | Authoritative receipt from source system (ERP order ID, tracking number). |
-| **15**| `outcome` | `JSON Object \| null` | Business conversion outcome (`order_created`, `cart_recovered`). |
-| **16**| `latency_ms` | `Integer` | Total execution elapsed time in milliseconds. |
-| **17**| `cost` | `JSON Object` | Operational cost: `{ prompt_tokens, completion_tokens, cost_twd }`. |
-| **18**| `error` | `JSON Object \| null` | Error code, sanitized message, and failure stack trace (if any). |
-| **\***| `timestamp` | `ISO 8601 UTC` | Commited timestamp. |
-| **\***| `chain_hash` | `CHAR(64) Hex` | Cryptographic SHA-256 hash linking this record to the preceding block. |
+| **1** | `run_id` | `VARCHAR(64)` | Unique execution run identifier. |
+| **2** | `tenant_id` | `UUID` | Tenant identity. Mandatory on all records for strict tenant isolation. |
+| **3** | `agent_id` | `VARCHAR(32)` | Executing agent identifier (`MKT-05`, `SAL-02`, `CS-01`). |
+| **4** | `customer_or_entity_id`| `VARCHAR(64)` (Pseudonymized)| Salted hash or UUID of the customer/entity. No plaintext PII. |
+| **5** | `trigger` | `VARCHAR(128)` | Triggering event (`cart.abandoned`, `order.lookup`, `message.received`). |
+| **6** | `context` | `JSONB` | Snapshot of sanitized input context and verified customer tier. |
+| **7** | `skill` | `VARCHAR(64)` | Skill invoked (`skill.sales.check_stock`, `skill.care.lookup_order`). |
+| **8** | `tool` | `VARCHAR(64)` | Downstream connector called (`API-001.InventoryConnector`, `ADPT-TW-001`). |
+| **9** | `decision` | `JSONB` | Orchestrator decision logic, reasoning summary, and confidence score. |
+| **10**| `authority` | `VARCHAR(16)` | Applied authority level (`AUTH-0` through `AUTH-5`). |
+| **11**| `approval` | `JSONB \| null` | Human approver record if AUTH-4: `{ approver_id, action, signed_at }`. |
+| **12**| `action` | `JSONB` | Outbound payload containing unique `effect_key`. |
+| **13**| `execution_status` | `VARCHAR(32)` | Status (`pending`, `executing`, `success`, `failed`, `denied`, `aborted`). |
+| **14**| `evidence` | `JSONB` | Authoritative receipt from source system (ERP order ID, tracking number). |
+| **15**| `outcome` | `JSONB \| null` | Business conversion outcome (`order_created`, `cart_recovered`). |
+| **16**| `latency_ms` | `INT` | Total execution elapsed time in milliseconds. |
+| **17**| `cost` | `JSONB` | Operational cost: `{ prompt_tokens, completion_tokens, cost_twd }`. |
+| **18**| `error` | `JSONB \| null` | Error code, sanitized message, and failure stack trace (if any). |
+| **\***| `timestamp` | `TIMESTAMPTZ` | Audit **event** time (the column is quoted as `"timestamp"` in SQL because it is a reserved word). |
+| **\***| `prev_hash` | `CHAR(64)` | `chain_hash` of this tenant's immediately preceding record (`prev_hash` is `NOT NULL`; the genesis record uses 64 zeros). |
+| **\***| `chain_hash` | `CHAR(64)` | SHA-256 digest chaining this record to its predecessor. `UNIQUE (tenant_id, chain_hash)`. |
 
 ### 4.2 Cryptographic Hash Chaining & Tamper Detection
-Every audit log entry is linked to its immediate predecessor via SHA-256 chaining. Modifying or deleting any historical record invalidates all subsequent hashes, providing verifiable tamper detection.
+Every audit record links to its immediate predecessor for the same `tenant_id` via SHA-256 chaining. Modifying or deleting any historical record invalidates all subsequent hashes for that tenant, which is what makes tampering detectable.
 
-$$\text{Hash}_n = \text{SHA256}(\text{Hash}_{n-1} + \text{CanonicalJSON}(\text{Payload}_n) + \text{Timestamp}_n + \text{Nonce}_n)$$
+$$\text{chain\_hash}_n = \text{SHA256}\left(\text{prev\_hash}_n \parallel \text{CanonicalJSON}(\text{payload}_n) \parallel \text{timestamp}_n\right)$$
+
+`payload_n` is the sanitized **18 domain fields** of §4.1 (the SRS §17 audit fields): it excludes the surrogate `id`, the chaining columns `prev_hash` / `chain_hash`, and the event `timestamp_n`, which enters the digest explicitly as the third input. The three inputs are joined with the `|` separator exactly as written above; the writer (`createChainedRecord`) and the verifier (`verifyChainIntegrity`) must use this identical construction, or every chain check fails.
+
+`CanonicalJSON` is RFC 8785 (JSON Canonicalization Scheme) over `payload_n`, so the digest is reproducible; there is no per-record nonce, and `prev_hash` is the previous record's `chain_hash` (the genesis record uses 64 zeros). Chains are partitioned per `tenant_id` - never globally - so the tenant-level isolation layer of NFR-006 is preserved; the verifier rejects a sequence whose `tenant_id` changes between consecutive records. Writers for one tenant must therefore serialize on that tenant's chain (single-writer per run, or an explicit lock): the `UNIQUE (tenant_id, chain_hash)` constraint of `agentos.audit_records` (§03) is the backstop that rejects a forked chain instead of silently persisting it.
 
 ```
 +--------------------------+         +--------------------------+
@@ -799,7 +1031,10 @@ export interface AuditRecordPayload {
 }
 
 export class CryptographicAuditLogger {
-  // Hash chain partitioned independently per tenant_id to satisfy NFR-006 multi-tenant isolation
+  // Hash chain partitioned independently per tenant_id: this preserves the
+  // tenant-level isolation layer of NFR-006 (§03 RLS/namespace partitioning).
+  // It is the additional platform layer - the customer-context isolation that
+  // SRS §19 mandates is enforced upstream, before any context is loaded.
   private readonly tenantLastHash: Map<string, string> = new Map();
   private readonly salt: string;
   private readonly GENESIS_HASH = '0000000000000000000000000000000000000000000000000000000000000000';
@@ -809,8 +1044,10 @@ export class CryptographicAuditLogger {
   }
 
   /**
-   * Retrieves the previous hash for a given tenant. Checks in-memory cache first,
-   * falling back to the most recent persisted audit record in PostgreSQL to guarantee continuity across restarts.
+   * Retrieves the previous hash for a given tenant. Checks the in-memory cache first,
+   * falling back to the most recent persisted record in `agentos.audit_records` so the
+   * chain stays continuous across restarts. Ordered by the quoted event-time column
+   * `"timestamp"` (the canonical column name in §03; there is no `created_at` here).
    */
   public async getPrevHashForTenant(
     tenantId: string,
@@ -821,7 +1058,7 @@ export class CryptographicAuditLogger {
 
     if (pgPool) {
       const res = await pgPool.query(
-        'SELECT chain_hash FROM agentos.audit_records WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT 1',
+        'SELECT chain_hash FROM agentos.audit_records WHERE tenant_id = $1 ORDER BY "timestamp" DESC, id DESC LIMIT 1',
         [tenantId]
       );
       if (res.rows.length > 0 && res.rows[0].chain_hash) {
@@ -833,12 +1070,17 @@ export class CryptographicAuditLogger {
   }
   /**
    * Sanitizes PII fields and generates a cryptographically chained audit record partitioned by tenant_id.
+   *
+   * Async because the predecessor hash is read through `getPrevHashForTenant`, which falls back to
+   * `agentos.audit_records` when this process holds no in-memory chain state (e.g. after a restart).
+   * The digest binds exactly the documented inputs: prev_hash | CanonicalJSON(payload) | timestamp,
+   * where `payload` is the sanitized record without the event `timestamp` (bound as the third input).
    */
-  public createChainedRecord(rawPayload: AuditRecordPayload): {
+  public async createChainedRecord(rawPayload: AuditRecordPayload): Promise<{
     readonly record: AuditRecordPayload;
     readonly chainHash: string;
     readonly prevHash: string;
-  } {
+  }> {
     const sanitizedPayload: AuditRecordPayload = {
       ...rawPayload,
       customerOrEntityId: this.pseudonymizeId(rawPayload.customerOrEntityId),
@@ -846,9 +1088,10 @@ export class CryptographicAuditLogger {
       action: this.maskPiiObject(rawPayload.action),
     };
 
-    const prevHash = this.getPrevHashForTenant(sanitizedPayload.tenantId);
-    const serialized = JSON.stringify(sanitizedPayload);
-    const hashInput = `${prevHash}|${serialized}|${sanitizedPayload.timestamp}`;
+    const prevHash = await this.getPrevHashForTenant(sanitizedPayload.tenantId);
+    const { timestamp, ...chainedPayload } = sanitizedPayload;
+    const serialized = this.canonicalizeJson(chainedPayload);
+    const hashInput = `${prevHash}|${serialized}|${timestamp}`;
     const chainHash = crypto.createHash('sha256').update(hashInput).digest('hex');
 
     // Update tenant-specific hash chain state
@@ -862,18 +1105,33 @@ export class CryptographicAuditLogger {
   }
 
   /**
-   * Persists an audit log record and its cryptographic chaining metadata to PostgreSQL.
+   * RFC 8785 (JCS) canonicalization of the sanitized payload, so the chain digest is
+   * reproducible regardless of property insertion order.
+   */
+  private canonicalizeJson(value: unknown): string {
+    if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+    if (Array.isArray(value)) return `[${value.map((v) => this.canonicalizeJson(v)).join(',')}]`;
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, v]) => v !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${this.canonicalizeJson(v)}`).join(',')}}`;
+  }
+
+  /**
+   * Persists an audit record and its chaining metadata to `agentos.audit_records` (§03 DOMAIN 5).
+   * The column list mirrors the canonical table exactly, including `prev_hash`, `chain_hash`,
+   * and the quoted reserved-word column `"timestamp"`.
    */
   public async persistToPostgres(
     pgPool: { query: (sql: string, params: unknown[]) => Promise<unknown> },
     entry: { record: AuditRecordPayload; chainHash: string; prevHash: string }
   ): Promise<void> {
     const sql = `
-      INSERT INTO audit_logs (
+      INSERT INTO agentos.audit_records (
         run_id, tenant_id, agent_id, customer_or_entity_id, trigger,
         context, skill, tool, decision, authority, approval, action,
         execution_status, evidence, outcome, latency_ms, cost, error,
-        timestamp, prev_hash, chain_hash
+        "timestamp", prev_hash, chain_hash
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
       )
@@ -906,7 +1164,8 @@ export class CryptographicAuditLogger {
   }
 
   /**
-   * Validates integrity across a sequence of audit log entries for a given tenant.
+   * Validates integrity across a sequence of audit records for a single tenant.
+   * Verification recomputes the same RFC 8785 digest the writer used.
    */
   public verifyChainIntegrity(
     entries: readonly { record: AuditRecordPayload; chainHash: string; prevHash: string }[]
@@ -923,10 +1182,11 @@ export class CryptographicAuditLogger {
         return false; // Broken link in hash chain
       }
 
-      const serialized = JSON.stringify(current.record);
+      const { timestamp, ...chainedPayload } = current.record;
+      const serialized = this.canonicalizeJson(chainedPayload);
       const expectedHash = crypto
         .createHash('sha256')
-        .update(`${current.prevHash}|${serialized}|${current.record.timestamp}`)
+        .update(`${current.prevHash}|${serialized}|${timestamp}`)
         .digest('hex');
 
       if (current.chainHash !== expectedHash) {
@@ -966,28 +1226,30 @@ export class CryptographicAuditLogger {
 
 ## 5. Non-Functional Requirements (NFR-001 to NFR-010) Verification Matrix
 
-The platform guarantees compliance with 10 mandatory Non-Functional Requirements (NFRs) verified via automated continuous integration and runtime monitors:
+This matrix maps the 10 mandatory Non-Functional Requirements to the design target that satisfies them and the verification method intended to prove it. It is a **design commitment, not a report of achieved results**: nothing here has been measured in production, and no compliance certification is claimed. Numeric targets that are not fixed by the SRS are **provisional design targets** to be locked against measured baselines (ASM-002) and the named benchmarks before they may be quoted as SLAs.
 
 | Requirement ID | NFR Domain | Specification Target | Verification Method & SLA Guard |
 |---|---|---|---|
-| **NFR-001** | **Security & Least Privilege** | Zero privilege escalation; prompt injection resilience; hard server lock for AUTH-5. | Automated adversarial penetration tests (`TC-E2E-006`); PEP interceptor unit tests. |
-| **NFR-002** | **Auditability** | 100% of mutational operations recorded with 18-field canonical schema and SHA-256 hash chaining. | Daily cryptographic chain integrity sweep; zero unchained log entries. |
+| **NFR-001** | **Security & Least Privilege** | Zero privilege escalation across `AUTH-0`..`AUTH-3`; prompt injection resilience; `AUTH-4` routes to human approval; `AUTH-5` is an immediate hard deny. | Automated adversarial penetration tests (`TC-E2E-006`); PEP interceptor unit tests. |
+| **NFR-002** | **Auditability** | Every mutational operation recorded in `agentos.audit_records` with the 18-field canonical schema and SHA-256 hash chaining. | Daily cryptographic chain integrity sweep; zero unchained log entries. |
 | **NFR-003** | **Idempotency & Durability**| Network retries with identical `effect_key` produce zero duplicate messages or transactions. | Chaos network fault injection testing (`TC-E2E-005`); database unique constraints. |
-| **NFR-004** | **System Availability** | 99.9% uptime for core API and Storefront Widget endpoints (excluding scheduled maintenance). | Multi-zone Kubernetes deployment with auto-healing pods and health check probes. |
-| **NFR-005** | **Explainability & Transparency** | 100% of qualification scores, recommendations, discounts, and routing decisions store logic `reason` and verified `evidence`. | Deterministic Decision audit logs; structured evidence separation contracts. |
-| **NFR-006** | **Multi-Tenant Isolation**| Absolute isolation of customer profiles, vector search indices, and queues across tenants. | Automated cross-tenant penetration test suite running in CI pipeline. |
-| **NFR-007** | **Human-in-the-Loop** | High-risk operations (AUTH-4) halt synchronously until human sign-off; Takeover mutex locks bot. | End-to-end integration tests verifying zero autonomous execution for AUTH-4. |
-| **NFR-008** | **Fail Closed Behavior** | In the event of system failure, timeout, or missing cost metrics, transactions fail safe/closed. | Mock service outage test: pricing engine blocks discount and falls back to $P_{base}$. |
-| **NFR-009** | **Performance & Latency** | Conversational response latency: median < 2.0s, p95 < 3.0s; API routing < 200ms. | Real-time Prometheus/Grafana p95 latency alarms; CDN edge acceleration. |
-| **NFR-010** | **Cost Observability & Resource Limits**| AI token compute cost strictly capped at 0.50 - 1.00 TWD per complete customer dialogue. | Token usage accounting middleware; automatic session throttling upon budget breach. |
+| **NFR-004** | **System Availability** | Core API and Storefront Widget endpoints remain available through retry, timeout, and recovery, excluding scheduled maintenance. A 99.9% uptime figure is a **provisional design target** pending the ASM-002 baseline, not a contractual SLA. | Multi-zone Kubernetes deployment with auto-healing pods and health check probes. |
+| **NFR-005** | **Explainability & Transparency** | Qualification scores, recommendations, discounts, and routing decisions store logic `reason` and verified `evidence`. | Deterministic Decision audit logs; structured evidence separation contracts. |
+| **NFR-006** | **Data Isolation (Customer Context) — MUST** | SRS §19 semantic: **data belonging to verified customer A must never appear in the context of customer B.** Every context load, session memory, and prompt carries data for the single verified customer of the current session only, and identity verification (`TC-E2E-004`) must complete before any profile or order lookup. Tenant-to-tenant isolation is an **additional, independent platform requirement layered on top of** this customer-level isolation — it does not replace or weaken it. | Automated cross-tenant and cross-customer isolation test suite (`TC-NFR-006` / `TC-DATA-001`) running in CI, covering PostgreSQL RLS, Redis key namespaces, vector collections, and AI context envelopes. |
+| **NFR-007** | **Human-in-the-Loop** | Operations classified `AUTH-4` halt synchronously in `awaiting_human` until a signed human decision; Takeover mutex locks the bot out of business replies. | End-to-end integration tests verifying zero autonomous execution for `AUTH-4` skills. |
+| **NFR-008** | **Fail Closed Behavior** | In the event of system failure, timeout, missing authority, unverified price/inventory/consent, or an unapproved tenant policy limit, execution fails closed and escalates to a human. | Mock service outage test: pricing engine blocks discount and falls back to $P_{base}$; unset policy parameter routes to SCR-003. |
+| **NFR-009** | **Performance & Latency** | Conversational responses are designed for near-real-time interaction. Any concrete figure - e.g. median < 2.0s, p95 < 3.0s, API routing < 200ms - is a **provisional design target pending the ASM-002 baseline and the NFR-009 benchmark**, which is what locks the official SLA. | Real-time Prometheus/Grafana p95 latency alarms; CDN edge acceleration; benchmark harness run per SRS §19 before any SLA commitment. |
+| **NFR-010** | **Cost Observability & Resource Limits**| Token, model, API/tool cost, cost/run, cost/customer, and cost/conversion are instrumented and attributable per tenant and per run. The 0.50 - 1.00 TWD per-dialogue figure is a **provisional design target pending the ASM-002 cost baseline and the NFR-010 benchmark**; it is a tenant-configured budget, not a committed cap. | Token usage accounting middleware; automatic session throttling upon budget breach. |
 
 ---
 
 ## 6. Economic Incentive Mechanisms & Anti-Sybil Defense
 
+> **Provisional figures.** Every percentage, monetary amount, day count, and quota in this section is an **illustrative placeholder of the proposed design**, not an approved or measured value. The subsidy source ratio, basket cap, minimum-spend multiple, and reward quotas are **tenant policy parameters** owned by Business/Finance and only take effect once locked under **[UNCONFIRMED][ASM-003]** (discount and promotion thresholds) and **[UNCONFIRMED][ASM-004]** (refund and compensation approval). Commission-reallocation ratios are additionally market assumptions that require measurement against the merchant's real cost structure.
+
 ### 6.1 ECN-001: Sales Commission Reallocation & Instant Dynamic Subsidy (AI 智能即時補貼)
 
-The platform avoids traditional arbitrary discounting by reallocating human sales commissions to real-time closing subsidies.
+The design reallocates human sales commissions to real-time closing subsidies instead of the traditional pattern of ad-hoc, arbitrary discounting.
 
 ```
 +-----------------------------------------------------------------------------+
@@ -996,7 +1258,7 @@ The platform avoids traditional arbitrary discounting by reallocating human sale
 | Traditional: AI haggles arbitrarily -> Erodes margin -> Suspected of fraud  |
 |                                                                             |
 | ECN-001:                                                                    |
-| Human Sales Commission Pool (3-5% GMV)                                      |
+| Human Sales Commission Pool (ratio tenant-configured, ASM-003)              |
 |      |                                                                      |
 |      v (When AI qualifies lead & detects genuine price sensitivity)         |
 | Reallocated to AI Instant Dynamic Subsidy (AI 智能即時補貼)                  |
@@ -1016,13 +1278,13 @@ The platform avoids traditional arbitrary discounting by reallocating human sale
      - **LINE Member Flash Privilege (LINE 專屬快閃折抵)**
      - **Bonus LINE Points Reward (加碼送 LINE Points)**
    - UI prompts display the merchant's verified **Taiwan Unified Business Number (統一編號 - Tongyi Bianhao)** and **LINE Official Account Blue/Green Badge**.
-3. **Atomic 10-Minute TTL & Quota Limits**:
-   - Subsidies are bounded by a 10-minute validity window (`quote_ttl = 600s`).
-   - Scarcity is communicated transparently: *"3 subsidized slots unlocked for your session today"*. If unpaid after 10 minutes, the budget reservation is released back to the tenant's commission pool.
+3. **Atomic Quote TTL & Quota Limits**:
+   - Subsidies are bounded by a validity window (`quote_ttl = 600s`); the 600-second value is a **blueprint design parameter, not an approved policy value**, and is tenant-configurable.
+   - Scarcity is communicated transparently: *"3 subsidized slots unlocked for your session today"*. If unpaid when the validity window elapses, the budget reservation is released back to the tenant's commission pool.
 
 ### 6.2 ECN-004: Dynamic Loyalty Budgeting & Anti-Sybil Defense
 
-To prevent multi-account coupon farming and arbitrage bots from draining marketing budgets, the platform implements a 4-factor identity check and strict basket caps.
+The blueprint specifies a 4-factor identity check and tenant-configured basket caps to protect marketing budgets against multi-account coupon farming and arbitrage bots.
 
 ```
 +-----------------------------------------------------------------------------+
@@ -1046,7 +1308,7 @@ To prevent multi-account coupon farming and arbitrage bots from draining marketi
    - **Payment Fingerprint**: One-way salt-hashed token of credit card number or LINE Pay account ID.
    - **Normalized Address Hash**: Parsed and standardized delivery address (e.g. Taiwan 3+3 postal code standard) to detect apartment/unit variation tricks.
 2. **Anti-Arbitrage Guardrails**:
-   - **Basket Cap**: Maximum promotional deduction per order is capped at 1,000 - 2,000 TWD.
-   - **Minimum Spend Rule**: Subsidies require a minimum spend equal to at least 3x the voucher value.
-   - **Category Exclusion**: High-ticket durable assets (e.g., EV Scooters) are strictly excluded from percentage-based discount vouchers. Only fixed-amount accessories or official government subsidy guidance can be applied.
+   - **Basket Cap**: The maximum promotional deduction per order is a tenant-configured limit (**[UNCONFIRMED][ASM-003]**); no platform-wide cap exists in this blueprint.
+   - **Minimum Spend Rule**: The minimum-spend multiple relative to the voucher value is a tenant-configured policy parameter, not a fixed platform constant.
+   - **Category Exclusion**: high-ticket durable assets (e.g., EV Scooters) are excluded from percentage-based discount vouchers **by tenant/product policy**; only fixed-amount accessories or official government subsidy guidance may be applied. The blueprint fixes no category list of its own.
 

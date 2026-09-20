@@ -1,0 +1,100 @@
+{
+  "id": "UNIT-AUTH-GRANT-REGISTRY",
+  "title": "Grant registry: only AUTH-0..AUTH-3 can be assigned to an agent",
+  "document": "unit/authority.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "AUTH-4",
+    "AUTH-5",
+    "BR-008",
+    "NFR-001"
+  ],
+  "facets": [
+    "entity:Agent"
+  ],
+  "risk": "An operator or migration script writes AUTH-4 or AUTH-5 into an agent record, permanently bypassing the approval gate or the hard lock.",
+  "preconditions": [
+    "Namespace gov-unit-auth-<case_id>-<worker_id>; no shared mutable state with other cases.",
+    "PolicyEnforcementPoint loaded with fixtures/offline/governance.json skill_authority_registry and agents[]; clock frozen at 2026-01-15T10:00:00Z."
+  ],
+  "inputs": {
+    "grants": [
+      {
+        "agent_id": "SAL-02",
+        "assigned_authority": "AUTH-0"
+      },
+      {
+        "agent_id": "SAL-02",
+        "assigned_authority": "AUTH-3"
+      },
+      {
+        "agent_id": "SAL-02",
+        "assigned_authority": "AUTH-4"
+      },
+      {
+        "agent_id": "SAL-02",
+        "assigned_authority": "AUTH-5"
+      },
+      {
+        "agent_id": "SAL-02",
+        "assigned_authority": "SUPERUSER"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Insert the two legal grants AUTH-0 and AUTH-3",
+      "expected": "Both rows are accepted and the stored value round-trips unchanged."
+    },
+    {
+      "action": "Insert the AUTH-4 grant",
+      "expected": "The write is rejected by the persistence constraint (checked at the database or repository boundary); the stored value for SAL-02 is unchanged."
+    },
+    {
+      "action": "Insert the AUTH-5 grant and the SUPERUSER grant",
+      "expected": "Both writes are rejected; no row is persisted and the rejection names the constrained column."
+    },
+    {
+      "action": "Read back the agent record",
+      "expected": "assigned_authority is still AUTH-3 from step 1 and no grant row above AUTH-3 exists."
+    }
+  ],
+  "assertions": [
+    "The persisted value set for assigned_authority is exactly {AUTH-0, AUTH-1, AUTH-2, AUTH-3}.",
+    "AUTH-4 and AUTH-5 writes fail with a constraint error, not a silent coercion.",
+    "Agent behaviour after the rejected writes still routes create_order to approval.",
+    "No rejection is swallowed: each failure is observable to the caller."
+  ],
+  "forbidden": [
+    "Coercing an invalid grant to the nearest valid level so the write succeeds.",
+    "Persisting AUTH-5 and relying on the PEP to catch it later.",
+    "Allowing the rejection to be recorded as a successful grant."
+  ],
+  "evidence": [
+    "Round-tripped agent records after each write attempt.",
+    "Constraint violation messages for the three rejected grants.",
+    "PEP verdict for create_order after the attempts, showing REQUIRE_HUMAN_APPROVAL."
+  ],
+  "cleanup": [
+    "Restore SAL-02 to the fixture value and remove gov- grant rows."
+  ],
+  "automation": "Real repository/constraint under test; no vendor substitute. Applies the same check whether the store is PostgreSQL or the in-process repository used offline.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

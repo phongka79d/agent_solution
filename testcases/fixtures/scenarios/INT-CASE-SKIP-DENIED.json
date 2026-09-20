@@ -1,0 +1,92 @@
+{
+  "id": "INT-CASE-SKIP-DENIED",
+  "title": "Skipping required states is refused while the documented reopen path still works",
+  "document": "integration/case-fsm.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "CS-01",
+    "FR-CS-002",
+    "SRS-08"
+  ],
+  "facets": [
+    "entity:Service Case",
+    "stage:APPROVAL"
+  ],
+  "risk": "A case is forced straight to RESOLVED to hit a metric, hiding the fact that no agent ever worked it.",
+  "preconditions": [
+    "A NEW case CASE-T1-0009 for cust-a in namespace cd-skip-*",
+    "Tenant policy allows only the documented forward transitions plus the REOPENED branch"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "case_number": "CASE-T1-0009",
+    "attempts": [
+      {
+        "from": "NEW",
+        "to": "RESOLVED"
+      },
+      {
+        "from": "NEW",
+        "to": "CLOSED"
+      },
+      {
+        "from": "IN_PROGRESS",
+        "to": "NEW"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Attempt NEW to RESOLVED and NEW to CLOSED directly",
+      "expected": "both are refused with an invalid-transition error and the case remains NEW"
+    },
+    {
+      "action": "Walk the documented forward path one state at a time",
+      "expected": "each documented transition is accepted in order: CLASSIFIED, ASSIGNED, IN_PROGRESS, WAITING_CUSTOMER, RESOLVED, CLOSED"
+    },
+    {
+      "action": "Attempt one backward transition (IN_PROGRESS to NEW) on a second case",
+      "expected": "the backward transition is refused and that case keeps its state"
+    },
+    {
+      "action": "Read both cases' transition histories",
+      "expected": "the refused skips appear only as refusal audit entries and the accepted path appears as one entry per step"
+    }
+  ],
+  "assertions": [
+    "All three skip/backward attempts are refused with no state change",
+    "The stepwise path completes all seven states with one audit entry per accepted transition",
+    "No case reaches RESOLVED without having passed IN_PROGRESS"
+  ],
+  "forbidden": [
+    "Allow an unconfigured skip so a metric looks better",
+    "Permit a backward transition that silently rewrites the earlier history"
+  ],
+  "evidence": [
+    "Transition history for the case in each attempt with accepted/refused status",
+    "Case projection after the full forward path"
+  ],
+  "cleanup": [
+    "Delete the run-scoped cases for cd-skip-*; keep refusal and transition audit entries"
+  ],
+  "automation": "Run the real state machine once with the documented configuration; the case treats the SRS minimum states as the requirement and reports any additional allowed transition as proposed configuration.",
+  "prerequisites": [],
+  "references": [
+    "implement/03-database-and-memory-schema.md",
+    "plans/platform/data-and-knowledge.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/platform.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

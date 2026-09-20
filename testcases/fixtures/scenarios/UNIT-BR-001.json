@@ -1,0 +1,89 @@
+{
+  "id": "UNIT-BR-001",
+  "title": "BR-001: offered price without an authenticated catalog reference is rejected",
+  "document": "unit/business-rules.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P0",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "BR-001",
+    "BR-003",
+    "FR-SAL-002",
+    "TC-E2E-003"
+  ],
+  "facets": [
+    "entity:Price",
+    "stage:ACTION"
+  ],
+  "risk": "The agent invents or interpolates a price in conversation, quoting a number no System of Record will honour and creating a commercial dispute.",
+  "preconditions": [
+    "Namespace gov-unit-br-<case_id>-<worker_id>; Business Rules Engine loaded with no cross-case state.",
+    "Frozen clock 2026-01-15T10:00:00Z; agent fixture context loaded from fixtures/offline/governance.json."
+  ],
+  "inputs": {
+    "agent_id": "SAL-02",
+    "tool": "ADPT-WEB-CHAT-001",
+    "quote": {
+      "sku_id": "SKU-OK",
+      "offered_price": 950,
+      "currency": "TWD",
+      "catalog_ref_id": null
+    },
+    "control_quote": {
+      "sku_id": "SKU-OK",
+      "offered_price": 1000,
+      "currency": "TWD",
+      "catalog_ref_id": "ERP-SKU-OK"
+    }
+  },
+  "steps": [
+    {
+      "action": "Evaluate the quote payload that carries no catalog reference id",
+      "expected": "Rule BR-001 fails first with errorCode ERR_ARBITRARY_PRICING and a failure reason naming the missing reference."
+    },
+    {
+      "action": "Attempt to deliver the same payload to the customer channel",
+      "expected": "The pipeline halts at BR-001; no quote message is handed to the adapter and the adapter counter is 0."
+    },
+    {
+      "action": "Evaluate the control quote carrying catalog_ref_id ERP-SKU-OK",
+      "expected": "BR-001 passes; evaluation proceeds to later rules and the quote is released with the authoritative price 1000 TWD."
+    }
+  ],
+  "assertions": [
+    "errorCode is exactly ERR_ARBITRARY_PRICING for the reference-less quote.",
+    "The adapter counter is 0 after the rejected payload and 1 after the control quote, proving the block was real.",
+    "The rejection payload contains no quoted price field (no partial quote leaks to the channel).",
+    "The control quote preserves the SoR price 1000 TWD unchanged."
+  ],
+  "forbidden": [
+    "Deriving a price from a nearby SKU or from the model context.",
+    "Emitting a quote while the rule result is a failure.",
+    "Recording the rejection as a successful run that can be mistaken for a delivered price."
+  ],
+  "evidence": [
+    "Rule evaluation record with ruleId BR-001, passed=false and errorCode.",
+    "Channel adapter call counter and the released control quote payload."
+  ],
+  "cleanup": [
+    "Clear the gov- quote drafts and adapter log; no message left the mock."
+  ],
+  "automation": "Real BusinessRulesEngine and PEP under test; only ERP/POS/connector boundaries are substituted by the offline mock whose call log and receipts are the oracle. Rules are evaluated in sequence and halt on the first failure, so each case asserts the first failing rule code rather than a bag of errors.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/catalog.json",
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

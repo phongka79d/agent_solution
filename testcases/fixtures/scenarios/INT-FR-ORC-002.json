@@ -1,0 +1,99 @@
+{
+  "id": "INT-FR-ORC-002",
+  "title": "Abandoned-cart recovery crosses agents under one orchestrator run",
+  "document": "integration/sales-care-orchestrator.md",
+  "layer": "integration",
+  "environment": "offline",
+  "priority": "critical",
+  "gate": "P2",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/platform.py",
+  "requirements": [
+    "FR-ORC-002",
+    "SAL-04",
+    "BR-004",
+    "TC-E2E-001"
+  ],
+  "facets": [
+    "stage:PLAN",
+    "entity:Workflow",
+    "event:add_to_cart"
+  ],
+  "risk": "The recovery workflow bypasses policy or consent when several agents collaborate, and a customer who opted out receives a cart reminder.",
+  "preconditions": [
+    "Abandoned cart for cust-a (SKU-OK, cart-a-1) with EMAIL marketing consent granted and no quiet-hours conflict",
+    "Orchestrator run orc-cart-* started at 2026-01-15T10:00:00Z with the channel adapter replaced by a test sink"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "signal": {
+      "signal_id": "evt_a_cart_add_1",
+      "event_type": "cart.add"
+    },
+    "cart": {
+      "cart_id": "cart-a-1",
+      "sku_id": "SKU-OK",
+      "unit_price": 1000
+    },
+    "expected_chain": [
+      "CONTEXT",
+      "HYPOTHESIS",
+      "DECISION",
+      "PLAN",
+      "ACTION",
+      "EXECUTION",
+      "EVIDENCE"
+    ]
+  },
+  "steps": [
+    {
+      "action": "Run the abandoned-cart workflow across its agents",
+      "expected": "the run records the documented stage sequence with one plan containing at least one sales step and one messaging step"
+    },
+    {
+      "action": "Inspect the recommendation chosen for the cart",
+      "expected": "the recommendation names SKU-OK with a reason, evidence, eligibility and expected outcome, and never a discontinued SKU"
+    },
+    {
+      "action": "Inspect the consent and floor-price checks before dispatch",
+      "expected": "the EMAIL marketing consent for cust-a is verified and the offered price is not below 800 TWD"
+    },
+    {
+      "action": "Repeat the run for cust-b who opted out of marketing",
+      "expected": "no message is dispatched for cust-b, the run stops with a suppression outcome and no channel call is made"
+    }
+  ],
+  "assertions": [
+    "The run executes every stage in order and produces one plan with the sales and messaging steps",
+    "Exactly one message is dispatched for cust-a, referencing SKU-OK and a price at or above 800 TWD",
+    "For cust-b zero messages are dispatched and a suppression outcome is recorded"
+  ],
+  "forbidden": [
+    "Send any cart-recovery message to a customer without marketing consent",
+    "Recommend a discontinued SKU or a price below the authoritative floor"
+  ],
+  "evidence": [
+    "Run record with per-stage artifacts and the chosen plan",
+    "Channel test-sink call log showing one dispatch for cust-a and zero for cust-b"
+  ],
+  "cleanup": [
+    "Delete the run-scoped task, plan and message rows for orc-cart-*; retain the consent and audit records"
+  ],
+  "automation": "Run the real orchestrator over fixture events with the messaging adapter replaced by a recording test sink; the oracle combines the run artifacts with the sink call log so a silent dispatch cannot pass.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "plans/platform/workflows-and-handoffs.md",
+    "implement/04-core-engine-and-orchestrator.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/events.json",
+    "fixtures/offline/consents.json",
+    "fixtures/offline/catalog.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

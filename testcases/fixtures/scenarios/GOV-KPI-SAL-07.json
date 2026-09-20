@@ -1,0 +1,92 @@
+{
+  "id": "GOV-KPI-SAL-07",
+  "title": "SAL-07 Sales Cycle: declared formula, numerator and denominator with honest missing-data behaviour",
+  "document": "governance/kpi.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "medium",
+  "gate": "P2",
+  "basis": "baseline",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "SRS-20",
+    "OBJ-002",
+    "SAL-01"
+  ],
+  "facets": [
+    "kpi:Sales Cycle",
+    "stage:OUTCOME"
+  ],
+  "risk": "The Sales Cycle figure is produced under different accounting rules - the median presented as the sales cycle, or the mean computed over only the orders that converted quickly - so the KPI is wrong in the direction that flatters the programme and every decision taken on it inherits the error.",
+  "preconditions": [
+    "Namespace gov-kpi-<case_id>-<worker_id>; the metric is computed by the real reporting code over fixtures/offline/governance.json kpi_dataset and never copied from the dashboard payload.",
+    "Frozen clock 2026-01-15T10:00:00Z with the reporting window 2026-01-01T00:00:00Z .. 2026-02-01T00:00:00Z as a half-open interval; the stored aggregate is recomputed independently from the raw counter rows.",
+    "Metric scope is fixed before measurement: numerator is closed cycles that have both a first-need timestamp and a confirmed-payment timestamp; denominator is not a ratio - a duration in hours with the censoring rule stated.",
+    "The dictionary entry for 'Sales Cycle' (owner, unit, window, exclusion rule) is loaded read-only and is compared with the recomputation instead of being trusted."
+  ],
+  "inputs": {
+    "metric": "Sales Cycle",
+    "code": "SAL-07",
+    "group": "Sales",
+    "dataset": "kpi_dataset.sales",
+    "formula": "mean elapsed hours between first need intake and confirmed payment",
+    "window": [
+      "2026-01-01T00:00:00Z",
+      "2026-02-01T00:00:00Z"
+    ],
+    "currency": "TWD",
+    "expected_value": "45 hours (mean of the eight synthetic cycles)",
+    "wrong_value_if_buggy": "the median presented as the sales cycle, or the mean computed over only the orders that converted quickly",
+    "release_blocker": false,
+    "expected_boundary_behaviour": "cycles still open at window end are right-censored and excluded, never counted as 0 hours"
+  },
+  "steps": [
+    {
+      "action": "Compute Sales Cycle from the frozen rows in kpi_dataset.sales",
+      "expected": "The stored aggregate reports 45 hours (mean of the eight synthetic cycles) and records the formula, the window and the currency that produced it."
+    },
+    {
+      "action": "Recompute Sales Cycle independently from the raw counter rows for the same tenant and window",
+      "expected": "The recomputed value equals the stored value 45 hours (mean of the eight synthetic cycles), and every numerator row lies inside the denominator scope."
+    },
+    {
+      "action": "Force the empty-source variant of the metric (no qualifying row in the window)",
+      "expected": "The metric reports cycles still open at window end are right-censored and excluded, never counted as 0 hours; the display distinguishes missing source data from a measured zero."
+    },
+    {
+      "action": "Read the dashboard payload and the metric dictionary entry",
+      "expected": "The dashboard renders the stored value with its window, coverage and source, and the dictionary names the owner, unit, numerator and denominator that the recomputation used."
+    }
+  ],
+  "assertions": [
+    "Sales Cycle equals 45 hours (mean of the eight synthetic cycles) for the frozen window, recomputed from the raw counter rows with numerator scope 'closed cycles that have both a first-need timestamp and a confirmed-payment timestamp' and denominator scope 'not a ratio - a duration in hours with the censoring rule stated'.",
+    "A recomputation that yields the median presented as the sales cycle, or the mean computed over only the orders that converted quickly is detected as wrong: the stored aggregate and the independent recomputation must agree before the figure is published.",
+    "The dashboard payload for the same tenant and window carries the stored value with its window, coverage and measurement source; it substitutes neither a design target nor another metric's value.",
+    "Boundary behaviour: cycles still open at window end are right-censored and excluded, never counted as 0 hours; missing source data is never rendered as a measured zero."
+  ],
+  "forbidden": [
+    "Counting an abandoned cycle as a zero-length sale.",
+    "Reporting the cycle for only the fastest customer segment."
+  ],
+  "evidence": [
+    "Cycle table with the first-need and payment timestamps.",
+    "Censoring report listing the cycles excluded at window end."
+  ],
+  "cleanup": [
+    "Delete gov- aggregate, raw-counter and scenario rows for SAL-07 after exporting the recomputation table."
+  ],
+  "automation": "The reporting service and the metric dictionary run as real code under test over the frozen KPI dataset; the dashboard is a consumer whose displayed value must equal the independently recomputed value. Waits are condition-based on the stored aggregate row, metric values are never supplied as inputs, and no vendor boundary is involved in the arithmetic.",
+  "prerequisites": [],
+  "references": [
+    "plans/delivery/analytics.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

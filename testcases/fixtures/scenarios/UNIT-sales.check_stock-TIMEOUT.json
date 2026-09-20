@@ -1,0 +1,100 @@
+{
+  "id": "UNIT-sales.check_stock-TIMEOUT",
+  "title": "skill.sales.check_stock timeout — effect-free retry budget",
+  "document": "unit/skills.md",
+  "layer": "unit",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P2",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/business.py",
+  "requirements": [
+    "BR-003",
+    "BR-006",
+    "FR-SAL-002",
+    "NFR-004",
+    "NFR-008",
+    "SAL-02",
+    "SAL-04",
+    "SRS-11"
+  ],
+  "facets": [
+    "skill:skill.sales.check_stock",
+    "kb:/product/products.md",
+    "intent:stock",
+    "event:add_to_cart",
+    "kpi:Failed Execution"
+  ],
+  "risk": "A hanging dependency is interpreted as success or retried blind, producing phantom business effects for skill.sales.check_stock.",
+  "preconditions": [
+    "isolated namespace run_id=RUN-sales.check_stock-TIMEOUT, case_id=UNIT-sales.check_stock-TIMEOUT, worker=w-biz-unit; no shared mutable session with any other case",
+    "skill registry row for skill.sales.check_stock registered with test_cases TC-SKILL-01..05 plus >=1 skill-specific case and asserted registrable before the run",
+    "in-memory adapters loaded from the case fixtures for tenant T1 only; frozen clock 2026-01-15T10:00:00Z"
+  ],
+  "inputs": {
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "sku_id": "SKU-OK",
+    "caller_agent": "SAL-02",
+    "granted_authority": "AUTH-0",
+    "adapter_fault": "HANG_PAST_TIMEOUT",
+    "adapter_latency_ms": 3500
+  },
+  "steps": [
+    {
+      "action": "Arm the adapter to accept then hang",
+      "expected": "API-001.InventoryConnector accepts the request and never responds; the engine deadline is 3000 ms"
+    },
+    {
+      "action": "Observe the abort, the classification and the retry schedule",
+      "expected": "WMS offline / InventoryConnector hangs past 3000ms -> TIMEOUT/RETRYABLE, 500ms x1.5 retries; exhaustion -> fail closed: no in_stock claim and no stale cached quantity is served as a FACT (NFR-008)"
+    },
+    {
+      "action": "Assert no synthesised payload",
+      "expected": "the skill step ends failed/timeout: no value is invented, no cached value is presented as a current FACT, and the dependent business step is refused"
+    },
+    {
+      "action": "Assert the retry accounting",
+      "expected": "attempt count <= 1+max_retries (3) with backoff_multiplier=1.5 and jitter; every attempt is effect-free (no effect_reservations row)"
+    },
+    {
+      "action": "Assert honest failure reaches the caller",
+      "expected": "the customer-facing layer receives an explicit cannot-confirm result with the audit timestamp, never a value that looks current"
+    }
+  ],
+  "assertions": [
+    "a timed-out read never yields a fabricated payload and never serves the previous read as current (NFR-008 fail closed)",
+    "the retry budget (max_retries=3, initial interval and backoff_multiplier=1.5) is respected exactly and no attempt has an external effect",
+    "the timeout is classified TIMEOUT for this effect-free skill and recorded with per-attempt latency in the audit",
+    "the refusal propagates to the business outcome (no order, no answer, no recommendation presented)"
+  ],
+  "forbidden": [
+    "presenting the previous read as the current value",
+    "retrying beyond the declared budget or outside the deadline"
+  ],
+  "evidence": [
+    "per-attempt execution log: attempt number, latency, classification, adapter outcome (API-001.InventoryConnector)",
+    "effect_reservations row (effect-bearing skills) or adapter invocation log (effect-free skills) with the case effect_key/idempotency key",
+    "audit entry recording the timeout/deadline breach and the reconciliation result"
+  ],
+  "cleanup": [
+    "resolve the reservation by reconciliation, then drop namespace RUN-sales.check_stock-TIMEOUT and reset the mock adapter fault injection"
+  ],
+  "automation": "Real code under test: skill registry row, authority guard/PEP, input validator, deadline and retry loop, effect_key reservation + reconciliation, evidence/audit writer. Substituted boundary: the external adapter (in-memory for offline, approved sandbox for live). Frozen clock 2026-01-15T10:00:00Z; all waits are condition/deadline waits on the engine's virtual clock, never sleep. The adapter is fault-injected to hang; the deadline and retry intervals are driven by the engine's virtual clock, so the case is deterministic.",
+  "prerequisites": [],
+  "references": [
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+    "implement/05-skill-system-specifications.md",
+    "plans/modules/sales.md",
+    "implement/06-api-and-connectors-spec.md",
+    "implement/04-core-engine-and-orchestrator.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/business.json",
+    "fixtures/offline/catalog.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}

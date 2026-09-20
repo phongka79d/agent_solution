@@ -1,0 +1,94 @@
+{
+  "id": "GOV-NFR-005-ROUTING",
+  "title": "NFR-005: routing and discount decisions also carry reason plus evidence",
+  "document": "governance/nfr.md",
+  "layer": "governance",
+  "environment": "offline",
+  "priority": "high",
+  "gate": "P1",
+  "basis": "blueprint",
+  "pair": null,
+  "status": "NOT_RUN",
+  "source_module": "sources/governance.py",
+  "requirements": [
+    "NFR-005",
+    "FR-ORC-001",
+    "BR-002"
+  ],
+  "facets": [
+    "entity:Decision",
+    "stage:DECISION"
+  ],
+  "risk": "Only qualification is explained, while routing and pricing decisions remain opaque, so nobody can tell why a discount was granted or why a case went to a particular agent.",
+  "preconditions": [
+    "Namespace gov-nfr-<case_id>-<worker_id>; NFR verification runs against the offline gateway with mock SoR and channel boundaries.",
+    "Frozen clock 2026-01-15T10:00:00Z; failure, outage and crash injections are scripted at the substituted boundary, never faked inside the assertion."
+  ],
+  "inputs": {
+    "decisions": [
+      {
+        "kind": "ROUTING",
+        "input": "customer asks about a delayed parcel and stock availability",
+        "expected_fields": [
+          "reason",
+          "evidence"
+        ]
+      },
+      {
+        "kind": "FLOOR_POLICY",
+        "input": "discount request 0.15 on SKU-OK",
+        "expected_fields": [
+          "reason",
+          "evidence",
+          "floor_value"
+        ]
+      }
+    ]
+  },
+  "steps": [
+    {
+      "action": "Trigger an ambiguous routing decision",
+      "expected": "The routing record names the selected agent and skill plus the matched signals, with a reason and evidence references."
+    },
+    {
+      "action": "Trigger a floor-policy decision on a discounted quote",
+      "expected": "The record stores the computed floor, the offered price, the policy inputs used and the verdict."
+    },
+    {
+      "action": "Read both decision records and their audit rows",
+      "expected": "Both carry non-empty reason and evidence fields and agree with the audit row on the verdict."
+    }
+  ],
+  "assertions": [
+    "Routing decisions record why the chosen agent and skill were selected, not only which ones.",
+    "Floor-policy decisions record the floor value and the policy inputs, so the verdict can be re-derived.",
+    "Both decide records agree with their audit rows.",
+    "Evidence references resolve, and no decision cites an absent record."
+  ],
+  "forbidden": [
+    "Recording the verdict without the reasoning.",
+    "Storing only a code such as DENY without the inputs used.",
+    "Diverging reason text between the decision record and the audit row."
+  ],
+  "evidence": [
+    "Both decision records with reason and evidence fields.",
+    "Audit rows for the same runs.",
+    "Floor computation trace for the discounted quote."
+  ],
+  "cleanup": [
+    "Delete gov- decision rows after export."
+  ],
+  "automation": "Core PEP, rules engine, audit writer, idempotency store and worker lease logic run as real code under test; only ERP/WMS, channel gateways, Redis and the model provider are substituted. Faults are injected at those boundaries and waits are condition-based on persisted state.",
+  "prerequisites": [],
+  "references": [
+    "implement/08-security-governance-nfr.md",
+    "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md"
+  ],
+  "fixtures": [
+    "fixtures/offline/governance.json",
+    "fixtures/offline/catalog.json"
+  ],
+  "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
+  "generator": "testcases/_generate.py",
+  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+}
