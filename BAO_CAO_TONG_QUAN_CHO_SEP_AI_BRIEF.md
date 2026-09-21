@@ -112,11 +112,30 @@ Ban Giám Đốc và Khách hàng không phải lo ngại các rủi ro thườn
 
 ---
 
-## 🚀 6. KẾ HOẠCH HÀNH ĐỘNG DÀNH CHO SẾP
+## 🚀 6. SO SÁNH: CHATBOT TRUYỀN THỐNG VS BỘ TRỢ LÝ AI AGENT CẮM-RÚT
 
-Để đưa sản phẩm tiếp cận thị trường nhanh nhất, đề xuất lộ trình 3 bước:
+Nhiều Lãnh đạo băn khoăn: *"Website hiện tại đã có nút chat hoặc cài bot tự động rồi, tại sao phải cần AI Agent?"*
+
+| Tiêu chí so sánh | Chatbot truyền thống (Cây kịch bản) | Bộ 3 Trợ lý AI Agent Cắm-Rút (AgentOS) |
+| :--- | :--- | :--- |
+| **Cách thức phản hồi** | Cứng nhắc theo kịch bản bấm nút (Menu/Flowchart); khách gõ lệch câu là *"Xin lỗi em không hiểu"*. | **Hiểu ngôn ngữ tự nhiên 100%**: Khách nói tiếng lóng, viết tắt, hỏi vòng vo AI vẫn hiểu đúng ý để tư vấn. |
+| **Dữ liệu trả lời** | Trả lời tĩnh, không biết kho còn hàng hay hết hàng, giá bao nhiêu. | **Đọc trực tiếp từ Database/ERP/POS**: Báo chính xác số lượng tồn, giá niêm yết và thời gian giao dự kiến. |
+| **Khả năng bán hàng** | Chỉ là công cụ trực tin nhắn thụ động. | **Chủ động khơi gợi nhu cầu**, gợi ý combo, khóa giá sàn $P_{floor}$ bảo vệ lãi ròng và tự động gửi tin cứu giỏ hàng. |
+| **Bộ nhớ khách hàng** | Mỗi lần chat là một cuộc hội thoại mới toanh. | **Ghi nhớ Customer 360**: Biết khách cũ hay mới, đã từng mua gì để cá nhân hóa lời chào. |
+| **Xử lý tình huống khó** | Khách mắng mỏ bot vẫn trả lời vô hồn gây ức chế. | **Phát hiện cảm xúc tiêu cực $\rightarrow$ Báo động đỏ** và chuyển giao nhân viên tiếp quản trong $\le 1.0$ giây. |
+
+---
+
+## 📈 7. MÔ HÌNH ĐÓNG GÓI THƯƠNG MẠI & KẾ HOẠCH HÀNH ĐỘNG DÀNH CHO SẾP
+
+### 7.1. Đóng gói bán lẻ linh hoạt (Dễ chốt hợp đồng):
+* **Gói Starter (Chỉ Module CSKH):** Khách hàng doanh nghiệp chỉ cần giải phóng nhân sự trực ca đêm 24/7 và tra cứu đơn hàng $\rightarrow$ Chi phí thấp, cài đặt 5 phút, tỷ lệ chốt thử nghiệm 90%.
+* **Gói Growth (CSKH + Bán hàng Sales):** Dành cho shop muốn tăng tỷ lệ chốt đơn và phục hồi giỏ hàng bỏ quên $\rightarrow$ Thu phí thuê bao nền + thưởng % hoa hồng trên doanh số cứu được.
+* **Gói Enterprise (Full 3 Module + Báo cáo chuyên sâu):** Tích hợp trọn gói cả Tiếp thị, Bán hàng và CSKH đa kênh.
+
+### 7.2. Kế hoạch hành động 3 bước:
 1. **Bước 1 (Tuần 1):** Dựng bản Demo nhúng trực tiếp **Module AI CSKH** vào một trang web bán hàng thử nghiệm để Sếp và đội ngũ trải nghiệm bấm chat thực tế.
-2. **Bước 2 (Tuần 2-3):** Thử nghiệm kết nối dữ liệu sản phẩm mẫu từ Odoo ERP / Shopify, kiểm tra tính năng tra cứu đơn hàng và bộ lọc khóa giá sàn $P_{floor}$.
+2. **Bước 2 (Tuần 2-3):** Thử nghiệm kết nối dữ liệu sản phẩm mẫu từ hệ thống ERP / POS / Web thực tế, kiểm tra tính năng tra cứu đơn hàng và bộ lọc khóa giá sàn $P_{floor}$.
 3. **Bước 3 (Tháng tới):** Đóng gói tài liệu và script cài đặt để chào bán thử nghiệm cho nhóm 3-5 khách hàng doanh nghiệp đầu tiên với chính sách: *"Cài thử module CSKH miễn phí 14 ngày trên website có sẵn"*.
 
 ---
@@ -128,4 +147,4 @@ Ban Giám Đốc và Khách hàng không phải lo ngại các rủi ro thườn
 > 1. *"Tóm tắt 3 ưu điểm lớn nhất khi đóng gói AI thành các mô-đun cắm-rút vào web có sẵn thay vì bán một phần mềm nguyên khối?"*  
 > 2. *"Tại sao doanh nghiệp nên bắt đầu bằng việc cài module AI Chăm sóc khách hàng (CSKH) trước?"*  
 > 3. *"Hệ thống này bảo vệ giá bán và dòng tiền của doanh nghiệp bằng những cơ chế kỹ thuật cụ thể nào?"*  
-> 4. *"Khách hàng của chúng tôi đang dùng web WordPress và phần mềm Odoo, họ cần làm những bước gì để cài đặt giải pháp này?"*  
+> 4. *"Doanh nghiệp đã có sẵn Website thương mại điện tử và phần mềm quản lý kho, họ cần làm những bước gì để cài đặt giải pháp này mà không làm gián đoạn vận hành?"*  
