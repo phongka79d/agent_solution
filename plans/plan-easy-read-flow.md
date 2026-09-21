@@ -1,105 +1,106 @@
-# AgentOS — Bản Kế Hoạch Triển Khai Đọc Trong 5 Phút
-## HỆ THỐNG 3 TRỢ LÝ AI CẮM-RÚT (PLUG & PLAY) CHO WEBSITE DOANH NGHIỆP CÓ SẴN
+# AgentOS — Bản kế hoạch đọc trong 5 phút
 
 Bắt đầu bằng câu hỏi: **Doanh nghiệp nào sẽ thử nghiệm, trên website nào, để giải quyết một vấn đề mua hàng cụ thể?**
 
-[Mục lục](README.md) · [Thuật ngữ](glossary.md) · [Bản đầu và lộ trình](delivery/mvp-and-roadmap.md) · [Đặc tả kỹ thuật SRS](../presentation/tech_spec.html)
+[Mục lục](README.md) · [Thuật ngữ](glossary.md) · [Bản đầu và lộ trình](delivery/mvp-and-roadmap.md)
 
-Đây là bản kế hoạch hành động thực tế, kết hợp hài hòa giữa **tính khả thi triển khai từng bước nhỏ** và **khung kiểm soát rủi ro kỹ thuật cấp doanh nghiệp (AI-REV-SRS-001)**.
-
----
+Đây là kế hoạch đề xuất, chưa phải hệ thống đã hoạt động. Các ví dụ là giả thuyết để thử, không phải cam kết kết quả.
 
 ## 1. Sản phẩm làm gì? [OBJ-001 đến OBJ-004]
 
-Hệ thống được đóng gói thành **3 Mô-đun Trợ lý AI Cắm-Rút (Plug & Play)** cài trực tiếp vào Website hoặc App sẵn có của doanh nghiệp:
+Ba trợ lý AI gắn vào ứng dụng đang có của doanh nghiệp:
 
-| Mô-đun Trợ lý | Mã mục tiêu SRS | Việc chính trên Website | Giới hạn an toàn (Code cứng chặn đứng) |
+| Trợ lý | Mã mục tiêu SRS | Việc chính | Không được tự làm |
 |---|---|---|---|
-| **Chăm sóc khách hàng (Care)** | **OBJ-003** & **OBJ-004** | Trực chat 24/7 góc màn hình web, giải đáp FAQ, tra cứu vận đơn, chính sách đổi trả, kết nối nhân viên | **Cấm tự ý duyệt hoàn tiền/bồi thường** (`AUTH-4`/`BR-007`); bắt buộc xác minh đúng chủ đơn (`NFR-006`) |
-| **Tư vấn Bán hàng (Sales)** | **OBJ-002** | Nút "Tư vấn chọn nhanh", gợi ý combo mua kèm, nhắc phục hồi giỏ hàng bỏ quên | **Cấm tự bịa giá hay bán dưới giá sàn $P_{floor}$** (`BR-001..003`); gợi ý phải đủ 7 trường minh bạch (`FR-SAL-003`) |
-| **Tiếp thị (Marketing)** | **OBJ-001** | Quét nhu cầu thị trường, tạo nội dung giới thiệu, thu hút khách tiềm năng về web | **Cấm thu gom dữ liệu trái phép** (`BR-004`); khách từ chối nhận tin là dừng ngay (`suppression rule`) |
+| Tiếp thị | **OBJ-001** (Marketing) | Tìm hiểu thị trường, phát hiện nhu cầu sớm, tìm đối tác, tiếp nhận khách quan tâm (MKT-01..06) | Thu gom dữ liệu cá nhân hoặc gửi quảng cáo khi chưa đủ điều kiện (BR-004) |
+| Bán hàng | **OBJ-002** (Sales) | Hỏi đúng nhu cầu, giải thích sản phẩm, gợi ý lựa chọn và hỗ trợ mua (SAL-01..05) | Bịa công dụng, sửa giá, hứa đã thanh toán (BR-001, BR-003) |
+| Chăm sóc khách hàng | **OBJ-003** (Care) & **OBJ-004** (Retention) | Hướng dẫn, giải quyết câu hỏi, theo dõi vấn đề, giữ chân và chuyển nhân viên (CS-01, CS-02) | Tự duyệt hoàn tiền, đổi trả (AUTH-4/BR-007) hay bỏ qua xác minh khách (NFR-006, TC-E2E-004) |
 
-> 🔑 **Nguyên tắc "Cắm là chạy" & Zero-Disruption (Không làm đảo lộn hệ thống cũ):**  
-> * Doanh nghiệp **giữ nguyên 100% Website, Landing Page, cơ sở dữ liệu và phần mềm ERP/POS hiện tại**. AI chỉ nhúng vào như một tiện ích (Widget/Script) hoặc cổng kết nối (Webhook).
-> * Doanh nghiệp có toàn quyền **bật/tắt độc lập từng mô-đun**: Thích giải phóng trực ca đêm thì bật riêng **CSKH**; muốn tăng doanh thu thì bật thêm **Bán hàng**; cần kéo khách thì mở thêm **Tiếp thị**.
-> * **Không phải 3 Chatbot rời rạc [OBJ-005, OBJ-006]:** Dù cài độc lập, bên dưới cả 3 mô-đun đều kết nối chung một bộ não **Revenue Orchestrator**, dùng chung hồ sơ khách **Customer 360**, chung tri thức nội bộ và tuân thủ chặt chẽ khung phân quyền `AUTH-0..5`.
+> **Chú thích kiến trúc bắt buộc (OBJ-005, OBJ-006):** Ba trợ lý Tiếp thị, Bán hàng và Chăm sóc khách hàng không phải là 3 chatbot độc lập. Toàn bộ hệ thống là một lực lượng lao động AI thống nhất (**AI Revenue Workforce**) gồm **13 AI Agent chuyên trách** (MKT-01 đến MKT-06, SAL-01 đến SAL-05, CS-01 và CS-02) phối hợp đa tác vụ qua trung tâm điều phối **Revenue Orchestrator [OBJ-005]**, sử dụng chung nền tảng dữ liệu Customer Intelligence 360, kho tri thức (Knowledge Base) và tuân thủ nghiêm ngặt khung chính sách, phân quyền và lưu vết bằng chứng **[OBJ-006]**.
 
----
+Doanh nghiệp có thể bật một, hai hoặc cả ba mô-đun. Khi mô-đun cần dùng chưa bật, chuyển nhân viên hoặc công cụ hiện có; không tự mở thêm mô-đun.
 
-## 2. Hành trình mua sắm hợp nhất [OBJ-001 đến OBJ-005]
+## 2. Hành trình hợp nhất [OBJ-001 đến OBJ-005]
 
 ```text
-Hiểu vấn đề khách đang hoặc sắp gặp [OBJ-001 Tiếp thị]
-→ Tìm tín hiệu sớm và nơi khách tập trung [OBJ-001 Tiếp thị]
-→ Khách vào Website quen thuộc qua link đối tác / tìm kiếm / bài viết
-→ Khung tư vấn AI xuất hiện, gợi ý đúng nhu cầu kèm bằng chứng thật [OBJ-002 Bán hàng]
-→ Khách chốt đơn qua quy trình giỏ hàng có sẵn của website [OBJ-002 Bán hàng]
-→ Hệ thống ERP/POS gốc xác nhận giao dịch & trừ tồn kho thực tế
-→ AI tự động hướng dẫn sử dụng và cập nhật tiến độ đơn hàng [OBJ-003 CSKH]
-→ Khách dùng hài lòng, AI phát hiện nhu cầu mua lại/giới thiệu [OBJ-004 Thành công]
-→ Kết quả thực tế quay về vòng lặp học hỏi để hoàn thiện dịch vụ [OBJ-005, OBJ-006 Học hỏi]
+Hiểu vấn đề khách đang hoặc sắp gặp [OBJ-001]
+→ Tìm tín hiệu sớm và nơi khách tập trung [OBJ-001]
+→ Kiểm chứng giải pháp, thông điệp và đối tác [OBJ-001]
+→ Khách đến website từ đối tác / tìm kiếm / quảng cáo / giới thiệu
+→ Tư vấn theo nhu cầu, kèm bằng chứng [OBJ-002]
+→ Khách mua qua quy trình của doanh nghiệp [OBJ-002]
+→ Hệ thống gốc xác nhận giao dịch
+→ Hướng dẫn và chăm sóc [OBJ-003]
+→ Khách dùng tốt, có thể mua lại hoặc giới thiệu [OBJ-004]
+→ Kết quả thực tế quay về cải thiện nghiên cứu và sản phẩm [OBJ-005, OBJ-006]
 ```
 
-*Đây không phải quy trình bắt buộc cứng nhắc:* Khách muốn mua ngay có thể vào thẳng Bán hàng; khách gặp vấn đề bảo hành vào thẳng CSKH.
+Đây không phải chuỗi bắt buộc: khách muốn mua có thể vào thẳng Bán hàng; khách gặp sự cố vào thẳng Chăm sóc.
 
----
+### Ví dụ: chuẩn bị kết nối khi sang Đài Loan
 
-## 3. Khác biệt đáng thử & Khung bảo vệ kinh tế
+1. Tìm hiểu người chuẩn bị đi cần kết nối khi nào và đang vướng điều gì.
+2. Xem trung tâm học tiếng, đơn vị du học hoặc đối tác phù hợp có thể giúp giới thiệu giải pháp không.
+3. Đối tác cung cấp đường dẫn để khách tự xem và tự đăng ký; không chuyển danh sách học viên tùy tiện.
+4. AI hỏi nơi đến, thời gian dùng, thiết bị và nhu cầu dữ liệu, rồi tra sản phẩm được duyệt.
+5. Chỉ hứa khả năng kích hoạt hoặc dùng ngay khi có căn cứ từ nhà cung cấp.
+6. Sau mua, hỗ trợ kích hoạt; ghi nhận vấn đề để cải thiện nội dung và lựa chọn sản phẩm.
 
-| Ý tưởng kinh doanh thực chiến | Giá trị mong muốn | Giải pháp triển khai & Chốt chặn kỹ thuật |
+Đây là ví dụ vận dụng tài liệu thị trường, **chưa phải quyết định chọn ngành SIM**. Thứ tự học tiếng, xin visa, đặt vé cũng không giống nhau ở mọi người.
+
+## 3. Khác biệt đáng thử
+
+| Ý tưởng | Giá trị mong muốn | Cách làm nhỏ trước |
 |---|---|---|
-| **Tiếp cận trước khi nhu cầu đạt đỉnh** | Xuất hiện đúng lúc, giảm phụ thuộc đốt tiền quảng cáo | Nhân viên duyệt danh sách đối tác giới thiệu và bản đồ nhu cầu; chỉ gửi link khi khách chủ động bấm xem. |
-| **Giải thích thông số bằng tiếng đời thường** | Giúp khách hiểu ngay, không bị ngợp thông tin | Viết sẵn nội dung chuẩn vào kho tri thức (`/product/products.md`), cấm AI tự chém gió sai sự thật. |
-| **Chọn nhanh bằng 3 câu hỏi trắc nghiệm** | Giảm gõ phím trên điện thoại, tăng tỷ lệ mua | Hỏi nhanh: Nhu cầu là gì? Dùng ở đâu? Tầm ngân sách bao nhiêu? Cho phép bấm "Bỏ qua". |
-| **Gợi ý “chưa cần mua món đắt hơn”** | Tạo dựng niềm tin tuyệt đối, giảm tỷ lệ đổi trả | Ưu tiên phương án vừa đủ dùng; chỉ gợi ý nâng cấp khi có bằng chứng tương thích rõ ràng. |
-| **Ưu đãi có giới hạn kinh tế & Khóa giá sàn** | Khách được giảm giá thực tế mà công ty không bị lỗ | **Thuật toán Khóa Giá Sàn Toán Học ($P_{floor}$):**<br>$$P_{floor} = \max\left(\frac{\text{Giá\_vốn} + \text{Lãi\_tối\_thiểu}}{1 - \text{Phí\_thanh\_toán}}, P_{base} - D_{cap}\right)$$Chạy bằng code logic cứng ngoài LLM (Deterministic Engine); phát hành Token giữ giá 10 phút, ngăn chặn 100% việc AI bị hack giá. |
-| **Gợi ý có bằng chứng (7 trường chuẩn)** | Chống ảo giác (Anti-hallucination), minh bạch | Gợi ý sản phẩm bắt buộc đóng gói đủ 7 trường (`FR-SAL-003`): Khách hàng, Sản phẩm, Lý do, Bằng chứng, Điều kiện đủ, Độ tin cậy và Dự phóng kết quả. |
-| **Phản hồi sau mua quay về cải tiến** | Giải quyết tận gốc vấn đề thay vì chỉ đếm số tin | Tự động gom lý do trả hàng, câu hỏi hay gặp để chuyển sang màn hình Quản trị (`SCR-003`). |
+| Tiếp cận trước khi nhu cầu đạt đỉnh | Xuất hiện đúng thời điểm, giảm lệ thuộc quảng cáo | Nhân viên duyệt một bản đồ nhu cầu và một nhóm đối tác |
+| Giải thích thông số bằng ngôn ngữ đời thường | Giúp khách hiểu và chọn đúng | Viết nội dung từ tài liệu đã duyệt, không bịa thời lượng hay hiệu suất |
+| Chọn nhanh bằng vài câu hỏi | Giảm nhập liệu trên điện thoại | Hỏi nhu cầu, điều kiện dùng, tầm giá; cho phép bỏ qua |
+| Gợi ý “chưa cần mua đắt hơn” | Tăng độ tin cậy, giảm mua sai | Nêu phương án đủ dùng hoặc giữ sản phẩm cũ nếu có căn cứ |
+| Ưu đãi có giới hạn kinh tế | Chia một phần chi phí thực sự tiết kiệm cho khách | Phép kiểm tra giá/ưu đãi tùy chọn do máy chủ tính theo chính sách được duyệt (tham số do chủ doanh nghiệp phê duyệt, chưa chốt), chạy thử nội bộ trước khi cho AI đàm phán |
+| Bảo vệ giá bằng phiếu mua lần sau | Giảm lo mua hớ và thử khả năng mua lại | Thử có người duyệt, ngân sách và điều kiện rõ ràng |
+| Phản hồi sau mua quay lại nghiên cứu | Sửa vấn đề thật thay vì chỉ tăng lượng tin nhắn | Tổng hợp lý do không mua, đổi trả và câu hỏi lặp lại để người phụ trách xem |
 
----
+Không khẳng định những ý này chưa từng có trên thị trường. Lợi thế cần được chứng minh qua kết quả của doanh nghiệp thử nghiệm.
 
-## 4. Khách hàng và Doanh nghiệp trải nghiệm thế nào?
+## 4. Khách trải nghiệm thế nào? *(theo thiết kế đề xuất, chưa triển khai)*
 
-1. **Giao diện thân quen:** Khách vẫn lướt website hiện tại của doanh nghiệp, không cần tải app mới hay chuyển sang ứng dụng lạ.
-2. **Tôn trọng quyền riêng tư (Taiwan PDPA / Việt Nam):** AI chỉ hỏi những thông tin cần thiết để giải quyết việc trước mắt. Số điện thoại giao hàng **tuyệt đối không tự động biến thành quyền gửi tin rác tiếp thị**.
-3. **Phân định rõ rệt giữa Bằng chứng và Suy đoán (`FR-C360-003`):**  
-   Hệ thống tách biệt rạch ròi:
-   * **FACT (Sự thật):** Dữ liệu thực lấy từ ERP/POS (đã thanh toán chưa, kho còn bao nhiêu).
-   * **SIGNAL (Tín hiệu):** Hành vi xem hàng, thêm vào giỏ.
-   * **HYPOTHESIS (Giả thuyết AI):** Phỏng đoán sở thích (tuyệt đối không được ghi ngược thành Fact).
-4. **Quy tắc Duyệt người thật (Human-in-the-Loop - `AUTH-4`):**  
-   Khi khách yêu cầu hoàn tiền, khiếu nại gay gắt hoặc đề xuất chiết khấu đặc biệt, AI sẽ dừng ngay và bắn thông báo khẩn sang màn hình Điều hành (`SCR-005`) để nhân viên tiếp quản trong vòng $\le 1.0$ giây.
+1. Khách vẫn dùng website quen thuộc; có thể xem và hỏi chung mà không buộc để lại số điện thoại.
+2. AI chỉ hỏi dữ liệu cần cho nhu cầu đang giải quyết. Khi khách đặt giao hàng, thu thông tin giao nhận theo quy trình hiện tại.
+3. Nút trả lời nhanh hoặc phần giải thích sản phẩm giúp giảm gõ. Không bật nhiều cửa sổ cùng lúc.
+4. Giá, tồn kho và chính sách sẽ lấy từ nguồn doanh nghiệp cho phép, chưa phải dữ liệu đã kết nối.
+5. Trong bản đầu, khách thanh toán bằng trang/quy trình có sẵn; AI chưa tự tạo ưu đãi hay giao dịch.
+6. Hỗ trợ riêng về đơn hàng cần xác minh đúng khách. Muốn gặp nhân viên thì được chuyển ngay, không phải trả lời hết bộ câu hỏi.
 
----
+Số điện thoại giao hàng **không tự trở thành quyền gửi quảng cáo**. Khách từ chối nhận tin thì chuỗi liên hệ phù hợp phải dừng.
 
-## 5. Vì sao khách không phải kể lại từ đầu? [OBJ-005, OBJ-006]
+## 5. Vì sao khách không cần kể lại từ đầu? [OBJ-005, OBJ-006] *(theo thiết kế đề xuất, chưa triển khai)*
 
-* **Hồ sơ Customer 360 dùng chung:** Khi khách chat với AI CSKH về đơn hàng, nếu chuyển sang hỏi mua thêm sản phẩm, AI Bán hàng đã nắm sẵn ngữ cảnh (đang quan tâm món gì, vừa giao hàng đến đâu), không bắt khách trả lời lại từ đầu.
-* **Nguyên tắc "Một người phát ngôn":** Tại một thời điểm, chỉ có một bên trao đổi với khách (hoặc AI hoặc nhân viên). Bàn giao phải có tóm tắt nội dung và trạng thái rõ ràng.
-* **Cô lập ngữ cảnh tuyệt đối (NFR-006):** Dữ liệu của Khách A không bao giờ bị lộ sang Khách B; dữ liệu Doanh nghiệp A tuyệt đối không lẫn vào Doanh nghiệp B.
+Theo thiết kế, Customer360 tổng hợp phần thông tin được phép: khách đã hỏi gì, nguồn giới thiệu, sản phẩm quan tâm, đơn hàng đã xác nhận và vấn đề chưa xử lý. Các trường dữ liệu cụ thể sẽ chốt theo nguồn kết nối thực tế, chưa phải danh mục đã triển khai.
 
----
+Mỗi cuộc trao đổi chỉ nên có một bên được phát ngôn tại một thời điểm: một mô-đun hoặc nhân viên. Bàn giao phải có người nhận, tóm tắt và bước tiếp theo. Chưa ai nhận thì hiển thị “đang chờ”, không báo “đã xử lý”.
 
-## 6. Lộ trình triển khai: Làm nhỏ trước, mở rộng sau (Gate P0 đến P3)
+Dữ liệu khách hàng A không được xuất hiện trong ngữ cảnh khách hàng B (**cô lập ngữ cảnh khách hàng — NFR-006**); dữ liệu công ty A không được dùng để trả lời khách công ty B (lớp cô lập đa doanh nghiệp bổ sung). Giá và đơn hàng vẫn thuộc hệ thống gốc; AI không được phép biến câu “tôi đã chuyển khoản” thành giao dịch đã xác nhận.
 
-Thực hiện chuẩn chỉ theo 4 giai đoạn an toàn:
+## 6. Bản đầu làm đến đâu?
 
-| Giai đoạn | Tên cổng | Việc làm ngay (Thực tế, rủi ro thấp) | Kết quả nghiệm thu |
-|:---:|:---|---|---|
-| **P0** | **Nền tảng (Foundation)** | Kết nối API đọc sản phẩm/tồn kho từ ERP/Web có sẵn; cài đặt bộ luật giá sàn $P_{floor}$ và quyền hạn `AUTH-0..5`. | Kết nối thông suốt, dữ liệu đọc chuẩn xác. |
-| **P1** | **Thử nghiệm CSKH (Care Pilot)** | Nhúng khung chat hỗ trợ tra cứu đơn hàng, giải đáp thắc mắc thường gặp 24/7, nút chuyển nhân viên. | Giảm 60-80% khối lượng trực chat ca đêm; rủi ro tài chính = 0. |
-| **P2** | **Thử nghiệm Bán hàng (Sales Pilot)** | Mở tính năng "Tư vấn chọn nhanh", gợi ý combo mua kèm và nhắc giỏ hàng bỏ quên theo hợp đồng 7 trường. | Tăng tỷ lệ hoàn tất đơn hàng, biên lãi an toàn. |
-| **P3** | **Thử nghiệm Tiếp thị (Marketing)** | Tự động tạo nội dung chia sẻ, thu hút khách quan tâm từ mạng xã hội dẫn link về website. | Giảm chi phí quảng cáo (CAC), thêm khách mới. |
+Thứ tự cổng nghiệm thu theo lộ trình: **P0 — Nền tảng (Foundation)** bắt buộc xong trước (hợp đồng dữ liệu chuẩn, Customer360, quyền hạn, chính sách, bằng chứng, nhật ký kiểm toán, khung kết nối); tiếp theo **P1 — Chăm sóc khách hàng (Care)**, rồi **P2 — Bán hàng (Sales)**, sau đó **P3 — Tiếp thị (Marketing)** và các giai đoạn mở rộng P4/P5.
 
----
+| Làm trước | Chờ giai đoạn sau |
+|---|---|
+| **P0 — Nền tảng:** hợp đồng dữ liệu chuẩn, Customer360, quyền hạn, chính sách, bằng chứng và nhật ký kiểm toán | Agent thông minh, tự động hóa nâng cao |
+| **P1 — Chăm sóc khách hàng:** trả lời câu hỏi phổ biến, tra cứu đơn hàng, chuyển nhân viên | Vận chuyển, phiếu bù giá, đổi trả chuyên sâu |
+| **P2 — Bán hàng:** hỏi nhu cầu, tra sản phẩm, giải thích có nguồn | Mặc cả tự động, ưu đãi kết hợp, thanh toán QR mới |
+| Một doanh nghiệp, một hành trình, website hiện có | Nhiều ngành, nhiều kênh và giao diện nhúng đầy đủ |
+| Hồ sơ khách hợp nhất, quyền riêng, nhật ký, báo cáo | Nhiều kênh, trình kéo-thả quy trình và tự động hóa nâng cao |
+| Chỉ phản hồi theo yêu cầu khách chủ động; chưa chạy chuỗi nhắc tiếp thị ở P1 | Chuỗi nhắc/nuôi dưỡng Tiếp thị theo chiến dịch (P3); số lần nhắc do cấu hình tenant khóa, ví dụ “hai tin” chỉ là minh họa |
+| Nghiên cứu thị trường thủ công có AI hỗ trợ soạn nháp | Tự động tìm kiếm và quản lý mạng lưới đối tác |
 
-## 7. Tiêu chuẩn nghiệm thu 10 Điểm Vàng (Definition of Done - DoD)
+Lịch hẹn chỉ thêm nếu doanh nghiệp bán theo lịch tư vấn. LINE, Zalo và các kênh khác cần chọn, kiểm tra kết nối riêng; không bắt buộc đồng thời.
 
-Dự án tuyệt đối không được coi là xong chỉ vì "con bot biết nói chuyện qua lại". Một tính năng chỉ được bàn giao khi đạt chuẩn **10 Tiêu chuẩn Vàng**:
+## 7. Đánh giá thành công bằng gì? [OBJ-006]
 
-$$\textbf{Data thật} + \textbf{Agent thật} + \textbf{Skill thật} + \textbf{Tool thật} + \textbf{Policy thật} + \textbf{Approval thật} + \textbf{Execution thật} + \textbf{Evidence thật} + \textbf{Outcome thật} + \textbf{Test thật}$$
+Không chỉ nhìn số tin nhắn hoặc số đơn. Theo dõi khách chọn đúng hơn không, có người nhận bàn giao không, chi phí phục vụ có giảm không và **lãi đóng góp sau chi phí có tốt hơn không**.
 
-* **Thước đo cốt lõi:** Không chỉ đo số lượt nhắn tin, mà đo trực tiếp: **Khách có chọn đúng sản phẩm không? Tỷ lệ chuyển đổi đơn có tăng không? Chi phí vận hành có giảm không? Và biên lãi ròng thực thu có được bảo vệ 100% không?**
+Khi chưa kết nối được đơn hàng hoặc chi phí, báo “chưa có dữ liệu”, không ghi bằng 0. Giao dịch có AI tham gia không tự chứng minh AI tạo thêm doanh thu; cần phép thử phù hợp.
 
----
-*Hồ sơ kỹ thuật chi tiết: Xem thêm tại [Kế hoạch triển khai tổng thể](../KE_HOACH_TRIEN_KHAI_HE_THONG_AI_AGENT_SRS_001.md) và [Báo cáo gửi Sếp](../BAO_CAO_TONG_QUAN_CHO_SEP_AI_BRIEF.md).*
+**Bước tiếp theo, khoảng 2 phút:** ghi tên doanh nghiệp và website thử nghiệm vào [phiếu đầu vào](delivery/mvp-and-roadmap.md#pilot-inputs).
