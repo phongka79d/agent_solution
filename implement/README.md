@@ -50,7 +50,7 @@ The platform design bridges probabilistic Large Language Models (LLMs) with dete
 
 ## 3. Implementation Blueprint Table of Contents
 
-These 13 documents are the target implementation blueprint set for the platform, located in `implement/`. Every one of them is a **target blueprint/specification for a system that has not been built or deployed**; none reports implemented code, measured results, or production state.
+These 15 documents are the target implementation blueprint set for the platform, located in `implement/`. Every one of them is a **target blueprint/specification for a system that has not been built or deployed**; none reports implemented code, measured results, or production state.
 
 | File | Document Title | Document Nature | Primary Scope & Contents |
 |---|---|---|---|
@@ -67,6 +67,8 @@ These 13 documents are the target implementation blueprint set for the platform,
 | [**11-pricing-policy-engine.md**](./11-pricing-policy-engine.md) | **Pricing Policy Engine & Promotion Governance** | Target blueprint/specification - not deployed | Price floor evaluation, approval routing, promotion lifecycle, pricing rule engine separation from AI recommendation layer, auditability of pricing decisions. |
 | [**12-identity-consent-lifecycle.md**](./12-identity-consent-lifecycle.md) | **Identity Verification, Consent Lifecycle & Access Boundaries** | Target blueprint/specification - not deployed | Verified identity rules, single-customer session confinement, channel-specific consent lifecycle, and fail-closed privacy protections. |
 | [**13-approval-readiness-and-governance-gates.md**](./13-approval-readiness-and-governance-gates.md) | **Approval Readiness & Governance Gates** | Target blueprint/specification - not deployed | Governance gate model, approval queue design, human sign-off responsibilities, audit evidence, fail-safe and rollback requirements before operation. |
+| [**14-incident-response-and-operational-runbook.md**](./14-incident-response-and-operational-runbook.md) | **Incident Response & Operational Runbook** | Target blueprint/specification - not deployed | Incident severity, containment modes, safe shutdown, rollback limits, operational roles, recovery evidence, and return-to-service gates. |
+| [**15-mvp-v1-scope-and-release-strategy.md**](./15-mvp-v1-scope-and-release-strategy.md) | **MVP v1 Scope & Release Strategy** | Target blueprint/specification - not deployed | Bounded supervised MVP, explicit out-of-scope controls, staged release path, exit criteria, and expansion approval rules. |
 
 ---
 
@@ -103,12 +105,17 @@ Step 6: Approval Readiness & Governance Gate Review (13-approval-readiness-and-g
    ├── Validate policy, privacy, and technical safety gate criteria
    └── Require human sign-off before any material operational action is allowed
 
-Step 7: Core Engine, Policy, & Adapter Deployment (04, 05, 06)
+Step 7: MVP Scope & Incident Readiness Review (14-incident-response-and-operational-runbook.md, 15-mvp-v1-scope-and-release-strategy.md)
+   ├── Freeze the supervised MVP boundary and explicit out-of-scope items
+   ├── Define incident severity, containment, rollback, and return-to-service rules
+   └── Approve offline contract validation before any sandbox or live connector work
+
+Step 8: Core Engine, Policy, & Adapter Deployment (04, 05, 06)
    ├── Deploy Temporal workflows and Skill contracts
    ├── Configure authority limits and Price Floor inputs from the tenant's owner-approved ERP/SoR policy values ([UNCONFIRMED][ASM-003/004])
    └── Bind communication adapters (API-003 baseline channels plus ASM-001-gated extensions) and integration adapters (ERP API-001, Event API-002)
 
-Step 8: Frontend & Observability Verification (07, 08, 09)
+Step 9: Frontend & Observability Verification (07, 08, 09)
    ├── Launch Next.js Command Center and compile Storefront Widget
    ├── Execute automated test suites (TC-E2E-001..009 and TC-DATA-001..005)
    └── Validate OTel token metering and fail-closed circuits in staging

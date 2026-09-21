@@ -1,5 +1,7 @@
 # AgentOS Customer360 — Bộ 3 Trợ Lý AI Thương Mại Điện Tử Toàn Diện
 
+> **Báo cáo đọc chính:** [BAO_CAO_TRANG_THAI_DU_AN.md](BAO_CAO_TRANG_THAI_DU_AN.md) - hiện trạng, luồng xử lý, vấn đề, phương án, hành động và kết quả theo từng môi trường.
+
 ## Tóm Tắt Dự Án (Executive Summary)
 
 AgentOS Customer360 là giải pháp phần mềm B2B SaaS cung cấp bộ 3 trợ lý trí tuệ nhân tạo (AI Agents) chuyên biệt cho doanh nghiệp thương mại điện tử (E-Commerce):
@@ -19,6 +21,7 @@ Hệ thống được thiết kế theo kiến trúc đa người dùng (Multi-t
 agent_solution/
 ├── README.md                                  # Trang chủ điều hướng tổng thể dự án
 ├── PLAN.md                                    # Chỉ mục chuyển tiếp kế hoạch gốc
+├── BAO_CAO_TRANG_THAI_DU_AN.md                # Báo cáo trạng thái chính, cập nhật theo kết quả mới
 ├── De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md  # Đề bài gốc SRS v0.1 (AI-REV-SRS-001)
 ├── AGENT_NGIEN_CUU_THI_TRUONG.md               # Chỉ dẫn nhiệm vụ agent nghiên cứu thị trường
 ├── BAO_CAO_DE_AN_AI_ECOMMERCE_3_MODULE.pdf    # Báo cáo đề án tổng quan (bản PDF in 6 trang)
