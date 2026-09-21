@@ -50,7 +50,7 @@ The platform design bridges probabilistic Large Language Models (LLMs) with dete
 
 ## 3. Implementation Blueprint Table of Contents
 
-These 9 documents are the target implementation blueprint set for the platform, located in `implement/`. Every one of them is a **target blueprint/specification for a system that has not been built or deployed**; none reports implemented code, measured results, or production state.
+These 13 documents are the target implementation blueprint set for the platform, located in `implement/`. Every one of them is a **target blueprint/specification for a system that has not been built or deployed**; none reports implemented code, measured results, or production state.
 
 | File | Document Title | Document Nature | Primary Scope & Contents |
 |---|---|---|---|
@@ -63,6 +63,10 @@ These 9 documents are the target implementation blueprint set for the platform, 
 | [**07-human-command-center-ui.md**](./07-human-command-center-ui.md) | **Human Command Center UI & Storefront Widget** | Target blueprint/specification - not deployed | Next.js 14 Command Center implementation (SCR-001..005), SSE real-time streaming, and the standalone < 20 KB Vanilla TypeScript Web Component widget. |
 | [**08-security-governance-nfr.md**](./08-security-governance-nfr.md) | **Security, Governance & NFR Engine** | Target blueprint/specification - not deployed | Policy Enforcement Point (PEP), Authority Model (AUTH-0..5), 10 Business Rules (BR-001..010), prompt injection defense, and audit evidence logging. |
 | [**09-sprint-roadmap-and-pilots.md**](./09-sprint-roadmap-and-pilots.md) | **Sprint Roadmap, Pilots & CI/CD** | Target blueprint/specification - not deployed | 24-week engineering roadmap across 6 technical gates (P0 to P5), pilot acceptance test harnesses (TC-E2E-001..009), and CI/CD automation pipelines. |
+| [**10-data-sovereignty-and-source-of-truth.md**](./10-data-sovereignty-and-source-of-truth.md) | **Data Sovereignty & Source-of-Truth** | Target blueprint/specification - not deployed | Canonical ownership model, SoR vs mirror vs derived data classification, provenance rules, customer and tenant isolation, fail-closed data access policy. |
+| [**11-pricing-policy-engine.md**](./11-pricing-policy-engine.md) | **Pricing Policy Engine & Promotion Governance** | Target blueprint/specification - not deployed | Price floor evaluation, approval routing, promotion lifecycle, pricing rule engine separation from AI recommendation layer, auditability of pricing decisions. |
+| [**12-identity-consent-lifecycle.md**](./12-identity-consent-lifecycle.md) | **Identity Verification, Consent Lifecycle & Access Boundaries** | Target blueprint/specification - not deployed | Verified identity rules, single-customer session confinement, channel-specific consent lifecycle, and fail-closed privacy protections. |
+| [**13-approval-readiness-and-governance-gates.md**](./13-approval-readiness-and-governance-gates.md) | **Approval Readiness & Governance Gates** | Target blueprint/specification - not deployed | Governance gate model, approval queue design, human sign-off responsibilities, audit evidence, fail-safe and rollback requirements before operation. |
 
 ---
 
@@ -79,17 +83,32 @@ Step 2: Workspace Setup (02-project-structure.md)
    ├── Initialize pnpm workspace with Turborepo
    └── Link packages (@agentos/database, @agentos/core-engine, @agentos/skills, @agentos/adapters)
 
-Step 3: Database & Knowledge Ingestion (03-database-and-memory-schema.md)
+Step 3: Data Governance Foundations (10-data-sovereignty-and-source-of-truth.md)
+   ├── Define SoR, mirror, derived, and cache boundaries
+   ├── Assign data ownership and provenance metadata
+   └── Set customer/tenant fail-closed access rules before any runtime feature is built
+
+Step 4: Database & Knowledge Ingestion (03-database-and-memory-schema.md)
    ├── Run PostgreSQL migrations for 28 canonical entities & activate RLS policies
    ├── Configure Redis memory policies and TTL constraints
    └── Initialize Qdrant vector collections for the 8 Second Brain namespaces
 
-Step 4: Core Engine, Policy, & Adapter Deployment (04, 05, 06)
+Step 5: Pricing Policy & Customer Consent Controls (11-pricing-policy-engine.md, 12-identity-consent-lifecycle.md)
+   ├── Separate AI recommendation from pricing approval and execution
+   ├── Enforce customer verification and channel-specific consent gating
+   └── Route policy breaches to SCR-003 approval instead of silent execution
+
+Step 6: Approval Readiness & Governance Gate Review (13-approval-readiness-and-governance-gates.md)
+   ├── Confirm business owners, roles, and approval responsibilities
+   ├── Validate policy, privacy, and technical safety gate criteria
+   └── Require human sign-off before any material operational action is allowed
+
+Step 7: Core Engine, Policy, & Adapter Deployment (04, 05, 06)
    ├── Deploy Temporal workflows and Skill contracts
    ├── Configure authority limits and Price Floor inputs from the tenant's owner-approved ERP/SoR policy values ([UNCONFIRMED][ASM-003/004])
    └── Bind communication adapters (API-003 baseline channels plus ASM-001-gated extensions) and integration adapters (ERP API-001, Event API-002)
 
-Step 5: Frontend & Observability Verification (07, 08, 09)
+Step 8: Frontend & Observability Verification (07, 08, 09)
    ├── Launch Next.js Command Center and compile Storefront Widget
    ├── Execute automated test suites (TC-E2E-001..009 and TC-DATA-001..005)
    └── Validate OTel token metering and fail-closed circuits in staging
