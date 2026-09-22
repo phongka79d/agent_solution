@@ -38,3 +38,10 @@ EXPOSE 3000
 USER node
 
 CMD ["node", "apps/command-center/server.js"]
+FROM node:20-alpine
+WORKDIR /app
+COPY packages/core-engine/src/config/env.validator.mjs ./packages/core-engine/src/config/env.validator.mjs
+COPY apps/command-center/src ./apps/command-center/src
+USER node
+EXPOSE 3000
+CMD ["node", "apps/command-center/src/server.mjs"]
