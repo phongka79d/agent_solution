@@ -1,0 +1,8 @@
+FROM node:20-alpine
+WORKDIR /app
+COPY packages/core-engine/src/config ./packages/core-engine/src/config
+COPY apps/api/src ./apps/api/src
+COPY apps/worker/src ./apps/worker/src
+USER node
+EXPOSE 4001
+CMD ["node", "apps/worker/src/server.mjs"]

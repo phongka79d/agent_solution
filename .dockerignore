@@ -1,0 +1,11 @@
+.git
+.env
+*.md
+testcases
+presentation
+plans
+reports
+research
+**/test
+**/*.test.mjs
+.tmp-exitprobe

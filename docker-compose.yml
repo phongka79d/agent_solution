@@ -1,0 +1,300 @@
+# Local/CI topology only. Do not use this file for staging, sandbox, or production.
+# Copy .env.example to .env before `docker compose up`, or pass `--env-file .env.example`
+# for a placeholder local boot. Required secrets use ${VAR:?} so an empty value fails
+# closed. mock-erp is labeled local-ci-only and exits unless APP_ENV is local or ci.
+# The command-center service has no database, cache, vector, or ERP credential.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: agentos-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-agentos_dev}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      PGDATA: ${PGDATA:-/var/lib/postgresql/data/pgdata}
+      POSTGRES_ENV: ${POSTGRES_ENV:-local}
+      APP_ROLE_PASSWORD: ${APP_ROLE_PASSWORD:?APP_ROLE_PASSWORD is required}
+      MIGRATOR_ROLE_PASSWORD: ${MIGRATOR_ROLE_PASSWORD:?MIGRATOR_ROLE_PASSWORD is required}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./docker/postgres/init-roles.sh:/docker-entrypoint-initdb.d/02-roles.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-agentos_dev}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - agentos-network
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: agentos-redis
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+    command:
+      - redis-server
+      - --requirepass
+      - ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      - --maxmemory
+      - 512mb
+      - --maxmemory-policy
+      - volatile-lru
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - agentos-network
+
+  qdrant:
+    image: qdrant/qdrant:v1.9.2
+    container_name: agentos-qdrant
+    restart: unless-stopped
+    ports:
+      - "${QDRANT__SERVICE__HTTP_PORT:-6333}:6333"
+      - "${QDRANT__SERVICE__GRPC_PORT:-6334}:6334"
+    environment:
+      QDRANT__SERVICE__HTTP_PORT: 6333
+      QDRANT__SERVICE__GRPC_PORT: 6334
+      QDRANT__SERVICE__ENABLE_CORS: "true"
+      QDRANT__SERVICE__API_KEY: ${QDRANT__SERVICE__API_KEY:?QDRANT__SERVICE__API_KEY is required}
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333 && printf "GET /healthz HTTP/1.0\r\n\r\n" >&3 && grep -q "200" <&3'
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - agentos-network
+
+  mock-erp:
+    build:
+      context: ./services/mock-erp
+      dockerfile: Dockerfile
+    container_name: agentos-mock-erp
+    restart: unless-stopped
+    labels:
+      agentos.deploy: local-ci-only
+    ports:
+      - "${MOCK_ERP_PORT:-8081}:8081"
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      PORT: 8081
+      MOCK_SECRET_KEY: ${MOCK_SECRET_KEY:?MOCK_SECRET_KEY is required}
+      SIMULATE_LATENCY_MS: ${SIMULATE_LATENCY_MS:-50}
+      SIMULATE_FAILURE_RATE: ${SIMULATE_FAILURE_RATE:-0.0}
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:8081/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - agentos-network
+
+  temporal:
+    profiles: ["workflows"]
+    image: temporalio/auto-setup:1.23.0
+    container_name: agentos-temporal
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB: postgresql
+      DB_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PWD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_SEEDS: postgres
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
+    ports:
+      - "7233:7233"
+    networks:
+      - agentos-network
+
+  temporal-ui:
+    profiles: ["workflows"]
+    image: temporalio/ui:2.26.2
+    container_name: agentos-temporal-ui
+    restart: unless-stopped
+    depends_on:
+      - temporal
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: ${TEMPORAL_CORS_ORIGINS:-http://localhost:3000}
+    ports:
+      - "8080:8080"
+    networks:
+      - agentos-network
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    container_name: agentos-api
+    restart: unless-stopped
+    ports:
+      - "${PORT:-4000}:4000"
+    environment:
+      NODE_ENV: ${NODE_ENV:?NODE_ENV is required}
+      APP_ENV: ${APP_ENV:?APP_ENV is required}
+      PORT: 4000
+      SERVICE_NAME: ${SERVICE_NAME:-agentos-api}
+      API_BASE_URL: ${API_BASE_URL:?API_BASE_URL is required}
+      WEB_BASE_URL: ${WEB_BASE_URL:?WEB_BASE_URL is required}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?CORS_ALLOWED_ORIGINS is required}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: postgresql://agentos_app:${APP_ROLE_PASSWORD:?APP_ROLE_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-agentos_dev}?schema=agentos
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY:?QDRANT_API_KEY is required}
+      MOCK_ERP_ENABLED: ${MOCK_ERP_ENABLED:-true}
+      ERP_API_BASE_URL: http://mock-erp:8081/api/v1
+      EVENT_INGESTION_BASE_URL: http://mock-erp:8081/events/v1
+      EVENT_INGESTION_HMAC_SECRET: ${EVENT_INGESTION_HMAC_SECRET:?EVENT_INGESTION_HMAC_SECRET is required}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
+      WEBHOOK_HMAC_SECRET: ${WEBHOOK_HMAC_SECRET:?WEBHOOK_HMAC_SECRET is required}
+      AUDIT_HMAC_SECRET: ${AUDIT_HMAC_SECRET:?AUDIT_HMAC_SECRET is required}
+      ENCRYPTION_KEY_AES256: ${ENCRYPTION_KEY_AES256:?ENCRYPTION_KEY_AES256 is required}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY is required}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      mock-erp:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:4000/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - agentos-network
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    container_name: agentos-worker
+    restart: unless-stopped
+    environment:
+      NODE_ENV: ${NODE_ENV:?NODE_ENV is required}
+      APP_ENV: ${APP_ENV:?APP_ENV is required}
+      WORKER_HEALTH_PORT: ${WORKER_HEALTH_PORT:-4001}
+      SERVICE_NAME: agentos-worker
+      API_BASE_URL: ${API_BASE_URL:?API_BASE_URL is required}
+      WEB_BASE_URL: ${WEB_BASE_URL:?WEB_BASE_URL is required}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?CORS_ALLOWED_ORIGINS is required}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: postgresql://agentos_app:${APP_ROLE_PASSWORD:?APP_ROLE_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-agentos_dev}?schema=agentos
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY:?QDRANT_API_KEY is required}
+      MOCK_ERP_ENABLED: ${MOCK_ERP_ENABLED:-true}
+      ERP_API_BASE_URL: http://mock-erp:8081/api/v1
+      EVENT_INGESTION_BASE_URL: http://mock-erp:8081/events/v1
+      EVENT_INGESTION_HMAC_SECRET: ${EVENT_INGESTION_HMAC_SECRET:?EVENT_INGESTION_HMAC_SECRET is required}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
+      WEBHOOK_HMAC_SECRET: ${WEBHOOK_HMAC_SECRET:?WEBHOOK_HMAC_SECRET is required}
+      AUDIT_HMAC_SECRET: ${AUDIT_HMAC_SECRET:?AUDIT_HMAC_SECRET is required}
+      ENCRYPTION_KEY_AES256: ${ENCRYPTION_KEY_AES256:?ENCRYPTION_KEY_AES256 is required}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY is required}
+      # Empty keeps Temporal out of the readiness gate. Set only with --profile workflows.
+      TEMPORAL_ADDRESS: ${TEMPORAL_ADDRESS:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      mock-erp:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:4001/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - agentos-network
+
+  command-center:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.command-center
+    container_name: agentos-command-center
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: ${NODE_ENV:?NODE_ENV is required}
+      APP_ENV: ${APP_ENV:?APP_ENV is required}
+      PORT: 3000
+      NEXTAUTH_URL: ${NEXTAUTH_URL:?NEXTAUTH_URL is required}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?NEXTAUTH_SECRET is required}
+      # Origin only. Browser clients append /api/v1 themselves.
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?NEXT_PUBLIC_API_URL is required}
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3000/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - agentos-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  qdrant_data:
+
+networks:
+  agentos-network:
+    driver: bridge
