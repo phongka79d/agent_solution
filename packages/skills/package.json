@@ -1,0 +1,32 @@
+{
+  "name": "@agentos/skills",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "node ../../scripts/eslint.mjs",
+    "test:unit": "vitest run"
+  },
+  "dependencies": {
+    "@agentos/adapters": "workspace:*",
+    "@agentos/core-engine": "workspace:*",
+    "@agentos/database": "workspace:*"
+  },
+  "devDependencies": {
+    "@agentos/typescript-config": "workspace:*",
+    "@agentos/eslint-config": "workspace:*",
+    "@types/node": "^20.14.0",
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0"
+  }
+}

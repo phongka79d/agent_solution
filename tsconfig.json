@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "files": [],
+  "references": [
+    { "path": "packages/database" },
+    { "path": "packages/second-brain" },
+    { "path": "packages/core-engine" },
+    { "path": "packages/adapters" },
+    { "path": "packages/skills" },
+    { "path": "packages/storefront-widget" },
+    { "path": "apps/api" },
+    { "path": "apps/worker" },
+    { "path": "apps/command-center" }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "name": "@agentos/storefront-widget",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/agent-storefront-widget.iife.js",
+  "files": ["dist"],
+  "scripts": {
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "lint": "node ../../scripts/eslint.mjs",
+    "test:unit": "vitest run"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@agentos/eslint-config": "workspace:*",
+    "@agentos/typescript-config": "workspace:*",
+    "typescript": "^5.4.5",
+    "vite": "^5.2.11",
+    "vitest": "^1.6.0"
+  }
+}
