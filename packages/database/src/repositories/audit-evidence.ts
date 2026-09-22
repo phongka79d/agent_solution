@@ -22,9 +22,10 @@
  *
  *  * **Append-only.** No statement of this module is an `UPDATE` or a `DELETE`; the migration's
  *    `trg_immutable_evidence_records` / `trg_immutable_agent_run_logs` / `trg_immutable_audit_records`
- *    triggers are the outer guarantee (NFR-002, `0001_gate_p0.sql` section 7). A stored record is
- *    therefore never corrected, only detected: the verifiers below recompute every digest and report
- *    the interior tampering and the missing links they find instead of repairing anything.
+ *    triggers are the outer guarantee (NFR-002, the `IMMUTABLE AUDIT TRIGGERS` section of
+ *    `0000_agentos_schema.sql`). A stored record is therefore never corrected, only detected: the
+ *    verifiers below recompute every digest and report the interior tampering and the missing links
+ *    they find instead of repairing anything.
  *  * **Tenant-scoped by construction.** Each call opens exactly one `withTenantContext()`
  *    transaction, so the transaction-local `app.current_tenant_id` binding and the `tenant_id`
  *    predicate always agree and RLS (NFR-006) denies an unbound read or write. Reads are reads of one
