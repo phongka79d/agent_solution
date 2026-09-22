@@ -574,37 +574,65 @@ export class RevenueOrchestrator {
 
       // STEP 9: CHAINED IMMUTABLE EVIDENCE
       this.journal.enter('EVIDENCE');
-      const stepEvidence = await this.dependencies.evidenceLogger.createImmutableRecord({
-        run_id,
-        tenant_id,
-        correlation_id,
-        step_index: step.step_index,
-        effect_key: action.effect_key,
-        previous_evidence_hash: chain.previous,
-        payload: { action, receipt: providerReceipt, replayed },
-      });
-      chain.previous = stepEvidence.chain_hash; // link to the predecessor's chain hash
-      latestEvidence = stepEvidence;
 
-      await this.logRun({
-        tenant_id, run_id, correlation_id, trigger, step, context,
-        startedAt: stepStartedAt, startTime: stepStartTime,
-        execution_status: 'success', authority: action.required_authority,
-        approval: approvalRecord,
-        action, evidence: stepEvidence, error: null,
-        cost: dispatchedReceipt?.token_usage,
-        disposition: 'terminal',
-      });
-
-      if (step.mutating) {
-        // Watch for the asynchronous business outcome (step [10. OUTCOME]). The watcher row is
-        // unique per (tenant_id, effect_key), so a replay is a no-op rather than a second watcher.
-        await this.dependencies.evidenceLogger.initializeOutcomeWatch({
-          tenant_id,
+      // From here a mutating step may ALREADY have applied its external effect: it dispatched just
+      // now, or it replayed the stored receipt of an effect that landed. An evidence or audit write
+      // that fails at this point — the chained record, the run-log/audit row, or the outcome watch
+      // that settles the effect — is therefore a reconciliation obligation, not a terminal failure
+      // (implement/08 §4.3, §7): the attempt identity and the reservation are preserved, no success
+      // is claimed, no blind retry follows, and the task is parked under the SAME `effect_key`. A
+      // read-only step has no external effect, so its write failure keeps the existing behaviour.
+      const effectMayHaveLanded = step.mutating && (replayed || dispatchedReceipt !== null);
+      try {
+        const stepEvidence = await this.dependencies.evidenceLogger.createImmutableRecord({
           run_id,
+          tenant_id,
+          correlation_id,
+          step_index: step.step_index,
           effect_key: action.effect_key,
-          skill_id: action.skill_id,
+          previous_evidence_hash: chain.previous,
+          payload: { action, receipt: providerReceipt, replayed },
         });
+        chain.previous = stepEvidence.chain_hash; // link to the predecessor's chain hash
+        latestEvidence = stepEvidence;
+
+        await this.logRun({
+          tenant_id, run_id, correlation_id, trigger, step, context,
+          startedAt: stepStartedAt, startTime: stepStartTime,
+          execution_status: 'success', authority: action.required_authority,
+          approval: approvalRecord,
+          action, evidence: stepEvidence, error: null,
+          cost: dispatchedReceipt?.token_usage,
+          disposition: 'terminal',
+        });
+
+        if (step.mutating) {
+          // Watch for the asynchronous business outcome (step [10. OUTCOME]). The watcher row is
+          // unique per (tenant_id, effect_key), so a replay is a no-op rather than a second watcher.
+          await this.dependencies.evidenceLogger.initializeOutcomeWatch({
+            tenant_id,
+            run_id,
+            effect_key: action.effect_key,
+            skill_id: action.skill_id,
+          });
+        }
+      } catch (error) {
+        // A read-only step dispatched nothing effect-bearing, so there is nothing to reconcile and
+        // the failure keeps its existing classification.
+        if (!effectMayHaveLanded) {
+          throw error;
+        }
+        const reconcileReason = `EVIDENCE_RECONCILE_REQUIRED: ${String(this.serializeError(error).code)} after a possible effect on ${action.effect_key}; the evidence/audit trail is incomplete and must be reconciled by effect_key before any retry (§08 §4.3, §7).`;
+        await this.parkTask({
+          tenant_id, run_id, reason: reconcileReason, plan, current_step: step.step_index,
+          pending_action: action, context, previous_evidence_hash: chain.previous, request_id,
+        });
+        return {
+          lifecycle_state: 'waiting',
+          ...outcomeFields({
+            message: `Step ${step.step_index} effect ${action.effect_key} may already have landed but its evidence/audit trail is incomplete; no success is claimed and the run must be reconciled by effect_key.`,
+          }),
+        };
       }
     }
 
@@ -728,6 +756,28 @@ export class RevenueOrchestrator {
           const eligibility = await this.dependencies.policyEngine.evaluateAuthority(candidate, checkpoint.context);
           if (eligibility.verdict === 'DENIED') {
             throw new OrchestratorError('AUTHORITY_DENIED', eligibility.reason);
+          }
+          // SCR-005, re-read on resume (implement/08 §1.2): a release is the one decision that
+          // opens a dispatch, so the live takeover state is read BEFORE the single-use claim. The
+          // claim is irreversible and an approval authorizes exactly one execution, so consuming
+          // the row for an action no operator may dispatch would destroy the run's only resume
+          // authority and let a stale approval outlive the takeover it was decided under. The
+          // refusal therefore precedes the claim and leaves the row PENDING.
+          //
+          // Only the dispatch-opening path is guarded. REJECTED, CANCELLED and PAUSE open no
+          // dispatch and keep their existing behaviour: a phase-out decision must stay available
+          // while an operator holds the lock, otherwise the lock would freeze the queue it exists
+          // to protect.
+          if (
+            await this.dependencies.sessionControl.isTakenOver(
+              resumeEvent.tenant_id,
+              checkpoint.context.working_memory.session_id
+            )
+          ) {
+            throw new OrchestratorError(
+              'HUMAN_TAKEOVER',
+              'An operator holds the SCR-005 session lock; the approval stays PENDING and no dispatch may follow.'
+            );
           }
         }
         // Lock current task/action/approval; check the reviewed digest and operator; atomically

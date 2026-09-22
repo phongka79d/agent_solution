@@ -513,6 +513,7 @@ CREATE TABLE actions (
     decision_id UUID REFERENCES decisions(id) ON DELETE CASCADE,
     skill_name VARCHAR(64) NOT NULL,
     effect_key VARCHAR(128) NOT NULL,
+    action_revision INT NOT NULL DEFAULT 1 CHECK (action_revision >= 1),
     target_channel VARCHAR(32) NOT NULL,
     action_payload JSONB NOT NULL,
     status VARCHAR(32) NOT NULL DEFAULT 'pending', -- 'pending', 'authorized', 'dispatched', 'failed'
