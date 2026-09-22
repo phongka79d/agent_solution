@@ -428,6 +428,16 @@ export function parseEnvironment(env = process.env, options = {}) {
   // ---- vector store -------------------------------------------------------------
   const qdrantUrl = urlField(add, read, 'QDRANT_URL');
   const qdrantApiKey = stringField(add, read, 'QDRANT_API_KEY', 1);
+  // Compose renders one key into both names; the Qdrant service and the gateway would
+  // authenticate with different keys if the two ever diverged, so the boot is refused instead of
+  // picking one. The message names both variables and echoes neither value.
+  const qdrantServiceApiKey = read('QDRANT__SERVICE__API_KEY');
+  if (qdrantServiceApiKey !== undefined && qdrantServiceApiKey !== '' && qdrantServiceApiKey !== qdrantApiKey) {
+    const message =
+      'QDRANT__SERVICE__API_KEY and QDRANT_API_KEY must carry the same key: render one value into both names, or leave QDRANT__SERVICE__API_KEY unset. Neither value is reported here.';
+    add('QDRANT__SERVICE__API_KEY', message);
+    add('QDRANT_API_KEY', message);
+  }
   const embeddingDimensions = intField(add, read, 'EMBEDDING_DIMENSIONS', 1536, {
     min: 1,
     description: 'a positive integer',

@@ -24,6 +24,9 @@ RUN pnpm install --frozen-lockfile \
 FROM node:20-bookworm-slim AS runtime
 
 ENV NODE_ENV=production
+# The Next 14 standalone server binds HOSTNAME:PORT, so both are pinned for the
+# in-container healthcheck on 127.0.0.1:3000.
+ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
 
 WORKDIR /app
@@ -38,10 +41,3 @@ EXPOSE 3000
 USER node
 
 CMD ["node", "apps/command-center/server.js"]
-FROM node:20-alpine
-WORKDIR /app
-COPY packages/core-engine/src/config/env.validator.mjs ./packages/core-engine/src/config/env.validator.mjs
-COPY apps/command-center/src ./apps/command-center/src
-USER node
-EXPOSE 3000
-CMD ["node", "apps/command-center/src/server.mjs"]

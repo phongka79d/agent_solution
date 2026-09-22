@@ -20,7 +20,7 @@
     "dev": "tsc --project tsconfig.build.json --watch",
     "typecheck": "tsc --noEmit",
     "lint": "node ../../scripts/eslint.mjs",
-    "test:unit": "vitest run"
+    "test:unit": "vitest run src && node --test test/env.validator.test.mjs test/readiness.test.mjs"
   },
   "dependencies": {
     "@agentos/database": "workspace:*",

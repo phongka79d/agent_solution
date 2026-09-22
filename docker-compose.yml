@@ -4,6 +4,12 @@
 # closed. mock-erp is labeled local-ci-only and exits unless APP_ENV is local or ci.
 # The command-center service has no database, cache, vector, or ERP credential.
 
+# Single source for the Qdrant API key. `QDRANT_API_KEY` is the only variable a
+# caller sets: the qdrant service's own key and both clients alias this one
+# anchored value, and QDRANT__SERVICE__API_KEY is never interpolated apart from
+# it. The validator refuses a startup where the two are set to different values.
+x-qdrant-api-key: &qdrant-api-key ${QDRANT_API_KEY:?QDRANT_API_KEY is required}
+
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -73,7 +79,7 @@ services:
       QDRANT__SERVICE__HTTP_PORT: 6333
       QDRANT__SERVICE__GRPC_PORT: 6334
       QDRANT__SERVICE__ENABLE_CORS: "true"
-      QDRANT__SERVICE__API_KEY: ${QDRANT__SERVICE__API_KEY:?QDRANT__SERVICE__API_KEY is required}
+      QDRANT__SERVICE__API_KEY: *qdrant-api-key
     volumes:
       - qdrant_data:/qdrant/storage
     healthcheck:
@@ -171,7 +177,10 @@ services:
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
       QDRANT_URL: http://qdrant:6333
-      QDRANT_API_KEY: ${QDRANT_API_KEY:?QDRANT_API_KEY is required}
+      QDRANT_API_KEY: *qdrant-api-key
+      # Same anchored value as the qdrant service, so the process-level equality
+      # check in the env validator sees one key instead of two.
+      QDRANT__SERVICE__API_KEY: *qdrant-api-key
       MOCK_ERP_ENABLED: ${MOCK_ERP_ENABLED:-true}
       ERP_API_BASE_URL: http://mock-erp:8081/api/v1
       EVENT_INGESTION_BASE_URL: http://mock-erp:8081/events/v1
@@ -224,7 +233,10 @@ services:
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
       QDRANT_URL: http://qdrant:6333
-      QDRANT_API_KEY: ${QDRANT_API_KEY:?QDRANT_API_KEY is required}
+      QDRANT_API_KEY: *qdrant-api-key
+      # Same anchored value as the qdrant service, so the process-level equality
+      # check in the env validator sees one key instead of two.
+      QDRANT__SERVICE__API_KEY: *qdrant-api-key
       MOCK_ERP_ENABLED: ${MOCK_ERP_ENABLED:-true}
       ERP_API_BASE_URL: http://mock-erp:8081/api/v1
       EVENT_INGESTION_BASE_URL: http://mock-erp:8081/events/v1
