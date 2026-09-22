@@ -32,3 +32,6 @@ export {
   SECOND_BRAIN_COLLECTION,
 } from './memory/qdrant.js';
 export type * from './contracts/index.js';
+
+/** Durable PostgreSQL repositories and their structural ports. */
+export * from './repositories/index.js';

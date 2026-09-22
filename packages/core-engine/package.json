@@ -20,7 +20,10 @@
     "dev": "tsc --project tsconfig.build.json --watch",
     "typecheck": "tsc --noEmit",
     "lint": "node ../../scripts/eslint.mjs",
-    "test:unit": "vitest run src && node --test test/env.validator.test.mjs test/readiness.test.mjs"
+    "test:unit": "vitest run src && node --test test/env.validator.test.mjs test/readiness.test.mjs",
+    "test:contracts": "vitest run --config vitest.contracts.config.ts",
+    "test:adversarial": "vitest run --config vitest.adversarial.config.ts",
+    "test:security": "vitest run --config vitest.security.config.ts"
   },
   "dependencies": {
     "@agentos/database": "workspace:*",

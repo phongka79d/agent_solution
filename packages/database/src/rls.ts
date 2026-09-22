@@ -82,7 +82,6 @@ export async function withTenantContext<T>(
     } catch {
       // Surface the original failure: a broken connection must not mask its cause.
     }
-
     throw error;
   } finally {
     await clearSessionTenantContext(client);

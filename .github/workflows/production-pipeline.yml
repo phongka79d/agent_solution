@@ -1,0 +1,217 @@
+# Gate P0 CI pipeline (implement/09 §4). Every gate below is fail-closed:
+# `scripts/require-implemented-tasks.mjs` checks the Turborepo task graph first
+# and refuses a task that no workspace package implements, because `turbo run`
+# exits 0 with "0 total" for a declared-but-unimplemented task. A green run
+# therefore means each named suite actually executed.
+#
+# The suite tasks are implemented by workspace packages, each with its own vitest
+# config, and never by an empty wrapper script:
+#   test:contracts    packages/core-engine  (vitest.contracts.config.ts)
+#   test:adversarial  packages/core-engine  (vitest.adversarial.config.ts)
+#                     packages/database     (vitest.adversarial.config.ts)
+#   test:security     packages/core-engine  (vitest.security.config.ts)
+#                     packages/database     (vitest.security.config.ts)
+# Every one of them is offline (no PostgreSQL, no Redis, no network), so this
+# pipeline needs no service for them; the live half of the durable invariants is
+# job 3 (`pnpm test:rls-policies`) and, for the gate's own evidence, the
+# gate-environment rehearsal. A green suite here proves the named offline cases
+# ran — it does not close a durability item that needs the real durable store.
+#
+# `test:pilots` and `test:e2e` stay declared in `turbo.json` for the later gates
+# (implement/09 §8) but no workspace package implements them and this pipeline
+# never invokes them: a job that ran an empty pilot/e2e suite would report a gate
+# that the repository cannot yet evidence. The suite tasks above run offline,
+# unit-level evidence only, and are named for exactly what they execute.
+#
+# Nothing in this pipeline publishes: `permissions` is read-only, and the Docker
+# job only builds images into the local daemon, inspects them, boots the Compose
+# stack for its health gates, and tears its own project down.
+name: Production Quality and Verification Pipeline
+
+on:
+  push:
+    branches: [main, 'release/*']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static-analysis:
+    name: 1. Static Analysis and Type Checking
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      # No `version` input: the workspace pins pnpm in `packageManager`
+      # (`pnpm@9.1.0`), and an explicit version that disagrees with that pin is
+      # refused by the action. The pin is the single source of truth.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install the frozen workspace
+        run: pnpm install --frozen-lockfile
+      # Every Turborepo task this pipeline invokes is checked in one place, so a
+      # gate whose implementer disappears fails here — before lint, tests or
+      # images — instead of reporting "0 total" as a green suite in job 2, 3 or 4.
+      - name: Require every gate task this pipeline invokes to be implemented
+        run: >-
+          node scripts/require-implemented-tasks.mjs lint typecheck build test:unit test:contracts
+          test:adversarial test:security db:migrate:rehearse
+      - name: Lint
+        run: pnpm lint
+      - name: Type-check
+        run: pnpm typecheck
+      - name: Build every workspace package
+        run: pnpm build
+
+  unit-and-contract-tests:
+    name: 2. Unit and Contract Tests
+    needs: static-analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install the frozen workspace
+        run: pnpm install --frozen-lockfile
+      # `test:contracts` is implemented by packages/core-engine
+      # (`vitest.contracts.config.ts`): canonical JSON plus the SHA-256/HMAC
+      # primitives every durable digest is computed with, and the authority-rank
+      # vocabulary the policy boundary compares against. The guard fails this job
+      # if that implementer disappears, because reporting this job green would
+      # claim a suite that never ran.
+      - name: Require the unit and contract tasks to be implemented
+        run: node scripts/require-implemented-tasks.mjs test:unit test:contracts
+      - name: Unit tests
+        run: pnpm test:unit
+      - name: Contract tests
+        run: pnpm test:contracts
+
+  database-migration-rehearsal:
+    name: 3. Raw SQL Migration and RLS Rehearsal
+    needs: static-analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        # Same image as docker-compose.yml, so the rehearsal runs against the
+        # extensions the durable local/CI store actually ships (docker/postgres/init.sql).
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: agent_os_rehearsal
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test_user -d agent_os_rehearsal"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install the frozen workspace
+        run: pnpm install --frozen-lockfile
+      # The RLS suite connects as a NOBYPASSRLS role and the migration grants
+      # privileges to it only when it already exists, so the repository's own
+      # local/CI bootstrap (init.sql then init-roles.sh) runs first. The role
+      # bootstrap refuses POSTGRES_ENV values outside local/ci.
+      - name: Bootstrap extensions, schema, and least-privilege roles
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGPASSWORD: test_password
+          POSTGRES_USER: test_user
+          POSTGRES_DB: agent_os_rehearsal
+          POSTGRES_ENV: ci
+          APP_ROLE_PASSWORD: agentos_app_password
+          MIGRATOR_ROLE_PASSWORD: agentos_migrator_password
+        run: |
+          psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --file docker/postgres/init.sql
+          bash docker/postgres/init-roles.sh
+      - name: Require the migration rehearsal task to be implemented
+        run: node scripts/require-implemented-tasks.mjs db:migrate:rehearse
+      - name: Apply and replay the raw SQL migrations
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@127.0.0.1:5432/agent_os_rehearsal
+        run: pnpm db:migrate:rehearse
+      # The RLS suite has no skip path: a missing DATABASE_URL, an unmigrated
+      # schema, or a role that bypasses row security all fail it.
+      - name: Verify the RLS policies from the NOBYPASSRLS application role
+        env:
+          DATABASE_URL: postgresql://agentos_app:agentos_app_password@127.0.0.1:5432/agent_os_rehearsal
+        run: pnpm test:rls-policies
+
+  adversarial-and-security-tests:
+    name: 4. Adversarial Security and Governance Tests
+    needs: [unit-and-contract-tests, database-migration-rehearsal]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install the frozen workspace
+        run: pnpm install --frozen-lockfile
+      # Both suites are implemented and offline, so this job needs no service:
+      # `test:adversarial` runs the durable effect guard (packages/core-engine)
+      # and the effect-reservation/workflow arbitration repositories
+      # (packages/database); `test:security` runs the policy enforcement point
+      # (packages/core-engine) and the approval queue plus the audit/evidence
+      # chains (packages/database). The guard fails this job if an implementer
+      # disappears, because an empty run would report a green security gate
+      # (implement/09 §4: a gate is closed only once executed). These offline
+      # cases cannot stand in for the real durable store; that evidence belongs
+      # to job 3 and to the gate-environment rehearsal.
+      - name: Require the adversarial and security tasks to be implemented
+        run: node scripts/require-implemented-tasks.mjs test:adversarial test:security
+      - name: Adversarial tests
+        run: pnpm test:adversarial
+      - name: Security tests
+        run: pnpm test:security
+
+  docker-build-load-and-smoke:
+    name: 5. Named Image Build, Local Load, Inspect, and Boot (no publish)
+    needs: adversarial-and-security-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      # This job runs the repository's plain-Node smoke — `scripts/docker-smoke.mjs`,
+      # the same file the root `pnpm docker:smoke` script wraps. It drives `docker`
+      # and `docker compose` directly and installs nothing into the workspace, so
+      # this job needs neither pnpm setup nor `pnpm install`.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # Compose refuses to start without the required variables; .env.example is
+      # the repository's documented local/CI placeholder file and stays
+      # gitignored (never committed) in the runner's workspace.
+      - name: Provide the local/CI environment file Compose reads
+        run: cp .env.example .env
+      # Builds api/worker/command-center from docker/Dockerfile.*, loads them into
+      # the local daemon, inspects each image, boots the default Compose profile,
+      # waits for the three services to report healthy, then tears down its own
+      # Compose project. No image is pushed, published, or tagged for a registry.
+      - name: Build, load, inspect, and boot the named images
+        run: node scripts/docker-smoke.mjs --project agentos-ci-smoke --env-file .env --wait-seconds 600

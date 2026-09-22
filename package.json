@@ -21,6 +21,7 @@
     "test:e2e": "turbo run test:e2e",
     "db:migrate:rehearse": "turbo run db:migrate:rehearse",
     "test:rls-policies": "vitest run --config packages/database/vitest.rls.config.ts",
+    "docker:smoke": "node scripts/docker-smoke.mjs",
     "clean": "turbo run clean && rm -rf node_modules"
   },
   "devDependencies": {

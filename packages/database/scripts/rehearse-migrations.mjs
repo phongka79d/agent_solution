@@ -23,6 +23,8 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { Client } from 'pg';
+
 const migrationsDirectory = fileURLToPath(new URL('../migrations/', import.meta.url));
 
 const LEDGER_SCHEMA = 'agentos_meta';

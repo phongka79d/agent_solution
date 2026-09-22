@@ -7,6 +7,10 @@ export { computeEffectKey, computeRequestFingerprint } from './effects/effect-ke
 export { RevenueOrchestrator } from './orchestrator/revenue-orchestrator.js';
 export { LIFECYCLE_STAGES, assertValidTransition } from './lifecycle/stages.js';
 export { assertOrchestratorBrokered } from './orchestrator/agent-boundary.js';
+export * from './durability/canonical-json.js';
+export * from './durability/effect-guard.js';
+export * from './durability/evidence.js';
+export * from './policy/index.js';
 
 /** Package identity surfaced by `apps/api` and `apps/worker` health payloads. */
 export const packageName = '@agentos/core-engine';

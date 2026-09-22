@@ -20,6 +20,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "node ../../scripts/eslint.mjs",
     "test:unit": "vitest run",
+    "test:adversarial": "vitest run --config vitest.adversarial.config.ts",
+    "test:security": "vitest run --config vitest.security.config.ts",
     "db:migrate:rehearse": "node scripts/rehearse-migrations.mjs"
   },
   "dependencies": {

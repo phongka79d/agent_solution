@@ -13,9 +13,11 @@ const ASSIGNABLE_GRANTS: readonly AssignableAuthority[] = ['AUTH-0', 'AUTH-1', '
 
 describe('evaluateAuthorityVerdict', () => {
   it('auto-approves a step the grant covers by rank', () => {
-    expect(evaluateAuthorityVerdict('AUTH-0', 'AUTH-0')).toEqual({
+    expect(evaluateAuthorityVerdict('AUTH-0', 'AUTH-0')).toMatchObject({
       verdict: 'AUTO_APPROVED',
       reason: 'AUTHORIZED: AUTH-0 covers AUTH-0.',
+      errorCode: null,
+      rankCompared: true,
     });
     expect(evaluateAuthorityVerdict('AUTH-2', 'AUTH-1').verdict).toBe('AUTO_APPROVED');
     expect(evaluateAuthorityVerdict('AUTH-3', 'AUTH-3').verdict).toBe('AUTO_APPROVED');
@@ -23,9 +25,11 @@ describe('evaluateAuthorityVerdict', () => {
 
   it('denies a lower grant as INSUFFICIENT_AUTHORITY', () => {
     for (const required of ['AUTH-1', 'AUTH-2', 'AUTH-3'] as const) {
-      expect(evaluateAuthorityVerdict('AUTH-0', required)).toEqual({
+      expect(evaluateAuthorityVerdict('AUTH-0', required)).toMatchObject({
         verdict: 'DENIED',
-        reason: `INSUFFICIENT_AUTHORITY: requires ${required}, granted AUTH-0.`,
+        reason: expect.stringContaining(`requires ${required}`),
+        errorCode: 'INSUFFICIENT_AUTHORITY',
+        rankCompared: true,
       });
     }
     expect(evaluateAuthorityVerdict('AUTH-1', 'AUTH-3').verdict).toBe('DENIED');
@@ -49,9 +53,11 @@ describe('evaluateAuthorityVerdict', () => {
       expect(result.verdict).toBe('DENIED');
       expect(result.reason).toMatch(/^PROHIBITED_ACTION:/);
     }
-    expect(evaluateAuthorityVerdict('AUTH-3', 'AUTH-5')).toEqual({
+    expect(evaluateAuthorityVerdict('AUTH-3', 'AUTH-5')).toMatchObject({
       verdict: 'DENIED',
       reason: expect.stringContaining('PROHIBITED_ACTION'),
+      errorCode: 'PROHIBITED_ACTION',
+      rankCompared: false,
     });
   });
 
@@ -69,11 +75,17 @@ describe('evaluateAuthorityVerdict', () => {
     }
   });
 
-  it('denies an unassignable grant as INVALID_CLEARANCE', () => {
-    for (const granted of ['AUTH-4', 'AUTH-5', 'AUTH-9', '']) {
-      const result = evaluateAuthorityVerdict(granted as AssignableAuthority, 'AUTH-3');
+  it('denies an unassignable grant as INVALID_CLEARANCE and treats absence as missing', () => {
+    for (const granted of ['AUTH-4', 'AUTH-5', 'AUTH-9']) {
+      const result = evaluateAuthorityVerdict(granted, 'AUTH-3');
       expect(result.verdict).toBe('DENIED');
+      expect(result.errorCode).toBe('INVALID_CLEARANCE');
       expect(result.reason).toMatch(/^INVALID_CLEARANCE:/);
     }
+
+    expect(evaluateAuthorityVerdict('', 'AUTH-3')).toMatchObject({
+      verdict: 'DENIED',
+      errorCode: 'CLEARANCE_REQUIRED',
+    });
   });
 });

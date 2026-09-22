@@ -639,7 +639,7 @@ export class RevenueOrchestrator {
       throw new OrchestratorError('INVALID_TASK_STATE', `Cannot resume task currently in '${task.state}'`);
     }
 
-    const checkpoint: DurableTaskCheckpoint | null = task.state_payload;
+    const checkpoint = task.state_payload as DurableTaskCheckpoint | null;
     if (!checkpoint?.plan || !checkpoint.context || !checkpoint.request_id) {
       // Re-entering a plan requires the checkpoint that carries the immutable `request_id`, the
       // context and the evidence cursor. Re-drafting from scratch would re-decide the plan and
