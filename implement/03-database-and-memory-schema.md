@@ -1,5 +1,10 @@
 # Database & Memory Schema Specification
 
+> **BLUEPRINT STATUS — target design; NOT IMPLEMENTED, DEPLOYED, MEASURED, or runtime evidence.**
+> This document refines SRS §14 / §19 and names target DDL, RLS, Redis, Qdrant, memory, and migration contracts.
+> Every SQL, JSON, TypeScript, and shell block is a **target snippet**, not a file that currently exists.
+
+
 ## 1. PostgreSQL DDL Schema (28 Canonical Entities + 1 Child Entity + 3 Audit Tables + 3 Runtime Tables + 2 Views)
 
 The data layer implements the 28 canonical entities defined in Section 14 of the SRS across 4 functional domains, plus the child, runtime, and projection objects consumed by the Core Engine:
@@ -14,6 +19,8 @@ The data layer implements the 28 canonical entities defined in Section 14 of the
 | Customer 360 projection view (`customer_360_profiles`) | 1 | §1 DDL — DOMAIN 5 |
 | Composite tenant-scoped FK convention + negative tests | — | §1.1 |
 | Epistemic (FACT / HYPOTHESIS) write boundary + SoR-mirror protection | — | §1.2 |
+
+**Ordinal vs physical order.** Entity numbers in this document are the **SRS §14 ordinals** and are the only canonical cross-reference (Campaign = 14, Segment = 15). Physical DDL order inside the listing below is **dependency order**, not the SRS ordinal: `segments` (SRS Entity 15) is created before `campaigns` (SRS Entity 14) because `campaigns.segment_id` references it. Physical order MUST NOT be read as an ordinal anywhere in this pack.
 
 There is exactly **one** approval model in this schema: the canonical entity `approvals` (Entity 24). `approval_queue` is a read-only view over its `PENDING` rows for SCR-003; no second queue table exists, so a resume can never be double-booked against two stores.
 
@@ -128,11 +135,13 @@ CREATE TABLE customer_events (
     tenant_id UUID NOT NULL,
     customer_id UUID REFERENCES customers(id) ON DELETE SET NULL,
     session_id VARCHAR(128) NOT NULL,
-    event_name VARCHAR(64) NOT NULL, -- 'page_view', 'add_to_cart', 'search', 'checkout_step'
+    event_name VARCHAR(64) NOT NULL, -- API-002 canonical vocabulary: 'session','product_view','search','click','add_to_cart','checkout','purchase' (owned by ./06-api-and-connectors-spec.md); platform extension events use the 'ext.<domain>.<name>' form (see §8)
+    source_event_id VARCHAR(128) NOT NULL, -- immutable event identity supplied by the source (client/provider); the dedupe key for replayed or late delivery (API-002, §8)
     channel VARCHAR(32) NOT NULL,
     payload JSONB NOT NULL DEFAULT '{}'::jsonb,
     occurred_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    ingested_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ingested_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_customer_events_source UNIQUE (tenant_id, source_event_id)
 );
 CREATE INDEX idx_customer_events_tenant_cust ON customer_events (tenant_id, customer_id, occurred_at DESC);
 CREATE INDEX idx_customer_events_session ON customer_events (tenant_id, session_id, occurred_at DESC);
@@ -174,13 +183,22 @@ CREATE TABLE skus (
 );
 CREATE INDEX idx_skus_product ON skus (tenant_id, product_id);
 
--- Entity 7: Price (Official ERP pricing mirrored read-only; provenance-tagged - BR-001, BR-003)
--- Every column here is a MIRROR of the System of Record (ERP/POS pricing service, API-001).
--- The AI platform never computes, generates, or stores a competing floor: `floor_price` is the
--- authoritative value returned by the ERP/policy pricing engine together with its provenance.
--- (A local GENERATED floor derived from `cost_of_goods / (1 - minimum_margin_rate)` was a
--- second, silently diverging source of truth against the engine that actually authorizes
--- discounts, which the PEP must never be able to "agree with" wrongly - NFR-008, BR-002.)
+-- Entity 7: Price (SoR pricing mirror; provenance-tagged - BR-001, BR-003)
+-- [OWNER-DECISION-REQUIRED][README §8.1] Two floor-ownership models remain open; this DDL
+-- does not decide between them and no query may assume either one is final:
+--   Candidate A - source-supplied floor (this table's mirror shape): the authoritative source
+--     (ERP/policy pricing service, API-001) supplies `floor_price` + `floor_price_source`; the
+--     platform validates presence, freshness, tenant binding, and provenance, and refuses a
+--     missing or unapproved provenance.
+--   Candidate B - platform-derived floor: the platform derives the floor from owner-approved
+--     policy inputs using a documented formula. The illustrative local arithmetic in `02` and
+--     `08` (`Math.ceil((C + L + D_cap)/(1-r))`) is a competing candidate, not a canonical
+--     formula, and MUST NOT be treated as one here.
+-- Ownership, formula/mode, rounding, currency, staleness, and provenance stay unresolved until
+-- the Solution Architect and Business/Finance record the decision. Interim safety rule: no
+-- price-bearing action may dispatch without an owner-approved, provenance-bearing floor decision.
+-- Missing or unapproved provenance is `P_FLOOR_UNAVAILABLE`, and this schema invents no numeric default.
+-- `minimum_margin_rate` is a policy mirror for binding only; it is NOT used by this DDL to derive `floor_price`.
 CREATE TABLE prices (
     id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
     tenant_id UUID NOT NULL,
@@ -188,9 +206,9 @@ CREATE TABLE prices (
     currency VARCHAR(8) NOT NULL DEFAULT 'TWD',
     list_price NUMERIC(12, 2) NOT NULL,
     cost_of_goods NUMERIC(12, 2) NOT NULL,
-    minimum_margin_rate NUMERIC(5, 4) NOT NULL CHECK (minimum_margin_rate >= 0.0000 AND minimum_margin_rate < 1.0000), -- policy mirror, informational only; not used to derive floor_price
-    floor_price NUMERIC(12, 2) NOT NULL,              -- AUTHORITATIVE floor supplied by ERP/policy; never AI-generated
-    floor_price_source VARCHAR(128) NOT NULL,         -- e.g. 'erp:pricing-service/v3' (BR-003 provenance)
+    minimum_margin_rate NUMERIC(5, 4) NOT NULL CHECK (minimum_margin_rate >= 0.0000 AND minimum_margin_rate < 1.0000), -- policy mirror, informational only (see conflict note above); not used to derive floor_price
+    floor_price NUMERIC(12, 2) NOT NULL,              -- floor value per the OWNER-DECISION-REQUIRED ownership model (README §8.1); never AI-generated
+    floor_price_source VARCHAR(128) NOT NULL,         -- floor provenance; e.g. 'erp:pricing-service/v3' (BR-003). Missing provenance refuses a price-bearing dispatch.
     floor_price_synced_at TIMESTAMPTZ NOT NULL,       -- staleness is evaluated against this, not against row creation
     effective_from TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     effective_to TIMESTAMPTZ,
@@ -325,7 +343,9 @@ CREATE TABLE opportunities (
 );
 CREATE INDEX idx_opportunities_stage ON opportunities (tenant_id, stage);
 
--- Entity 14: Segment (Behavioral and RFM audience cohorts)
+-- Entity 15: Segment (Behavioral and RFM audience cohorts).
+-- SRS §14 ordinal = 15. It is listed before Campaign (Entity 14) only because
+-- `campaigns.segment_id` references this table; physical order is dependency order.
 CREATE TABLE segments (
     id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
     tenant_id UUID NOT NULL,
@@ -339,7 +359,8 @@ CREATE TABLE segments (
 );
 CREATE INDEX idx_segments_tenant ON segments (tenant_id, name);
 
--- Entity 15: Campaign (Marketing outreach lifecycle - MKT-05, AUTH-4)
+-- Entity 14: Campaign (Marketing outreach lifecycle - MKT-05, AUTH-4).
+-- SRS §14 ordinal = 14; created after Segment (Entity 15) solely because of the FK above.
 CREATE TABLE campaigns (
     id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
     tenant_id UUID NOT NULL,
@@ -372,8 +393,8 @@ CREATE TABLE offers (
     discount_value NUMERIC(10, 2) NOT NULL,
     max_discount_cap NUMERIC(10, 2) NOT NULL, -- D_cap
     min_order_value NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
-    p_floor_constraint NUMERIC(12, 2) NOT NULL, -- AUTHORITATIVE floor mirrored from the ERP/policy pricing engine (BR-001, BR-003); never defaulted or generated locally
-    p_floor_source VARCHAR(128) NOT NULL,       -- Provenance of the floor, e.g. 'erp:pricing-service/v3'
+    p_floor_constraint NUMERIC(12, 2) NOT NULL, -- floor constraint value under the OWNER-DECISION-REQUIRED ownership model (README §8.1); mirrored or derived per the recorded decision, never defaulted or generated locally
+    p_floor_source VARCHAR(128) NOT NULL,       -- floor provenance (required before any price-bearing dispatch; missing provenance refuses the action)
     applicable_skus JSONB NOT NULL DEFAULT '[]'::jsonb,
     total_quota INT NOT NULL,
     claimed_count INT NOT NULL DEFAULT 0,
@@ -429,11 +450,16 @@ CREATE TABLE service_cases (
     evidence_id UUID,
     outcome_id UUID,
     sla_due_at TIMESTAMPTZ,
+    sla_history JSONB NOT NULL DEFAULT '[]'::jsonb, -- append-only SLA windows [{opened_at, due_at, closed_at?, reason}]; REOPEN appends a fresh window (§9)
+    reopen_count INT NOT NULL DEFAULT 0,            -- incremented ONLY by the REOPEN action; never a state value (§9)
+    reopened_at TIMESTAMPTZ,                        -- most recent REOPEN time; NULL when never reopened
+    case_version INT NOT NULL DEFAULT 1 CHECK (case_version > 0), -- compare-and-set for transitions, assignment and REOPEN (§9)
     resolution TEXT,
     satisfaction_score INT, -- 1 to 5
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT uq_cases_tenant_number UNIQUE (tenant_id, case_number)
+    CONSTRAINT uq_cases_tenant_number UNIQUE (tenant_id, case_number),
+    CONSTRAINT ck_cases_reopen_pair CHECK ((reopen_count = 0) = (reopened_at IS NULL)) -- reopen bookkeeping is paired: a reopen always stamps both fields (§9)
 );
 CREATE INDEX idx_service_cases_state ON service_cases (tenant_id, state, priority);
 
@@ -462,7 +488,7 @@ CREATE TABLE agents (
 CREATE TABLE skills (
     id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
     tenant_id UUID NOT NULL,
-    name VARCHAR(64) NOT NULL, -- 'retrieve-customer', 'check-inventory', 'calculate-price'
+    name VARCHAR(64) NOT NULL, -- canonical Skill ID from 05, e.g. 'skill.sales.check_price'; mapped to runtime skill_id
     purpose TEXT NOT NULL, -- SRS §11 field 2 (Purpose)
     required_authority VARCHAR(16) NOT NULL CHECK (required_authority IN ('AUTH-0', 'AUTH-1', 'AUTH-2', 'AUTH-3', 'AUTH-4')), -- AUTH-4 = must pass the approvals gate; AUTH-5 is never a requirement, only a deny verdict
     allowed_agents VARCHAR(64)[] NOT NULL DEFAULT '{}',
@@ -554,7 +580,7 @@ CREATE TABLE approvals (
     review_comment TEXT,
     decided_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT uq_approvals_tenant_effect UNIQUE (tenant_id, effect_key),
+    CONSTRAINT uq_approvals_tenant_effect UNIQUE (tenant_id, effect_key), -- one approval binding per effect revision; a confirmed-absent retry reuses this row and never inserts another
     CONSTRAINT ck_approvals_decided CHECK ((decision = 'PENDING') = (decided_at IS NULL)),
     CONSTRAINT ck_approvals_pause_pending CHECK (decision = 'PENDING' OR is_paused = FALSE)
 );
@@ -637,9 +663,8 @@ ALTER TABLE service_cases
 -- ----------------------------------------------------------------------------
 -- DOMAIN 5: CUSTOMER360 PROJECTION VIEW, AUDIT & RUNTIME TABLES
 -- These objects are the persistence contract of the Core Engine (§04): the
--- 11-step pipeline reads the projection view at step [2. CONTEXT] and writes the
--- three append-only chains, the durable task row, the idempotency reservation, the
--- pending-outcome watcher, and the SCR-003 approval lifecycle.
+-- 11-stage lifecycle reads the projection at CONTEXT and writes the
+-- append-only chains, durable task, effect reservation, outcome watcher, and approval lifecycle.
 -- RLS is not declared inline: the §2 auto-policy DO block enables and FORCEs
 -- `tenant_isolation_policy` on every table of the `agentos` schema, so the tables
 -- below are covered by construction. The views (`customer_360_profiles`,
@@ -647,7 +672,7 @@ ALTER TABLE service_cases
 -- tables via `security_invoker = true`.
 -- ----------------------------------------------------------------------------
 
--- Customer 360 Projection: Entity 1 (`customers`) + Entity 2 (`customer_identities`)
+-- View 1: Customer 360 Projection (Entity 1 (`customers`) + Entity 2 (`customer_identities`)
 -- + Entity 3 (`consents`) consolidated into the single FACT read model consumed by
 -- orchestrator context hydration (FR-C360-001, §04 5.1).
 --   * FACT semantics: only VERIFIED contact handles are released. `verified_phone`
@@ -708,7 +733,7 @@ LEFT JOIN LATERAL (
       AND cons.consent_type = 'marketing_messaging'
 ) consent ON TRUE;
 
--- Runtime Table 1: Agent Run Log (18-field execution audit contract, §04 6.1).
+-- Audit Table 1: Agent Run Log (18-field execution audit contract, §04 6.1).
 -- One row per executed pipeline step, appended when the step completes. `tenant_id`
 -- leads the primary key so the key is tenant-scoped and index-local.
 CREATE TABLE agent_run_logs (
@@ -739,7 +764,7 @@ CREATE TABLE agent_run_logs (
 CREATE INDEX idx_agent_run_logs_tenant_agent ON agent_run_logs (tenant_id, agent_id, started_at DESC);
 CREATE INDEX idx_agent_run_logs_entity ON agent_run_logs (tenant_id, customer_or_entity_id);
 
--- Runtime Table 2: Approval Queue VIEW (SCR-003 human-in-the-loop gate, AUTH-4).
+-- View 2: Approval Queue (SCR-003 human-in-the-loop gate, AUTH-4).
 -- This is a VIEW, not a table: the canonical mutable state lives in `approvals` (Entity 24),
 -- and the queue is exactly its PENDING projection, ordered oldest-first for the console.
 -- §04 `logPendingApproval` INSERTs into `approvals`; the SCR-003 console decides a row there
@@ -764,7 +789,7 @@ SELECT
 FROM agentos.approvals a
 WHERE a.decision = 'PENDING';
 
--- Runtime Table 3: Pending Outcome Attribution (§04 step [10. OUTCOME]).
+-- Runtime Table 1: Pending Outcome Attribution (§04 step [10. OUTCOME]).
 -- One watcher row per mutating execution. It binds the deterministic `effect_key` to the run
 -- that must later claim the asynchronous business result (order settled, payment received, cart
 -- cleared, CSAT scored) and expires on a bounded observation window so unattributed executions
@@ -786,7 +811,7 @@ CREATE TABLE pending_outcome_attributions (
 CREATE INDEX idx_pending_outcome_run ON pending_outcome_attributions (tenant_id, run_id);
 CREATE INDEX idx_pending_outcome_expiry ON pending_outcome_attributions (tenant_id, status, expires_at) WHERE status = 'OBSERVING';
 
--- Runtime Table 4: Effect Reservations (durable idempotency + call reservation).
+-- Runtime Table 2: Effect Reservations (durable idempotency + call reservation).
 -- Layer-1 reservation lives in Redis (`tenant:{tid}:effect:{effect_key}`, 72 h). Redis is a
 -- cache, not a system of record: when it is unavailable, or when the 72 h window has lapsed,
 -- this table is the durable authority that still guarantees at-most-once execution (BR-005,
@@ -810,7 +835,7 @@ CREATE TABLE effect_reservations (
 );
 CREATE INDEX idx_effect_reservations_expiry ON effect_reservations (tenant_id, status, expires_at) WHERE status = 'RESERVED';
 
--- Runtime Table 5: Platform Durable Tasks (§04 4.1 FSM).
+-- Runtime Table 3: Platform Durable Tasks (§04 4.1 FSM).
 -- The durable workflow state that survives worker crashes and restarts. It is the schedule of
 -- record for resume/recovery: a leased-but-dead task is re-queued, and a failed task is retried
 -- only while retryable and under `max_retries` (§04 4.4). `tenant_id` is UUID and leads every
@@ -842,7 +867,7 @@ CREATE INDEX idx_tasks_tenant_state ON platform_durable_tasks (tenant_id, state)
 CREATE INDEX idx_tasks_lease ON platform_durable_tasks (state, lease_expires_at) WHERE state IN ('queued', 'running');
 CREATE INDEX idx_tasks_correlation ON platform_durable_tasks (tenant_id, correlation_id);
 
--- Audit Table 3: Evidence Records (cryptographically chained, append-only).
+-- Audit Table 2: Evidence Records (cryptographically chained, append-only).
 -- §04 6.1 writes one row per mutating step; `previous_evidence_hash` links each
 -- record to its predecessor within the run, forming the tamper-evident chain.
 CREATE TABLE evidence_records (
@@ -862,7 +887,7 @@ CREATE TABLE evidence_records (
 );
 CREATE INDEX idx_evidence_records_run ON evidence_records (tenant_id, run_id, step_index);
 
--- Audit Table 4: Audit Records (canonical 18-field chained compliance log, §08 4.1).
+-- Audit Table 3: Audit Records (canonical 18-field chained compliance log, §08 4.1).
 -- Deliberately distinct from `agent_run_logs`: this is the GDPR Art. 30 / Taiwan
 -- PDPA retention record, chained by `chain_hash` (§08 4.2). Column names mirror the
 -- §08 4.1 audit schema verbatim so the compliance writer's INSERT is
@@ -971,7 +996,7 @@ ALTER TABLE agentos.orders
          REFERENCES agentos.customers (tenant_id, id);
 ```
 
-The DDL in §1 declares the entity graph with single-column `REFERENCES` for readability; this tenant-scoping migration runs immediately afterwards, before the first tenant row is written. `scripts/migrations/0001_tenant_scoped_fks.sql` is its durable home and executes inside the same migration transaction that created the schema.
+The DDL in §1 declares the entity graph with single-column `REFERENCES` for readability; this tenant-scoping migration runs immediately afterwards, before the first tenant row is written. `packages/database/migrations/0001_tenant_scoped_fks.sql` is its durable home under the package owner in `02` §5 and executes inside the same migration transaction that created the schema.
 
 **Negative tests are mandatory.** A green happy path proves nothing here — a *missing* foreign key also accepts every legal insert. The suite must assert each cross-tenant case below by inserting an otherwise-valid row whose tenant differs from the referenced row's tenant, and must observe SQLSTATE `23503`:
 
@@ -985,9 +1010,30 @@ The DDL in §1 declares the entity graph with single-column `REFERENCES` for rea
 
 ---
 
+### 1.2. Epistemic Write Boundary and SoR-Mirror Protection
+
+`[SRS-MUST][SRS §5 / FR-C360-003]` AI hypotheses must never be written back as customer facts (SRS §5: "Giả thuyết AI không được ghi ngược thành Customer Fact"). This table is the persistence-side enforcement contract for that rule; the runtime guard lives in `./04-core-engine-and-orchestrator.md` §1.1 invariant 2 and §3.3 `enforceEpistemicSeparation()`.
+
+| Value class | Persisted in | May be written by | Write-back to an SoR mirror or `customers` FACT |
+|---|---|---|---|
+| `FACT` | `customers` and SoR-mirror tables (`products`, `skus`, `prices`, `inventories`, `orders`, `invoices`); only explicitly sourced FACT fields of the mixed-class `customer_360_profiles` read projection | the owning SoR sync/adapter path only; the projection is not a FACT write target | n/a — AI writers are not present in these mirror write paths |
+| `SIGNAL` | `customer_events`, `conversations`/`conversation_messages` | API-002 ingestion and channel adapters | never |
+| `HYPOTHESIS` | `evidences` rows with `taxonomy_type = 'HYPOTHESIS'`; derived projections that carry the `_hypothesis` suffix (`customer_360_profiles.rfm_segment_hypothesis`, `leads` scoring fields, `segments` membership, `recommendations`) | hypothesis-producing skills and the orchestrator | **refused** — a HYPOTHESIS value MUST NOT be promoted to FACT or written into any SoR mirror without authoritative SoR validation |
+| `DECISION` | `decisions`, `approvals`, `campaigns`, `offers`, `service_cases` | orchestrator/policy engine, human approval | n/a (no SoR mirror) |
+| `ACTION` | `actions`, `executions` | orchestrator effect pipeline | n/a (no SoR mirror) |
+
+**Enforcement rules.**
+
+1. A derived attribute is persisted with an explicit `_hypothesis` suffix or an `evidences` row of class `HYPOTHESIS` — never as a bare FACT column. The `customer_360_profiles` view exposes `rfm_segment_hypothesis` for exactly this reason.
+2. Promotion from `HYPOTHESIS` to `FACT` requires a System-of-Record validation record (an `evidences` row whose `source_uri` names the SoR record and whose `verified_by` names the validating component); there is no direct-write path from an AI skill into a mirror table.
+3. `skills.epistemic_class` declares the class a skill produces; a `HYPOTHESIS`-class skill is registered with no SoR-mirror write capability, and the PEP refuses a call whose declared class does not match its connector binding.
+4. Raw conversation text is never promoted into long-term FACT or Organizational Knowledge (SRS §16); it stays in `conversation_messages` under the retention decision of ASM-005 (§7).
+
+---
+
 ## 2. Row-Level Security (RLS) Policy Implementation
 
-To satisfy **NFR-006 (Zero Data Bleeding)**, Row-Level Security is strictly enabled and forced across every table in the `agentos` schema — the 28 canonical tables, the child table `conversation_messages`, and the DOMAIN 5 audit/runtime tables (`audit_records`, `evidence_records`, `approval_queue`, `agent_run_logs`). The `customer_360_profiles` view is not a table and therefore carries no policy of its own; it is declared `WITH (security_invoker = true)` so the policies of its base tables (`customers`, `customer_identities`, `consents`) are evaluated against the calling role. Queries that omit a valid tenant context return 0 rows (default deny) or throw an error.
+To satisfy **NFR-006 (Zero Data Bleeding)**, Row-Level Security is strictly enabled and forced across every table in the `agentos` schema — the 28 canonical tables, the child table `conversation_messages`, and the DOMAIN 5 audit/runtime tables (`audit_records`, `evidence_records`, `agent_run_logs`, `platform_durable_tasks`, `pending_outcome_attributions`, `effect_reservations`). The two views (`customer_360_profiles`, `approval_queue`) are not tables and therefore carry no policy of their own; both are declared `WITH (security_invoker = true)` so the policies of their base tables are evaluated against the calling role. Queries that omit a valid tenant context return 0 rows (default deny) or throw an error.
 
 **Predicate contract.** The tenant context is a comma-separated list of UUIDs stored in `app.current_tenant_id`, parsed with `string_to_array(current_setting('app.current_tenant_id', true), ',')::uuid[]`. The explicit `::uuid[]` cast is what keeps the predicate type-correct: `tenant_id` is `UUID`, the parsed value is `UUID[]`, so PostgreSQL resolves `uuid = ANY(uuid[])` and never has to resolve `uuid = text` (which has no operator and would raise `operator does not exist: uuid = text`). An unset setting yields `NULL`, and an empty setting yields the empty array — both make `= ANY(...)` evaluate to NULL/FALSE, so the failure mode is deny, never allow.
 
@@ -1096,10 +1142,11 @@ Redis 7.2 serves as Layer 1 (Working Memory) and the distributed concurrency coo
 | Key Pattern | Data Type | TTL | Purpose |
 |---|---|---|---|
 | `tenant:{tid}:session:{sid}:mutex` | String | 30 seconds | Prevents multiple AI agents from replying concurrently to the same customer. |
-| `tenant:{tid}:session:{sid}:takeover_lock` | String | 1 hour | Human operator override lock (SCR-005). Pauses all automated agent execution. |
+| `tenant:{tid}:session:{sid}:takeover_lock` | String | 60 seconds, renewed every 30 seconds (extend request 1–300 seconds) | Human operator override lease (SCR-005). Pauses all automated agent execution; expiry or explicit resume releases control. The wire contract is authoritative; a crashed console cannot hold a conversation indefinitely. |
 | `tenant:{tid}:effect:{effect_key}` | String (JSON) | 259,200s (72h) | Distributed idempotency record. Holds payload hash and execution status (NFR-003). |
-| `tenant:{tid}:ratelimit:{entity}:{window}` | Integer | Window expiry | Sliding window token counter for rate limiting (e.g. 100 req/min). |
-| `tenant:{tid}:wm:{cid}` | List / Hash | 2 hours | Transient prompt scratchpad and dialog turn state (Memory Layer 1). The `wm` segment is the canonical short form; the Core Engine hydrator reads exactly this key (§04 5.1 `fetchWorkingMemory`). |
+| `tenant:{tid}:task:{run_id}:lease` | String | 30 seconds, renewed at TTL/3 | Durable-task worker lease fast path (§04 4.3). The authoritative schedule of record is `platform_durable_tasks`; a Redis flush loses no task, and `task.claim` re-validates ownership. |
+| `tenant:{tid}:ratelimit:{entity}:{window}` | Integer | Window expiry | Sliding window token counter for rate limiting (e.g. 100 req/min). `[PROVISIONAL][ASM-002]` — the quoted rate is illustrative, not an approved policy value. |
+| `tenant:{tid}:wm:{sid}` | List / Hash | 2 hours `[PROVISIONAL][ASM-005]` | Transient prompt scratchpad and dialog turn state (Memory Layer 1). Keyed by the unique server-issued `session_id` (`{sid}`), never by an unverified customer handle; the Core Engine hydrator reads exactly this key (§04 5.1 `fetchWorkingMemory`, §7). |
 
 ### Distributed Mutex Lock Acquisition & Release (Lua Scripts)
 
@@ -1320,3 +1367,116 @@ export async function searchSecondBrain(
   });
 }
 ```
+
+## 5. Canonical Entity, Field, and Evidence Catalog `[SRS-MUST][SRS §14 / owner: 03]`
+
+The DDL above is the target persistence contract. The canonical ordinal is the SRS ordinal; implementation summaries MUST NOT introduce a second numbering system. In particular, `Campaign` is Entity 14 and `Segment` is Entity 15. Every object is tenant-scoped, and every cross-entity reference uses the composite tenant-safe convention in §1.1.
+
+| Entity | Target table/object | Primary identity | Required identity/lifecycle rule | Value class / owner |
+|---|---|---|---|---|
+| Customer | `customers` | `(tenant_id,id)` | SoR-mirrored identity; immutable source identity | FACT / `03` |
+| Customer Identity | `customer_identities` | `(tenant_id,id)` | normalized identifier plus verification provenance | FACT / `03` |
+| Consent | `consents` | `(tenant_id,id)` | append history; current status cannot erase prior consent | FACT / `03` |
+| Customer Event | `customer_events` | `(tenant_id,id)` | immutable event with `occurred_at`, source, idempotency | SIGNAL / `03` |
+| Product | `products` | `(tenant_id,id)` | catalog identity from SoR; no AI-created SKU | FACT / `03` |
+| SKU | `skus` | `(tenant_id,id)` | product child identity; source reference required | FACT / `03` |
+| Price | `prices` | `(tenant_id,id)` | effective-dated SoR mirror with floor provenance | FACT / `03` |
+| Inventory | `inventories` | `(tenant_id,id)` | source and observed time required; stale values cannot authorize | FACT / `03` |
+| Order | `orders` | `(tenant_id,id)` | effect/SoR reference and immutable order identity | FACT / `03` |
+| Invoice | `invoices` | `(tenant_id,id)` | SoR receipt reference; append financial history | FACT / `03` |
+| Conversation | `conversations` | `(tenant_id,id)` | session/channel mutex and lifecycle state | SIGNAL / `03` |
+| Lead | `leads` | `(tenant_id,id)` | score carries reason/evidence and inference class | HYPOTHESIS / `03` |
+| Opportunity | `opportunities` | `(tenant_id,id)` | stage transitions audited; revenue is SoR-backed when actual | HYPOTHESIS/FACT / `03` |
+| Campaign | `campaigns` | `(tenant_id,id)` | draft → approval → dispatch lifecycle; AUTH-4 route where required | DECISION / `03` |
+| Segment | `segments` | `(tenant_id,id)` | derived membership is recomputable and not FACT | HYPOTHESIS / `03` |
+| Offer | `offers` | `(tenant_id,id)` | policy-bound, floor-provenance-bearing, quota audited | DECISION / `03` |
+| Recommendation | `recommendations` | `(tenant_id,id)` | reason/evidence required; no inference promoted to FACT | HYPOTHESIS / `03` |
+| Service Case | `service_cases` | `(tenant_id,id)` | seven stored states plus `REOPEN` action | DECISION / `03` |
+| Agent | `agents` | `(tenant_id,id)` | only AUTH-0..AUTH-3 assigned grants | DECISION / `03` |
+| Skill | `skills` | `(tenant_id,id)` | exactly 23 platform registry rows; required AUTH-4 routes approval | DECISION / `03` + `05` |
+| Workflow | `workflows` | `(tenant_id,id)` | durable versioned definition and state | DECISION / `03` + `04` |
+| Decision | `decisions` | `(tenant_id,id)` | reason, evidence, policy version, verdict | DECISION / `03` + `08` |
+| Action | `actions` | `(tenant_id,id)` | payload digest/effect key before dispatch | ACTION / `03` + `04` |
+| Approval | `approvals` | `(tenant_id,id)` | one-time binding to run/effect; PENDING queue view | DECISION / `03` + `07` |
+| Execution | `executions` | `(tenant_id,id)` | provider receipt/status; UNKNOWN reconciles | ACTION / `03` + `06` |
+| Evidence | `evidences` | `(tenant_id,id)` | source URI/version and explicit `taxonomy_type`; immutable grounding record | FACT/SIGNAL/HYPOTHESIS/DECISION/ACTION / `03` |
+| Outcome | `outcomes` | `(tenant_id,id)` | attributed to effect/run with source evidence | FACT / `03` + `04` |
+| Learning | `learnings` | `(tenant_id,id)` | versioned observations and outcome references; activation is audited and retention-owned | HYPOTHESIS / `03` + `04` |
+
+Required fields are immutable where they identify a source record, tenant, subject, event time, effect key, or evidence predecessor. Updates to mutable workflow/approval state MUST be versioned and audited. Raw conversation text and `HYPOTHESIS` values MUST NOT be promoted to long-term FACT or Organizational Knowledge without authoritative validation.
+
+## 6. Tenant, Subject, and Memory Isolation Matrix `[SRS-MUST][SRS §9, §14, §19 / NFR-006]`
+
+| Boundary | Required binding | Missing binding behavior |
+|---|---|---|
+| PostgreSQL | `tenant_id`, RLS session context, composite tenant-scoped FKs | transaction rejected; context reset between requests |
+| Customer/session | verified `customer_id` or unique server-issued `session_id` | private lookup refused; anonymous session gets isolated bucket |
+| Redis | `tenant:{tenant_id}:...` plus session/customer suffix | key operation refused; no global fallback |
+| Qdrant | `tenant_id`, approved namespace/document filter | retrieval unavailable/refused; no unfiltered search |
+| API/event | signed/authenticated tenant context and idempotency key | 401/403/409; no agent routing |
+
+## 7. Five-Layer Memory Contract `[SRS-MUST][SRS §16; §10 / NFR-005, NFR-006]`
+
+| Layer | Target storage/key | Writer / reader | Lifetime / retention owner | Allowed content |
+|---|---|---|---|---|
+| Working Memory | Redis `tenant:{tid}:wm:{session_id}` | orchestrator / current run | session TTL `[PROVISIONAL][ASM-005]` | current turn, unresolved task, bounded scratch data |
+| Customer Context | PostgreSQL projections + scoped cache | context aggregator / authorized skills and UI | tenant policy `[UNCONFIRMED][ASM-005]` | verified customer FACTs, consent, relevant events |
+| Organizational Knowledge | Qdrant approved namespace payloads | knowledge ingestion / all retrieval skills | document owner `[UNCONFIRMED][ASM-005]` | approved policy, product, brand, playbook facts |
+| Agent Operational Memory | PostgreSQL/Redis run summaries | orchestrator / supervisor and agent runtime | operational retention `[UNCONFIRMED][ASM-005]` | tool outcomes, failure patterns, run metadata |
+| Learning Memory | `learnings` observations linked to immutable `evidences`/`outcomes` | outcome attribution / future evaluation | Business/Finance + Data owner `[UNCONFIRMED][ASM-005]` | validated outcome signals and versioned hypotheses; activation changes audited |
+
+Raw conversation and HYPOTHESIS content stays in its declared short-lived/evidence class. It MUST NOT silently become FACT or Organizational Knowledge.
+
+## 8. Ten-Stage Timeline Projection `[SRS-MUST][SRS §5 / FR-C360-002; §15 / API-002 / owner: 03]`
+
+The Customer 360 projection exposes the unified stages `View`, `Search`, `Click`, `Chat`, `Add to cart`, `Purchase`, `Delivery`, `Support`, `Review`, and `Repurchase`. API-002 keeps the seven SRS canonical events `session`, `product_view`, `search`, `click`, `add_to_cart`, `checkout`, and `purchase`; the remaining timeline stages are derived from source events/SoR records.
+
+| Timeline stage | Canonical event/source mapping | Required projection fields |
+|---|---|---|
+| View | `product_view` / `customer_events` | `occurred_at`, `source_record_id`, ordering key, dedup key |
+| Search | `search` / `customer_events` | same |
+| Click | `click` / `customer_events` | same |
+| Chat | `session` + conversation/message records | same plus `conversation_id` |
+| Add to cart | `add_to_cart` / cart boundary | same plus `cart_id` |
+| Purchase | `purchase` or `checkout` resolved by API-001 order | same plus `order_id` |
+| Delivery | order/shipment provider event | same plus `shipment_id` |
+| Support | service case/conversation event | same plus `case_id` |
+| Review | review provider/SoR event | same plus `review_id` |
+| Repurchase | subsequent order joined to prior customer/SKU | same plus source order reference |
+
+Ordering uses `(occurred_at, source_record_id, event_id)`; deduplication uses the source event id or deterministic source-record key. Late events are retained and reprojected; replay is idempotent. SCR-004 reads this projection and labels FACT/SIGNAL/HYPOTHESIS/DECISION/ACTION distinctly.
+
+## 9. Service Case FSM and Migration Contract `[SRS-MUST][SRS §8 / owner: 03]`
+
+Stored states are exactly `NEW`, `CLASSIFIED`, `ASSIGNED`, `IN_PROGRESS`, `WAITING_CUSTOMER`, `RESOLVED`, and `CLOSED`. `REOPEN` is an action/event, not an eighth stored state: `RESOLVED` or `CLOSED` → `IN_PROGRESS`, incrementing `reopen_count`, recording `reopened_at`, appending SLA history and evidence. Illegal transitions fail with a domain error and create no state mutation. The downstream `REOPENED` proposal remains a known propagation conflict in plans/testcases and is not adopted here.
+
+The seven baseline states come from SRS §8; the allowed edges and `REOPEN` below are blueprint refinements. Every change requires the same tenant/customer binding, the expected `case_version`, an authorized owner, and an audit/evidence reference. Successful changes increment `case_version`; stale versions return conflict without another transition.
+
+| Current state | Allowed action → next state | Required input / retained history |
+|---|---|---|
+| `NEW` | classify → `CLASSIFIED` | recognized intent/category, priority, source conversation |
+| `CLASSIFIED` | assign → `ASSIGNED` | agent or human owner and SLA policy reference |
+| `ASSIGNED` | begin work → `IN_PROGRESS` | accepting owner and start timestamp |
+| `IN_PROGRESS` | request customer input → `WAITING_CUSTOMER`; resolve → `RESOLVED` | question or resolution plus evidence; SLA accounting retained |
+| `WAITING_CUSTOMER` | receive input → `IN_PROGRESS`; resolve → `RESOLVED` | source reply or evidenced resolution; no timeout-implied success |
+| `RESOLVED` | close → `CLOSED`; `REOPEN` → `IN_PROGRESS` | closure decision or reopen reason/new SLA window |
+| `CLOSED` | `REOPEN` → `IN_PROGRESS` | reopen reason, same case/customer/order identity and history |
+
+Assignment, priority, and evidence updates may leave state unchanged but still require the expected version and audit. Every unlisted transition is `INVALID_FSM_TRANSITION`; a duplicate transition request returns its recorded result, while a new request with an obsolete version conflicts. No state transition creates an order/refund or bypasses its separate approval contract.
+
+Migration order is extension/schema → tables/keys → indexes → RLS enable/force → policies → canonical registry seeds → derived views/backfills. Each migration is transactional where PostgreSQL permits; append-only audit/evidence cannot be destructively rolled back. Partial migration recovery resumes from the last committed version, with operator-reviewed compensating migration for irreversible append-only writes. The authoritative runtime task state is the stored `task_lifecycle_state` enum (`queued`, `running`, `waiting`, `awaiting_human`, `completed`, `stopped`, `failed`); `UNKNOWN` is an effect/reconciliation outcome represented by `waiting` plus an open `effect_reservations` row, not a stored task enum value.
+
+### 9.1 Canonical persistence objects and projections `[BLUEPRINT][SRS §14, §17]`
+
+The 28 canonical SRS entities remain `customers` through `learnings` in §1. DOMAIN 5 objects are additional runtime/audit projections, not replacement entities. Entity 26 is `evidences` (grounding taxonomy); `evidence_records` is the separate immutable per-run cryptographic payload chain keyed by `evidence_id`. Entity 27 is `outcomes`; `pending_outcome_attributions` is its observation watcher. Entity 28 is `learnings`; there is no `learning_records` table or alias.
+
+The same rule applies to `agent_run_logs` versus `audit_records`: the former is the per-step six-status operational run log; the latter is the canonical 18-field compliance chain. A route, UI, skill, or test MUST identify which object it reads or writes; no alias may create a second writer or bypass tenant/RLS/append-only rules.
+
+Registry serialization maps runtime `skill_id` to `skills.name`, `tool_binding` to `skills.connector_name`, and enablement to `skills.is_active`; the other §05 contract fields retain their names. Seeds use the 23 canonical dot-notated IDs, never a second hyphenated registry.
+
+Wire projections are explicit: stored conversation `open`/`paused_takeover`/`closed` maps to `ACTIVE`/`HUMAN_TAKEOVER`/`CLOSED`; stored task `queued` maps to R02/R03 `accepted` while R16 reports `queued`. Other task states keep their spelling. Approval `PENDING` with `is_paused=TRUE` renders `PAUSED` and stays undecided; the task remains `awaiting_human`. These projections do not add stored enum values.
+
+
+## 10. Verification Scenarios `[BLUEPRINT][SRS §14, §19 / NFR-003, NFR-006]`
+
+Future verification MUST cover cross-tenant composite-FK rejection; RLS context reset; memory-layer separation and expiry; ten-stage timeline reconstruction with late/replayed events; refusal to promote HYPOTHESIS to FACT; every legal/illegal Service Case transition including REOPEN; migration ordering and partial recovery; and uniqueness of tenant/effect/idempotency keys. These scenarios are `[NOT-RUNTIME-EVIDENCE]` until executed against the future runtime.

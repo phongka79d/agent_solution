@@ -214,7 +214,7 @@ The `RevenueAttributionChart` subscribes to the SSE channel `/api/v1/telemetry/s
  */
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
 interface AttributionPoint {
@@ -225,11 +225,16 @@ interface AttributionPoint {
 
 export function RevenueAttributionChart({ initialData }: { readonly initialData: AttributionPoint[] }) {
   const [dataPoints, setDataPoints] = useState<AttributionPoint[]>(initialData);
+  // §10 frame contract: the SSE `id:` field is the resumable cursor. A repeat id is dropped, and
+  // EventSource re-sends `Last-Event-ID` automatically on reconnect.
+  const lastEventId = useRef<string | null>(null);
 
   useEffect(() => {
     const eventSource = new EventSource('/api/v1/telemetry/stream?metric=revenue_attribution');
 
     eventSource.onmessage = (event: MessageEvent<string>) => {
+      if (event.lastEventId && event.lastEventId === lastEventId.current) return;
+      lastEventId.current = event.lastEventId || lastEventId.current;
       try {
         const payload = JSON.parse(event.data) as AttributionPoint;
         setDataPoints((prev) => [...prev.slice(-47), payload]); // Keep trailing 48 intervals
@@ -265,7 +270,7 @@ export function RevenueAttributionChart({ initialData }: { readonly initialData:
 ## 3. SCR-002: Agent Operations Console Specification
 
 ### 3.1 Screen Purpose & Technical Telemetry
-SCR-002 provides DevOps engineers and AI Operations teams with granular visibility into agent runtime states, execution latencies (p50, p90, p95, p99), external tool call failure rates, and execution stack traces.
+SCR-002 provides DevOps engineers and AI Operations teams with granular visibility into agent runtime states, execution latencies (p50, p90, p95, p99), external tool call failure rates, and execution stack traces. The status directory covers all thirteen platform agents — `MKT-01..MKT-06`, `SAL-01..SAL-05`, `CS-01`, and `CS-02` — with every agent in the §3.2 status model; the mock-up below is an illustrative three-row slice.
 
 ```
 +------------------------------------------------------------------------------------+
@@ -297,6 +302,9 @@ Each agent registers a heartbeat every 15 seconds. The status is derived as:
 - `DRAINING`: Marked by operator; finishes current runs without accepting new triggers.
 
 ### 3.3 Run History & Virtualized Table Contract
+
+The `authority` field is a per-step routing/verdict label read from the audit trail — `AUTH-4` marks a step that paused for SCR-003 and `AUTH-5` a denied step — never an agent grant; an agent holds only `AUTH-0..AUTH-3` (`06` §8.1 R16; `04` §8.1).
+
 ```typescript
 export interface AgentRunRecord {
   readonly runId: string;
@@ -638,38 +646,38 @@ export function AgentOperationsConsole({
 ## 4. SCR-003: Approval Center Specification
 
 ### 4.1 Screen Purpose & Risk Governance
-SCR-003 is the mandatory human-in-the-loop checkpoint for high-risk operations classified under **AUTH-4**. Operations are held in a durable `awaiting_human` task state until an authorized human operator reviews the evidence and submits one of the 5 standardized decisions.
+SCR-003 is the mandatory human-in-the-loop checkpoint for high-risk operations classified under **AUTH-4**. Operations are held in a durable `awaiting_human` task state until an authorized human operator reviews the evidence and submits one of the 5 standardized decisions. The screen renders the single `approvals` store's `PENDING` projection (queue route R14 plus the detail read `GET /api/v1/approvals/{approval_id}`); a paused item stays `PENDING` (`is_paused=TRUE`, rendered `PAUSED`) and the task remains `awaiting_human` until a decision resolves it.
 
 ### 4.2 Standardized 5 Decisions Workflow
-Every item in the approval queue supports exactly five atomic decisions, submitted through the single authoritative route `POST /api/v1/approvals/{id}/decision` (see `06-api-and-connectors-spec.md` §1). The `decision` enum is **`APPROVE` | `REJECT` | `MODIFY` | `PAUSE` | `CANCEL`**, and the resulting approval states are **`APPROVED` | `REJECTED` | `MODIFIED` | `PAUSED` | `CANCELLED`**. There is no separate `/execute` route.
+Every item in the approval queue supports exactly five atomic decisions, submitted through the single authoritative route `POST /api/v1/approvals/{id}/decision` (see `06-api-and-connectors-spec.md` §1). The `decision` enum is **`APPROVE` | `REJECT` | `MODIFY` | `PAUSE` | `CANCEL`**, and the resulting wire states are **`APPROVED` | `REJECTED` | `MODIFIED` | `PAUSED` | `CANCELLED`** — where `PAUSED` renders a still-undecided item (stored `decision='PENDING'` with `is_paused=TRUE`; the task stays `awaiting_human`), not a decided one. There is no separate `/execute` route.
 
 ```
 +-----------------------------------------------------------------------------+
 | APPROVAL ITEM #APV-9812                               Status: AWAITING_HUMAN|
 | Agent: MKT-05 | Campaign: Flash_Sale_Line_01 | Audience: 12,450 Users       |
-| Triggered: 2026-09-18 09:10:00 UTC | Expiry TTL: 09:40:00 (30m countdown)  |
+| Triggered: 2026-09-18 09:10:00 UTC | Expiry: no verified TTL source         |
 +-----------------------------------------------------------------------------+
 | Action Payload Diff:                                                        |
 |   Discount Code: "FLASH15" (15% off)                                        |
 |   Estimated Budget Consumption: 186,750 TWD                                 |
-|   Floor Price Compliance: PASS (All SKU prices >= P_floor)                   |
+|   Floor Price Compliance: sample — all SKU prices >= owner-approved P_floor |
 +-----------------------------------------------------------------------------+
 | Available Operator Decisions (decision enum):                               |
-|  [ 1. APPROVE ]  -> Signs payload with HMAC token, releases to queue        |
+|  [ 1. APPROVE ]  -> Signs payload, releases the run to execute (running)    |
 |  [ 2. REJECT ]   -> Rejects with mandatory reason code, terminates task     |
-|  [ 3. MODIFY ]   -> Opens schema form to edit payload before re-check       |
-|  [ 4. PAUSE ]    -> Freezes workflow step timer for investigation           |
-|  [ 5. CANCEL ]   -> Terminates run and releases all atomic reservations     |
+|  [ 3. MODIFY ]   -> Edits payload; new revision re-validates before release |
+|  [ 4. PAUSE ]    -> Keeps item PENDING (paused); nothing released           |
+|  [ 5. CANCEL ]   -> Aborts run; releases undispatched holds only            |
 +-----------------------------------------------------------------------------+
 ```
 
-1. **`APPROVE`**: Operator verifies evidence. Core generates a cryptographically signed approval ticket (`approver_id`, `timestamp`, `signature`), transitioning the task from `awaiting_human` to `queued` for execution; the approval state becomes `APPROVED`.
-2. **`REJECT`**: Requires selection of a standardized rejection code (`BUDGET_EXCEEDED`, `BRAND_VIOLATION`, `UNACCEPTABLE_MARGIN`, `INAPPROPRIATE_TIMING`) plus freeform rationale; the approval state becomes `REJECTED` and the task terminates.
-3. **`MODIFY`**: Opens an in-place JSON / structured form editor. Changes to parameters (e.g., lowering discount from 15% to 10% or trimming target audience) re-trigger deterministic business rules validation; the modified payload is submitted as `modified_payload`, re-validated, then released to execution with approval state `MODIFIED`.
-4. **`PAUSE`**: Freezes the workflow execution timer without aborting it; the approval state becomes `PAUSED`. Used when internal inventory or external systems are undergoing maintenance.
-5. **`CANCEL`**: Irrevocably aborts the workflow run (approval state `CANCELLED`), logs the action in the immutable audit store, and immediately releases any held atomic budget or inventory reservations.
+1. **`APPROVE`**: Operator verifies evidence. Core generates a cryptographically signed approval ticket (`approver_id`, `timestamp`, `signature`), transitioning the task from `awaiting_human` to `running` for execution; the approval becomes `APPROVED` (decided).
+2. **`REJECT`**: Requires selection of a standardized rejection code (`BUDGET_EXCEEDED`, `BRAND_VIOLATION`, `UNACCEPTABLE_MARGIN`, `INAPPROPRIATE_TIMING`) plus freeform rationale; the approval becomes `REJECTED` and the task transitions to `stopped`, the same terminal path as `CANCEL`.
+3. **`MODIFY`**: Opens an in-place JSON / structured form editor. The modified payload is submitted as `modified_payload` and, only after every guard passes, becomes a normalized new action revision (`action_revision + 1`): it re-runs the full validation set — schema, authority/policy, consent, floor provenance — receives its own payload digest and deterministic `effect_key`, and is stored atomically with the task checkpoint when the claim is applied, so it can never reuse the reviewed payload's binding or reservation. The approval becomes `MODIFIED` and the task runs the released revision.
+4. **`PAUSE`**: Keeps the item undecided and in the queue — stored `decision='PENDING'` with `is_paused=TRUE` (rendered `PAUSED`) — and the task stays `awaiting_human`; nothing is released, dispatched, or aborted. Used when internal inventory or external systems are undergoing maintenance.
+5. **`CANCEL`**: Irrevocably aborts the workflow run (approval `CANCELLED`, task `stopped`), logs the decision in the immutable audit/evidence store, and releases reservations that were never dispatched. A reservation whose external outcome is unresolved (`RESERVED`, `UNKNOWN`) is retained and reconciled by `effect_key` — cancellation never discards an unresolved effect (`04` §4.4).
 
-`AWAITING_HUMAN` is the only undecided state; the other five states correspond one-to-one with the decision enum values.
+`AWAITING_HUMAN` and `PAUSED` both describe an **undecided** item (`PENDING`; `PAUSED` = `is_paused=TRUE` and still in the queue); `APPROVED`, `REJECTED`, `MODIFIED` and `CANCELLED` are the four decided states, and each decision value maps to its wire state (`APPROVE`→`APPROVED`, `REJECT`→`REJECTED`, `MODIFY`→`MODIFIED`, `PAUSE`→`PAUSED`, `CANCEL`→`CANCELLED`).
 
 ### 4.3 Zustand Approval State Store
 ```typescript
@@ -683,7 +691,11 @@ import { immer } from 'zustand/middleware/immer';
 /** SCR-003 decision enum — the five baseline operator actions. This is the `decision` value sent to `POST /api/v1/approvals/{id}/decision`. */
 export type ApprovalDecision = 'APPROVE' | 'REJECT' | 'MODIFY' | 'PAUSE' | 'CANCEL';
 
-/** Approval states. `AWAITING_HUMAN` is the undecided queue state; the other five mirror `ApprovalDecisionResponse.status`. */
+/**
+ * Approval states. `AWAITING_HUMAN` and `PAUSED` both describe an undecided queue item
+ * (`PAUSED` = stored `PENDING` + `is_paused=TRUE`, still in the queue; the task stays
+ * `awaiting_human`); the other four mirror `ApprovalDecisionResponse.status` after a decision.
+ */
 export type ApprovalStatus =
   | 'AWAITING_HUMAN'
   | 'APPROVED'
@@ -700,7 +712,10 @@ export interface ApprovalItem {
   readonly title: string;
   readonly payload: Record<string, unknown>;
   readonly riskReason: string;
-  readonly expiresAt: string;
+  /** SHA-256 of the reviewed canonical payload, captured from the queue/detail read; required on every decision submission so a superseded payload is refused (409 APPROVAL_STALE_PAYLOAD). */
+  readonly payloadSha256: string;
+  /** Present only when the server instruments an expiry source (`06` §8.2.1); absent → no countdown is rendered. */
+  readonly expiresAt?: string;
   readonly status: ApprovalStatus;
 }
 
@@ -747,7 +762,8 @@ export const useApprovalStore = create<ApprovalState>()(
       if (!target) return;
       if (!operatorId) throw new Error('Approval decision requires an authenticated operator identity.');
 
-      // Single authoritative approval route; the decision enum is exported verbatim.
+      // The server recomputes the canonical digest and refuses stale/superseded payloads before
+      // claiming the approval. MODIFY is not a client-side authority or digest override.
       const response = await fetch(`/api/v1/approvals/${id}/decision`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -755,6 +771,7 @@ export const useApprovalStore = create<ApprovalState>()(
           decision,
           operator_id: operatorId,
           reason: meta.reason,
+          expected_payload_sha256: target.payloadSha256,
           modified_payload: meta.modifiedPayload,
         }),
       });
@@ -784,8 +801,8 @@ export const useApprovalStore = create<ApprovalState>()(
 #### 1. ApprovalQueueList.tsx
 ```typescript
 /**
- * @file components/approvals/ApprovalQueueList.tsx
- * Interactive list displaying pending AUTH-4 approval requests with risk metrics and countdowns.
+ * Interactive list displaying pending AUTH-4 approval requests with risk metrics and an optional
+ * server-instrumented expiry indicator; no client-inferred countdown exists without an expiry source.
  */
 'use client';
 
@@ -822,8 +839,9 @@ export function ApprovalQueueList({
     <div className="space-y-3">
       {items.map((item) => {
         const isSelected = item.id === selectedId;
-        const expiresDate = new Date(item.expiresAt);
-        const minutesLeft = Math.max(0, Math.round((expiresDate.getTime() - Date.now()) / 60000));
+        const minutesLeft = item.expiresAt
+          ? Math.max(0, Math.round((new Date(item.expiresAt).getTime() - Date.now()) / 60000))
+          : null;
 
         return (
           <div
@@ -847,9 +865,13 @@ export function ApprovalQueueList({
 
             <p className="text-xs text-slate-400 mb-3">{item.riskReason}</p>
 
-            <div className="flex justify-between items-center text-[11px] text-slate-500 font-mono">
+            <div className="flex justify-between items-center text-[10px] font-mono text-slate-500">
               <span>Agent: <strong className="text-slate-300">{item.agentId}</strong></span>
-              <span>TTL Remaining: <strong className={minutesLeft < 10 ? 'text-rose-400' : 'text-amber-400'}>{minutesLeft}m</strong></span>
+              {minutesLeft === null ? (
+                <span>Expiry: not instrumented</span>
+              ) : (
+                <span>TTL Remaining: <strong className={minutesLeft < 10 ? 'text-rose-400' : 'text-amber-400'}>{minutesLeft}m</strong></span>
+              )}
             </div>
           </div>
         );
@@ -2393,3 +2415,42 @@ Every screen and component in this specification must satisfy the following veri
 | **SCR-005** | `UI-TEST-005` | Mutex Takeover Lock Acquisition | Takeover button acquires the conversation lease within 200ms; AI outbound replies stop; heartbeat renews the lease and resume releases it |
 | **Storefront Widget**| `UI-TEST-006` | Bundle Budget & Host Style Isolation | Gzipped script < 20.0 KB; merchant CSS `* { margin: 50px }` does not leak |
 | **Storefront Widget**| `UI-TEST-007` | postMessage Origin Enforcement | Messages whose `event.origin` differs from the configured `host-origin` are discarded; outbound messages are posted to that explicit origin, never `*` |
+
+## 9. Contract-Complete Screen, Realtime, and Widget Rules `[SRS-MUST][SRS §18 / SCR-001..005, NFR-006, NFR-007]`
+
+The screens and component snippets above are target UI only. Each screen consumes the owner route in `06`, applies tenant/operator scope, and visibly distinguishes loading, empty, partial, stale, denied, dependency-unavailable, version-conflict, and fail-closed states.
+
+| Screen | Required contract | Source route/data | Scope and verification |
+|---|---|---|---|
+| `SCR-001` Executive Dashboard | ten SRS indicators: Revenue, Leads, Conversion, Active Campaigns, AI Generated Revenue, CS status, Retention, AI Actions, Approval Pending, Abnormal Events; aggregation window/timezone and provisional labels | `GET /api/v1/telemetry/kpi-snapshot` + SSE | tenant/operator scope; missing data is `—`/stale, never zero-success; abnormal event drills to evidence |
+| `SCR-002` Agent Operations | 13-agent directory, heartbeat/status, run history, errors, tool calls, latency, token/cost, filters, retry only for safe failed runs | `GET /api/v1/runs` + stream | tenant filter and operator permission; UNKNOWN cannot blind retry |
+| `SCR-003` Approval Center | PENDING queue, evidence card, exact five decisions `APPROVE`, `REJECT`, `MODIFY`, `PAUSE`, `CANCEL`; one-time binding and optimistic version | `GET /api/v1/approvals?status=PENDING` + `POST /api/v1/approvals/{id}/decision` | authorized operator; stale item shows conflict; AUTH-5 never queues |
+| `SCR-004` Customer 360 | ten-stage timeline; FACT/SIGNAL/HYPOTHESIS/DECISION/ACTION visual separation; evidence, verified identity, cursor pagination and gaps | `GET /api/v1/customers/{customer_id}/timeline` | tenant and verified customer binding; cross-tenant/private lookup refusal |
+| `SCR-005` Conversation Console | session mutex, takeover/heartbeat/resume, message ownership, draft/copy mode, escalation, stale operator lease | takeover routes + WebSocket | human hold suppresses autonomous send; race loses safely to current lease owner |
+
+Shared state wording is descriptive only: `loading`, `empty`, `partial`, `stale`, `permission_denied`, `dependency_unavailable`, `version_conflict`, and `fail_closed`. A missing or unresolved price-floor provenance renders a fail-closed state; the UI MUST NOT display “sent”, “approved”, “executed”, or “successful” until the corresponding backend receipt/evidence arrives.
+
+Floor ownership, formula/margin mode, rounding, freshness and provenance remain `[OWNER-DECISION-REQUIRED]` for the Solution Architect and Business/Finance ([README §8.1](./README.md#81-p_floor-ownership-and-formula--owner-decision-required)). Both the ERP/policy-service supplied floor and platform-derived candidate remain open. No price-bearing action may dispatch without an owner-approved, provenance-bearing floor decision; SCR-003 cannot authorize a bypass, and disabling discount/subsidy capability does not relax this check for a price-bearing proposal using it.
+
+The UI maps missing or unapproved floor provenance to `P_FLOOR_UNAVAILABLE` and a fail-closed state. It does not display a quote, approval success, or dispatch-ready action when the floor decision is absent; the operator cannot use SCR-003 to bypass that condition.
+
+## 10. Realtime and Storefront Boundary `[BLUEPRINT][SRS §18, §19 / NFR-006, NFR-007, NFR-009]`
+Authority boundary reminder: the Command Center displays `AUTH-4` approval routing and `AUTH-5` denial as per-step verdicts; agents retain only `AUTH-0..AUTH-3` grants. `AUTH-5` is a hard deny. The UI cannot grant, raise, or reinterpret authority.
+
+SSE/WebSocket target events include `telemetry.snapshot`, `run.updated`, `approval.pending`, `approval.decided`, `conversation.message`, `takeover.acquired`, `takeover.heartbeat`, `takeover.released`, and `stream.error`. The client reconnects with bounded exponential backoff and a replay cursor, de-duplicates event IDs, filters by tenant/operator, and renders stale/unavailable state when the stream is down.
+
+The widget uses a browser-safe token only; enterprise secrets and policy/price decisions never enter the client. Shadow DOM isolates host styles; host-page failure does not block checkout. Consent, keyboard navigation, mobile behavior, explicit postMessage origin, and the provisional bundle budget are verified at the UI boundary. The widget may request a server decision but MUST NOT calculate or authorize P_floor, discount, inventory, authority, or approval.
+
+## 11. UI Verification Scenarios `[BLUEPRINT][SRS §18, §19 / SCR-001..005]`
+
+Future checks MUST prove tenant A/B isolation; pending approval display and decision conflict; ten-stage timeline completeness and epistemic badges; takeover race and no autonomous send during hold; SSE reconnect/replay/de-duplication; permission matrix; dependency unavailable states; widget failure without blocking host checkout; and keyboard accessibility. These are `[NOT-RUNTIME-EVIDENCE]` until the target UI and gateway are executed.
+
+### 11.1 UI state, event, and security acceptance boundary `[BLUEPRINT][SRS §18, §19 / SCR-001..005, NFR-006, NFR-007, NFR-009]`
+
+All screen data is a tenant-scoped projection of the routes owned by `06`; the browser never queries PostgreSQL, Redis, Qdrant, a provider, or a second policy service directly. Each request carries the operator/session binding established by the gateway, and each rendered record retains its `run_id`, `correlation_id`, source status, and evidence reference where applicable. A stale cursor, version conflict, expired lease, denied permission, missing source, or unavailable stream is a visible state transition, not a successful empty result.
+
+Realtime delivery is at-least-once and cursor-resumable: frames carry a tenant-scoped event id, the client resumes with `Last-Event-ID`, de-duplicates before state application, and never interprets a replay as a new business event. A stream error freezes the last known state with a stale/unavailable marker and reconnects with bounded backoff; it cannot approve, dispatch, mutate a case, or release a takeover lease by itself. Mutations remain REST route calls with idempotency/version preconditions.
+
+The widget boundary is deliberately weaker than the operator console. It may hold only a browser-safe session token and anonymous/session conversation identifier; it cannot receive enterprise secrets, customer profile data outside the server-authorized response, provider credentials, authority grants, approval tickets, or price-policy inputs. Shadow DOM and explicit origin checks protect the host page, while the widget treats host messages and streamed content as untrusted data. Host-page or widget failure must not block checkout, and no widget-side fallback may claim consent, inventory, approval, delivery, or successful execution.
+
+These screen, stream, takeover, accessibility, and widget rules are target acceptance criteria. They are `[NOT-RUNTIME-EVIDENCE]` until the browser client and `/api/v1` gateway execute the scenarios in §8–§11 against tenant-scoped durable state.
