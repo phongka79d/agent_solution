@@ -15,7 +15,8 @@
     "build": "tsc --project tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "lint": "node ../../scripts/eslint.mjs",
-    "test:unit": "vitest run"
+    "test:unit": "vitest run",
+    "test:contracts": "vitest run --config vitest.contracts.config.ts"
   },
   "dependencies": {
     "@agentos/adapters": "workspace:*",
