@@ -30,7 +30,7 @@ The target platform exposes four foundational REST endpoints governed by strict 
 
 **SCR-003 approval routing.** The single authoritative approval endpoint is `POST /api/v1/approvals/{id}/decision`. It accepts the five baseline SCR-003 actions — `APPROVE`, `REJECT`, `MODIFY`, `PAUSE`, `CANCEL` — and is the route the Command Center UI calls (see `07-human-command-center-ui.md` §4.3). There is no separate `/execute` route.
 
-**SCR-005 conversation control routing.** The authoritative routes are `POST /api/v1/conversations/{id}/takeover` (operator takes over, per SCR-005), `POST /api/v1/conversations/{id}/takeover/heartbeat` (renews the operator lease while the takeover is active), and `POST /api/v1/conversations/{id}/resume` (operator returns the conversation to the agent, per SCR-005 "trả lại Agent"; this is also the only release path for the lease). Session identity is the `conversation_id`; there is no parallel `/sessions/{id}` resource and no separate DELETE/release route.
+**SCR-005 conversation control routing.** The authoritative routes are `POST /api/v1/conversations/{id}/takeover` (operator takes over, per SCR-005), `POST /api/v1/conversations/{id}/takeover/heartbeat` (renews the operator lease while the takeover is active), and `POST /api/v1/conversations/{id}/resume` (operator returns the conversation to the agent, per SCR-005 "trả lại Agent"; the only explicit release path for the lease — lease expiry also returns control to the agent). Session identity is the `conversation_id`; there is no parallel `/sessions/{id}` resource and no separate DELETE/release route.
 
 ### 1.1. Gateway route registry (blueprint — none of these routes exists today)
 
@@ -180,9 +180,15 @@ paths:
       summary: Submit human operator decision for a pending AUTH-4 approval (SCR-003 — Approve, Reject, Modify, Pause, Cancel)
       description: >-
         The single approval route used by the SCR-003 Approval Center. decision=APPROVE releases the signed
-        payload for execution; REJECT terminates the task; MODIFY replaces the payload and re-validates it
-        before approval; PAUSE freezes the workflow without aborting it; CANCEL irrevocably aborts the run and
-        releases held reservations. PAUSE and CANCEL are first-class decisions, not task-state edits.
+        payload for execution; REJECT terminates the task; MODIFY authorizes a normalized new action revision
+        only after every guard passes: the revision re-runs the full validation set (schema, authority/policy,
+        consent, floor provenance), receives its own payload digest and deterministic effect key, and is stored
+        atomically with the task checkpoint when the claim is applied — the reviewed digest and the former
+        approval record are never reused, and the revision is dispatched only after that atomic write; PAUSE
+        keeps the approval PENDING with is_paused=TRUE (rendered PAUSED; the task remains awaiting_human) and
+        releases nothing; CANCEL irrevocably aborts the run, releasing only reservations that were never
+        dispatched — a reservation whose external outcome is unresolved stays RESERVED for reconciliation,
+        never a blind release. PAUSE and CANCEL are first-class decisions, not task-state edits.
       operationId: submitApprovalDecision
       parameters:
         - name: id
@@ -202,7 +208,10 @@ paths:
               $ref: '#/components/schemas/ApprovalDecisionRequest'
       responses:
         '200':
-          description: Decision accepted and orchestrated task resumed (APPROVED/MODIFIED), frozen (PAUSED), or terminated (REJECTED/CANCELLED)
+          description: >-
+            Decision accepted: the orchestrated task is resumed (APPROVED/MODIFIED → task running), paused
+            (PENDING + is_paused=TRUE → wire PAUSED; task awaiting_human), or terminated (REJECTED/CANCELLED →
+            task stopped).
           content:
             application/json:
               schema:
@@ -259,6 +268,8 @@ paths:
           $ref: '#/components/responses/403Forbidden'
         '404':
           $ref: '#/components/responses/404NotFound'
+        '409':
+          $ref: '#/components/responses/409Conflict'
 
   /conversations/{id}/takeover/heartbeat:
     post:
@@ -342,6 +353,8 @@ paths:
           $ref: '#/components/responses/403Forbidden'
         '404':
           $ref: '#/components/responses/404NotFound'
+        '409':
+          $ref: '#/components/responses/409Conflict'
 
 components:
   securitySchemes:
@@ -562,16 +575,30 @@ components:
 
     ApprovalDecisionRequest:
       type: object
-      required: [decision, operator_id, reason]
+      required: [decision, operator_id, reason, expected_payload_sha256]
       properties:
         decision:
           type: string
           description: >-
             Baseline SCR-003 action set. APPROVE signs and releases the payload; REJECT terminates the task;
-            MODIFY replaces the payload (see modified_payload) and re-validates it before approval; PAUSE
-            freezes the durable workflow without aborting it; CANCEL irrevocably aborts the run and releases
-            held reservations.
+            MODIFY authorizes a normalized new action revision (see modified_payload) only after every guard
+            passes: the revision re-runs the full validation set — schema, authority/policy, consent, floor
+            provenance — receives its own payload digest and deterministic effect key, and is stored
+            atomically with the task checkpoint when the claim is applied; the reviewed digest and the former
+            approval record are never reused. PAUSE keeps the approval PENDING with is_paused=TRUE (rendered
+            PAUSED; the task stays awaiting_human) and releases nothing; CANCEL irrevocably aborts the run,
+            releasing only never-dispatched reservations — a reservation whose external outcome is unresolved
+            stays RESERVED for reconciliation.
           enum: [APPROVE, REJECT, MODIFY, PAUSE, CANCEL]
+        expected_payload_sha256:
+          type: string
+          description: >-
+            The digest is required and verified server-side against the canonical stored payload inside the
+            same transaction as the one-time claim; the decision is applied only when it still matches, and a
+            mismatch means the approver reviewed a superseded payload and is refused with 409
+            APPROVAL_STALE_PAYLOAD. The claim is additionally a server-side compare-and-set on the bound
+            (tenant_id, run_id, effect_key) triple, so a second click or a replayed callback updates zero
+            rows and is refused with 409 APPROVAL_NOT_CLAIMABLE (see 04 §4.2).
         operator_id:
           type: string
         reason:
@@ -593,8 +620,9 @@ components:
         status:
           type: string
           description: >-
-            APPROVED / MODIFIED release the task back to execution; PAUSED holds the task in a durable paused
-            state; REJECTED / CANCELLED terminate it.
+            APPROVED / MODIFIED release the task back to execution (task state running); PAUSED is the
+            rendering of a still-undecided item — stored decision='PENDING' with is_paused=TRUE, task remains
+            awaiting_human — not a stored approval state; REJECTED / CANCELLED terminate the run (task stopped).
           enum: [APPROVED, REJECTED, MODIFIED, PAUSED, CANCELLED]
         decided_at:
           type: string
@@ -690,7 +718,7 @@ components:
 
 ## 2. API-001 (ERP/POS Connector) Standard Interface DTOs
 
-API-001 represents the authoritative System of Record connection. It guarantees read/write integrity with existing client systems (SAP, Oracle NetSuite, 91APP, SHOPLINE, Cyberbiz) — these vendor names are illustrative **provider choices that remain [UNCONFIRMED][ASM-001]** until the production connector audit closes.
+API-001 is the target authoritative System-of-Record boundary. Its read/write integrity requirements apply to existing client systems (SAP, Oracle NetSuite, 91APP, SHOPLINE, Cyberbiz); these vendor names are illustrative **provider choices that remain [UNCONFIRMED][ASM-001]** until the connector audit closes. No connector integrity has been demonstrated by this blueprint.
 
 ```typescript
 /**
@@ -761,8 +789,10 @@ export interface PriceLookupResponseDTO {
   readonly original_list_price: number;
   readonly active_promotional_price?: number;
   readonly tier_discount_applied: number;
-  readonly final_unit_price: number;
-  readonly mathematical_floor_price: number; // P_floor boundary (BR-001, BR-002)
+  /** Owner-approved, provenance-bearing floor; candidate field until `README.md` §8.1 is decided. */
+  readonly mathematical_floor_price: number;
+  readonly floor_price_source: string;
+  readonly floor_price_synced_at: string;
   readonly currency: string;
   readonly tax_rate: number;
   readonly quote_token: string;
@@ -972,7 +1002,7 @@ SRS API-002 defines exactly seven canonical events: **`session`, `product_view`,
 | `purchase` | `order.placed` | Order confirmation from SoR. |
 | — (extension) | `cart.remove` | **Not** part of the baseline canonical set; retained as an extension event for analytics only and never used as a purchase/abandonment trigger on its own. |
 
-Events whose `event_type` has no canonical parent are marked `canonical_event: null` and treated as extension telemetry. The mapping is deterministic and versioned; a granular alias may never be silently re-pointed at a different canonical event.
+Events whose `event_type` has no canonical parent are marked `canonical_event: null` and treated as extension telemetry. The mapping is deterministic and versioned; a granular alias may never be silently re-pointed at a different canonical event. In storage, `customer_events.event_name` holds the canonical event — one of the seven baseline names, or the extension's `ext.<domain>.<name>` identity when `canonical_event` is null — while the original granular `event_type` and the alias-table version are retained in the stored `payload`; `source_event_id` is the dedupe key (`03` §1 Entity 4; §8.3 C-7).
 
 ```
                  [Storefront / App Webhook]
@@ -1515,22 +1545,22 @@ export class WhatsAppSessionWindowGuard {
 }
 ```
 
-#### 5.2.2. ADPT-GL-002: Multi-Currency Gateway with Time-Locked FX Buffer
+#### 5.2.2. ADPT-GL-002: Multi-Currency Gateway with Time-Locked FX Buffer `[OPTIONAL-EXTENSION][UNCONFIRMED][ASM-001]`
 
-When transacting cross-border in multi-currency (USD, EUR, JPY, GBP, TWD), real-time FX fluctuations could erode operating margins and breach the mathematical floor price $P_{floor}$. ADPT-GL-002 enforces a 15–30 minute Time-Locked FX Snapshot combined with a mandatory $1.5\% \text{ to } 2.0\%$ FX Safety Buffer.
+This is an isolated platform-derived FX candidate, not a selected floor model or a production quote path (README §8.1; `08` §3.3). Business/Finance must approve the buffer and lock window under ASM-003; neither has a platform default. Rate source, rounding and floor provenance remain `[OWNER-DECISION-REQUIRED]`. Under the ERP/policy-service model the adapter instead validates the source-supplied quote/floor. No calculation below substitutes for an owner-approved, provenance-bearing floor decision.
 
 ##### Mathematical Safeguard Formulation
 - Let $P_{base}$ be the unit price in the tenant's domestic ledger base currency (e.g., TWD).
 - Let $P_{floor}$ be the non-negotiable floor price boundary in base currency (`BR-001`, `BR-002`).
 - Let $R_{spot}$ be the spot exchange rate defined as domestic base currency per 1 unit of target foreign currency ($\frac{\text{Base}}{\text{Foreign}}$, e.g., $32.0\text{ TWD / USD}$).
-- Let $B$ be the FX volatility safety buffer fraction ($B \in [0.015, 0.020]$, default $0.0175$).
+- Let $B$ be an explicitly owner-approved FX safety buffer fraction, $0 \le B < 1$; no default or policy range is fixed here.
 - The guaranteed rate protecting the seller against foreign currency depreciation is:
   $$R_{guaranteed} = R_{spot} \times (1 - B)$$
 - The foreign currency price quoted to the buyer is calculated as:
   $$P_{foreign} = \frac{P_{base}}{R_{guaranteed}} = \frac{P_{base}}{R_{spot} \times (1 - B)}$$
 - **Floor Invariant Proof**: When the customer pays $P_{foreign}$, the minimum base currency yield received upon settlement at rate $R_{settlement} \ge R_{guaranteed}$ satisfies:
   $$\text{ConvertedBase} = P_{foreign} \times R_{settlement} \ge P_{foreign} \times R_{guaranteed} = \left(\frac{P_{base}}{R_{guaranteed}}\right) \times R_{guaranteed} = P_{base} \ge P_{floor}$$
-  This guarantees that margin erosion never breaches $P_{floor}$ for adverse currency slippage up to $B \times 100\%$.
+  This conditional arithmetic assumes the stated settlement-rate bound and does not prove that a provider guarantees that rate. Rounding and provider settlement evidence must be verified before dispatch; this is `[NOT-RUNTIME-EVIDENCE]`.
 
 ```typescript
 /**
@@ -1543,34 +1573,38 @@ export interface TimeLockedFXQuote {
   readonly base_currency: string;
   readonly target_currency: string;
   readonly spot_rate: number; // Base currency units per 1 unit of foreign currency
-  readonly buffer_percent: number; // e.g., 0.0175 (1.75%)
+  readonly buffer_percent: number; // explicit owner-approved fraction; no default
   readonly guaranteed_rate: number; // spot_rate * (1 - buffer_percent)
   readonly expires_at: number; // Timestamp ms
 }
 
 export class FXSafeguardEngine {
-  private static readonly QUOTE_TTL_MS = 20 * 60 * 1000; // 20 minutes lock
-  private static readonly DEFAULT_BUFFER = 0.0175; // 1.75% safety buffer
-
   /**
    * Generates a time-locked FX quote with safety margin.
    */
   public static createLockedQuote(
     baseCurrency: string,
     targetCurrency: string,
-    liveSpotRate: number
+    liveSpotRate: number,
+    approvedBuffer: number,
+    approvedTtlMs: number
   ): TimeLockedFXQuote {
+    if (!Number.isFinite(liveSpotRate) || liveSpotRate <= 0
+      || !Number.isFinite(approvedBuffer) || approvedBuffer < 0 || approvedBuffer >= 1
+      || !Number.isSafeInteger(approvedTtlMs) || approvedTtlMs <= 0) {
+      throw new Error('P_FLOOR_UNAVAILABLE: explicit valid FX policy inputs are required.');
+    }
     const quote_id = `fx_${crypto.randomUUID()}`;
-    const guaranteed_rate = liveSpotRate * (1 - this.DEFAULT_BUFFER);
+    const guaranteed_rate = liveSpotRate * (1 - approvedBuffer);
 
     return {
       quote_id,
       base_currency: baseCurrency,
       target_currency: targetCurrency,
       spot_rate: liveSpotRate,
-      buffer_percent: this.DEFAULT_BUFFER,
+      buffer_percent: approvedBuffer,
       guaranteed_rate: Number(guaranteed_rate.toFixed(6)),
-      expires_at: Date.now() + this.QUOTE_TTL_MS,
+      expires_at: Date.now() + approvedTtlMs,
     };
   }
 
@@ -1614,7 +1648,7 @@ export class FXSafeguardEngine {
     const convertedBaseAmount = foreignPrice * lockedQuote.guaranteed_rate;
     if (convertedBaseAmount < baseFloorPrice) {
       throw new Error(
-        `FLOOR_PRICE_BREACH: Converted amount ${convertedBaseAmount.toFixed(2)} ${lockedQuote.base_currency} < P_floor ${baseFloorPrice} ${lockedQuote.base_currency}`
+        `ERR_FLOOR_PRICE_VIOLATION: Converted amount ${convertedBaseAmount.toFixed(2)} ${lockedQuote.base_currency} < P_floor ${baseFloorPrice} ${lockedQuote.base_currency}`
       );
     }
   }
@@ -1865,3 +1899,218 @@ matrix defines the behaviour to assert, not a measured SLA.
 | `TC-CON-010` | DOM Connectors | Evaluate FMCG customer with $> 20\%$ CVS non-pickup rate (DOM-FMCG-003). | `allow_cvs_cod` returns `false`, forces `REQUIRE_PREPAYMENT` action. |
 | `TC-CON-011` | Core Gateway | Replay the same `idempotency_key`/`effect_key`: (a) byte-identical payload, (b) mutated payload. | (a) returns the cached receipt with the original `task_id` and executes no second external effect; (b) returns `409 IDEMPOTENCY_CONFLICT`. |
 | `TC-CON-012` | SCR-005 Control | Operator takes over, heartbeats, then resumes the conversation. | Takeover locks AI outbound replies; heartbeat extends `lease_expires_at`; resume returns status `ACTIVE` (agent control) and releases the lease. |
+
+## 8. Complete `/api/v1` Route Inventory and Wire Contract `[SRS-MUST][SRS §15, §18 / API-001..003]`
+
+This section is the **single authoritative target route inventory** for the implementation pack. It supersedes the per-family summary that previously stood here and the "eight REST routes" wording of §1.1: the OpenAPI document in §1 declares eight of the seventeen baseline operations (the four core routes, the approval decision, and the three conversation-control routes), and §1.1's five additional rows plus the four Command Center reads complete the set. Every row below is a **target contract**; no gateway, endpoint, or adapter exists today, and none of these routes can be served by this repository.
+
+### 8.0 Count, scope, and conventions
+
+**Baseline target operations: 18.** The count is deliberately explicit and is the reference number for the rest of the pack. Seven are reads or streams — R03, R09, R10, and R14–R17 — and eleven drive state:
+
+| Count group | # | Operations |
+|---|---|---|
+| Conversation/task/event core | 4 | R01 `POST /conversations`; R02 `POST /conversations/{conversation_id}/messages`; R03 `GET /tasks/{task_id}`; R04 `POST /events` |
+| Approval and reconciliation decisions | 2 | R05 `POST /approvals/{approval_id}/decision`; R18 `POST /operations/runs/{run_id}/reconciliation` |
+| Conversation control | 3 | R06 `POST /conversations/{id}/takeover`; R07 `POST /conversations/{id}/takeover/heartbeat`; R08 `POST /conversations/{id}/resume` |
+| Realtime | 2 | R09 `GET /telemetry/stream` (SSE); R10 `WS /ws/stream` (WebSocket) |
+| Storefront | 2 | R11 `POST /storefront/stream`; R12 `POST /storefront/events` |
+| Operator retry | 1 | R13 `POST /operations/runs/{run_id}/retry` |
+| Command Center reads | 4 | R14 `GET /approvals?status=PENDING`; R15 `GET /customers/{customer_id}/timeline`; R16 `GET /runs`; R17 `GET /telemetry/kpi-snapshot` |
+| **Total** | **18** | |
+
+Counted **separately** from the baseline (never silently folded into the 18, never treated as aliases):
+
+| Surface class | Count | Detail |
+|---|---|---|
+| Supplemental SCR-003 detail read | 1 operation | `GET /api/v1/approvals/{approval_id}` (§8.2.1) — required by SCR-003 to render the evidence card and to capture the reviewed payload digest |
+| Browser/OAuth callback surfaces owned by `01` | 2 paths | `LINE_LOGIN_CALLBACK_URL` and `CVS_EMAP_CALLBACK_URL` defaults in the `01` §8 Configuration Catalog (`/api/v1/auth/line/callback`, `/api/v1/shipping/cvs/callback`); redirect/OAuth endpoints, not JSON gateway operations |
+| Provider webhook ingress | 0 gateway route paths templated | §4.1 templates **verification schemes and payload extracts**, not per-provider gateway paths; provider deliveries reach the platform through R04 or the channel adapter ingress and remain `[OPTIONAL-EXTENSION][UNCONFIRMED][ASM-001]` |
+
+**Conventions that apply to every operation below**
+
+- **Base path:** `/api/v1` only. There is no unprefixed and no `/v1`-only variant in the implementation contract; the `/v1` wording in `plans/` is recorded in the `README.md` §9 propagation register.
+- **Tenant binding:** `tenant_id` is resolved server-side from the authenticated session/credential and the RLS context (NFR-006, `03` §2). A body/query/header `tenant_id` is a routing hint at most and is never the isolation factor; a mismatch is refused, never merged.
+- **Error envelope:** `{ error_code, message, retryable, correlation_id, details? }` (`ErrorResponse`, §1). Business-rule codes are owned by `08` §8 (`P_FLOOR_UNAVAILABLE`, `ERR_FLOOR_PRICE_VIOLATION`, `AUTHORITATIVE_SOURCE_UNAVAILABLE`, `CONSENT_REQUIRED`, …); the `ErrorResponse.error_code` enum in §1 is an illustrative subset that implementation MUST extend to the `08` vocabulary rather than re-spell.
+- **Success is never claimed without proof:** a route returns `202`/`200` plus a durable `task_id`/receipt; it never returns "sent"/"executed" for an effect whose provider receipt is absent. Indeterminate external outcomes are `UNKNOWN` and reconcile by `effect_key` (`04` §4.4).
+- **Audit and evidence:** every operation writes an `agentos.audit_records` row (`08` §4.1); any operation that can produce an external effect additionally references an `agentos.evidence_records` row (BR-010, NFR-002). Reads write the audit row and no evidence row.
+- **Pagination:** cursor-based for every collection (`cursor`, `limit`); no page numbers, no offsets. `limit` defaults/maxima are `[PROVISIONAL][ASM-002]` and MUST NOT be treated as policy.
+
+### 8.1 Baseline operations — per-route wire contract
+
+Each row states auth/tenant binding, concrete request and response schema, the state transition it drives, idempotency behaviour, pagination, the error set, and the audit/evidence obligation.
+
+**8.1.1 Conversation, task, approval, and conversation-control operations (R01–R08)**
+
+| # | Auth & tenant binding | Request schema | Success response | State transition | Idempotency | Pagination | Errors | Audit & evidence |
+|---|---|---|---|---|---|---|---|---|
+| R01 | Channel session credential (widget/app) or operator session; tenant from the authenticated session; unknown `customer_identifier` never resolves an identity by itself (`04` §5) | `CreateConversationRequest` (§1): `channel` ∈ API-003 baseline `WEB_CHAT`/`MESSENGER`/`TIKTOK`/`ZALO`/`EMAIL`/`SMS` (+ extension values), `customer_identifier`, optional `metadata` | `201 ConversationSessionResponse`: `conversation_id`, `session_token`, `status`, `created_at` | Inserts an `agentos.conversations` row (`state = 'open'` → wire `ACTIVE`); returns the existing conversation when the `(tenant, channel, external_thread_id)` binding already exists (`uq_conversations_tenant_thread`) | `POST` is a bind-or-create on the unique thread binding, not a duplicate-creating mutation; no `idempotency_key` field | n/a | `400 VALIDATION_FAILED`, `401 AUTHENTICATION_FAILED`, `403 CAPABILITY_NOT_ENABLED` (channel/module not enabled for the tenant) | Audit row with the resolved channel and conversation id; no evidence row (no external effect) |
+| R02 | Session-bound caller holding the conversation, or an operator session that currently holds the takeover lease (R06); tenant from session | `PostMessageRequest` (§1): `message` (≤ 4000), required `idempotency_key`, optional `module` (`marketing`/`sales`/`support`/`auto`), optional `attachments` | `202 TaskAcceptedResponse`: `task_id`, `conversation_id`, `status` ∈ `accepted`/`running`/`waiting`/`awaiting_human`/`completed`/`stopped`/`failed`, `task_version`, `correlation_id` | Creates or resumes a durable run (`platform_durable_tasks`); a message while the lease is held by another operator is refused `409` (Conversation Locked by Human Operator, `07` §6.2) | Required. Identical replay of the same `idempotency_key` + byte-identical payload → cached receipt (same `task_id`), no second turn; same key + different payload → `409 IDEMPOTENCY_CONFLICT` (NFR-003, BR-005/BR-006) | n/a | `400`, `409`, `401`, `403`, `422` (policy/validation failure, e.g. `CONSENT_REQUIRED` for outreach on a non-consented subject) | Audit row per message turn; evidence row only when the run produces an external effect (later step) |
+| R03 | Session-bound caller or operator with read permission; tenant from session | Path `task_id`; no body | `200 TaskStateResponse`: `task_id`, `task_version`, `status`, optional `answer`, `sources[]` (`source_record_id`, `source_version`, `source_file`), `actions[]` (`operation`, `status`, `provider_reference`), `evidence_reference`, `correlation_id` | None (read). `status` is the durable task state; `awaiting_human` means an approval is pending | n/a | n/a | `404 TASK_NOT_FOUND`, `401`, `403` | Read audit row; `evidence_reference` surfaces the `evidence_records` row when one exists |
+| R04 | Signed connector/provider boundary or authenticated platform producer (`WebhookHmacAuth` `X-Signature-SHA256` + tenant binding); signature verified before any agent routing | `PlatformEventEnvelope`: `event_id`, `event_type`, `source`, `occurred_at`, `payload` | `202 EventIngestionResponse`: `event_id`, `correlation_id`, `status` ∈ `QUEUED`/`IGNORED`/`PROCESSED` | Append to `customer_events`/stream; may dispatch a signal that starts a run | Required on `event_id`: identical replay → cached receipt; same `event_id` with a different payload → `409 IDEMPOTENCY_CONFLICT` | n/a | `400`, `401` (signature/TLS failure), `409` | Audit row per delivery with signature verdict; evidence only for downstream effects |
+| R05 | Operator session with decision permission for the tenant; approval must be bound to the identical `(tenant_id, run_id, effect_key)` triple (`04` §4.2) | `ApprovalDecisionRequest`: `decision` ∈ `APPROVE`/`REJECT`/`MODIFY`/`PAUSE`/`CANCEL`, `operator_id`, `reason` (mandatory; standardized code for `REJECT`), required `expected_payload_sha256` (the digest the approver reviewed, captured from R14 or §8.2.1), `modified_payload` (MODIFY only — a new action revision that must re-pass validation with its own digest and effect key before dispatch) | `200 ApprovalDecisionResponse`: `approval_id`, `task_id`, `status` ∈ `APPROVED`/`REJECTED`/`MODIFIED`/`PAUSED`/`CANCELLED`, `decided_at`, `correlation_id` | Compare-and-set claim on the PENDING `approvals` row plus the task transition in one transaction: `APPROVE`/`MODIFY` → task `running` (MODIFY stores its normalized new revision — payload, digest, effect key, checkpoint — atomically in the same transaction, and the old approval/digest is never reused); `REJECT`/`CANCEL` → task `stopped`; `PAUSE` → `decision='PENDING'` with `is_paused=TRUE`; wire `PAUSED` | One-time claim with two preconditions: a stale `expected_payload_sha256` → `409 APPROVAL_STALE_PAYLOAD`; a second click, stale console tab, or replayed callback that updates 0 rows → `409 APPROVAL_NOT_CLAIMABLE`. No replay ever returns a decision receipt as a success | n/a | `400` (unknown decision value, listing the five accepted values), `401`, `403`, `404`, `409` | Audit row recording `decision`, `operator_id`, `decided_at`, and the approval id; evidence row when the released action executes |
+| R06 | Operator session with takeover permission for the tenant; the conversation must belong to that tenant | `ConversationTakeoverRequest`: `operator_id`, `reason`, `takeover_mode` (`FULL_CONTROL`/`CO_PILOT`; see the enum conflict in §8.3) | `200 ConversationTakeoverResponse`: `conversation_id`, `status = HUMAN_TAKEOVER`, `operator_id`, `taken_over_at`, `lease_expires_at` | Acquires `tenant:{tid}:session:{conversation_id}:takeover_lock` and moves the conversation to the human-held state (`state='paused_takeover'` → wire `HUMAN_TAKEOVER`); a second operator receives `409` | Lease acquisition is a single-key compare-and-set (`SET NX`); the same operator re-issuing takeover renews rather than stacks a lock | n/a | `400`, `401`, `403`, `404`, `409` (lease held) | Audit row with operator, mode, and lease TTL; evidence row not required (no external effect until the operator sends) |
+| R07 | Only the operator currently holding the lease; tenant from session | `ConversationTakeoverHeartbeatRequest`: `operator_id`, `extend_seconds` (1–300) | `200 ConversationTakeoverHeartbeatResponse`: `conversation_id`, `status = HUMAN_TAKEOVER`, `operator_id`, `lease_expires_at` | Extends, never creates: renews the existing lease only. Heartbeat does not send a message and does not alter message ownership | Renewal is idempotent in effect (renewing twice yields one lease with a later expiry) | n/a | `401`, `403`, `404`, `409` (lease expired or held by another operator) | Audit row per renewal with `lease_expires_at`; no evidence row |
+| R08 | The lease-holding operator or an authorized supervisor; tenant from session | `ConversationResumeRequest`: `operator_id`, optional `handoff_summary`, optional `next_agent_id` | `200 ConversationResumeResponse`: `conversation_id`, `status = ACTIVE`, `resumed_at` | Owner-checked release of the lease (`state='open'` → wire `ACTIVE`) after re-validating consent, context, and pending order state (`07` §6.2) | Release is owner-checked and idempotent: a repeat when no lease is held returns the same terminal `ACTIVE` state or `409` if another operator holds it — never a double release | n/a | `400`, `401`, `403`, `404` | Audit row with handoff summary; evidence row only if the hand-back itself dispatches an external effect |
+
+**8.1.2 Realtime, storefront, and operator-retry operations (R09–R13)**
+
+| # | Auth & tenant binding | Request schema | Response schema | State transition | Idempotency | Pagination | Errors | Audit & evidence |
+|---|---|---|---|---|---|---|---|---|
+| R09 | Operator session, read-only; the stream is filtered to the session tenant | Query: `metric` (e.g. `revenue_attribution`) or `channel` (e.g. `run_updates`), optional `cursor`/`Last-Event-ID` for resume (target frame contract and event names: `07` §10) | `text/event-stream`; each frame carries `id`, `event`, `data` with a tenant-scoped payload | None (read) | Replay by cursor is idempotent: the client de-duplicates on the frame `id`; a dropped connection resumes from the last acknowledged `id` | n/a (cursor resume, not page listing) | `401`, `403`; mid-stream failures surface as a `stream.error` frame followed by reconnect guidance | Stream subscription/reconnect audit row; no evidence row |
+| R10 | Operator session bound to the tenant and operator id; handshake rejects an unauthenticated or cross-tenant subscription | Commands and subscriptions over the socket (message ownership, Copilot draft delivery, lease notifications: `07` §10) | Server events (`run.updated`, `approval.pending`, `conversation.message`, `takeover.heartbeat`, …) | None directly; R10 never mutates state — control actions go through R06/R07/R08 | Commands carry an explicit command id; a replayed command is de-duplicated, never applied twice | n/a | `401`/`403` at handshake; `stream.error` event for in-band failures | Connection and command audit rows; no evidence row |
+| R11 | First-party storefront widget with a browser-safe, tenant-scoped token; tenant from the token, never from the body | `PostMessageRequest` plus optional `session_id` for first-turn binding; server-side delegates to R01 + R02 | Streamed (chunked) reply text for one chat turn; identical `idempotency_key` replay returns the cached receipt instead of a second turn | Creates/binds the conversation, then starts a durable run (same as R01 + R02) | Required, delegated to R02; a repeated turn never produces two outbound messages | n/a | `400`, `401`, `409`, `422` (including `CONSENT_REQUIRED` and the fail-closed price/authority refusals) | Audit row per turn; no client-side policy/price decision is ever accepted as evidence |
+| R12 | First-party widget/app origin with the same browser-safe token; tenant bound from the token | `PlatformEventEnvelope` (the same envelope as R04: `event_id`, `event_type`, `source`, `occurred_at`, `payload`) plus an optional `session_id` for anonymous binding; the stream normalizer maps it into the §3.1 stream envelope (`context`, `data`, derived `canonical_event`) before writing `customer_events` and the C360 projection | `202 EventIngestionResponse` (`QUEUED`/`IGNORED`/`PROCESSED`) | Append to `customer_events` and the C360 projection | Required on `event_id`: identical replay → cached receipt; same `event_id`, different payload → `409 IDEMPOTENCY_CONFLICT` | n/a | `400`, `401`, `409` | Audit row per event batch; no evidence row |
+| R13 | Operator session with retry permission for the tenant | Path `run_id`; optional body carrying the operator id and reason | `202` `TaskAcceptedResponse` for the re-queued run, or `409` when the run is not retryable | Re-queues a **failed** run whose failure is verified side-effect-free (schema/validation failure, authority `DENY`, `FAIL_CLOSED`, pre-dispatch provider rejection) | Reuses the run's original `effect_key`, so the reservation still makes the retry at-most-once (BR-005/BR-006); retrying an already-requeued run is a no-op, not a second dispatch | n/a | `400`, `403`, `404`, `409` (UNKNOWN/indeterminate outcome → reconciliation only, never a blind retry) | Audit row with operator id and failure class; evidence row only if the retried attempt reaches an external effect |
+| R18 | Authenticated operator with reconciliation permission; tenant from session | Path `run_id`; body `{ resolution: PROVIDER_CONFIRMED_SUCCEEDED \| PROVIDER_CONFIRMED_ABSENT \| ESCALATE_MANUALLY, receipt?, reason }` | `202` accepted resolution or `409` when the task is not an unresolved reconciliation exception | Maps to `04` `human.reconcile`; success or confirmed absence settles the existing reservation, while manual escalation leaves the task `awaiting_human` and dispatches nothing | Same `effect_key`; no new approval or effect identity | n/a | `400`, `403`, `404`, `409` | Audit row with operator, resolution, provider receipt digest, and effect key |
+
+**8.1.3 Command Center read operations (R14–R17)**
+
+All four are read-only, tenant-scoped projections: they never bypass RLS or operator scope, they never write business state, and each writes exactly one audit row.
+
+| # | Auth & tenant binding | Request (query) | Response schema | Source of truth | Idempotency & pagination | Missing/partial data | Errors | Audit |
+|---|---|---|---|---|---|---|---|---|
+| R14 | Operator with read permission; tenant from session | `status=PENDING` (only supported filter in the baseline), optional `cursor`, `limit` | Approval queue projection: `approval_id`, `run_id`, `action_id`, `effect_key`, `payload`, `reason`, `status`, `is_paused`, `decided_by`, `decided_at`, `decision_notes`, `created_at`, plus the computed `payload_sha256` used as the decision precondition (`03` §1 DOMAIN 5 `approval_queue`; §8.2.1). Because the view is exactly the `PENDING` projection, a paused-but-undecided item appears once as `status='PENDING'` with `is_paused=TRUE` (rendered as `PAUSED`); a stored `decision='EXPIRED'` row would leave the view, but no automated expiry writes that value until an owner-approved TTL source exists — the expiry/decided rendering and its missing-data rule are defined in §8.3 C-5 | `agentos.approval_queue` view over `approvals`; there is no second queue table | Read-only; cursor pagination; oldest-first ordering | A tenant with no PENDING rows returns an empty list, never a fabricated item; an item whose `expires_at` source is not instrumented renders without a countdown (§8.3 C-5) | `400` (unsupported filter), `401`, `403` | Read audit row |
+| R15 | Operator **and** a verified customer binding for the requested customer; tenant from session; a cross-tenant or unverified private lookup is refused (`04` §5 identity verdicts) | Path `customer_id`; optional `cursor`, `limit`, `from`, `to` | Timeline projection: ordered entries carrying `occurred_at`, `source_record_id`, canonical stage/event name, evidence classification (`FACT`/`SIGNAL`/`HYPOTHESIS`/`DECISION`/`ACTION`), evidence reference (`03` §8 ten-stage projection; `07` §9 `SCR-004` row) | `customer_events` + conversation/order/CRM projections rebuilt through the `03` ten-stage mapping | Read-only; cursor pagination ordered by `(occurred_at, source_record_id, event_id)`; late events are appended, not rewritten | Gaps are returned as explicit gaps (stage with no events), never as empty-success; a stage with no source returns `NO_DATA` with a reason | `400`, `401`, `403`, `404` | Read audit row; the identity verdict that authorized the read is recorded |
+| R16 | Operator with read permission; tenant from session | optional `cursor`, `limit`, `agent_id`, `state`, `status`, `from`, `to` | Run list/detail projection from the durable task plus the per-step operational log: `run_id`, `state`, `task_version`, `current_step`, `retry_count`, `last_error_class`, per-step `skill`, `tool`, `authority`, `approval`, `action`, `execution_status` ∈ `pending`/`executing`/`success`/`failed`/`denied`/`aborted`, `evidence`, `outcome`, `latency_ms`, `cost`, `error`, `started_at`, `completed_at` (`platform_durable_tasks`, `agent_run_logs`). `state` returns the **stored** `task_lifecycle_state` vocabulary (`queued`/`running`/`waiting`/`awaiting_human`/`completed`/`stopped`/`failed`, `03` §1); the wire value `accepted` used by R02/R03 is the projection of stored `queued` (§8.3 C-8) | `agentos.platform_durable_tasks` + `agentos.agent_run_logs` (append-only; one terminal row per step) | Read-only; cursor pagination; filters are server-side and tenant-scoped | Unmeasured latency/cost columns render as "not measured" rather than `0`; a run whose outcome is still observing renders as pending attribution | `400`, `401`, `403` | Read audit row |
+| R17 | Operator with read permission; tenant from session | optional `window` (e.g. `24h`, `30d`), `timezone` (IANA), `cursor`, `limit` | SCR-001 metric snapshot: the ten baseline indicators, each with `value`, `source_status` (`LIVE`/`STALE`/`NO_DATA`/`NOT_INSTRUMENTED`/`UNAVAILABLE`), `observed_at`, `window`, `timezone`, `provisional` flag (`07` §9 `SCR-001` row) | `07` dashboard projection over the telemetry/attribution sources; window and timezone are explicit in the response | Read-only; snapshot is idempotent for a fixed `(tenant, window, timezone, observed_at)`; cursor is for paged series, not for the snapshot itself | A metric with no upstream source returns `NOT_INSTRUMENTED`; a metric with an instrumented but empty window returns `NO_DATA` with reason; a stale value carries its `observed_at` and is labelled stale — never rendered as zero success | `400` (invalid window/timezone), `401`, `403`, `503` (`METRICS_UNAVAILABLE`, cached values remain labelled stale) | Read audit row |
+
+### 8.2 Supplemental operations and non-baseline surfaces (counted separately)
+
+**8.2.1 `GET /api/v1/approvals/{approval_id}` — SCR-003 approval detail read (1 supplemental operation)**
+
+- **Why it exists:** SCR-003 MUST render the approval evidence card and MUST capture the digest of the payload the approver actually reviewed before submitting a decision. The list route R14 returns summaries; the detail read returns the single item plus `payload_sha256` and the reviewer-visible fields (`effect_key`, `reason`, `run_id`, `action_id`, `created_at`, `expires_at` when instrumented).
+- **Auth/tenant:** the same operator read permission as R14; the item must belong to the session tenant (a cross-tenant read returns `404`, not a redacted success).
+- **Derivation, not a new store:** `payload_sha256` is computed server-side from the canonical `approvals.payload` with the same RFC 8785 + SHA-256 rule used for `evidence_records.payload_sha256` (§1; `04` §6). No new column and no second approval store is introduced by this read.
+- **Field-level authorization:** privileged payload fields and the signature context are omitted for a role whose decision list is empty (a viewer may read the item's existence and status without the privileged payload); the response for such a role is a redacted projection, never a different object type.
+- **Errors:** `401`, `403`, `404`; no `409` (the read never mutates).
+- **Traceability note:** this operation is evidenced by the governance specification `testcases/sources/governance.py:2426` (`viewer_read` → `GET /api/v1/approvals/APV-CAMP-15`). It is **outside the 18** so that the baseline count stays exactly as published; it is not an alias of R14 and it does not replace it.
+
+**8.2.2 Inbound provider webhooks (optional, ASM-001, 0 baseline gateway paths)**
+
+§4.1 templates the **verification scheme and payload extract** for each channel (LINE `X-Line-Signature`, Meta `X-Hub-Signature-256`, TikTok, Zalo, Email, SMS, Web Chat JWT+origin), but this specification deliberately templates **no per-provider gateway path**. Provider deliveries therefore have exactly two target ingress shapes:
+
+1. **Platform event ingress (R04)** — the provider or a tenant-side relay posts the provider payload as a `PlatformEventEnvelope` with an HMAC signature; canonical derivation and deduplication are those of §3.0.
+2. **Channel adapter ingress** — when a provider mandates a dedicated callback URL, the path is `[OPTIONAL-EXTENSION][UNCONFIRMED][ASM-001]` and MUST be enumerated only after the ASM-001 connector audit locks the provider list, its API surface, and its callback requirements.
+
+R04 is already counted once within the 18 baseline operations; using it for provider delivery adds no route. Dedicated per-provider callback paths are outside that count and may be specified only after ASM-001 closes. Signature verification (§4.2), consent, quota, and receipt handling are mandatory on both ingress shapes.
+
+**8.2.3 Browser/OAuth callback surfaces owned by `01`**
+
+`01`'s configuration catalog defines `LINE_LOGIN_CALLBACK_URL` (`/api/v1/auth/line/callback`) and `CVS_EMAP_CALLBACK_URL` (`/api/v1/shipping/cvs/callback`) as local placeholder values. They are browser redirect/OAuth-return surfaces owned by `01` and are **not** JSON gateway operations; `06` does not define their payloads, and their production hostnames remain `[UNCONFIRMED][ASM-001]`.
+
+### 8.3 Route and wire-shape conflicts, aliases, and propagation
+
+These items are **known divergences between layers**, recorded here rather than silently resolved. Per the authority order in `README.md` §5, this implementation contract governs until the owning layer is updated and regenerated; `README.md` §9 carries the pack-level propagation register.
+
+| # | Conflict | Evidence | Owner / resolution path | Interim rule (what implementation does today) |
+|---|---|---|---|---|
+| C-1 | Testcase sources use alternative spellings for three Command Center reads: `/api/v1/telemetry/executive` (vs R17), `/api/v1/agents/operations` (vs R16), `/api/v1/customers/{customer_id}/360` (vs R15) | `testcases/sources/governance.py:1588`, `:1622`, `:1651`, `:1682`; `:1714`; `:1970`, `:2030-2032` | Owner: testcase source owner. `README.md` §9 states testcases are downstream propagation targets, never route authority: update the source module and regenerate; never hand-edit generated output | R15–R17 spellings are authoritative in this pack; the fixture spellings MUST NOT be implemented as parallel aliases. The other fixture hits — `POST /api/v1/approvals/{id}/execute` and `PATCH /api/v1/tasks/{id}` (`governance.py:2553-2555`) — are **intentional must-reject negatives**, not routes to add: `/execute` and task-state editing do not exist (§1) |
+| C-2 | `takeover_mode` wire value: the governance specification sends `HUMAN_ACTIVE`; OpenAPI §1 declares `FULL_CONTROL`/`CO_PILOT`, and `07`'s hook sends `FULL_CONTROL` verbatim | §1 `ConversationTakeoverRequest`; `testcases/sources/governance.py:2063`; `07` §6.4 hook | Owner: testcase source owner (propagation debt, same class as C-1) | The enum stays `FULL_CONTROL`/`CO_PILOT`; the console may *display* the human-held mode as "HUMAN_ACTIVE" wording, but no `HUMAN_ACTIVE` value is accepted on the wire (unknown values are rejected `400`) |
+| C-3 | Conversation status vocabulary — resolved as a deliberate projection: wire `ACTIVE`/`HUMAN_TAKEOVER`/`CLOSED` (§1) vs stored `conversations.state` `'open'`/`'paused_takeover'`/`'closed'` (`03` §1 Entity 11) | §1 `ConversationSessionResponse`; `03` §1 Entity 11 and §9.1 wire projections; the governance fixture asserts the wire value (`testcases/sources/governance.py:2067`) | Resolved: `03` (persistence) with `06` (wire) — the stored↔wire mapping is the documented projection in `03` §9.1, not an open conflict | The wire enum stays authoritative for the API, the UI, and the fixtures; implementation MUST map (`ACTIVE` ↔ `open`, `HUMAN_TAKEOVER` ↔ `paused_takeover`, `CLOSED` ↔ `closed`) and MUST NOT store the wire value verbatim. The projection adds no stored enum values |
+| C-4 | Takeover lease TTL — resolved: the wire contract and `03`'s Redis key registry agree on the bounded, renewable takeover lease | `03` §3 key registry (60 s TTL, renewed every 30 s, `extend_seconds` 1–300); §1 heartbeat schema; `07` §6.2 | Resolved: `03` key registry with `06`/`07` wire | The takeover lease is **60 s, renewed every 30 s**, with `extend_seconds` 1–300. The `TTL/3` renewal rule applies only to the durable-task worker lease `tenant:{tid}:task:{run_id}:lease` (`03` §3), never to the takeover lease; the takeover renewal cadence is a console/config default, not an authorization |
+| C-5 | Approval expiry and pause vocabulary: the `approval_queue` view exposes no `expires_at` column, `approvals.decision` allows the stored value `EXPIRED` with no owner-approved TTL source, and Pause keeps `decision='PENDING'` with `is_paused=TRUE` while the wire response says `PAUSED` | `03` §1 DOMAIN 5 and §1 Entity 24; §1 `ApprovalDecisionResponse`; `testcases/sources/governance.py` GOV-APV-EXPIRY fixture | Owner: `03`/Product (owner-approved TTL policy and `expires_at` source) — no expiry automation until that decision is recorded | **Read mapping (fixed now, no new storage):** `status='PENDING'` + `is_paused=FALSE` → undecided `AWAITING_HUMAN`; `status='PENDING'` + `is_paused=TRUE` → `PAUSED`; a decided row leaves the queue view. `EXPIRED` remains a stored vocabulary value, but nothing writes it automatically: no TTL source is instrumented and no hardcoded interval may be applied. Decision responses map `PAUSE` → `PAUSED`, and `APPROVE`/`MODIFY`/`REJECT`/`CANCEL` → `APPROVED`/`MODIFIED`/`REJECTED`/`CANCELLED`. The console renders no countdown and no "expired" verdict until an owner-approved TTL source exists, and never infers expiry from a clock it cannot verify |
+| C-6 | Route prefix wording: `plans/` uses `/v1` | `README.md` §9 propagation register | Owner: plan owner | `/api/v1` is the single implementation prefix; no second route is created |
+| C-7 | Stored event vocabulary — resolved: `customer_events.event_name` holds the canonical event (the SRS §15 API-002 seven baseline events, or the `ext.<domain>.<name>` extension form); the original granular `event_type` and alias version are retained in `payload` | `03` §1 Entity 4; §3.0; SRS §15 API-002 | Resolved: `03` (column semantics) with `06` (wire vocabulary) | **Mapping (canonical):** `customer_events.event_name` stores the canonical event — one of the seven baseline names, or `ext.<domain>.<name>` when `canonical_event` is null — while the original granular `event_type` and the alias-table version are retained in `payload`; `source_event_id` is the dedupe key. The versioned alias table in §3.0 remains the only mapping authority |
+| C-8 | Initial durable-state naming: `03`'s `task_lifecycle_state` has `queued` and no `accepted`, while §1's `TaskAcceptedResponse`/`TaskStateResponse` return `accepted` | `03` §1 and §9.1 wire projections; §1 schemas; `04` §4.2 writes storage values directly | Owner: `03` with `06`/`04` | One projection, stated once: wire `accepted` ↔ stored `queued`; all other values are identical (`running`, `waiting`, `awaiting_human`, `completed`, `stopped`, `failed`). R16 returns the stored vocabulary (§8.1.3); R02/R03 return the wire vocabulary. No third spelling is introduced |
+
+### 8.4 Price-floor guardrail at the connector boundary `[OWNER-DECISION-REQUIRED]`
+
+The connector boundary is where a price-bearing proposal would acquire its numbers, so the floor rule is stated here explicitly (owner sections: `README.md` §8.1, `08` §7.3):
+
+- **Hard rule.** No price-bearing dispatch may leave the adapter boundary without an **owner-approved, provenance-bearing floor decision**. A price/quote response that lacks the floor decision, its approving owner, or its provenance fails closed with the `08` §8 BR-001 code; the connector never derives, rounds, or infers a floor locally, and no numeric default may be invented (`NFR-008`, BR-001, BR-003).
+- **Candidate fields, not a canonical contract.** `PriceLookupResponseDTO` (§2) currently carries `mathematical_floor_price`, `floor_price_source`, and `floor_price_synced_at`. Those names are candidates: the authoritative-provenance model (ERP/policy service supplies `floor_price` + provenance; the platform validates presence, freshness, tenant binding, and signature) and the platform-derived model (the platform computes the floor from owner-approved policy inputs) remain **competing proposals**.
+- **Unresolved dimensions.** Ownership, formula/margin mode, rounding, currency, staleness window, and provenance format are `[OWNER-DECISION-REQUIRED]` between the Solution Architect and Business/Finance (`README.md` §8.1). The local calculations referenced at `implement/04:409-410`, `03:178-182`, `08:736-739`, and `plans/delivery/analytics.md:207` are competing candidates, not a canonical formula, and this document does not select one.
+- **Capability vs safety.** A tenant disabling the discount/subsidy capability simply does not use that optional action class; it does **not** allow a price-bearing proposal that uses the capability to bypass the floor decision. The phrase "`P_floor` if enabled" MUST NOT appear without this distinction.
+- **Approval is not a policy bypass.** An approval authorizes exactly one action bound to `(tenant_id, run_id, effect_key)` and never raises authority. An invalid agent grant is rejected **before** any AUTH-4 queue item is created, and the prerequisites this section names — floor provenance, authoritative source availability, consent, verified identity — cannot be approved away by an operator decision: an `AUTH-4` approval releases a compliant action, it never manufactures compliance. A `PAUSE` keeps the approval `PENDING` and releases nothing.
+
+## 9. API-001, API-002, and API-003 Boundary Rules `[SRS-MUST][SRS §15 / API-001..003]`
+
+The three connectors share one boundary discipline: **the platform reads through permissions and writes through controlled actions.** No component of the AI platform talks to a system of record's database, and a provider's word is never replaced by an assumption.
+
+### 9.1 API-001 (ERP/POS) — read scope, mutation scope, and source-of-record ownership
+
+| Rule | Target behaviour | Failure / error | Evidence obligation |
+|---|---|---|---|
+| Distinct read and mutation permissions | Every read entity in SRS API-001 (`product`, `SKU`, `price`, `inventory`, `customer`, `order`, `invoice`, `sales history`) is individually permissioned per tenant and per caller role; a role that may not read `customer` cannot obtain it through a different route | `403` (authority/permission), never a silently redacted numeric field | Read audit row naming the permission that authorized the call |
+| Mutations only through controlled actions | Writes are limited to the controlled action set (draft order, reservation, invoice issuance, refund/compensation requests); each mutation carries an `effect_key` and is reserved before dispatch (`04` §4.4) | `403`/`422`; an unregistered mutation is a hard failure, never a local fallback | Evidence row with the provider receipt; no receipt ⇒ no success claim |
+| System of record for price, inventory, order, receipt | ERP/Commerce remains the authority for price, inventory, order state, and receipts (SRS §2.1). The platform mirrors values with provenance and freshness and never recomputes them (BR-001, BR-003) | Missing/stale/unprovenanced values → fail closed (`AUTHORITATIVE_SOURCE_UNAVAILABLE`, `P_FLOOR_UNAVAILABLE` in `08` §8) | Mirror rows carry source id/version and sync time; the evidence row references the provider response |
+| Floor provenance at the boundary | A price-bearing response is usable only with the owner-approved, provenance-bearing floor decision of §8.4 | Refusal is the documented outcome; no numeric default and no local formula may substitute | The refusal itself is audited (BR-010) so a fail-closed path is visible, not silent |
+| Private customer data is identity-gated | Customer profile and sales-history reads require the tenant's permission **and** a trusted identity context (`04` §5 verdicts); a payload-asserted phone/email/tax id never resolves a customer | `403`, or an empty/`UNRESOLVED`-safe answer; a cross-tenant id returns `404` | The identity verdict that authorized the read is audited |
+| Provider outcomes are preserved verbatim | Success, provider rejection, and indeterminate outcomes are stored distinctly; an indeterminate outcome is never normalized into success or a provable no-op | `UNKNOWN` parks the task in `waiting` and reconciles by `effect_key` (`04` §4.4) — never a blind retry | The reservation row plus the provider body/HTTP status are retained as evidence |
+| No direct database access | The AI layer reaches API-001 only through the adapter port (package boundaries and forbidden imports in `02` §5); no skill, agent, or orchestrator component opens an ERP database connection | A direct-connection attempt is a build/lint boundary violation, not a runtime fallback | Package-ownership check in `02` §5; no runtime evidence required for a static rule |
+
+### 9.2 API-002 (Web/App events) — canonical baseline, extensions, and stream semantics
+
+| Rule | Target behaviour | Failure / error | Evidence obligation |
+|---|---|---|---|
+| Exactly seven baseline canonical events | `session`, `product_view`, `search`, `click`, `add_to_cart`, `checkout`, `purchase` (SRS §15 API-002) are the canonical set; every accepted web/app event carries the derived `canonical_event` | An event whose `event_type` has no baseline parent is accepted as extension telemetry with `canonical_event: null`, never re-labelled into a baseline event | Ingestion audit row with the derived canonical value |
+| Extensions stay extensions | `cart.remove` remains an analytics-only extension and is never a purchase or abandonment trigger by itself; delivery, support, review, and repurchase evidence reach the ten-stage timeline through their own source records and the `03` §8 projection mapping — they are **not** forced into the seven canonical names | A skill that requires a baseline event refuses when only an extension event exists; it does not infer one | The skill's own evidence row records which source record was used |
+| Deterministic alias mapping | The alias table in §3.0 is versioned: a granular alias may never be silently re-pointed at a different canonical event | A mapping change is a version bump plus a migration note, never a hot edit | Alias version recorded in the stored `payload` and with the ingestion audit row |
+| Deduplication | `event_id` plus the canonical payload is the deduplication key: identical replay returns the cached receipt; the same `event_id` with a different payload is `409 IDEMPOTENCY_CONFLICT` | Never a double-counted conversion, never a silent overwrite | Cached receipt reference in the audit row |
+| Ordering and late events | Ordering is `(occurred_at, source_record_id, event_id)`; late events are retained and re-projected, and a late `purchase` still attributes to its original run | Out-of-order arrival changes no stored ordering key and never rewrites history | Projection rebuild is idempotent; a replay produces no duplicate projection row |
+| Replay safety | Replaying a window of events (connector retry, backfill) is idempotent end to end: the C360 projection and any triggered run are both deduplicated | A replay that would re-trigger a run is refused by the same `event_id`/`effect_key` rules | Replay audit row plus the unchanged projection row identity |
+| Events carry no authority | An event payload can never raise authority, consent, price, or policy (`BR-008`, `BR-009`); `context.consent_granted` is context, not a consent record | A skill that needs consent reads the consent store, not the event | Consent version cited in the skill's evidence row |
+
+### 9.3 API-003 (Communications) — baseline channels, inbound, outbound, and mutex
+
+| Rule | Target behaviour | Failure / error | Evidence obligation |
+|---|---|---|---|
+| Six baseline channels | Facebook (Messenger), TikTok, Zalo, Email, SMS, Web/App Chat are first-class (SRS §15 API-003); `channel` values and adapter bindings are per §4.0 | An unconfigured channel is `403 CAPABILITY_NOT_ENABLED`, never a silent route to another channel | Channel/connector id recorded on the conversation and the evidence row |
+| Inbound verification before agents | Every inbound delivery is verified for tenant binding, TLS, provider signature, replay window, and schema before any agent or skill sees it (§4.2) | `401` on signature/TLS failure or a signature timestamp outside the freshness/replay window; an identical replay returns the cached acknowledgement and is never a `409`; the same `event_id`/delivery id with a different payload is `409 IDEMPOTENCY_CONFLICT`; agents are never invoked before verification completes | Audit row with the signature verdict and the provider message id |
+| Outbound consent and suppression | Marketing-class outbound requires a valid, current consent record (BR-004); opt-outs and suppression lists are checked immediately before send; transactional replies follow the channel's own window and template rules | `422 CONSENT_REQUIRED` (marketing) / suppression short-circuit recorded as suppressed, not failed | Consent/suppression version referenced in the evidence row alongside the provider receipt |
+| One responder per conversation | The session mutex (`tenant:{tid}:session:{sid}:mutex`) admits exactly one responder; a human lease (R06) suppresses agent outbound entirely | `409` for a contended dispatch; the losing writer never sends | The mutex/lease holder is recorded on the dispatch audit row |
+| Provider receipts | Outbound message ids, delivery acknowledgements, and provider errors are stored as received; a missing receipt is never recorded as delivered | Indeterminate send → `UNKNOWN`, parked and reconciled by `effect_key` | Evidence row carries the provider message id or the truthful failure |
+| Quota and rate limits | Per-channel quota is checked before a proactive/broadcast send; quota exhaustion blocks the proactive class and falls back only to contract-permitted paths (e.g. a free reply window) | Quota refusal is a suppressed/blocked outcome with an alert, not a retried storm | Quota state and the refusal reason are audited; the LINE 80 %/100 % guard (§5.1.2) is an `[OPTIONAL-EXTENSION]` example of this rule |
+| Provider unavailable | An unavailable or unconfigured provider fails closed: the action is refused or parked for reconciliation; the platform never silently substitutes a different channel or an unverified address | `503`/reconciliation path, with the reason surfaced to the operator | The outage is audited and appears as an abnormal event in `07` SCR-001 |
+| Extension channels are gated | LINE, WhatsApp, Instagram, payment rails, and the Taiwan/Global adapters are `[OPTIONAL-EXTENSION][UNCONFIRMED][ASM-001]`; each is individually enable-able and individually disable-able per tenant | A disabled adapter refuses with `CAPABILITY_NOT_ENABLED` and holds no queued work | Adapter enablement state is part of the tenant configuration audit record |
+
+## 10. Adapter Boundary, Dependencies, Rollout, and Verification Scenarios `[BLUEPRINT][SRS §15, §19 / NFR-003, NFR-008]`
+
+### 10.1 Interface versus provider
+
+Adapter **interfaces** are canonical and owned by this document; provider **names** (SAP, Oracle NetSuite, 91APP, SHOPLINE, Cyberbiz, Meta, TikTok, Zalo, SendGrid, Mailgun, Twilio, LINE, WhatsApp, ECPay, NewebPay) are candidates that remain `[UNCONFIRMED][ASM-001]`. Every adapter, mandatory or optional, MUST verify in this order before dispatch: tenant binding → transport (TLS/signature) → schema → authority/verdict → business rules (consent, floor provenance, inventory) → idempotency reservation → dispatch. A provider timeout after dispatch becomes `UNKNOWN` and reconciles by `effect_key`; optional adapters (`ADPT-TW`, `ADPT-GL`) that are unavailable, unconfigured, or disabled fail closed and hold no queued work.
+
+### 10.2 Dependencies and rollout prerequisites
+
+| Dependency | Needed for | Status today |
+|---|---|---|
+| Canonical contracts (`04` orchestrator types, `05` skill registry, `03` persistence) | Every route in §8 — request/response shapes are derived from these owners | Specification only |
+| PEP and authority verdicts (`08`) | R05–R08, R13 and every skill dispatch | Specification only |
+| Identity resolution (`04` §5) | R15 and every customer-scoped read/write | Specification only |
+| RLS and tenant context (`03` §2) | Every route's tenant binding | Specification only |
+| Redis mutex/lease registry (`03` §3) | R06–R08 | Specification only; takeover lease TTL resolved in `03` §3 (60 s TTL, renewed every 30 s) |
+| Provider account audit | Any inbound/outbound channel beyond the mock | `[UNCONFIRMED][ASM-001]` |
+| Gate P0 build | Anything in §8 | Not started |
+
+Rollout order for the connector layer mirrors the gates: P0 (contracts, connector framework, mock adapters) → P1 (one real Care channel end to end) → P2 (real `AI action → order → revenue` via the SoR) → P3 (one human-approved marketing channel with attribution evidence). Until a gate's real evidence exists, no route in §8 may be described as production behaviour.
+
+### 10.3 Verification scenarios
+
+All of the following are `[NOT-RUNTIME-EVIDENCE]` until executed against a built gateway; the pass criteria define target behaviour, not an observed result. `TC-CON-*` identifiers refer to the matrix in §7.
+
+| # | Scenario | Expected assertion |
+|---|---|---|
+| V-01 | Malformed or unsigned inbound webhook (R04, R12, §4.2) | `401` before any agent routing; nothing is queued; audit row records the verdict (`TC-CON-004`) |
+| V-02 | Replayed event with identical payload, then with a mutated payload (R04, R12) | Identical replay returns the cached receipt and one projection row; mutated payload returns `409 IDEMPOTENCY_CONFLICT` |
+| V-03 | Tenant mismatch on a read and on a decision (R14, R15, R05) | Cross-tenant read/write is refused; the decision attempt does not mutate the foreign item |
+| V-04 | Duplicate `idempotency_key` with a changed payload (R02, R11) | `409`; no second outbound turn; the original receipt is unchanged (`TC-CON-011`) |
+| V-05 | API-001 read outside permission, then a mutation outside the controlled action set | `403` in both cases; no partial data and no local fallback write |
+| V-06 | API-002 canonical mapping: each granular alias, plus an extension event | Each alias yields its documented canonical value; `canonical_event: null` for extensions; no extension is coerced into a baseline event |
+| V-07 | Late event replay and full-window replay (R12) | Late events land in order by `(occurred_at, source_record_id, event_id)`; replay creates no duplicate projection row and no duplicate run |
+| V-08 | API-003 opt-out suppression and missing-consent marketing send | Suppression recorded as suppressed; marketing send refused `422 CONSENT_REQUIRED`; no provider call |
+| V-09 | Provider timeout after dispatch (outbound message, order mutation) | Task parks in `waiting`, reservation stays open, reconciliation by `effect_key`; nothing is recorded as delivered |
+| V-10 | Disabled/absent optional adapter (LINE, WhatsApp, Taiwan/Global) | `403 CAPABILITY_NOT_ENABLED`; no substitute channel and no queued work |
+| V-11 | Approval durability: double click, stale digest, wrong operator, MODIFY revalidation, AUTH-5 case (R05) | One claim succeeds; the second attempt returns `409`; a stale `payload_sha256` is refused; a `MODIFY` re-runs every guard and stores a new revision atomically (the old digest/approval is never reused); an `AUTH-5` verdict never creates a queue item (`TC-CON-009`) |
+| V-12 | Takeover race, heartbeat, crash, resume (R06–R08) | Exactly one lease holder; heartbeat extends only the holder's lease; a crashed console's lease expires and the agent resumes; resume is the only explicit release path — lease expiry also returns control to the agent (`TC-CON-012`) |
+| V-13 | Retry a `FAIL_CLOSED`/`DENY` failure, then a `UNKNOWN` run (R13) | The first re-queues under the same `effect_key`; the second is refused `409` and routed to reconciliation |
+| V-14 | Command Center reads with an empty tenant and with a partial source (R14–R17) | Explicit empty/`NO_DATA`/`NOT_INSTRUMENTED`/stale labels with reasons; never a fabricated zero or a fabricated approval |
+| V-15 | SSE drop mid-stream with a `Last-Event-ID`/`cursor` resume (R09) | The client resumes from the cursor, duplicates are dropped by frame id, and no frame is replayed as a new business event |
+
+### 10.4 Route acceptance boundary and compatibility rules `[BLUEPRINT][SRS §15, §18, §19 / NFR-003, NFR-006, NFR-008]`
+
+The 18 baseline operations are the complete counted gateway surface. Eleven drive state — R01, R02, R04–R08, R11–R13, and R18 (conversation/task/event creation, approval, takeover control, retries, and reconciliation) — and seven are reads or streams: R03 (durable task read), R09–R10 (read-model streams), and R14–R17 (the four Command Center projections). The supplemental approval detail read and any provider callback are separate surfaces with their own owner and count; neither may be introduced as an alias for a baseline route. Every route binds tenant identity from the authenticated session before loading private data, applies the route's operator or customer permission, and writes the audit record before returning a claimed success.
+
+Compatibility is projection-only, never a second business contract. `accepted` is the R02/R03 wire acknowledgement for stored `queued`; stored task states otherwise pass through unchanged. Conversation wire states map to the `03` persistence states, and `PAUSED` is rendered from a PENDING approval with `is_paused = TRUE`, not from a new stored approval decision value. On idempotency-keyed ingestion and effect routes, an identical replay returns the original receipt; a changed payload under the same key returns `409 IDEMPOTENCY_CONFLICT`. R05 instead uses a one-time decision claim: a decided row or repeated PAUSE returns `409 APPROVAL_NOT_CLAIMABLE`, as specified in §8.1.1; a paused PENDING row still accepts a later explicit terminal decision.
+
+The route layer never derives price floors, grants authority, manufactures consent or identity, retries an indeterminate effect, or treats a client-provided tenant/customer/operator assertion as proof. Missing or stale trusted inputs return the owning error vocabulary and a truthful `NO_DATA`/`UNAVAILABLE`/fail-closed projection. These are target wire rules and `[NOT-RUNTIME-EVIDENCE]` until the gateway, durable store, and authorized provider boundaries exist.

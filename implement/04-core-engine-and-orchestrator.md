@@ -1,9 +1,14 @@
 # Core Engine and Revenue Orchestrator Specification
 
-Status: Production Engineering Specification
+> **BLUEPRINT STATUS — target design; NOT IMPLEMENTED, DEPLOYED, MEASURED, or runtime evidence.**
+> This document owns the future orchestrator contract for SRS §12, §17, §19 / NFR-003, NFR-006, NFR-007, and NFR-008.
+> Every code, workflow, and interface block is a **target snippet**, not a present runtime artifact.
+
+Status: Target Blueprint Specification (Gate P0) — not an implemented system
 System Component: Core Platform Engine (Layer 1)
 Document Version: 1.0.0
 Target Directory: `implement/04-core-engine-and-orchestrator.md`
+
 
 ---
 
@@ -99,7 +104,7 @@ export type EpistemicClassification = 'FACT' | 'SIGNAL' | 'HYPOTHESIS' | 'DECISI
  */
 export type AuthorityLevel = 'AUTH-0' | 'AUTH-1' | 'AUTH-2' | 'AUTH-3' | 'AUTH-4' | 'AUTH-5';
 
-/** The only values an agent grant or a skill requirement may hold (never AUTH-4 / AUTH-5). */
+/** Agent grants hold only AUTH-0..3; registry requirements separately admit AUTH-4 routing. */
 export type AssignableAuthority = 'AUTH-0' | 'AUTH-1' | 'AUTH-2' | 'AUTH-3';
 
 /**
@@ -268,10 +273,13 @@ export interface PlannedStep {
   readonly required_authority: AuthorityLevel;
   /** Registry-declared: true ⇒ the step has an external effect that must be reserved/reconciled. */
   readonly mutating: boolean;
+  /** Required registry classification; price-bearing rows cannot omit this intent. */
+  readonly price_bearing: boolean;
   /** Registry-declared: true ⇒ replaying the same key is safe (BR-006, §05 retry policy). */
   readonly idempotent: boolean;
   /** Registry-declared hard deadline (§05 field 10) enforced by the dispatch guard (`dispatchWithDeadline()`). */
   readonly timeout_ms: number;
+  /** Predecessor step indexes. Absent or empty means the step follows sequential index order. */
   readonly depends_on_steps?: number[];
   readonly computed_price_floor?: number;
   readonly floor_source?: string;
@@ -299,6 +307,8 @@ export interface ActionDraft {
    * external effect, is dispatched unreserved, and stays freely retryable (§4.4).
    */
   readonly mutating: boolean;
+  /** Explicit registry classification copied from PlannedStep. */
+  readonly price_bearing: boolean;
   /** Immutable inbound identity bound into `effect_key` (never the random `run_id`). */
   readonly request_id: string;
   /** 0 unless a human MODIFY created a new action revision through the approvals gate. */
@@ -307,7 +317,7 @@ export interface ActionDraft {
   readonly effect_key: string;
   readonly required_authority: AuthorityLevel;
   readonly payload: Record<string, unknown>;
-  /** Authoritative ERP/policy mirror value; never computed locally (BR-001, BR-003). */
+  /** Candidate floor mirror; usable only after owner/provenance checks in §8.2. Never LLM-derived. */
   readonly computed_price_floor?: number;
   readonly floor_source?: string;
   readonly proposed_price?: number;
@@ -317,7 +327,7 @@ export interface ActionDraft {
 
 export interface ApprovalGateResult {
   readonly verdict: AuthorityVerdict;
-  /** Present iff verdict = AWAITING_HUMAN_APPROVAL. */
+  /** Present when a stored approval covers this action; policy evaluation itself creates no row. */
   readonly approval_id?: string;
   readonly reason: string;
 }
@@ -396,7 +406,7 @@ interface EvidenceChain {
 
 export interface ResolvedSubject {
   readonly customer_id: string | null;
-  /** SESSION_BOUND is the only source that may attach a Customer 360 FACT to the run. */
+  /** SESSION_BOUND or a provider-authenticated, verified CHANNEL_IDENTIFIER_EXACT binding may attach facts. */
   readonly resolution: 'SESSION_BOUND' | 'CHANNEL_IDENTIFIER_EXACT' | 'UNRESOLVED';
   readonly session_id: string;
 }
@@ -445,15 +455,17 @@ export function evaluateAuthorityVerdict(
   granted: AssignableAuthority,
   required: AuthorityLevel
 ): { verdict: AuthorityVerdict; reason: string } {
+  if (!Object.hasOwn(AUTHORITY_RANK, granted)) {
+    return { verdict: 'DENIED', reason: `INVALID_CLEARANCE: '${String(granted)}' is not assignable.` };
+  }
   if (required === 'AUTH-5') {
     return { verdict: 'DENIED', reason: 'PROHIBITED_ACTION: AUTH-5 is a hard deny verdict (SRS §12, BR-008).' };
   }
   if (required === 'AUTH-4') {
-    return { verdict: 'AWAITING_HUMAN_APPROVAL', reason: 'APPROVAL_REQUIRED: AUTH-4 actions execute only after a human approval (BR-007).' };
+    return { verdict: 'AWAITING_HUMAN_APPROVAL', reason: 'APPROVAL_REQUIRED: AUTH-4 requires a bound human decision (BR-007).' };
   }
-  if (granted === undefined || AUTHORITY_RANK[granted] === undefined) {
-    // Unknown or non-assignable granted clearance ⇒ fail closed, never "assume allowed".
-    return { verdict: 'DENIED', reason: `INVALID_CLEARANCE: '${String(granted)}' is not an assignable authority level.` };
+  if (!Object.hasOwn(AUTHORITY_RANK, required)) {
+    return { verdict: 'DENIED', reason: `INVALID_AUTHORITY_REQUIREMENT: '${String(required)}' is unknown.` };
   }
   if (AUTHORITY_RANK[granted] < AUTHORITY_RANK[required as AssignableAuthority]) {
     return { verdict: 'DENIED', reason: `INSUFFICIENT_AUTHORITY: requires ${required}, granted ${granted}.` };
@@ -465,7 +477,7 @@ export function evaluateAuthorityVerdict(
 #### 3.2.2. Identity and session binding
 
 * `IEffectGuard`, `IIdentityResolver` and `ISessionControl` are the only components allowed to decide idempotency, customer binding, and takeover state. They fail closed: an unresolved identity yields `customer = null` (anonymous context) and **any skill whose schema requires a customer identifier refuses to run**; a missing `session_id` aborts the run at step [1. SIGNAL].
-* Per-customer verification is never inferred from a phone number, an email string, a channel handle, or a `verification_status`/VIP flag carried in a payload. Only `SESSION_BOUND` (gateway-authenticated session) or `CHANNEL_IDENTIFIER_EXACT` (exact match against the tenant's `customer_identities` row) may attach a customer. Resolution details: §5.1.
+* Per-customer verification is never inferred from payload phone/email/handle or VIP flags. `SESSION_BOUND` is gateway-authenticated; `CHANNEL_IDENTIFIER_EXACT` requires a provider-authenticated sender and an exact tenant/channel identity row whose `verified_at` is non-null. An unverified match stays `UNRESOLVED` with `customer_id = null`; §5.1 owns this boundary.
 * Working memory is keyed by the unique server-issued `session_id` (`tenant:{tid}:wm:{sid}`). Anonymous sessions never share a bucket, so customer A's scratchpad can never be hydrated into customer B's context (NFR-006).
 
 #### 3.2.3. Deterministic `effect_key` and reservation protocol
@@ -734,16 +746,15 @@ export class RevenueOrchestrator {
   /**
    * The single guarded step engine (steps 6-9): draft → floor → authority → reserve → dispatch →
    * evidence. `processSignal` and `resumeTask` both call it, so a resumed run re-applies the
-   * IDENTICAL guard sequence to every remaining step: a step that follows a resumed step still
-   * passes through `verifyFloorPrice()` and the authority verdict, and a later `AUTH-4` step
-   * pauses again instead of inheriting the earlier approval. An approval authorizes one action;
-   * it is never converted into a clearance.
+   * IDENTICAL guard sequence to every remaining step. Every step, including a released action,
+   * rechecks the current grant, registry, consent, identity, source/floor and takeover policy.
+   * A bound claimed approval satisfies only its own AUTH-4 pause; it never becomes a clearance.
    *
    * Takeover is re-checked before every step — hence before every retry and every resume.
    *
    * `approved_action` is the persisted action a human decision released, bound to
    * `(tenant_id, run_id, effect_key)` and claimed exactly once (§4.2). It is dispatched as
-   * persisted under its own deterministic key and skips only its own gate.
+   * persisted under its own deterministic key and skips no independent safety gate.
    */
   private async executeSteps(params: {
     signal: SignalEnvelope | null;
@@ -808,74 +819,94 @@ export class RevenueOrchestrator {
         : await this.draftAction(step, context, run_id, tenant_id, request_id, 0);
       this.verifyFloorPrice(action);
 
-      // STEP 7: AUTHORITY GATE (canonical verdict semantics — §3.2.1). A released action is NOT
-      // re-gated: its authorization is the human decision bound to (tenant_id, run_id, effect_key)
-      // that `claimApprovalAndResume()` consumed exactly once. Every other step — including every
-      // step that follows a resumed one — passes through the verdict here.
-      if (!released) {
-        const authorization: ApprovalGateResult = await this.dependencies.policyEngine.evaluateAuthority(action, context);
-
-        if (authorization.verdict === 'DENIED') {
-          await this.dependencies.workflowEngine.transitionTask(tenant_id, run_id, 'stopped', `Authority denied: ${authorization.reason}`);
-          await this.logRun({
-            tenant_id, run_id, correlation_id, trigger, step, context,
-            startedAt: stepStartedAt, startTime: stepStartTime,
-            execution_status: 'denied', authority: action.required_authority, approval: null,
-            action,
-            evidence: { recorded: false, reason: 'AUTHORITY_DENIED' },
-            error: { code: 'AUTHORITY_DENIED', reason: authorization.reason },
-            disposition: 'terminal',
-          });
-          return { lifecycle_state: 'stopped', message: authorization.reason };
+      // STEP 7: recheck current policy even after a human decision was claimed.
+      // A stored claim satisfies only AUTH-4 for its exact action/digest; consent, source,
+      // floor, identity, grant and takeover checks still run and may refuse dispatch.
+      if (released) {
+        const approvalRef = params.approval_ref;
+        if (
+          action.required_authority !== 'AUTH-4'
+          || !approvalRef?.approval_id
+          || action.approval_id !== approvalRef.approval_id
+          || !params.approved_action
+          || params.approved_action.effect_key !== action.effect_key
+        ) {
+          throw new OrchestratorError(
+            'APPROVAL_BINDING_REQUIRED',
+            'A released action must carry the claimed AUTH-4 approval bound to its exact effect key.'
+          );
         }
+      }
+      const authorization = await this.dependencies.policyEngine.evaluateAuthority(action, context);
 
-        if (authorization.verdict === 'AWAITING_HUMAN_APPROVAL') {
-          const taskVersion = (await this.dependencies.workflowEngine.getTask(tenant_id, run_id))?.task_version ?? 1;
-          // One transaction: INSERT the PENDING approval row and pause the durable task together,
-          // bound to this tenant, this run and this effect key. The approval row (never a queue
-          // copy) is the only resume authority (§03 Entity 24).
-          const paused = await this.dependencies.workflowEngine.pauseForApproval({
-            tenant_id,
-            run_id,
-            expected_task_version: taskVersion,
-            checkpoint: {
-              plan,
-              current_step: step.step_index,
-              pending_action: action,
-              context,
-              previous_evidence_hash: chain.previous,
-              request_id,
-            },
-            approval: {
-              action_id: action.action_id,
-              effect_key: action.effect_key,
-              payload: action.payload,
-              reason: authorization.reason,
-            },
-          });
+      if (authorization.verdict === 'DENIED') {
+        await this.dependencies.workflowEngine.transitionTask(tenant_id, run_id, 'stopped', `Authority denied: ${authorization.reason}`);
+        await this.logRun({
+          tenant_id, run_id, correlation_id, trigger, step, context,
+          startedAt: stepStartedAt, startTime: stepStartTime,
+          execution_status: 'denied', authority: action.required_authority, approval: null,
+          action,
+          evidence: { recorded: false, reason: 'AUTHORITY_DENIED' },
+          error: { code: 'AUTHORITY_DENIED', reason: authorization.reason },
+          disposition: 'terminal',
+        });
+        return { lifecycle_state: 'stopped', message: authorization.reason };
+      }
 
-          // A PENDING approval means "prepared, not executed": the step's disposition is not decided
-          // yet, so the audit trail records `pending` (never `success`) and the step's single
-          // `agent_run_logs` row is appended only when the decision resolves the step.
-          await this.logRun({
-            tenant_id, run_id, correlation_id, trigger, step, context,
-            startedAt: stepStartedAt, startTime: stepStartTime,
-            execution_status: 'pending', authority: action.required_authority,
-            approval: { approval_id: paused.approval_id, verdict: authorization.verdict, reason: authorization.reason },
-            action: { ...action, approval_id: paused.approval_id },
-            evidence: { recorded: false, reason: 'AWAITING_HUMAN_APPROVAL' },
-            error: null,
-            disposition: 'attempt',
-          });
-          return {
-            lifecycle_state: 'awaiting_human',
-            message: `Paused for Human Approval at step ${step.step_index} in SCR-003 (approval ${paused.approval_id})`,
-          };
+      if (authorization.verdict === 'AWAITING_HUMAN_APPROVAL') {
+        if (released) {
+          throw new OrchestratorError(
+            'APPROVAL_CLAIM_NOT_RECOGNIZED',
+            'The bound approval no longer satisfies the current authority verdict; dispatch is refused.'
+          );
         }
+        const currentTask = await this.dependencies.workflowEngine.getTask(tenant_id, run_id);
+        if (!currentTask) throw new OrchestratorError('TASK_NOT_FOUND', run_id);
+        const taskVersion = currentTask.task_version;
+        // One transaction: INSERT the PENDING approval row and pause the durable task together,
+        // bound to this tenant, this run and this effect key. The approval row (never a queue
+        // copy) is the only resume authority (§03 Entity 24).
+        const paused = await this.dependencies.workflowEngine.pauseForApproval({
+          tenant_id,
+          run_id,
+          expected_task_version: taskVersion,
+          checkpoint: {
+            plan,
+            current_step: step.step_index,
+            pending_action: action,
+            context,
+            previous_evidence_hash: chain.previous,
+            request_id,
+          },
+          approval: {
+            action_id: action.action_id,
+            effect_key: action.effect_key,
+            payload: action.payload,
+            reason: authorization.reason,
+          },
+        });
+
+        // A PENDING approval means "prepared, not executed": the step's disposition is not decided
+        // yet, so the audit trail records `pending` (never `success`) and the step's single
+        // `agent_run_logs` row is appended only when the decision resolves the step.
+        await this.logRun({
+          tenant_id, run_id, correlation_id, trigger, step, context,
+          startedAt: stepStartedAt, startTime: stepStartTime,
+          execution_status: 'pending', authority: action.required_authority,
+          approval: { approval_id: paused.approval_id, verdict: authorization.verdict, reason: authorization.reason },
+          action: { ...action, approval_id: paused.approval_id },
+          evidence: { recorded: false, reason: 'AWAITING_HUMAN_APPROVAL' },
+          error: null,
+          disposition: 'attempt',
+        });
+        return {
+          lifecycle_state: 'awaiting_human',
+          message: `Paused for Human Approval at step ${step.step_index} in SCR-003 (approval ${paused.approval_id})`,
+        };
       }
 
       // What authorized this step: the human decision that released it, or the autonomous verdict.
-      const approvalRecord = this.approvalField(params.approval_ref);
+      const approvalRecord = this.approvalField(released ? params.approval_ref : null);
 
       // STEP 8: RESERVATION THEN DISPATCH. `acquireEffectSlot()` reserves the deterministic
       // `effect_key` durably before every mutating dispatch; a read-only action is dispatched
@@ -1045,9 +1076,12 @@ export class RevenueOrchestrator {
     run_id: string,
     resumeEvent: {
       tenant_id: string;
-      event_type: 'human.approval' | 'human.modify' | 'human.reject' | 'human.cancel' | 'timer.expired' | 'reconcile.completed';
+      event_type: 'human.approval' | 'human.modify' | 'human.reject' | 'human.pause' | 'human.cancel' | 'human.reconcile' | 'timer.expired' | 'reconcile.completed';
       approval_id?: string;
+      expected_payload_sha256?: string; // required for every approval decision; digest of reviewed payload
       operator_id?: string;
+      reconciliation_resolution?: 'PROVIDER_CONFIRMED_SUCCEEDED' | 'PROVIDER_CONFIRMED_ABSENT' | 'ESCALATE_MANUALLY';
+      reconciliation_receipt?: unknown;
       modifications?: Record<string, unknown>;
       reason?: string;
     }
@@ -1072,8 +1106,19 @@ export class RevenueOrchestrator {
       );
     }
     const pendingAction: ActionDraft | null = checkpoint.pending_action ?? null;
-    const isHumanDecision = resumeEvent.event_type !== 'timer.expired'
-      && resumeEvent.event_type !== 'reconcile.completed';
+    const isReconciliationResolution = resumeEvent.event_type === 'human.reconcile';
+    const isHumanApprovalDecision = resumeEvent.event_type === 'human.approval'
+      || resumeEvent.event_type === 'human.modify'
+      || resumeEvent.event_type === 'human.reject'
+      || resumeEvent.event_type === 'human.pause'
+      || resumeEvent.event_type === 'human.cancel';
+    const isAutomaticResume = resumeEvent.event_type === 'timer.expired'
+      || resumeEvent.event_type === 'reconcile.completed';
+    if ((isHumanApprovalDecision && task.state !== 'awaiting_human')
+      || (isReconciliationResolution && task.state !== 'awaiting_human')
+      || (isAutomaticResume && task.state !== 'waiting')) {
+      throw new OrchestratorError('INVALID_TASK_STATE', 'Resume event does not match the durable waiting state.');
+    }
 
     // The lease is taken BEFORE the approval is claimed: an approval authorizes exactly one
     // execution, so it must never be consumed by a worker that cannot actually run the task.
@@ -1082,6 +1127,7 @@ export class RevenueOrchestrator {
       throw new OrchestratorError('CONCURRENT_TASK_LOCK', `Unable to acquire lease to resume ${run_id}`);
     }
 
+    let executionResumed = false;
     try {
       let releasedAction: ActionDraft | null = null;
       let approvalRef: {
@@ -1090,65 +1136,80 @@ export class RevenueOrchestrator {
         operator_id: string | null;
       } | null = null;
 
-      if (isHumanDecision) {
-        // A human decision must name the PENDING approval row it decides, and that row must be
-        // bound to this run's effect key (no cross-run, cross-tenant or stale approval replays).
-        if (!resumeEvent.approval_id || !pendingAction) {
-          throw new OrchestratorError(
-            'APPROVAL_BINDING_REQUIRED',
-            'A human decision must reference the PENDING approval row bound to this run effect_key.'
-          );
+      if (isReconciliationResolution) {
+        if (!resumeEvent.operator_id || !resumeEvent.reconciliation_resolution || !pendingAction) {
+          throw new OrchestratorError('RECONCILIATION_BINDING_REQUIRED', 'Manual reconciliation requires an authenticated operator, resolution and pending action.');
         }
-        const decision: 'APPROVED' | 'MODIFIED' | 'REJECTED' | 'CANCELLED' =
+        if (resumeEvent.reconciliation_resolution === 'ESCALATE_MANUALLY') {
+          return { run_id, lifecycle_state: 'awaiting_human', message: 'Provider outcome remains unresolved; no dispatch was authorized.' };
+        }
+        await this.dependencies.effectGuard.resolve({
+          tenant_id: resumeEvent.tenant_id,
+          effect_key: pendingAction.effect_key,
+          status: resumeEvent.reconciliation_resolution === 'PROVIDER_CONFIRMED_SUCCEEDED' ? 'SUCCEEDED' : 'FAILED',
+          receipt: resumeEvent.reconciliation_receipt,
+        });
+        await this.dependencies.workflowEngine.transitionTask(resumeEvent.tenant_id, run_id, 'running', 'Manual provider reconciliation resolved');
+        executionResumed = true;
+      }
+
+      if (isHumanApprovalDecision) {
+        if (!resumeEvent.approval_id || !pendingAction || !resumeEvent.operator_id || !resumeEvent.expected_payload_sha256) {
+          throw new OrchestratorError('APPROVAL_BINDING_REQUIRED', 'Decision requires authenticated operator, approval and reviewed digest.');
+        }
+        const decision: 'APPROVED' | 'MODIFIED' | 'REJECTED' | 'PAUSE' | 'CANCELLED' =
           resumeEvent.event_type === 'human.approval' ? 'APPROVED'
           : resumeEvent.event_type === 'human.modify' ? 'MODIFIED'
           : resumeEvent.event_type === 'human.reject' ? 'REJECTED'
+          : resumeEvent.event_type === 'human.pause' ? 'PAUSE'
           : 'CANCELLED';
-
-        // Claim the canonical `agentos.approvals` row AND re-activate the durable task in ONE
-        // transaction (§4.2 statement 4). The compare-and-set binds the identical
-        // (tenant_id, run_id, effect_key) triple the approver saw, so a second click, a stale
-        // console tab or a replayed callback updates 0 rows and is rejected as
-        // APPROVAL_NOT_CLAIMABLE.
+        if (decision === 'MODIFIED' && !resumeEvent.modifications) {
+          throw new OrchestratorError('MODIFICATION_REQUIRED', 'MODIFY requires a proposed payload delta.');
+        }
+        const candidate = decision === 'MODIFIED'
+          ? await this.applyModification(pendingAction, resumeEvent.modifications!, checkpoint.context)
+          : pendingAction;
+        if (decision === 'APPROVED' || decision === 'MODIFIED') {
+          this.verifyFloorPrice(candidate);
+          const eligibility = await this.dependencies.policyEngine.evaluateAuthority(candidate, checkpoint.context);
+          if (eligibility.verdict === 'DENIED') {
+            throw new OrchestratorError('AUTHORITY_DENIED', eligibility.reason);
+          }
+        }
+        // Lock current task/action/approval; check the reviewed digest and operator; atomically
+        // save the authorized revision. The store's full transaction contract is §4.2(4).
         const claimed = await this.dependencies.workflowEngine.claimApprovalAndResume({
           tenant_id: resumeEvent.tenant_id,
           run_id,
           approval_id: resumeEvent.approval_id,
           effect_key: pendingAction.effect_key,
+          expected_payload_sha256: resumeEvent.expected_payload_sha256,
+          authorized_action: decision === 'APPROVED' || decision === 'MODIFIED' ? candidate : null,
           decision,
-          operator_id: resumeEvent.operator_id ?? null,
+          operator_id: resumeEvent.operator_id,
           review_comment: resumeEvent.reason ?? null,
         });
         if (!claimed.claimed) {
-          throw new OrchestratorError(
-            'APPROVAL_NOT_CLAIMABLE',
-            `Approval ${resumeEvent.approval_id} is not PENDING or is not bound to run ${run_id} (already decided, cancelled or stale).`
-          );
+          throw new OrchestratorError('APPROVAL_NOT_CLAIMABLE', 'Approval is stale, decided, or bound to a different action.');
+        }
+        if (decision === 'PAUSE') {
+          return { run_id, lifecycle_state: 'awaiting_human', message: 'Approval remains pending under an explicit human pause' };
         }
         if (decision === 'REJECTED' || decision === 'CANCELLED') {
           return { run_id, lifecycle_state: 'stopped', message: `Task ${decision.toLowerCase()} by human operator` };
         }
-
-        // MODIFY creates a new action revision through the approvals gate: its `effect_key` is
-        // recomputed from the SAME immutable `request_id` with `action_revision + 1`, so the
-        // modified payload can never collide with the revision the approver saw. The decision
-        // authorizes this one execution and is never converted into an agent clearance.
-        const releasedBase = decision === 'MODIFIED' && resumeEvent.modifications
-          ? this.applyModification(pendingAction, resumeEvent.modifications)
-          : pendingAction;
-        releasedAction = { ...releasedBase, approval_id: resumeEvent.approval_id };
-        approvalRef = {
-          approval_id: resumeEvent.approval_id,
-          decision,
-          operator_id: resumeEvent.operator_id ?? null,
-        };
+        executionResumed = true;
+        releasedAction = { ...candidate, approval_id: resumeEvent.approval_id };
+        approvalRef = { approval_id: resumeEvent.approval_id, decision, operator_id: resumeEvent.operator_id };
       }
 
-      await this.dependencies.workflowEngine.transitionTask(resumeEvent.tenant_id, run_id, 'running', `Resumed by ${resumeEvent.event_type}`);
+      if (isAutomaticResume && !executionResumed) {
+        await this.dependencies.workflowEngine.transitionTask(resumeEvent.tenant_id, run_id, 'running', `Resumed by ${resumeEvent.event_type}`);
+        executionResumed = true;
+      }
 
-      // The SAME guarded engine as the first pass: every remaining step re-runs the takeover check,
-      // the floor verification and — except for the released step, whose authorization is the
-      // claimed human decision — the full authority verdict.
+      // The human path already committed its transition. All resumed steps recheck safety;
+      // the claimed decision satisfies only AUTH-4 and cannot outlive a policy revocation.
       const outcome = await this.executeSteps({
         signal: null,
         tenant_id: resumeEvent.tenant_id,
@@ -1169,6 +1230,8 @@ export class RevenueOrchestrator {
       await this.dependencies.workflowEngine.transitionTask(resumeEvent.tenant_id, run_id, 'completed', 'All resumed steps verified');
       return { run_id, lifecycle_state: 'completed', evidence: outcome.evidence };
     } catch (error) {
+      // A refused human decision must not fail or re-queue the still-pending task.
+      if (!executionResumed) throw error;
       // Identical durable-recovery contract to the first pass (§4.4). An indeterminate external
       // outcome never reaches this block: the guarded step engine parks it as `waiting` with its
       // checkpoint and with the reservation still RESERVED, so only RETRYABLE and FATAL failures
@@ -1394,20 +1457,25 @@ export class RevenueOrchestrator {
     }
   }
 
-  /** Hard Invariant BR-001 / BR-002 / BR-003: a price is only allowed with an authoritative floor. */
+  /** Hard Invariant BR-001 / BR-002 / BR-003: a price-bearing action needs an authoritative floor. */
   private verifyFloorPrice(action: ActionDraft): void {
-    if (action.proposed_price === undefined) {
-      return;
-    }
-    if (action.computed_price_floor === undefined || !action.floor_source) {
+    const payloadPriceBearing = action.payload['price_bearing'] === true
+      || action.payload['offer_id'] !== undefined
+      || action.payload['discount_amount'] !== undefined
+      || action.payload['discount_percent'] !== undefined
+      || action.proposed_price !== undefined;
+    if (!action.price_bearing && !payloadPriceBearing) return;
+    if (!Number.isFinite(action.proposed_price)
+      || !Number.isFinite(action.computed_price_floor)
+      || !action.floor_source?.trim()) {
       throw new OrchestratorError(
         'P_FLOOR_UNAVAILABLE',
-        `No authoritative P_floor with provenance for ${action.skill_id}; refusing to price (BR-001, BR-003, NFR-008).`
+        `No owner-approved P_floor with provenance for ${action.skill_id}; refusing to price (BR-001, BR-003, NFR-008).`
       );
     }
     if (action.proposed_price < action.computed_price_floor) {
       throw new OrchestratorError(
-        'PRICE_FLOOR_VIOLATION',
+        'ERR_FLOOR_PRICE_VIOLATION',
         `Proposed price ${action.proposed_price} < P_floor ${action.computed_price_floor} (${action.floor_source}).`
       );
     }
@@ -1438,15 +1506,12 @@ export class RevenueOrchestrator {
     return { code: 'UNCLASSIFIED', message: error instanceof Error ? error.message : String(error) };
   }
 
-  private applyModification(base: ActionDraft, delta: Record<string, unknown>): ActionDraft {
+  private async applyModification(base: ActionDraft, delta: Record<string, unknown>, context: HydratedContext): Promise<ActionDraft> {
     const action_revision = base.action_revision + 1;
-    return {
+    return this.dependencies.policyEngine.validateAction({
       ...base,
       payload: { ...base.payload, ...delta },
       action_revision,
-      // The revision gets its own deterministic key off the SAME immutable `request_id`, so the
-      // modified payload can never be mistaken for the revision the approver saw (and can never
-      // reuse its reservation).
       effect_key: this.dependencies.effectGuard.computeEffectKey({
         tenant_id: base.tenant_id,
         skill_id: base.skill_id,
@@ -1454,8 +1519,7 @@ export class RevenueOrchestrator {
         action_revision,
         request_id: base.request_id,
       }),
-      proposed_price: (delta.proposed_price as number) ?? base.proposed_price,
-    };
+    }, context);
   }
 
   /**
@@ -1471,30 +1535,19 @@ export class RevenueOrchestrator {
     request_id: string,
     action_revision: number
   ): Promise<ActionDraft> {
-    return {
-      action_id: randomUUID(),
-      run_id,
-      tenant_id,
-      agent_id: step.agent_id,
-      skill_id: step.skill_id,
-      adapter_target: step.adapter_target,
-      step_index: step.step_index,
-      mutating: step.mutating,
-      request_id,
-      action_revision,
+    return this.dependencies.policyEngine.validateAction({
+      action_id: randomUUID(), run_id, tenant_id, request_id, action_revision,
+      agent_id: step.agent_id, skill_id: step.skill_id, adapter_target: step.adapter_target,
+      step_index: step.step_index, mutating: step.mutating, price_bearing: step.price_bearing,
       effect_key: this.dependencies.effectGuard.computeEffectKey({
-        tenant_id,
-        skill_id: step.skill_id,
-        step_index: step.step_index,
-        action_revision,
-        request_id,
+        tenant_id, skill_id: step.skill_id, step_index: step.step_index, action_revision, request_id,
       }),
       required_authority: step.required_authority,
       payload: { ...step.input_parameters, tenant_id },
       computed_price_floor: step.computed_price_floor,
       floor_source: step.floor_source,
       proposed_price: step.proposed_price,
-    };
+    }, context);
   }
 
   private buildClarificationPlan(
@@ -1518,8 +1571,10 @@ export class RevenueOrchestrator {
           },
           required_authority: 'AUTH-3',
           mutating: true,
+          price_bearing: false,
           idempotent: false,
           timeout_ms: 3000,
+          depends_on_steps: [],
         },
       ],
       fallback_strategy: 'FAIL_CLOSED',
@@ -1624,6 +1679,12 @@ export interface IAgentRuntime {
 }
 
 export interface IPolicyEngine {
+  /** Normalize with the registered skill schema; reject unknown fields, bind tenant/subject,
+   * and resolve price/floor metadata from trusted sources. Plan/delta policy fields are not proof. */
+  validateAction(action: ActionDraft, context: HydratedContext): Promise<ActionDraft>;
+  /** Re-read registry/grant, identity, consent, policy, source/floor and takeover state.
+   * Create no queue here. A claimed approval covering this exact action satisfies AUTH-4 only;
+   * invalid/revoked bindings are DENIED. Checkpoint context is not a freshness proof. */
   evaluateAuthority(action: ActionDraft, context: HydratedContext): Promise<ApprovalGateResult>;
 }
 
@@ -1647,14 +1708,16 @@ export interface IStatefulWorkflowEngine {
     checkpoint: unknown;
     approval: { action_id: string; effect_key: string; payload: unknown; reason: string };
   }): Promise<{ approval_id: string }>;
-  /** One transaction: claim the PENDING approval row + re-activate the task (§4.2). */
+  /** One transaction: decide and resume/stop, or retain PENDING + awaiting_human for PAUSE (§4.2). */
   claimApprovalAndResume(params: {
     tenant_id: string;
     run_id: string;
     approval_id: string;
-    effect_key: string | null;
-    decision: 'APPROVED' | 'MODIFIED' | 'REJECTED' | 'CANCELLED';
-    operator_id: string | null;
+    effect_key: string;
+    expected_payload_sha256: string;
+    authorized_action: ActionDraft | null;
+    decision: 'APPROVED' | 'MODIFIED' | 'REJECTED' | 'PAUSE' | 'CANCELLED';
+    operator_id: string; // must match the authenticated decision principal, never payload-only authority
     review_comment: string | null;
   }): Promise<{ claimed: boolean }>;
   /** §4.4 durable recovery: classify, count, re-queue or fail terminally. */
@@ -1766,9 +1829,10 @@ The Task Engine manages durable tasks that survive process restarts, power loss,
 | `running` | `task.fatal_error` | `failed` | Non-retryable error, or `retry_count >= max_retries`. Fail-closed; `error_details` and an audit record are written. |
 | `waiting` | `event.received` | `running` | Correlation ID verified; state re-hydrated; worker lease re-acquired. |
 | `waiting` | `timer.expired` | `running` | Scheduled delay reached (e.g., 24-hr abandoned cart sequence). |
-| `waiting` | `reconcile.resolved` | `running` | The outstanding effect was confirmed applied or confirmed absent; execution resumes from `current_step`. |
-| `awaiting_human`| `human.approve` | `running` | The operator's decision is claimed transactionally against the bound `approval_id` (§4.2); the authorized action is dispatched under the same `effect_key`. |
-| `awaiting_human`| `human.modify` | `running` | Same claim path; the payload delta becomes `action_revision + 1` and the floor check re-runs before dispatch. |
+| `waiting` | `reconcile.completed` | `running` | The outstanding effect was confirmed applied or confirmed absent; execution resumes from `current_step`. |
+| `awaiting_human`| `human.approval` | `running` | Reviewed digest and operator checked; approval and task claimed transactionally; current policy rechecked before the same effect key dispatches. |
+| `awaiting_human`| `human.modify` | `running` | Normalized new payload/revision is explicitly authorized after all guards; action, approval and checkpoint change atomically; the old digest authorizes nothing further. |
+| `awaiting_human` | `human.pause` | `awaiting_human` | Reviewed digest and operator checked; set `is_paused=TRUE`, retain PENDING and its action binding; audit without dispatch. Repeated PAUSE conflicts; a later explicit terminal decision may resolve it. |
 | `awaiting_human`| `human.reject` / `human.cancel` | `stopped` | Terminal. The approval row is decided in the same transaction; the reason is written to the audit trail. |
 | `*` | `human.takeover` | `stopped` | Immediate hard kill of bot execution on the session (`SCR-005`). Re-checked before every step, retry and resume; a late takeover never leaves a queued dispatch behind. |
 | `stopped` | `human.resume` | `stopped` | Operator returns the conversation to the agent: the takeover lock is released, `conversations.state` returns to `open`, `active_agent` to `auto`. The stopped task stays terminal — the next inbound signal starts a fresh run. |
@@ -1781,20 +1845,25 @@ The canonical DDL for `platform_durable_tasks`, `approvals` and `effect_reservat
 -- (1) task.claim — lease without a read-modify-write race.
 --     A stale lease (owner dead past expiry) is reclaimable; a live one is not.
 UPDATE agentos.platform_durable_tasks
-   SET state = 'running',
+   SET state = CASE WHEN state = 'queued' THEN 'running'::agentos.task_lifecycle_state ELSE state END,
        lease_owner = $3,
        lease_expires_at = CURRENT_TIMESTAMP + INTERVAL '30 seconds',
        task_version = task_version + 1,
        updated_at = CURRENT_TIMESTAMP
  WHERE tenant_id = $1
    AND run_id = $2
+   AND state IN ('queued', 'running', 'waiting', 'awaiting_human')
+   AND task_version = $expected_task_version
    AND (lease_owner IS NULL OR lease_owner = $3 OR lease_expires_at < CURRENT_TIMESTAMP)
 RETURNING task_version;           -- 0 rows ⇒ another worker owns a live lease ⇒ CONCURRENT_TASK_LOCK
 
 -- (2) progress checkpoint — only the lease owner may advance the cursor.
 UPDATE agentos.platform_durable_tasks
-   SET current_step = $4, state_payload = state_payload || $5::jsonb, updated_at = CURRENT_TIMESTAMP
- WHERE tenant_id = $1 AND run_id = $2 AND lease_owner = $3 AND state = 'running';
+   SET current_step = $4, state_payload = state_payload || $5::jsonb,
+       task_version = task_version + 1, updated_at = CURRENT_TIMESTAMP
+ WHERE tenant_id = $1 AND run_id = $2 AND lease_owner = $3 AND state = 'running'
+   AND task_version = $expected_task_version AND lease_expires_at > CURRENT_TIMESTAMP
+RETURNING task_version;
 
 -- (3) task.require_auth4 — pause and record the approval atomically (SCR-003, §03 Entity 24).
 --     `approvals.action_id` references `actions(id)`, so the action row must be inserted first
@@ -1813,55 +1882,36 @@ BEGIN;
          state_payload = $checkpoint::jsonb,
          task_version = task_version + 1,
          updated_at = CURRENT_TIMESTAMP
-   WHERE tenant_id = $1 AND run_id = $2 AND task_version = $expected_task_version;
+   WHERE tenant_id = $1 AND run_id = $2 AND task_version = $expected_task_version
+     AND state = 'running' AND lease_owner = $worker_id AND lease_expires_at > CURRENT_TIMESTAMP;
    -- 0 rows ⇒ another worker already advanced this task ⇒ abort and retry the read.
 COMMIT;
 
--- (4) human decision — claim the approval AND re-activate the task in ONE transaction.
---     The WHERE clause binds the decision to the exact run and effect key the approver saw, and
---     `decision = 'PENDING'` makes the update a compare-and-set: a second click, a stale console
---     tab, or a replayed callback updates 0 rows and is rejected as APPROVAL_NOT_CLAIMABLE.
-BEGIN;
-  UPDATE agentos.approvals
-     SET decision = $decision,              -- APPROVED | MODIFIED | REJECTED | CANCELLED
-         operator_id = $operator_id,
-         decided_at = CURRENT_TIMESTAMP,
-         review_comment = $review_comment,
-         payload = COALESCE($modified_payload, payload)
-   WHERE tenant_id = $1
-     AND id = $approval_id
-     AND run_id = $2
-     AND effect_key = $effect_key
-     AND decision = 'PENDING'
-     AND is_paused = FALSE
-  RETURNING id, decision, action_id, effect_key;
-   -- 0 rows ⇒ already decided / wrong run / not bound to this effect key ⇒ APPROVAL_NOT_CLAIMABLE
-
-  UPDATE agentos.platform_durable_tasks
-     SET state = CASE WHEN $decision IN ('REJECTED','CANCELLED') THEN 'stopped' ELSE 'running' END,
-         paused_for_approval_id = NULL,
-         task_version = task_version + 1,
-         updated_at = CURRENT_TIMESTAMP
-   WHERE tenant_id = $1 AND run_id = $2 AND state = 'awaiting_human';
-COMMIT;
+-- (4) Human decision uses the transactional procedure specified immediately below this block.
+-- Digest normalization is RFC 8785 in the application, never PostgreSQL JSON text formatting.
 
 -- (5) Stale-lease requeue (crash recovery). Only tasks whose owner stopped heart-beating are
 --     re-queued; a task parked in `waiting` / `awaiting_human` is never touched.
 UPDATE agentos.platform_durable_tasks
-   SET state = 'queued', lease_owner = NULL, updated_at = CURRENT_TIMESTAMP
- WHERE state = 'running' AND lease_expires_at < CURRENT_TIMESTAMP;
+   SET state = 'queued', lease_owner = NULL, lease_expires_at = NULL,
+       task_version = task_version + 1, updated_at = CURRENT_TIMESTAMP
+ WHERE tenant_id = $1 AND state = 'running' AND lease_expires_at < CURRENT_TIMESTAMP;
 
--- (6) Pause/expiry sweep for unanswered approvals, run by the scheduler (BR-007).
-UPDATE agentos.approvals
-   SET decision = 'EXPIRED', decided_at = CURRENT_TIMESTAMP
- WHERE tenant_id = $1 AND decision = 'PENDING' AND created_at < CURRENT_TIMESTAMP - INTERVAL '72 hours';
+-- No approval-expiry sweep is defined: there is no approved TTL source/column in §03.
+-- The provisional 72h effect-cache/reconciliation window is NOT an approval lifetime.
 ```
+
+**(4) Human-decision transaction — target procedure, not optional checks.** `claimApprovalAndResume` runs under tenant RLS and the authenticated operator identity. Lock the task, action and approval in that order with `SELECT ... FOR UPDATE`; require `awaiting_human`, matching `paused_for_approval_id`, unexpired owned worker lease, and the pending `(tenant_id, run_id, effect_key)` binding. Recompute SHA-256 over RFC 8785 canonical `approvals.payload` while locked and compare it with `expected_payload_sha256`; mismatch returns `409 APPROVAL_STALE_PAYLOAD` without writes. A decided claim or repeated PAUSE returns `APPROVAL_NOT_CLAIMABLE`; a paused PENDING item may still receive an explicit terminal decision. The skill dispatch digest check separately uses `APPROVAL_PAYLOAD_MISMATCH` for an action not covered by its authorization (`05`).
+
+For APPROVE, persist the unchanged authorized action. For MODIFY, allow only the registered schema's editable payload fields; preserve tenant, subject, skill and inbound identity, increment `action_revision`, and derive its new deterministic key. Revalidate all policy/source/consent/identity/floor checks, compare the normalized authorized payload, and refuse if the old effect was ever dispatched or is indeterminate. Atomically update `actions.action_payload`/`effect_key`, `approvals.payload`/`effect_key`, and the checkpoint's pending action; append audit containing old/new digests, keys, revision, policy versions and operator. The explicit MODIFY decision is authorization for this new revision, not reuse of the previous digest.
+
+For any terminal decision, write the approval decision/operator/reason/time, clear `is_paused`, increment the locked task version, and clear `paused_for_approval_id`. APPROVED/MODIFIED transitions to `running`; REJECTED/CANCELLED to `stopped`. Every expected update must affect exactly one row and audit must append, or the entire transaction rolls back. `PAUSE` uses the same reviewed-digest/operator checks, sets only `is_paused=TRUE`, keeps PENDING/`awaiting_human`, increments task version and audits; a subsequent explicit human decision can decide that paused item through the same five-decision route. No timer or automatic worker may clear a pause.
+
+After commit, dispatch rechecks current policy and the stored binding; the one-time decision does not authorize future steps. Approval expiry is `[OWNER-DECISION-REQUIRED]` for Business/Operations with `03`/`04`: until a policy/version and server-observable deadline are specified, no automated expiry or UI countdown is enabled. Stale policy, revoked permission, changed digest and decided rows are refused independently of TTL.
 
 **Binding rules.**
 
-1. An `approvals` row is inserted PENDING and decided at most once; `uq_approvals_tenant_effect` guarantees at most one live approval per effect key per tenant.
-2. A decision is only accepted together with the identical `(tenant_id, run_id, effect_key)` triple that was presented to the approver — an approval can never be replayed against a different action.
-3. The approval authorizes exactly one execution. It does **not** change the agent's clearance: the resume path re-enters the single guarded step engine (`executeSteps`, `from_step = current_step`) with the same `authority` value, and any later step needing `AUTH-4` pauses again.
+3. The approval authorizes exactly one execution. It does not change the agent's clearance: a valid claim short-circuits only the released action's `AUTH-4` routing verdict after the transaction checks the exact binding and digest. The resume path then re-enters `executeSteps`; every later step evaluates the ordinary PEP path and any later `AUTH-4` step pauses again.
 4. A paused task, its approval row and the pending action are all visible in SCR-003 through the single `approval_queue` view over `approvals` (§03 DOMAIN 5) — there is no second queue table to diverge from.
 
 ### 4.3. Distributed Worker Lease Management (Redis Mutex)
@@ -1954,8 +2004,8 @@ NFR-004 requires durable workflows with finite exponential backoff, timeouts and
 3. RESUME  the task from `current_step` when every reservation for the step is settled:
      • SUCCEEDED → the step is complete: emit the business outcome watch, advance the cursor,
                    continue with the next step (never re-dispatch this effect).
-     • FAILED    → re-dispatch once under the SAME effect_key (the reservation row now proves the
-                   first attempt never landed).
+     • FAILED    → re-dispatch once under the SAME effect_key. If the action is AUTH-4, reuse the
+                   existing approvals row bound to that key; never insert a second approval.
 4. ESCALATE  when an indeterminate reservation reaches `expires_at` (default 72 h, = the
              idempotency window): mark the reservation EXPIRED, park the task in
              `awaiting_human`, and raise an SCR-003 exception item so a human resolves the
@@ -2008,8 +2058,8 @@ The Context Aggregator hydrates customer state with a strict latency budget ($\l
 Hydration splits into two phases with different trust rules:
 
 1. **Identity resolution (trusted, server-side).** `IIdentityResolver` maps the subject to a customer without ever trusting a payload assertion:
-   * `SESSION_BOUND` — the gateway authenticated the session (logged-in web/app session, or a completed OTP verification bound to this `session_id`). Only this path may attach a Customer 360 profile to the run.
-   * `CHANNEL_IDENTIFIER_EXACT` — the channel handle matches exactly one `customer_identities` row for that tenant and channel (`uq_identities_tenant_channel`, §03 §1). The platform binds the *resolved* `customer_id`; the handle itself never becomes a FACT.
+   * `SESSION_BOUND` — gateway-authenticated login or completed OTP verification bound to this session; permits the verified customer's profile.
+   * `CHANNEL_IDENTIFIER_EXACT` — provider-authenticated sender matches exactly one tenant/channel identity row with `verified_at` non-null. Only that verified binding may attach a profile; an unverified match resolves to `UNRESOLVED`, never a private-data lookup.
    * `UNRESOLVED` — anonymous. `customer = null`, and every skill whose input schema requires `customer_id` refuses to run; order lookups refuse; marketing outreach refuses (BR-004).
    * Never used: fuzzy phone/email matching, `customers.primary_phone` fallback, `verification_status`/VIP flags, or any value echoed from the client payload (BR-003, NFR-008).
 2. **Fact hydration** then reads `customer_360_profiles` by the resolved `customer_id` **only** (the view's RLS-covered base tables apply). Working memory is keyed by the unique server-issued `session_id`, so an anonymous visitor can never land in another visitor's scratchpad.
@@ -2340,7 +2390,7 @@ Approvals are **not** written here: the pause/claim transaction of §4.2 is the 
 |---|---|---|---|
 | `TC-ORC-001` | 11-Step Lifecycle | Ingest standard `product.inquiry` signal. | Completes steps 1 through 11; emits a chained `evidence_records` row and one `agent_run_logs` row per step. |
 | `TC-ORC-002` | Epistemic Guard (FR-C360-003) | Inject Agent output attempting to set `customer.is_fraud = true` as FACT. | Engine throws `SECURITY_VIOLATION`; Fact Store and SoR mirrors unchanged. |
-| `TC-ORC-003` | Floor Price Guard (BR-001) | Skill drafts a quotation of 80 TWD where $P_{floor} = 100$ TWD, and a second draft with no floor provenance at all. | First: `PRICE_FLOOR_VIOLATION`. Second: `P_FLOOR_UNAVAILABLE` (fail closed, never a locally derived floor). |
+| `TC-ORC-003` | Floor Price Guard (BR-001..003) | Draft 80 TWD against an owner-approved 100 TWD floor; separately omit provenance. | `ERR_FLOOR_PRICE_VIOLATION` / `P_FLOOR_UNAVAILABLE`; zero dispatch even after human approval; SoR price unchanged. |
 | `TC-ORC-004` | Approval Pause (SCR-003) | Trigger broadcast campaign skill (`AUTH-4`). | Task transitions to `awaiting_human`; exactly one `approvals` row is PENDING, visible through the `approval_queue` view; the audit trail records `execution_status = 'pending'` (no effect claimed), and the step's single `agent_run_logs` row is appended only when the decision resolves the step. |
 | `TC-ORC-005` | Human Takeover (SCR-005) | Ingest human operator `takeover` event on an active session. | Bot execution halts immediately; task transitions to `stopped`; no further step is drafted or dispatched. |
 | `TC-ORC-006` | Double Execution Prevention (BR-006) | Two workers execute the same plan step with identical `effect_key`. | The durable reservation (`effect_reservations` PK) admits one attempt; the second receives `IN_FLIGHT`/`REPLAY` and never reaches the adapter. |
@@ -2353,3 +2403,65 @@ Approvals are **not** written here: the pause/claim transaction of §4.2 is the 
 | `TC-ORC-013` | Anonymous Session Isolation (NFR-006) | Two anonymous visitors of one tenant interact concurrently. | Distinct `session_id` ⇒ distinct `tenant:{tid}:wm:{sid}` buckets, `customer = null` for both, and zero cross-session context in either prompt. |
 | `TC-ORC-014` | Verified Identity for Customer Data | A caller supplies another customer's phone/email or a `verification_status = 'vip'` hint to read order history. | Identity resolves to `UNRESOLVED`/`CHANNEL_IDENTIFIER_EXACT` only from trusted sources; the order-lookup skill refuses without a verified identity of the order owner (§05 skill 17). No FACT is released from the payload assertion. |
 | `TC-ORC-015` | Derived RFM Separation (FR-C360-003) | Read `customer_360_profiles` and attempt to persist the derived RFM value back to `customers`. | The projection exposes `rfm_segment_hypothesis` only; the SoR-mirror write is rejected (§03 §1.2) and a durable derived attribute can only be stored as an `evidences` row with `taxonomy_type = 'HYPOTHESIS'`. |
+
+## 8. Contract-Complete Stage, Control-Flow, and Recovery Rules `[SRS-MUST][SRS §12, §17, §19 / NFR-003, NFR-004, NFR-007, NFR-008]`
+
+This section is the owner contract for the eleven stages. The snippets and tables are `[NOT-RUNTIME-EVIDENCE]` until a future worker executes them against real durable state.
+
+| Stage | Input → output | Durable state / side effect | Authority/evidence/retry rule |
+|---|---|---|---|
+| `SIGNAL` | external envelope → `SignalEnvelope` | immutable event and correlation ID | schema/tenant validation; reject malformed/replay conflict |
+| `CONTEXT` | signal + tenant/session → `HydratedContext` | context-read trace | verified identity before private lookup; read retry only |
+| `HYPOTHESIS` | context → tagged `HypothesisRecord` | hypothesis/evidence record | never FACT; model timeout is non-terminal until policy deadline |
+| `DECISION` | hypothesis + policy → `RoutingDecision` | decision reason/verdict | registry/authority/policy checks; deny is terminal |
+| `PLAN` | routing + context → `ExecutionPlan` | versioned task plan | no agent peer calls; validate dependencies and timeout |
+| `ACTION` | plan step → `ActionDraft` | payload digest/effect key reservation intent | provenance-bearing floor required for price action; no dispatch yet |
+| `APPROVAL` | action + verdict → `ApprovalGateResult` | PENDING approval or terminal deny | AUTH-0..3 may auto route; AUTH-4 pauses; AUTH-5 hard denies |
+| `EXECUTION` | approved action → `ExecutionReceipt` | reservation and provider attempt | dispatch after reservation; UNKNOWN reconciles, never blind retries |
+| `EVIDENCE` | receipt + decision → `EvidenceRecord` | append-only digest/hash chain | record provider receipt or truthful failure |
+| `OUTCOME` | evidence + downstream events → `OutcomeAttribution` | attributed outcome watcher | source/effect match and late-event handling |
+| `LEARNING` | outcome → versioned learning update | restricted Learning Memory write | no raw conversation/HYPOTHESIS promotion to FACT/knowledge |
+
+Central control flow is mandatory: one orchestrator owns routing; agents do not call agents. The orchestrator asks at most one clarification question before routing/handoff, checks module enablement, resolves customer identity before private lookup, checks consent before outreach, and checks human takeover before every stage and retry. Missing context, disabled module, unknown identity, missing consent, unavailable floor provenance, or missing authority fails closed.
+
+### 8.1 Authority verdict and approval binding `[SRS §12 / BR-007, BR-008]`
+
+Agents carry only `AUTH-0..AUTH-3` grants. After tenant/agent binding, validate the grant, deny `AUTH-5`, route `AUTH-4`, reject any unknown requirement, and compare rank only for `AUTH-0..AUTH-3`. Every independent policy/consent/identity/floor check must pass before queue creation. The one-time approval binds `(tenant_id, run_id, effect_key, payload_digest)` and never upgrades a clearance. Resume rechecks current policy; the approval satisfies only its own AUTH-4 pause. Audit distinguishes grant, requirement, verdict, approval state, and execution status.
+
+### 8.2 Pricing guardrail conflict `[OWNER-DECISION-REQUIRED][SRS §13, §19 / BR-001..003, NFR-008]`
+
+No price-bearing dispatch is allowed without an owner-approved, provenance-bearing floor decision. Below-floor proposals are terminal refusals; approval cannot waive this. The ERP/policy-supplied mirror and platform-derived floor from owner-approved inputs remain competing proposals. Local arithmetic in `02` §4.1, `08` §3.1 and `09` is candidate-only until the Solution Architect and Business/Finance lock ownership, formula/mode, rounding, currency, staleness and provenance (`README.md` §8.1). `validateAction` resolves trusted metadata; `verifyFloorPrice` compares only validated values and cannot establish provenance by itself.
+
+### 8.3 Durable task lifecycle and reconciliation `[SRS §12, §17 / NFR-003, NFR-004]`
+
+Stored task states are `queued`, `running`, `waiting`, `awaiting_human`, `completed`, `stopped`, and `failed` (`03` DOMAIN 5). `UNKNOWN` is an unconfirmed effect outcome represented by `waiting`, `error.outcome = 'UNKNOWN'`, and an open reservation; it is neither a task state nor an audit execution status. Optimistic `task_version` and fenced leases reject stale workers. Approval claim and task transition are atomic. Stop/revocation checks run before each dispatch. Recovery loads committed checkpoints and never infers success from an in-memory response.
+
+### 8.4 Stage-entry and recovery invariants `[BLUEPRINT][SRS §9, §12, §17, §19]`
+
+`current_step` is the plan's skill-step cursor, not the ordinal of the eleven-stage lifecycle. The checkpoint stores stage identity/output and digest in `state_payload` together with the plan, pending action and evidence cursor. Each transition advances `task_version` while preserving `correlation_id`. A fenced worker alone may update the checkpoint or admit dispatch; a stale write affects zero rows. Recovery uses the last committed output rather than regenerating a plan or model response.
+
+The stage boundary is pre-side-effect through `APPROVAL`: tenant and subject binding, schema validation, skill/agent authorization, business rules, consent, floor provenance, takeover state, and approval digest are evaluated before `IEffectGuard.reserve()`. `EXECUTION` is the only stage allowed to invoke an external mutating adapter, and only after a durable reservation succeeds. `EVIDENCE` cannot be skipped after a provider attempt; if its append fails, the run cannot claim success and enters reconciliation/operator review. `OUTCOME` accepts only a source event or SoR receipt linked to the effect; `LEARNING` writes a versioned, retention-approved projection and never overwrites source facts.
+
+Recovery decisions are explicit: `SUCCEEDED` reservation advances the cursor without dispatch; provider-confirmed `FAILED` absence permits one same-key re-dispatch; `RESERVED`/indeterminate remains `waiting` and is reconciled; an expired unresolved reservation becomes an operator-visible `awaiting_human` exception. A retry is therefore a new attempt record with the same effect identity, never a new effect identity. These are target invariants and `[NOT-RUNTIME-EVIDENCE]` until a future durable worker and provider boundary execute them.
+
+## 9. Dependency Interface Catalog `[BLUEPRINT][SRS §12, §17, §19]`
+
+| Interface | Input/output | Required errors and boundary |
+|---|---|---|
+| `IContextAggregator` | `SignalEnvelope` → `HydratedContext` | tenant/identity missing, source unavailable; no inferred FACT |
+| `IAgentRuntime` | context/route → hypothesis/draft | schema/timeout; cannot dispatch tools directly |
+| `IPolicyEngine` | draft/context → authority/business verdict | AUTH-4 route, AUTH-5 deny, policy unavailable fail closed |
+| `IStatefulWorkflowEngine` | plan/event → durable task state | optimistic version, lease lost, restart recovery |
+| `IEvidenceLogger` | stage/receipt → immutable evidence | digest/chain failure blocks completion |
+| `IAuditTrail` | verdict/transition → audit record | append failure blocks claimed success |
+| `IAdapterDispatcher` | approved action → provider receipt | timeout/indeterminate/invalid receipt; no fabricated result |
+| `IEffectGuard` | `(tenant_id,effect_key,payload_digest)` → reservation/replay | conflict/in-flight/unknown |
+| `IIdentityResolver` | session/verified factors → identity verdict | unresolved or mismatch refuses private lookup |
+| `ISessionControl` | conversation → takeover/lease state | human hold suppresses agent send |
+| `DurableLeaseManager` | task → fenced lease | expired/stale worker cannot write |
+
+## 10. Evidence, Outcome, and Verification Contract `[SRS §17, §19 / NFR-002, NFR-005]`
+
+Trace propagation carries `tenant_id`, `run_id`, `correlation_id`, and `effect_key` through all stages. Evidence stores canonical JSON digest, predecessor hash, provider receipt or truthful failure, and source references. Audit and evidence are separate: audit records the governance decision; evidence records the immutable payload/result. Outcome attribution requires a source event/SoR reference and never fabricates revenue, delivery, or learning. Learning writes are versioned and restricted to validated outcome classes.
+
+Future scenarios MUST cover: a complete eleven-stage run; missing context; unknown identity; missing consent; AUTH-4 pause/resume; AUTH-5 deny; provider timeout with reconciliation; duplicate retry; takeover suppression; absent floor provenance; and HYPOTHESIS separation. No scenario is runtime evidence until executed and attached to a gate bundle.
