@@ -2,6 +2,11 @@ import type { TenantBinding } from '@agentos/database/contracts';
 import { loadApprovedDocuments } from '@agentos/second-brain';
 
 export * from './contracts/index.js';
+export { evaluateAuthorityVerdict } from './policy/authority.js';
+export { computeEffectKey, computeRequestFingerprint } from './effects/effect-key.js';
+export { RevenueOrchestrator } from './orchestrator/revenue-orchestrator.js';
+export { LIFECYCLE_STAGES, assertValidTransition } from './lifecycle/stages.js';
+export { assertOrchestratorBrokered } from './orchestrator/agent-boundary.js';
 
 /** Package identity surfaced by `apps/api` and `apps/worker` health payloads. */
 export const packageName = '@agentos/core-engine';
