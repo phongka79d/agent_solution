@@ -21,3 +21,12 @@ Desktop.ini
 
 # Output temp files
 temp_*
+
+# Node / pnpm workspace artifacts
+node_modules/
+dist/
+.next/
+.turbo/
+coverage/
+*.tsbuildinfo
+pnpm-debug.log

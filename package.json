@@ -1,0 +1,35 @@
+{
+  "name": "agent-solution-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=20.10.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@9.1.0",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev --parallel",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test:unit",
+    "test:unit": "turbo run test:unit",
+    "test:contracts": "turbo run test:contracts",
+    "test:adversarial": "turbo run test:adversarial",
+    "test:security": "turbo run test:security",
+    "test:pilots": "turbo run test:pilots",
+    "test:e2e": "turbo run test:e2e",
+    "db:migrate:rehearse": "turbo run db:migrate:rehearse",
+    "test:rls-policies": "vitest run --config packages/database/vitest.rls.config.ts",
+    "clean": "turbo run clean && rm -rf node_modules"
+  },
+  "devDependencies": {
+    "@agentos/eslint-config": "workspace:*",
+    "@agentos/typescript-config": "workspace:*",
+    "eslint": "^8.57.0",
+    "prettier": "^3.2.5",
+    "turbo": "^1.13.3",
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0"
+  }
+}

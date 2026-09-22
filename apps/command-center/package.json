@@ -1,0 +1,31 @@
+{
+  "name": "@agentos/command-center",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "next build",
+    "dev": "next dev --port 3000",
+    "start": "next start --port 3000",
+    "typecheck": "tsc --noEmit",
+    "lint": "node ../../scripts/eslint.mjs",
+    "test:unit": "vitest run"
+  },
+  "dependencies": {
+    "next": "14.2.15",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@agentos/eslint-config": "workspace:*",
+    "@agentos/typescript-config": "workspace:*",
+    "@types/node": "^20.12.12",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "autoprefixer": "^10.4.19",
+    "postcss": "^8.4.38",
+    "tailwindcss": "3.4.4",
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0"
+  }
+}

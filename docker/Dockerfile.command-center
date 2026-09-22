@@ -1,3 +1,43 @@
+# syntax=docker/dockerfile:1
+# apps/command-center image. Build context is the repository root:
+#   docker build -f docker/Dockerfile.command-center .
+# No secret is passed at build time: the browser bundle receives only
+# NEXT_PUBLIC_* values, and none are baked in here.
+
+FROM node:20-bookworm-slim AS builder
+
+ENV PNPM_HOME=/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+ENV CI=true
+ENV NEXT_STANDALONE=1
+RUN corepack enable
+
+WORKDIR /repo
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
+COPY packages ./packages
+COPY apps ./apps
+
+RUN pnpm install --frozen-lockfile \
+    && pnpm --filter @agentos/command-center... build
+
+FROM node:20-bookworm-slim AS runtime
+
+ENV NODE_ENV=production
+ENV PORT=3000
+
+WORKDIR /app
+
+# `next build` with `output: 'standalone'` emits a self-contained server that
+# mirrors the workspace layout; client assets are copied next to it.
+COPY --from=builder /repo/apps/command-center/.next/standalone ./
+COPY --from=builder /repo/apps/command-center/.next/static ./apps/command-center/.next/static
+
+EXPOSE 3000
+
+USER node
+
+CMD ["node", "apps/command-center/server.js"]
 FROM node:20-alpine
 WORKDIR /app
 COPY packages/core-engine/src/config/env.validator.mjs ./packages/core-engine/src/config/env.validator.mjs

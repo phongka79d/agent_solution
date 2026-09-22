@@ -1,0 +1,29 @@
+{
+  "name": "@agentos/adapters",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "node ../../scripts/eslint.mjs",
+    "test:unit": "vitest run"
+  },
+  "dependencies": {
+    "@agentos/core-engine": "workspace:*"
+  },
+  "devDependencies": {
+    "@agentos/typescript-config": "workspace:*",
+    "@agentos/eslint-config": "workspace:*",
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "extends": "@agentos/typescript-config/react.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "strict": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "allowJs": true,
+    "incremental": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true
+  },
+  "include": [
+    "src",
+    ".next/types/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}
