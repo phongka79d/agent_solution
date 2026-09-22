@@ -1,0 +1,11 @@
+ BAO_CAO_TRANG_THAI_DU_AN.md                        | 248 [31m---------------[m
+ README.md                                          |   3 [31m-[m
+ .../10-data-sovereignty-and-source-of-truth.md     | 345 [31m---------------------[m
+ implement/11-pricing-policy-engine.md              | 296 [31m------------------[m
+ implement/12-identity-consent-lifecycle.md         | 282 [31m-----------------[m
+ .../13-approval-readiness-and-governance-gates.md  | 312 [31m-------------------[m
+ ...14-incident-response-and-operational-runbook.md | 161 [31m----------[m
+ implement/15-mvp-v1-scope-and-release-strategy.md  | 154 [31m---------[m
+ implement/README.md                                |  34 [32m+[m[31m-[m
+ testcases/manifest.json                            |  10 [32m+[m[31m-[m
+ 10 files changed, 9 insertions(+), 1836 deletions(-)
