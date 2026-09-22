@@ -41,6 +41,35 @@ function post(server, path, body, { secret = SECRET, tenant = TENANT_ID, signatu
   });
 }
 
+/**
+ * A signed read: the tenant scope travels in the header, because a GET has no body to carry it.
+ */
+function get(server, path, { secret = SECRET, tenant = TENANT_ID } = {}) {
+  const { port } = server.address();
+  return new Promise((resolve, reject) => {
+    const req = http.request({
+      hostname: '127.0.0.1',
+      port,
+      path,
+      method: 'GET',
+      headers: {
+        'content-length': 0,
+        'x-mock-signature': signBody(secret, ''),
+        ...(tenant === null ? {} : { 'x-tenant-id': tenant }),
+      },
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        resolve({ status: res.statusCode, body: text ? JSON.parse(text) : null, text });
+      });
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 async function start(env, deps) {
   const server = createServer({
     APP_ENV: 'local',
@@ -161,6 +190,100 @@ test('SIMULATE_FAILURE_RATE=1 returns UNKNOWN before business logic', async () =
     });
     assert.equal(res.status, 504);
     assert.equal(res.body.outcome, 'UNKNOWN');
+  } finally {
+    server.close();
+  }
+});
+
+test('an action is accepted once, replayed by id, and refuses a changed body', async () => {
+  const server = await start();
+  try {
+    const body = { tenant_id: TENANT_ID, action_id: 'act-1', payload: { sku_id: 'SKU-LOCAL-1' } };
+
+    const first = await post(server, '/api/v1/actions/act-1', body);
+    assert.equal(first.status, 200);
+    assert.equal(first.body.status, 'accepted');
+    assert.equal(first.body.provider_reference, `MOCK-ERP:${TENANT_ID}:act-1`);
+    assert.equal(typeof first.body.snapshot_at, 'string');
+
+    const replay = await post(server, '/api/v1/actions/act-1', body);
+    assert.equal(replay.status, 200);
+    assert.deepEqual(replay.body, first.body);
+
+    const changed = await post(server, '/api/v1/actions/act-1', { ...body, payload: { sku_id: 'other' } });
+    assert.equal(changed.status, 409);
+    assert.equal(changed.body.code, 'IDEMPOTENCY_CONFLICT');
+  } finally {
+    server.close();
+  }
+});
+
+test('an applied action stays readable after the response is lost', async () => {
+  const server = await start({ SIMULATE_SWALLOW_AFTER_WRITE: '1' });
+  try {
+    const lost = await post(server, '/api/v1/actions/act-lost', {
+      tenant_id: TENANT_ID,
+      action_id: 'act-lost',
+    });
+    assert.equal(lost.status, 504);
+    assert.equal(lost.body.outcome, 'UNKNOWN');
+
+    const reconciled = await get(server, '/api/v1/actions/act-lost');
+    assert.equal(reconciled.status, 200);
+    assert.equal(reconciled.body.provider_reference, `MOCK-ERP:${TENANT_ID}:act-lost`);
+  } finally {
+    server.close();
+  }
+});
+
+test('the action boundary is scoped to the signed tenant and refuses unsigned calls', async () => {
+  const server = await start();
+  try {
+    const unsigned = await post(
+      server,
+      '/api/v1/actions/act-2',
+      { tenant_id: TENANT_ID, action_id: 'act-2' },
+      { signature: '' },
+    );
+    assert.equal(unsigned.status, 401);
+
+    const mismatched = await post(
+      server,
+      '/api/v1/actions/act-2',
+      { tenant_id: TENANT_ID, action_id: 'act-2' },
+      { tenant: '00000000-0000-4000-8000-0000000000ff' },
+    );
+    assert.equal(mismatched.status, 401);
+    assert.equal(mismatched.body.code, 'TENANT_MISMATCH');
+
+    // A tenant that never wrote the action cannot read it back.
+    const absent = await get(server, '/api/v1/actions/act-2', {
+      tenant: '00000000-0000-4000-8000-0000000000ff',
+    });
+    assert.equal(absent.status, 404);
+    assert.equal(absent.body.code, 'ACTION_NOT_FOUND');
+
+    const written = await post(server, '/api/v1/actions/act-2', {
+      tenant_id: TENANT_ID,
+      action_id: 'act-2',
+    });
+    assert.equal(written.status, 200);
+  } finally {
+    server.close();
+  }
+});
+
+test('an unscoped read is refused instead of answering for an unnamed tenant', async () => {
+  const server = await start();
+  try {
+    const { port } = server.address();
+    const unsigned = await fetch(`http://127.0.0.1:${port}/api/v1/catalog/items`);
+    assert.equal(unsigned.status, 401);
+    assert.equal((await unsigned.json()).code, 'SIGNATURE_INVALID');
+
+    const signed = await get(server, '/api/v1/catalog/items', { tenant: null });
+    assert.equal(signed.status, 401);
+    assert.equal(signed.body.code, 'TENANT_MISMATCH');
   } finally {
     server.close();
   }

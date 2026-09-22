@@ -53,6 +53,10 @@ function closeHealthServer(server: Server | undefined): Promise<void> {
 const worker: WorkerHandle = startWorker();
 
 process.stdout.write(`worker started [${worker.dependencies.join(', ')}]\n`);
+process.stdout.write(`worker connectors reachable: ${worker.connectors.bound.join(', ') || '(none)'}\n`);
+for (const capability of worker.connectors.unbound) {
+  process.stdout.write(`worker: capability not bound in this build: ${capability}\n`);
+}
 
 // Runtime-selected specifier, so a static import cannot express it: tsc must not emit or copy
 // `src/server.mjs`, and the file is not at the same relative path in `dist/index.js`.

@@ -28,11 +28,14 @@
 # stack for its health gates, and tears its own project down.
 name: Production Quality and Verification Pipeline
 
+# `init/agent-solution` is the repository's current default branch, so it is the
+# base of every pull request in this phase and MUST be listed for both events:
+# a workflow that only names `main` never validates the code that actually lands.
 on:
   push:
-    branches: [main, 'release/*']
+    branches: [main, 'init/agent-solution', 'release/*']
   pull_request:
-    branches: [main]
+    branches: [main, 'init/agent-solution']
 
 permissions:
   contents: read
