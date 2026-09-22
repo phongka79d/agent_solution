@@ -1,11 +1,36 @@
-.git
+# Build context for docker/Dockerfile.{api,worker,command-center}: the repository
+# root. Dependencies and build output are produced inside the builder stage, so the
+# host copies are never sent. Everything the builder copies stays included —
+# package.json, pnpm-lock.yaml, pnpm-workspace.yaml, turbo.json, .npmrc, the apps/
+# and packages/ sources — as does the Markdown under packages/second-brain that the
+# knowledge loader reads at runtime.
+
+# Secrets and VCS metadata
 .env
-*.md
-testcases
+.env.*
+**/.env
+**/.env.*
+.git
+.github
+
+# Installed dependencies and build output (recreated by pnpm install and the builds)
+**/node_modules
+**/dist
+**/.next
+**/.turbo
+
+# Test, coverage, and tooling output
+coverage
+**/coverage
+logs
+**/*.log
+
+# Documents and planning material: no image reads these
+**/*.pdf
+reports
 presentation
 plans
-reports
 research
-**/test
-**/*.test.mjs
-.tmp-exitprobe
+scratch
+testcases
+implement

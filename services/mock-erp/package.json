@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Local/CI-only simulator for the API-001/API-002 boundary. Outside the pnpm workspace and never deployed to a shared tier.",
   "scripts": {
-    "start": "node src/server.js"
+    "start": "node src/server.mjs"
   },
   "dependencies": {}
 }
