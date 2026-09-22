@@ -1,0 +1,167 @@
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import http from 'node:http';
+import { once } from 'node:events';
+import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+
+import { TENANT_ID } from '../src/fixtures.mjs';
+import { signBody } from '../src/hmac.mjs';
+import { createServer } from '../src/server.mjs';
+
+const SECRET = 'local-mock-erp-hmac-secret-value';
+const SERVER_PATH = fileURLToPath(new URL('../src/server.mjs', import.meta.url));
+
+function post(server, path, body, { secret = SECRET, tenant = TENANT_ID, signature } = {}) {
+  const raw = JSON.stringify(body);
+  const sig = signature === undefined ? signBody(secret, raw) : signature;
+  const { port } = server.address();
+  return new Promise((resolve, reject) => {
+    const req = http.request({
+      hostname: '127.0.0.1',
+      port,
+      path,
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'content-length': Buffer.byteLength(raw),
+        'x-mock-signature': sig,
+        'x-tenant-id': tenant,
+      },
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        resolve({ status: res.statusCode, body: text ? JSON.parse(text) : null, text });
+      });
+    });
+    req.on('error', reject);
+    req.end(raw);
+  });
+}
+
+async function start(env, deps) {
+  const server = createServer({
+    APP_ENV: 'local',
+    MOCK_SECRET_KEY: SECRET,
+    SIMULATE_LATENCY_MS: '0',
+    SIMULATE_FAILURE_RATE: '0',
+    ...env,
+  }, deps);
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  return server;
+}
+
+test('APP_ENV=staging exits and names APP_ENV without printing the secret', async () => {
+  const child = spawn(process.execPath, [SERVER_PATH], {
+    env: { ...process.env, APP_ENV: 'staging', MOCK_SECRET_KEY: 'SENTINEL_SECRET_DO_NOT_LEAK_123456' },
+  });
+  let stderr = '';
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk.toString();
+  });
+  const [code] = await once(child, 'exit');
+  assert.notEqual(code, 0);
+  assert.match(stderr, /\[APP_ENV\]/);
+  assert.equal(stderr.includes('SENTINEL_SECRET_DO_NOT_LEAK_123456'), false);
+});
+
+test('local /health returns 200', async () => {
+  const server = await start();
+  try {
+    const { port } = server.address();
+    const res = await fetch(`http://127.0.0.1:${port}/health`);
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { status: 'ok' });
+  } finally {
+    server.close();
+  }
+});
+
+test('inventory lookup returns ATP and price lookup does not invent a floor', async () => {
+  const server = await start();
+  try {
+    const stock = await post(server, '/api/v1/inventory/lookup', {
+      tenant_id: TENANT_ID,
+      sku_ids: ['SKU-LOCAL-1'],
+    });
+    assert.equal(stock.status, 200);
+    assert.equal(stock.body[0].total_available_to_promise, 5);
+
+    const price = await post(server, '/api/v1/prices/lookup', {
+      tenant_id: TENANT_ID,
+      sku_id: 'SKU-LOCAL-1',
+      quantity: 1,
+    });
+    assert.equal(price.status, 409);
+    assert.equal(price.body.code, 'P_FLOOR_UNAVAILABLE');
+    assert.equal(Object.hasOwn(price.body, 'mathematical_floor_price'), false);
+  } finally {
+    server.close();
+  }
+});
+
+test('events require HMAC and a canonical event', async () => {
+  const server = await start();
+  try {
+    const missing = await post(server, '/events/v1', {
+      tenant_id: TENANT_ID,
+      canonical_event: 'search',
+    }, { signature: '' });
+    assert.equal(missing.status, 401);
+
+    const bad = await post(server, '/events/v1', {
+      tenant_id: TENANT_ID,
+      canonical_event: 'not-canonical',
+    });
+    assert.equal(bad.status, 422);
+
+    const ok = await post(server, '/events/v1', {
+      tenant_id: TENANT_ID,
+      canonical_event: 'search',
+    });
+    assert.equal(ok.status, 202);
+    assert.equal(ok.body.canonical_event, 'search');
+  } finally {
+    server.close();
+  }
+});
+
+test('draft order replays the same refusal and conflicts on a changed body', async () => {
+  const server = await start();
+  try {
+    const body = {
+      tenant_id: TENANT_ID,
+      effect_key: 'effect-1',
+      customer_id: 'cust-local-1',
+      items: [],
+    };
+    const first = await post(server, '/api/v1/orders/draft', body);
+    const second = await post(server, '/api/v1/orders/draft', body);
+    assert.equal(first.status, 409);
+    assert.equal(first.body.reserved, false);
+    assert.equal(second.body.refusal_id, first.body.refusal_id);
+
+    const changed = await post(server, '/api/v1/orders/draft', { ...body, customer_id: 'other' });
+    assert.equal(changed.status, 409);
+    assert.equal(changed.body.code, 'IDEMPOTENCY_CONFLICT');
+  } finally {
+    server.close();
+  }
+});
+
+test('SIMULATE_FAILURE_RATE=1 returns UNKNOWN before business logic', async () => {
+  const server = await start({ SIMULATE_FAILURE_RATE: '1' });
+  try {
+    const res = await post(server, '/api/v1/inventory/lookup', {
+      tenant_id: TENANT_ID,
+      sku_ids: ['SKU-LOCAL-1'],
+    });
+    assert.equal(res.status, 504);
+    assert.equal(res.body.outcome, 'UNKNOWN');
+  } finally {
+    server.close();
+  }
+});
