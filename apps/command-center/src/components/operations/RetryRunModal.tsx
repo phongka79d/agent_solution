@@ -5,7 +5,7 @@
 
 import React, { useState } from 'react';
 import { apiClient, ApiError } from '../../lib/api-client';
-import type { AgentRunProjection, TaskAcceptedResponse } from './types';
+import type { AgentRunProjection, RunRetryRequest, TaskAcceptedResponse } from './types';
 
 interface RetryRunModalProps {
   readonly run: AgentRunProjection | null;
@@ -35,10 +35,13 @@ export function RetryRunModal({
     setErrorMessage(null);
 
     try {
-      const receipt = await apiClient.retryRun(run.run_id, {
-        operator_id: operatorId.trim() || undefined,
-        reason: reason.trim() || undefined,
-      });
+      const trimmedOperatorId = operatorId.trim();
+      const trimmedReason = reason.trim();
+      const requestPayload: RunRetryRequest = {
+        ...(trimmedOperatorId ? { operator_id: trimmedOperatorId } : {}),
+        ...(trimmedReason ? { reason: trimmedReason } : {}),
+      };
+      const receipt = await apiClient.retryRun(run.run_id, requestPayload);
 
       // Claim success ONLY after authoritative wire response received
       onSuccess(receipt);
@@ -46,7 +49,7 @@ export function RetryRunModal({
     } catch (err: unknown) {
       let msg = 'Failed to execute run retry';
       if (err instanceof ApiError) {
-        msg = `[${err.code}] ${err.message}`;
+        msg = `[${err.errorCode}] ${err.message}`;
       } else if (err instanceof Error) {
         msg = err.message;
       }

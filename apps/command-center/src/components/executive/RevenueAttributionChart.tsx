@@ -37,7 +37,7 @@ function parseAttributionPoint(data: unknown): AttributionPoint | null {
     time: obj.time,
     baseline: obj.baseline,
     aiAttributed: obj.aiAttributed,
-    id: typeof obj.id === 'string' ? obj.id : undefined,
+    ...(typeof obj.id === 'string' ? { id: obj.id } : {}),
   };
 }
 

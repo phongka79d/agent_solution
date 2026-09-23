@@ -67,7 +67,7 @@ export function MetricCardGrid({
   if (Array.isArray(metrics)) {
     normalizedList.push(...metrics);
   } else if (metrics && typeof metrics === 'object') {
-    for (const [key, val] of Object.entries(metrics)) {
+    for (const [key, val] of Object.entries(metrics as Record<string, unknown>)) {
       if (val && typeof val === 'object') {
         const itemObj = val as Record<string, unknown>;
         const rawStatus = typeof itemObj.source_status === 'string' ? itemObj.source_status : 'LIVE';
@@ -76,10 +76,10 @@ export function MetricCardGrid({
           value: itemObj.value !== undefined ? (itemObj.value as number | string | null | Record<string, unknown>) : (val as Record<string, unknown>),
           source_status: rawStatus as SourceStatus,
           observed_at: typeof itemObj.observed_at === 'string' ? itemObj.observed_at : null,
-          window: typeof itemObj.window === 'string' ? itemObj.window : undefined,
-          timezone: typeof itemObj.timezone === 'string' ? itemObj.timezone : undefined,
+          ...(typeof itemObj.window === 'string' ? { window: itemObj.window } : {}),
+          ...(typeof itemObj.timezone === 'string' ? { timezone: itemObj.timezone } : {}),
           provisional: Boolean(itemObj.provisional),
-          reason: typeof itemObj.reason === 'string' ? itemObj.reason : undefined,
+          ...(typeof itemObj.reason === 'string' ? { reason: itemObj.reason } : {}),
         });
       } else {
         normalizedList.push({

@@ -1,11 +1,11 @@
 const DATA_FIELD = 'data:';
 
 export interface StreamReceipt {
-  readonly task_id?: string;
-  readonly conversation_id?: string;
-  readonly status?: string;
-  readonly correlation_id?: string;
-  readonly task_version?: number;
+  readonly task_id?: string | undefined;
+  readonly conversation_id?: string | undefined;
+  readonly status?: string | undefined;
+  readonly correlation_id?: string | undefined;
+  readonly task_version?: number | undefined;
 }
 
 export interface ParsedStreamChunk {

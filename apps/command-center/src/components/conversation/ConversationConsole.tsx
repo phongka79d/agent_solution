@@ -238,8 +238,8 @@ export function ConversationConsole({
         leaseExpiresAt={leaseExpiresAt}
         lastHeartbeatAt={lastHeartbeatAt}
         errorMessage={takeoverError}
-        onTakeover={() => acquireTakeover({ reason: 'OPERATOR_MANUAL_TAKEOVER', takeoverMode: 'FULL_CONTROL' })}
-        onResume={() => resumeConversation({ handoffSummary: 'OPERATOR_RETURN_TO_AGENT' })}
+        onTakeover={async () => { await acquireTakeover({ reason: 'OPERATOR_MANUAL_TAKEOVER', takeoverMode: 'FULL_CONTROL' }); }}
+        onResume={async () => { await resumeConversation({ handoffSummary: 'OPERATOR_RETURN_TO_AGENT' }); }}
         onOpenEvaluation={() => setIsEvaluationOpen(true)}
         onClearError={() => setTakeoverError(null)}
         disabled={!conversationId || !operatorId}

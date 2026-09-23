@@ -17,10 +17,10 @@ export interface KpiMetricItem {
   readonly value: number | string | null | Record<string, unknown>;
   readonly source_status: SourceStatus;
   readonly observed_at: string | null;
-  readonly window?: string;
-  readonly timezone?: string;
-  readonly provisional?: boolean;
-  readonly reason?: string;
+  readonly window?: string | undefined;
+  readonly timezone?: string | undefined;
+  readonly provisional?: boolean | undefined;
+  readonly reason?: string | undefined;
 }
 
 export interface KpiSnapshotResponse {
@@ -28,7 +28,7 @@ export interface KpiSnapshotResponse {
   readonly timezone: string;
   readonly observed_at: string;
   readonly metrics: readonly KpiMetricItem[] | Record<string, unknown>;
-  readonly cursor?: string | null;
+  readonly cursor?: string | null | undefined;
 }
 
 /** The ten canonical baseline indicator keys from INT-SCR-001 and SRS §18 SCR-001. */
@@ -37,7 +37,7 @@ export interface BaselineIndicatorDefinition {
   readonly label: string;
   readonly format: 'currency' | 'number' | 'percent' | 'status';
   readonly description: string;
-  readonly aliases?: readonly string[];
+  readonly aliases?: readonly string[] | undefined;
 }
 
 export const BASELINE_INDICATOR_DEFINITIONS: readonly BaselineIndicatorDefinition[] = [
@@ -117,7 +117,7 @@ export interface AttributionPoint {
   readonly time: string;
   readonly baseline: number;
   readonly aiAttributed: number;
-  readonly id?: string;
+  readonly id?: string | undefined;
 }
 
 export interface AnomalyAlert {
@@ -126,7 +126,7 @@ export interface AnomalyAlert {
   readonly timestamp: string;
   readonly message: string;
   readonly source: string;
-  readonly evidence_reference?: string;
+  readonly evidence_reference?: string | undefined;
 }
 
 export type SseConnectionStatus =

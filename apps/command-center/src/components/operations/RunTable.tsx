@@ -17,7 +17,7 @@ interface RunTableProps {
   readonly cursorStackLength: number;
   readonly onNextPage: () => void;
   readonly onPrevPage: () => void;
-  readonly totalCount?: number;
+  readonly totalCount?: number | undefined;
 }
 
 function getStateBadgeClass(state: string): string {

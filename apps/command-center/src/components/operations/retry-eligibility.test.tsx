@@ -25,14 +25,13 @@ describe('SCR-002 Retry Eligibility Contract', () => {
   const baseRun: AgentRunProjection = {
     run_id: 'run-001',
     agent_id: 'CS-01',
-    session_id: 'sess-100',
+    task_version: 1,
     state: 'failed',
     execution_status: 'failed',
     current_step: 2,
     retry_count: 0,
     last_error_class: null,
     started_at: '2026-09-23T11:00:00Z',
-    created_at: '2026-09-23T11:00:00Z',
   };
 
   // --------------------------------------------------------------------------
@@ -222,6 +221,45 @@ describe('SCR-002 Retry Eligibility Contract', () => {
       expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>[^<]*Retry[^<]*<\/button>/);
       // Tooltip indicates safe operator retry
       expect(html).toContain('title="Execute safe operator retry"');
+    });
+
+    it('renders totalCount when provided', () => {
+      const html = renderToStaticMarkup(
+        <RunTable
+          runs={[baseRun]}
+          isLoading={false}
+          selectedRunId={null}
+          onSelectRun={() => {}}
+          onRetryRun={() => {}}
+          nextCursor={null}
+          cursorStackLength={0}
+          onNextPage={() => {}}
+          onPrevPage={() => {}}
+          totalCount={42}
+        />
+      );
+
+      expect(html).toContain('Showing 1 run of 42');
+    });
+
+    it('renders correctly when totalCount is undefined or omitted', () => {
+      const html = renderToStaticMarkup(
+        <RunTable
+          runs={[baseRun]}
+          isLoading={false}
+          selectedRunId={null}
+          onSelectRun={() => {}}
+          onRetryRun={() => {}}
+          nextCursor={null}
+          cursorStackLength={0}
+          onNextPage={() => {}}
+          onPrevPage={() => {}}
+          totalCount={undefined}
+        />
+      );
+
+      expect(html).toContain('Showing 1 run');
+      expect(html).not.toContain(' of ');
     });
   });
 });

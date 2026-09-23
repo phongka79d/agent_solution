@@ -19,9 +19,9 @@ import { ApprovalQueueList } from './ApprovalQueueList';
 import { ApprovalPayloadDiffModal } from './ApprovalPayloadDiffModal';
 
 interface ApprovalCenterProps {
-  readonly initialOperatorId?: string;
-  readonly operatorId?: string;
-  readonly onSelectCustomer?: (customerId: string) => void;
+  readonly initialOperatorId?: string | undefined;
+  readonly operatorId?: string | undefined;
+  readonly onSelectCustomer?: ((customerId: string) => void) | undefined;
 }
 
 export function ApprovalCenter({
@@ -263,15 +263,19 @@ export function ApprovalCenter({
           // fallback
         }
         const errorToThrow = new Error(errBody.message || `Decision failed with status ${res.status}`) as Error & {
-          status?: number;
-          isConflict?: boolean;
-          correlation_id?: string;
-          error_code?: string;
+          status?: number | undefined;
+          isConflict?: boolean | undefined;
+          correlation_id?: string | undefined;
+          error_code?: string | undefined;
         };
         errorToThrow.status = res.status;
         errorToThrow.isConflict = res.status === 409;
-        errorToThrow.correlation_id = errBody.correlation_id;
-        errorToThrow.error_code = errBody.error_code;
+        if (errBody.correlation_id !== undefined) {
+          errorToThrow.correlation_id = errBody.correlation_id;
+        }
+        if (errBody.error_code !== undefined) {
+          errorToThrow.error_code = errBody.error_code;
+        }
         throw errorToThrow;
       }
 
@@ -292,7 +296,7 @@ export function ApprovalCenter({
             status: nextStatus,
             isPaused: nextIsPaused,
             decidedAt: responseReceipt.decided_at,
-            decidedBy: responseReceipt.decided_by || operatorId,
+            decidedBy: operatorId,
             payload: decision === 'MODIFY' && modifiedPayload ? modifiedPayload : existing.payload,
           },
         };

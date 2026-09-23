@@ -8,7 +8,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiClient, ApiError } from '../../lib/api-client';
 import type { SharedUiState } from '../../lib/api-types';
-import type { AgentRunProjection, RunFilters, TaskAcceptedResponse } from './types';
+import type { AgentRunProjection, GetRunsParams, RunFilters, TaskAcceptedResponse } from './types';
 import { AgentDirectory } from './AgentDirectory';
 import { RunFilterControls } from './RunFilterControls';
 import { RunTable } from './RunTable';
@@ -46,17 +46,18 @@ export function AgentOperationsConsole() {
       setStatusMessage(null);
 
       try {
-        const res = await apiClient.getRuns({
-          cursor,
+        const queryParams: GetRunsParams = {
           limit: filters.limit,
-          agent_id: filters.agent_id.trim() || undefined,
-          state: filters.state.trim() || undefined,
-          status: filters.status.trim() || undefined,
-          from: filters.from.trim() || undefined,
-          to: filters.to.trim() || undefined,
-        });
+          ...(cursor ? { cursor } : {}),
+          ...(filters.agent_id.trim() ? { agent_id: filters.agent_id.trim() } : {}),
+          ...(filters.state.trim() ? { state: filters.state.trim() } : {}),
+          ...(filters.status.trim() ? { status: filters.status.trim() } : {}),
+          ...(filters.from.trim() ? { from: filters.from.trim() } : {}),
+          ...(filters.to.trim() ? { to: filters.to.trim() } : {}),
+        };
+        const res = await apiClient.getRuns(queryParams);
 
-        const returnedRuns = res.runs ?? [];
+        const returnedRuns = res.items;
         setRuns(returnedRuns);
         setNextCursor(res.next_cursor);
         setTotalCount(res.total_count);
@@ -72,13 +73,13 @@ export function AgentOperationsConsole() {
         if (err instanceof ApiError) {
           if (err.status === 401 || err.status === 403) {
             setUiState('permission_denied');
-            setStatusMessage(`[${err.code}] Permission Denied: ${err.message}`);
+            setStatusMessage(`[${err.errorCode}] Permission Denied: ${err.message}`);
           } else if (err.status >= 502 && err.status <= 504) {
             setUiState('dependency_unavailable');
-            setStatusMessage(`[${err.code}] Upstream Gateway Unavailable: ${err.message}`);
+            setStatusMessage(`[${err.errorCode}] Upstream Gateway Unavailable: ${err.message}`);
           } else {
             setUiState('fail_closed');
-            setStatusMessage(`[${err.code}] System Error: ${err.message}`);
+            setStatusMessage(`[${err.errorCode}] System Error: ${err.message}`);
           }
         } else {
           setUiState('dependency_unavailable');
@@ -117,7 +118,7 @@ export function AgentOperationsConsole() {
 
   const handleRetrySuccess = (receipt: TaskAcceptedResponse) => {
     setRetrySuccessNotice(
-      `Task accepted for re-dispatch (Run ID: ${receipt.run_id}, Version: ${receipt.task_version}, State: ${receipt.state})`
+      `Task accepted for re-dispatch (Task ID: ${receipt.task_id}, Version: ${receipt.task_version}, Status: ${receipt.status})`
     );
     fetchRuns(currentCursor);
   };

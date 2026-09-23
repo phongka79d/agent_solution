@@ -14,7 +14,7 @@ interface ApprovalQueueListProps {
   readonly onSelect: (id: string) => void;
   readonly isLoading: boolean;
   readonly error: string | null;
-  readonly onRetry?: () => void;
+  readonly onRetry?: (() => void) | undefined;
 }
 
 export function ApprovalQueueList({

@@ -1,14 +1,14 @@
 /**
  * @file apps/command-center/src/lib/api-client.ts
- * Typed browser-safe /api/v1 client for the Command Center.
- * Aligned with implement/06-api-and-connectors-spec.md and implement/07-human-command-center-ui.md.
+ * Command Center typed API Client for the AgentOS API Gateway (/api/v1).
  *
- * Invariants:
- * - Emits /api/v1 exactly once across all URL constructions.
- * - Injects tenant and operator headers without secrets.
- * - Browser-safe: only uses fetch / EventSource semantics; no runtime packages or provider SDK imports.
- * - Injectable fetch for deterministic contract and unit testing.
- * - Strict error envelope handling with typed ApiError.
+ * Rules:
+ * - Base prefix is /api/v1 (enforced by buildApiUrl).
+ * - Exact wire contracts aligned to authoritative apps/api/src/gateway/contracts.ts.
+ * - Strict exactOptionalPropertyTypes compatibility.
+ * - Injects tenant and operator authentication headers.
+ * - Extracts and standardizes API error responses (06 §1 ApiErrorEnvelope).
+ * - Safe signal handling for fetch calls under exactOptionalPropertyTypes.
  */
 
 import type {
@@ -57,7 +57,7 @@ export function apiOrigin(): string {
  * Omits undefined and null values; repeats arrays.
  */
 export function buildQueryString(
-  params?: Record<string, string | number | boolean | null | undefined | readonly (string | number | boolean)[]>
+  params?: Record<string, string | number | boolean | null | undefined | readonly (string | number | boolean)[]> | undefined
 ): string {
   if (!params) return '';
   const searchParams = new URLSearchParams();
@@ -83,8 +83,8 @@ export function buildQueryString(
  */
 export function buildApiUrl(
   endpoint: string,
-  query?: Record<string, string | number | boolean | null | undefined | readonly (string | number | boolean)[]>,
-  baseUrl?: string
+  query?: Record<string, string | number | boolean | null | undefined | readonly (string | number | boolean)[]> | undefined,
+  baseUrl?: string | undefined
 ): string {
   const rawOrigin = baseUrl !== undefined ? baseUrl : apiOrigin();
   const origin = rawOrigin.trim();
@@ -121,16 +121,17 @@ export class ApiError extends Error {
   readonly retryable: boolean;
   readonly correlationId: string;
   readonly status: number;
-  readonly details?: unknown;
+  readonly details?: Record<string, unknown> | unknown | undefined;
 
   constructor(status: number, envelope: ApiErrorEnvelope) {
-    super(envelope.message || `API error ${envelope.error_code} (${status})`);
+    super(envelope.message);
     this.name = 'ApiError';
     this.status = status;
     this.errorCode = envelope.error_code;
     this.retryable = envelope.retryable;
     this.correlationId = envelope.correlation_id;
     this.details = envelope.details;
+
     Object.setPrototypeOf(this, ApiError.prototype);
   }
 }
@@ -139,31 +140,31 @@ export class ApiError extends Error {
  * Configuration options for the CommandCenterApiClient.
  */
 export interface ApiClientConfig {
-  readonly baseUrl?: string;
-  readonly tenantId?: string;
-  readonly operatorId?: string;
-  readonly fetch?: typeof fetch;
-  readonly defaultHeaders?: Record<string, string>;
+  readonly baseUrl?: string | undefined;
+  readonly tenantId?: string | undefined;
+  readonly operatorId?: string | undefined;
+  readonly fetch?: typeof fetch | undefined;
+  readonly defaultHeaders?: Record<string, string> | undefined;
 }
 
 /**
  * Per-request overrides.
  */
 export interface RequestOptions {
-  readonly tenantId?: string;
-  readonly operatorId?: string;
-  readonly headers?: Record<string, string>;
-  readonly signal?: AbortSignal;
+  readonly tenantId?: string | undefined;
+  readonly operatorId?: string | undefined;
+  readonly headers?: Record<string, string> | undefined;
+  readonly signal?: AbortSignal | undefined;
 }
 
 /**
  * Typed browser-safe Command Center API Client.
  */
 export class CommandCenterApiClient {
-  private readonly baseUrl?: string;
-  private readonly tenantId?: string;
-  private readonly operatorId?: string;
-  private readonly customFetch?: typeof fetch;
+  private readonly baseUrl?: string | undefined;
+  private readonly tenantId?: string | undefined;
+  private readonly operatorId?: string | undefined;
+  private readonly customFetch?: typeof fetch | undefined;
   private readonly defaultHeaders: Record<string, string>;
 
   constructor(config: ApiClientConfig = {}) {
@@ -192,7 +193,7 @@ export class CommandCenterApiClient {
   async request<T>(
     endpoint: string,
     init: RequestInit = {},
-    query?: Record<string, string | number | boolean | null | undefined | readonly (string | number | boolean)[]>,
+    query?: Record<string, string | number | boolean | null | undefined | readonly (string | number | boolean)[]> | undefined,
     options: RequestOptions = {}
   ): Promise<T> {
     const url = buildApiUrl(endpoint, query, this.baseUrl);
@@ -216,11 +217,15 @@ export class CommandCenterApiClient {
       headers['x-operator-id'] = operatorId;
     }
 
-    const response = await this.fetchFn(url, {
+    const requestInit: RequestInit = {
       ...init,
       headers,
-      signal: options.signal,
-    });
+    };
+    if (options.signal !== undefined) {
+      requestInit.signal = options.signal;
+    }
+
+    const response = await this.fetchFn(url, requestInit);
 
     if (!response.ok) {
       let envelope: ApiErrorEnvelope;
@@ -262,7 +267,7 @@ export class CommandCenterApiClient {
    */
   async getApprovals(
     params: GetApprovalsParams = { status: 'PENDING' },
-    options?: RequestOptions
+    options?: RequestOptions | undefined
   ): Promise<GetApprovalsResponse> {
     const query = {
       status: params.status || 'PENDING',
@@ -277,7 +282,7 @@ export class CommandCenterApiClient {
    */
   async getApproval(
     approvalId: string,
-    options?: RequestOptions
+    options?: RequestOptions | undefined
   ): Promise<ApprovalDetailResponse> {
     return this.request<ApprovalDetailResponse>(
       `/approvals/${encodeURIComponent(approvalId)}`,
@@ -295,7 +300,7 @@ export class CommandCenterApiClient {
   async submitApprovalDecision(
     approvalId: string,
     body: ApprovalDecisionRequest,
-    options?: RequestOptions
+    options?: RequestOptions | undefined
   ): Promise<ApprovalDecisionResponse> {
     return this.request<ApprovalDecisionResponse>(
       `/approvals/${encodeURIComponent(approvalId)}/decision`,
@@ -318,8 +323,8 @@ export class CommandCenterApiClient {
    */
   async getCustomerTimeline(
     customerId: string,
-    params?: CustomerTimelineParams,
-    options?: RequestOptions
+    params?: CustomerTimelineParams | undefined,
+    options?: RequestOptions | undefined
   ): Promise<CustomerTimelineResponse> {
     const query = {
       cursor: params?.cursor,
@@ -344,8 +349,8 @@ export class CommandCenterApiClient {
    * Reads operational agent run history with step latencies and authority verdicts.
    */
   async getRuns(
-    params?: GetRunsParams,
-    options?: RequestOptions
+    params?: GetRunsParams | undefined,
+    options?: RequestOptions | undefined
   ): Promise<GetRunsResponse> {
     const query = {
       cursor: params?.cursor,
@@ -366,7 +371,7 @@ export class CommandCenterApiClient {
   async retryRun(
     runId: string,
     body: RunRetryRequest = {},
-    options?: RequestOptions
+    options?: RequestOptions | undefined
   ): Promise<TaskAcceptedResponse> {
     return this.request<TaskAcceptedResponse>(
       `/operations/runs/${encodeURIComponent(runId)}/retry`,
@@ -388,8 +393,8 @@ export class CommandCenterApiClient {
    * Reads the 10 baseline executive indicators with explicit source_status.
    */
   async getKpiSnapshot(
-    params?: GetKpiSnapshotParams,
-    options?: RequestOptions
+    params?: GetKpiSnapshotParams | undefined,
+    options?: RequestOptions | undefined
   ): Promise<KpiSnapshotResponse> {
     const query = {
       window: params?.window,
@@ -404,10 +409,10 @@ export class CommandCenterApiClient {
    * R09: Constructs the Server-Sent Events (SSE) telemetry stream URL.
    */
   getTelemetryStreamUrl(params?: {
-    metric?: string;
-    channel?: string;
-    cursor?: string;
-  }): string {
+    metric?: string | undefined;
+    channel?: string | undefined;
+    cursor?: string | undefined;
+  } | undefined): string {
     return buildApiUrl('/telemetry/stream', params, this.baseUrl);
   }
 
@@ -422,7 +427,7 @@ export class CommandCenterApiClient {
   async takeoverConversation(
     conversationId: string,
     body: ConversationTakeoverRequest,
-    options?: RequestOptions
+    options?: RequestOptions | undefined
   ): Promise<ConversationTakeoverResponse> {
     return this.request<ConversationTakeoverResponse>(
       `/conversations/${encodeURIComponent(conversationId)}/takeover`,
@@ -442,7 +447,7 @@ export class CommandCenterApiClient {
   async heartbeatTakeover(
     conversationId: string,
     body: ConversationTakeoverHeartbeatRequest,
-    options?: RequestOptions
+    options?: RequestOptions | undefined
   ): Promise<ConversationTakeoverHeartbeatResponse> {
     return this.request<ConversationTakeoverHeartbeatResponse>(
       `/conversations/${encodeURIComponent(conversationId)}/takeover/heartbeat`,
@@ -462,7 +467,7 @@ export class CommandCenterApiClient {
   async resumeConversation(
     conversationId: string,
     body: ConversationResumeRequest,
-    options?: RequestOptions
+    options?: RequestOptions | undefined
   ): Promise<ConversationResumeResponse> {
     return this.request<ConversationResumeResponse>(
       `/conversations/${encodeURIComponent(conversationId)}/resume`,
@@ -482,7 +487,7 @@ export class CommandCenterApiClient {
   async postConversationMessage(
     conversationId: string,
     body: PostMessageRequest,
-    options?: RequestOptions
+    options?: RequestOptions | undefined
   ): Promise<TaskAcceptedResponse> {
     return this.request<TaskAcceptedResponse>(
       `/conversations/${encodeURIComponent(conversationId)}/messages`,
@@ -505,7 +510,7 @@ export class CommandCenterApiClient {
    */
   async postStorefrontStream(
     body: StorefrontStreamRequest,
-    options?: RequestOptions
+    options?: RequestOptions | undefined
   ): Promise<Response> {
     const url = buildApiUrl('/storefront/stream', undefined, this.baseUrl);
     const headers: Record<string, string> = {
@@ -517,12 +522,16 @@ export class CommandCenterApiClient {
     const tenantId = options?.tenantId || this.tenantId;
     if (tenantId) headers['x-tenant-id'] = tenantId;
 
-    return this.fetchFn(url, {
+    const requestInit: RequestInit = {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
-      signal: options?.signal,
-    });
+    };
+    if (options?.signal !== undefined) {
+      requestInit.signal = options.signal;
+    }
+
+    return this.fetchFn(url, requestInit);
   }
 
   /**
@@ -530,8 +539,8 @@ export class CommandCenterApiClient {
    * Ingests storefront events with idempotency on event_id.
    */
   async postStorefrontEvent(
-    body: PlatformEventEnvelope & { session_id?: string },
-    options?: RequestOptions
+    body: PlatformEventEnvelope & { session_id?: string | undefined },
+    options?: RequestOptions | undefined
   ): Promise<EventIngestionResponse> {
     return this.request<EventIngestionResponse>(
       '/storefront/events',
@@ -549,6 +558,6 @@ export class CommandCenterApiClient {
 export const apiClient = new CommandCenterApiClient();
 
 /** Factory function to create custom configured clients. */
-export function createApiClient(config?: ApiClientConfig): CommandCenterApiClient {
+export function createApiClient(config?: ApiClientConfig | undefined): CommandCenterApiClient {
   return new CommandCenterApiClient(config);
 }

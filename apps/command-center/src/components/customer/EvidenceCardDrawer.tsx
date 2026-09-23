@@ -13,7 +13,7 @@ interface EvidenceCardDrawerProps {
   readonly evidenceCards: readonly EvidenceCard[];
   readonly isOpen: boolean;
   readonly onClose: () => void;
-  readonly focusedClassification?: EvidenceClassification | null;
+  readonly focusedClassification?: EvidenceClassification | null | undefined;
 }
 
 const TIER_ORDER: readonly EvidenceClassification[] = [

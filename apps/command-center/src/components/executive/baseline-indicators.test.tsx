@@ -68,7 +68,6 @@ describe('SCR-001 Baseline Indicators Contract', () => {
   // --------------------------------------------------------------------------
   describe('Absent Metric Representation (NOT_INSTRUMENTED)', () => {
     const revenueDef = BASELINE_INDICATOR_DEFINITIONS.find((d) => d.key === 'revenue_twd')!;
-    const leadsDef = BASELINE_INDICATOR_DEFINITIONS.find((d) => d.key === 'leads')!;
 
     it('renders NOT_INSTRUMENTED badge when metric is undefined (absent from snapshot)', () => {
       const html = renderToStaticMarkup(

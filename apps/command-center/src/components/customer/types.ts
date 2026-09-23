@@ -59,13 +59,14 @@ export type TimelineStage =
 export interface TimelineEvent {
   readonly eventId: string;
   readonly domain: 'MARKETING' | 'SALES' | 'COMMERCE' | 'SUPPORT' | string;
-  readonly stage?: TimelineStage;
+  readonly stage?: TimelineStage | undefined;
   readonly eventType: string;
   readonly summary: string;
   readonly occurredAt: string;
-  readonly sourceRecordId?: string;
-  readonly classification?: EvidenceClassification;
-  readonly evidenceCard?: EvidenceCard;
+  readonly sourceRecordId?: string | undefined;
+  readonly classification?: EvidenceClassification | undefined;
+  readonly evidenceCard?: EvidenceCard | undefined;
+  readonly evidenceReference?: string | undefined;
 }
 
 export interface TimelineGap {
@@ -77,17 +78,18 @@ export interface TimelineGap {
 
 export interface CustomerProfile {
   readonly customerId: string;
-  readonly name?: string;
-  readonly tier?: 'GUEST' | 'IDENTIFIED' | 'VERIFIED' | string;
-  readonly ltvTwd?: number;
-  readonly aovTwd?: number;
-  readonly churnRiskScore?: number;
+  readonly name?: string | undefined;
+  readonly tier?: 'GUEST' | 'IDENTIFIED' | 'VERIFIED' | string | undefined;
+  readonly ltvTwd?: number | undefined;
+  readonly aovTwd?: number | undefined;
+  readonly churnRiskScore?: number | undefined;
 }
 
 export interface CustomerTimelineResponse {
-  readonly customer?: CustomerProfile;
-  readonly events: readonly TimelineEvent[];
-  readonly gaps?: readonly TimelineGap[];
-  readonly next_cursor?: string | null;
-  readonly has_more?: boolean;
+  readonly customer?: CustomerProfile | undefined;
+  readonly events?: readonly TimelineEvent[] | undefined;
+  readonly items?: readonly TimelineEvent[] | undefined;
+  readonly gaps?: readonly TimelineGap[] | undefined;
+  readonly next_cursor?: string | null | undefined;
+  readonly has_more?: boolean | undefined;
 }

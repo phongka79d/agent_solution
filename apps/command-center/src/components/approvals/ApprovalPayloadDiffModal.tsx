@@ -23,9 +23,9 @@ interface ApprovalPayloadDiffModalProps {
     decision: ApprovalDecision,
     reason: string,
     expectedPayloadSha256: string,
-    modifiedPayload?: Record<string, unknown>
+    modifiedPayload?: Record<string, unknown> | undefined
   ) => Promise<ApprovalDecisionResponse>;
-  readonly onViewCustomer?: (customerId: string) => void;
+  readonly onViewCustomer?: ((customerId: string) => void) | undefined;
 }
 
 export function ApprovalPayloadDiffModal({
@@ -46,9 +46,9 @@ export function ApprovalPayloadDiffModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submissionError, setSubmissionError] = useState<{
     readonly message: string;
-    readonly isConflict?: boolean;
-    readonly correlationId?: string;
-    readonly errorCode?: string;
+    readonly isConflict?: boolean | undefined;
+    readonly correlationId?: string | undefined;
+    readonly errorCode?: string | undefined;
   } | null>(null);
 
   const [decisionReceipt, setDecisionReceipt] = useState<ApprovalDecisionResponse | null>(null);
@@ -104,8 +104,8 @@ export function ApprovalPayloadDiffModal({
       setSubmissionError({
         message: apiErr.message || 'Decision submission failed.',
         isConflict: is409,
-        correlationId: apiErr.correlation_id,
-        errorCode: apiErr.error_code,
+        ...(apiErr.correlation_id ? { correlationId: apiErr.correlation_id } : {}),
+        ...(apiErr.error_code ? { errorCode: apiErr.error_code } : {}),
       });
     } finally {
       setIsSubmitting(false);

@@ -5,7 +5,6 @@
  */
 
 import type {
-  TakeoverMode,
   SharedUiState,
   TaskLifecycleState,
 } from '../../lib/api-types';
@@ -15,15 +14,15 @@ import type {
  */
 export interface ChatMessage {
   readonly id: string;
-  readonly conversation_id?: string;
+  readonly conversation_id?: string | undefined;
   readonly sender: 'customer' | 'ai' | 'operator';
   readonly content: string;
   readonly timestamp: string;
-  readonly module?: 'marketing' | 'sales' | 'support' | 'auto';
-  readonly status?: 'pending' | 'accepted' | TaskLifecycleState;
-  readonly task_id?: string;
-  readonly correlation_id?: string;
-  readonly idempotency_key?: string;
+  readonly module?: ('marketing' | 'sales' | 'support' | 'auto') | undefined;
+  readonly status?: ('pending' | 'accepted' | TaskLifecycleState) | undefined;
+  readonly task_id?: string | undefined;
+  readonly correlation_id?: string | undefined;
+  readonly idempotency_key?: string | undefined;
 }
 
 /**
@@ -43,11 +42,11 @@ export type TakeoverLeaseState =
  * Strictly customer-invisible, requires operator review before sending.
  */
 export interface CopilotDraft {
-  readonly draft_id?: string;
+  readonly draft_id?: string | undefined;
   readonly text: string;
   readonly classification: 'AUTH-2';
   readonly generated_at: string;
-  readonly suggested_module?: 'marketing' | 'sales' | 'support' | 'auto';
+  readonly suggested_module?: ('marketing' | 'sales' | 'support' | 'auto') | undefined;
 }
 
 /**
@@ -66,11 +65,20 @@ export type WebSocketStreamStatus =
  * Evaluated as dependency_unavailable since no /api/v1 route is contracted.
  */
 export interface DialogueEvaluationState {
-  readonly rating?: number;
-  readonly flags?: readonly ('ACCURACY' | 'BRAND_VOICE' | 'LATENCY' | 'REASONING_COMPLIANCE')[];
-  readonly notes?: string;
+  readonly rating?: number | undefined;
+  readonly flags?: readonly ('ACCURACY' | 'BRAND_VOICE' | 'LATENCY' | 'REASONING_COMPLIANCE')[] | undefined;
+  readonly notes?: string | undefined;
   readonly state: Extract<SharedUiState, 'dependency_unavailable'>;
   readonly explanation: string;
+}
+
+/**
+ * Props for the ConversationConsole component.
+ */
+export interface ConversationConsoleProps {
+  readonly initialConversationId?: string | undefined;
+  readonly initialTenantId?: string | undefined;
+  readonly initialOperatorId?: string | undefined;
 }
 
 /**

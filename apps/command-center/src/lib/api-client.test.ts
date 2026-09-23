@@ -234,8 +234,7 @@ describe('R14 Approval Contracts', () => {
   it('calls GET /api/v1/approvals with default status=PENDING', async () => {
     const mockData: GetApprovalsResponse = {
       items: [],
-      cursor: null,
-      total_pending: 0,
+      next_cursor: null,
     };
     const spy = createFetchSpy(createMockJsonResponse(mockData));
     const client = createApiClient({ baseUrl: 'http://localhost:4000', fetch: spy.mockFetch });
@@ -248,24 +247,30 @@ describe('R14 Approval Contracts', () => {
   });
 
   it('calls GET /api/v1/approvals with explicit query parameters', async () => {
-    const spy = createFetchSpy(createMockJsonResponse({ items: [] }));
+    const spy = createFetchSpy(createMockJsonResponse({ items: [], next_cursor: null }));
     const client = createApiClient({ baseUrl: 'http://localhost:4000', fetch: spy.mockFetch });
 
-    await client.getApprovals({ status: 'APPROVED', cursor: 'cur-100', limit: 25 });
+    await client.getApprovals({ status: 'PENDING', cursor: 'cur-100', limit: 25 });
 
-    expect(spy.getLastUrl()).toBe('http://localhost:4000/api/v1/approvals?status=APPROVED&cursor=cur-100&limit=25');
+    expect(spy.getLastUrl()).toBe('http://localhost:4000/api/v1/approvals?status=PENDING&cursor=cur-100&limit=25');
   });
 
   it('calls GET /api/v1/approvals/{id} with URI encoding', async () => {
     const mockDetail: ApprovalDetailResponse = {
       approval_id: 'app/special:001',
-      session_id: 'sess-1',
-      action_type: 'PAYMENT_CAPTURE',
-      risk_level: 'HIGH',
+      run_id: 'run-1',
+      action_id: 'action-1',
+      effect_key: 'effect-1',
+      payload: {},
+      reason: 'Review this action',
       status: 'PENDING',
-      action_payload: {},
+      is_paused: false,
+      decided_by: null,
+      decided_at: null,
+      decision_notes: null,
       payload_sha256: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
       created_at: '2026-09-23T00:00:00Z',
+      tenant_id: 'tenant-1',
       expires_at: '2026-09-23T01:00:00Z',
     };
     const spy = createFetchSpy(createMockJsonResponse(mockDetail));
@@ -281,16 +286,17 @@ describe('R14 Approval Contracts', () => {
   it('calls POST /api/v1/approvals/{id}/decision with strict decision body and sha256', async () => {
     const mockResponse: ApprovalDecisionResponse = {
       approval_id: 'app-123',
-      decision: 'APPROVE',
-      decided_by: 'op-bob',
+      task_id: 'run-123',
       decided_at: '2026-09-23T12:00:00Z',
       status: 'APPROVED',
+      correlation_id: 'corr-123',
     };
     const spy = createFetchSpy(createMockJsonResponse(mockResponse));
     const client = createApiClient({ baseUrl: 'http://localhost:4000', fetch: spy.mockFetch });
 
     const decisionRequest: ApprovalDecisionRequest = {
       decision: 'APPROVE',
+      operator_id: 'op-bob',
       expected_payload_sha256: 'sha-expected-123',
       reason: 'Verified safe by human operator',
     };
@@ -300,7 +306,7 @@ describe('R14 Approval Contracts', () => {
     expect(spy.getLastUrl()).toBe('http://localhost:4000/api/v1/approvals/app-123/decision');
     expect(spy.getLastInit()?.method).toBe('POST');
     expect(spy.getBodyJson()).toEqual(decisionRequest);
-    expect(result.decision).toBe('APPROVE');
+    expect(result.status).toBe('APPROVED');
   });
 });
 
@@ -310,17 +316,18 @@ describe('R14 Approval Contracts', () => {
 describe('R15 Customer 360 Timeline Contract', () => {
   it('calls GET /api/v1/customers/{id}/timeline with pagination and timeframe params', async () => {
     const mockTimeline: CustomerTimelineResponse = {
-      customer_id: 'cust-456',
-      events: [
+      items: [
         {
-          id: 'ev-1',
+          event_id: 'ev-1',
+          source_record_id: 'order-1',
+          stage: 'purchase',
+          canonical_event: 'order.completed',
           classification: 'FACT',
-          source: 'SHOPIFY_ORDER',
-          summary: 'Order completed',
-          timestamp: '2026-09-23T10:00:00Z',
+          evidence_reference: 'evidence-1',
+          occurred_at: '2026-09-23T10:00:00Z',
         },
       ],
-      cursor: null,
+      next_cursor: null,
     };
     const spy = createFetchSpy(createMockJsonResponse(mockTimeline));
     const client = createApiClient({ baseUrl: 'http://localhost:4000', fetch: spy.mockFetch });
@@ -336,7 +343,7 @@ describe('R15 Customer 360 Timeline Contract', () => {
       'http://localhost:4000/api/v1/customers/cust-456/timeline?cursor=cur-next&limit=50&from=2026-09-01T00%3A00%3A00Z&to=2026-09-23T00%3A00%3A00Z'
     );
     expect(spy.getLastInit()?.method).toBe('GET');
-    expect(result.events[0].classification).toBe('FACT');
+    expect(result.items[0]?.classification).toBe('FACT');
   });
 });
 
@@ -346,28 +353,32 @@ describe('R15 Customer 360 Timeline Contract', () => {
 describe('R16 Runs and R13 Retry Contracts', () => {
   it('calls GET /api/v1/runs with filters and state queries', async () => {
     const mockRuns: GetRunsResponse = {
-      runs: [],
-      cursor: null,
+      items: [{ run_id: 'run-1', state: 'failed', task_version: 1, current_step: 0, retry_count: 0, last_error_class: null, steps: [], correlation_id: 'corr-1' }],
+      next_cursor: null,
     };
     const spy = createFetchSpy(createMockJsonResponse(mockRuns));
     const client = createApiClient({ baseUrl: 'http://localhost:4000', fetch: spy.mockFetch });
 
-    await client.getRuns({
+    const result = await client.getRuns({
       agent_id: 'agent-cart-recovery',
-      state: 'FAILED',
+      state: 'failed',
       limit: 10,
     });
 
     expect(spy.getLastUrl()).toBe(
-      'http://localhost:4000/api/v1/runs?limit=10&agent_id=agent-cart-recovery&state=FAILED'
+      'http://localhost:4000/api/v1/runs?limit=10&agent_id=agent-cart-recovery&state=failed'
     );
     expect(spy.getLastInit()?.method).toBe('GET');
+    expect(result.items[0]?.run_id).toBe('run-1');
   });
 
   it('calls POST /api/v1/operations/runs/{run_id}/retry for side-effect-free failures', async () => {
     const mockRetryResponse: TaskAcceptedResponse = {
       task_id: 'task-retry-999',
-      status: 'ACCEPTED',
+      conversation_id: null,
+      status: 'accepted',
+      task_version: 2,
+      correlation_id: 'corr-retry-1',
     };
     const spy = createFetchSpy(createMockJsonResponse(mockRetryResponse, 202));
     const client = createApiClient({ baseUrl: 'http://localhost:4000', fetch: spy.mockFetch });
@@ -382,7 +393,7 @@ describe('R16 Runs and R13 Retry Contracts', () => {
     expect(spy.getLastUrl()).toBe('http://localhost:4000/api/v1/operations/runs/run-fail-789/retry');
     expect(spy.getLastInit()?.method).toBe('POST');
     expect(spy.getBodyJson()).toEqual(retryBody);
-    expect(result.status).toBe('ACCEPTED');
+    expect(result.status).toBe('accepted');
   });
 });
 
@@ -395,13 +406,18 @@ describe('R17 Telemetry KPI & Stream Contracts', () => {
       window: '7d',
       timezone: 'Asia/Taipei',
       observed_at: '2026-09-23T12:00:00Z',
-      metrics: {
-        revenue_twd: {
+      metrics: [
+        {
+          metric: 'revenue_twd',
           value: 1250000,
           source_status: 'LIVE',
           observed_at: '2026-09-23T12:00:00Z',
+          window: '7d',
+          timezone: 'Asia/Taipei',
+          provisional: false,
         },
-      },
+      ],
+      cursor: null,
     };
     const spy = createFetchSpy(createMockJsonResponse(mockKpi));
     const client = createApiClient({ baseUrl: 'http://localhost:4000', fetch: spy.mockFetch });
@@ -412,7 +428,7 @@ describe('R17 Telemetry KPI & Stream Contracts', () => {
       'http://localhost:4000/api/v1/telemetry/kpi-snapshot?window=7d&timezone=Asia%2FTaipei'
     );
     expect(spy.getLastInit()?.method).toBe('GET');
-    expect(result.metrics.revenue_twd?.source_status).toBe('LIVE');
+    expect(Array.isArray(result.metrics) && result.metrics[0]?.source_status).toBe('LIVE');
   });
 
   it('constructs R09 Server-Sent Events (SSE) telemetry stream URL correctly', () => {
@@ -434,8 +450,9 @@ describe('SCR-005 Conversation Console Contracts', () => {
     const spy = createFetchSpy(
       createMockJsonResponse({
         conversation_id: 'conv-101',
-        takeover_mode: 'HUMAN_ACTIVE',
-        lease_id: 'lease-xyz',
+        status: 'HUMAN_TAKEOVER',
+        operator_id: 'operator-1',
+        taken_over_at: '2026-09-23T12:00:00Z',
         lease_expires_at: '2026-09-23T12:01:00Z',
       })
     );
@@ -444,6 +461,7 @@ describe('SCR-005 Conversation Console Contracts', () => {
     const req: ConversationTakeoverRequest = {
       operator_id: 'operator-1',
       reason: 'Customer requested human supervisor',
+      takeover_mode: 'FULL_CONTROL',
     };
 
     const result = await client.takeoverConversation('conv-101', req);
@@ -451,22 +469,23 @@ describe('SCR-005 Conversation Console Contracts', () => {
     expect(spy.getLastUrl()).toBe('http://localhost:4000/api/v1/conversations/conv-101/takeover');
     expect(spy.getLastInit()?.method).toBe('POST');
     expect(spy.getBodyJson()).toEqual(req);
-    expect(result.lease_id).toBe('lease-xyz');
+    expect(result.lease_expires_at).toBe('2026-09-23T12:01:00Z');
   });
 
   it('calls POST /api/v1/conversations/{id}/takeover/heartbeat to renew lease', async () => {
     const spy = createFetchSpy(
       createMockJsonResponse({
         conversation_id: 'conv-101',
-        lease_id: 'lease-xyz',
-        renewed_until: '2026-09-23T12:02:00Z',
+        status: 'HUMAN_TAKEOVER',
+        operator_id: 'operator-1',
+        lease_expires_at: '2026-09-23T12:02:00Z',
       })
     );
     const client = createApiClient({ baseUrl: 'http://localhost:4000', fetch: spy.mockFetch });
 
     const heartbeatReq: ConversationTakeoverHeartbeatRequest = {
       operator_id: 'operator-1',
-      lease_id: 'lease-xyz',
+      extend_seconds: 60,
     };
 
     const result = await client.heartbeatTakeover('conv-101', heartbeatReq);
@@ -474,14 +493,14 @@ describe('SCR-005 Conversation Console Contracts', () => {
     expect(spy.getLastUrl()).toBe('http://localhost:4000/api/v1/conversations/conv-101/takeover/heartbeat');
     expect(spy.getLastInit()?.method).toBe('POST');
     expect(spy.getBodyJson()).toEqual(heartbeatReq);
-    expect(result.renewed_until).toBe('2026-09-23T12:02:00Z');
+    expect(result.lease_expires_at).toBe('2026-09-23T12:02:00Z');
   });
 
   it('calls POST /api/v1/conversations/{id}/resume to release operator lease', async () => {
     const spy = createFetchSpy(
       createMockJsonResponse({
         conversation_id: 'conv-101',
-        takeover_mode: 'AI_ACTIVE',
+        status: 'ACTIVE',
         resumed_at: '2026-09-23T12:03:00Z',
       })
     );
@@ -489,7 +508,7 @@ describe('SCR-005 Conversation Console Contracts', () => {
 
     const resumeReq: ConversationResumeRequest = {
       operator_id: 'operator-1',
-      reason: 'Issue resolved; returning to autonomous routing',
+      handoff_summary: 'Issue resolved; returning to autonomous routing',
     };
 
     const result = await client.resumeConversation('conv-101', resumeReq);
@@ -497,7 +516,7 @@ describe('SCR-005 Conversation Console Contracts', () => {
     expect(spy.getLastUrl()).toBe('http://localhost:4000/api/v1/conversations/conv-101/resume');
     expect(spy.getLastInit()?.method).toBe('POST');
     expect(spy.getBodyJson()).toEqual(resumeReq);
-    expect(result.takeover_mode).toBe('AI_ACTIVE');
+    expect(result.status).toBe('ACTIVE');
   });
 
   it('calls POST /api/v1/conversations/{id}/messages with idempotency key', async () => {
@@ -505,7 +524,10 @@ describe('SCR-005 Conversation Console Contracts', () => {
       createMockJsonResponse(
         {
           task_id: 'msg-task-555',
-          status: 'ACCEPTED',
+          conversation_id: 'conv-101',
+          status: 'accepted',
+          task_version: 1,
+          correlation_id: 'corr-message-1',
         },
         202
       )
@@ -513,8 +535,7 @@ describe('SCR-005 Conversation Console Contracts', () => {
     const client = createApiClient({ baseUrl: 'http://localhost:4000', fetch: spy.mockFetch });
 
     const messageReq: PostMessageRequest = {
-      role: 'operator',
-      content: 'Hello, I have updated your shipment tracking number.',
+      message: 'Hello, I have updated your shipment tracking number.',
       idempotency_key: 'idem-msg-uuid-99',
     };
 
@@ -523,7 +544,7 @@ describe('SCR-005 Conversation Console Contracts', () => {
     expect(spy.getLastUrl()).toBe('http://localhost:4000/api/v1/conversations/conv-101/messages');
     expect(spy.getLastInit()?.method).toBe('POST');
     expect(spy.getBodyJson()).toEqual(messageReq);
-    expect(result.status).toBe('ACCEPTED');
+    expect(result.status).toBe('accepted');
   });
 });
 

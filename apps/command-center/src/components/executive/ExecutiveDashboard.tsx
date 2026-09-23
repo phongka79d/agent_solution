@@ -38,7 +38,7 @@ export function ExecutiveDashboard({
   const [windowVal, setWindowVal] = useState<string>(initialWindow);
   const [timezone] = useState<string>(initialTimezone);
   const [metrics, setMetrics] = useState<readonly KpiMetricItem[]>([]);
-  const [alerts, setAlerts] = useState<readonly AnomalyAlert[]>([]);
+  const [alerts] = useState<readonly AnomalyAlert[]>([]);
   const [uiState, setUiState] = useState<SharedUiState>('loading');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [observedAt, setObservedAt] = useState<string | null>(null);
@@ -53,31 +53,61 @@ export function ExecutiveDashboard({
         timezone,
       });
 
-      const rawMetrics = response.metrics;
+      const rawMetrics: unknown = response.metrics;
       let items: KpiMetricItem[] = [];
 
       if (Array.isArray(rawMetrics)) {
-        items = rawMetrics as KpiMetricItem[];
+        for (const item of rawMetrics) {
+          if (item && typeof item === 'object') {
+            const m = item as Record<string, unknown>;
+            const metricName = typeof m.metric === 'string' ? m.metric : (typeof m.name === 'string' ? m.name : '');
+            const status = (typeof m.source_status === 'string' ? m.source_status : 'NO_DATA') as SourceStatus;
+            const obsAt = typeof m.observed_at === 'string' ? m.observed_at : (typeof response.observed_at === 'string' ? response.observed_at : null);
+            const win = typeof m.window === 'string' ? m.window : (typeof response.window === 'string' ? response.window : undefined);
+            const tz = typeof m.timezone === 'string' ? m.timezone : (typeof response.timezone === 'string' ? response.timezone : undefined);
+            const prov = typeof m.provisional === 'boolean' ? m.provisional : undefined;
+            const rsn = typeof m.reason === 'string' ? m.reason : (typeof m.note === 'string' ? m.note : undefined);
+
+            items.push({
+              metric: metricName,
+              value: (m.value as number | string | null | Record<string, unknown>) ?? null,
+              source_status: status,
+              observed_at: obsAt,
+              ...(win !== undefined ? { window: win } : {}),
+              ...(tz !== undefined ? { timezone: tz } : {}),
+              ...(prov !== undefined ? { provisional: prov } : {}),
+              ...(rsn !== undefined ? { reason: rsn } : {}),
+            });
+          }
+        }
       } else if (rawMetrics && typeof rawMetrics === 'object') {
-        items = Object.entries(rawMetrics).map(([key, val]) => {
+        items = Object.entries(rawMetrics as Record<string, unknown>).map(([key, val]) => {
           if (val && typeof val === 'object') {
             const vObj = val as Record<string, unknown>;
+            const metricName = typeof vObj.metric === 'string' ? vObj.metric : (typeof vObj.name === 'string' ? vObj.name : key);
+            const status = (typeof vObj.source_status === 'string' ? vObj.source_status : 'NO_DATA') as SourceStatus;
+            const obsAt = typeof vObj.observed_at === 'string' ? vObj.observed_at : (typeof response.observed_at === 'string' ? response.observed_at : null);
+            const win = typeof vObj.window === 'string' ? vObj.window : (typeof response.window === 'string' ? response.window : undefined);
+            const tz = typeof vObj.timezone === 'string' ? vObj.timezone : (typeof response.timezone === 'string' ? response.timezone : undefined);
+            const prov = typeof vObj.provisional === 'boolean' ? vObj.provisional : undefined;
+            const rsn = typeof vObj.reason === 'string' ? vObj.reason : (typeof vObj.note === 'string' ? vObj.note : undefined);
+
             return {
-              metric: typeof vObj.metric === 'string' ? vObj.metric : key,
+              metric: metricName,
               value: (vObj.value as number | string | null | Record<string, unknown>) ?? null,
-              source_status: (vObj.source_status as SourceStatus) || 'NO_DATA',
-              observed_at: (vObj.observed_at as string) || response.observed_at || null,
-              window: vObj.window as string | undefined,
-              timezone: vObj.timezone as string | undefined,
-              provisional: Boolean(vObj.provisional),
-              reason: vObj.reason as string | undefined,
+              source_status: status,
+              observed_at: obsAt,
+              ...(win !== undefined ? { window: win } : {}),
+              ...(tz !== undefined ? { timezone: tz } : {}),
+              ...(prov !== undefined ? { provisional: prov } : {}),
+              ...(rsn !== undefined ? { reason: rsn } : {}),
             };
           }
           return {
             metric: key,
             value: (typeof val === 'number' || typeof val === 'string' || val === null) ? val : null,
             source_status: 'NO_DATA',
-            observed_at: response.observed_at || null,
+            observed_at: typeof response.observed_at === 'string' ? response.observed_at : null,
           };
         });
       }

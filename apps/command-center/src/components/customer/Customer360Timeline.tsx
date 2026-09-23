@@ -19,8 +19,8 @@ import type {
 import { EvidenceCardDrawer } from './EvidenceCardDrawer';
 
 interface Customer360TimelineProps {
-  readonly initialCustomerId?: string;
-  readonly onCustomerIdChange?: (customerId: string) => void;
+  readonly initialCustomerId?: string | undefined;
+  readonly onCustomerIdChange?: ((customerId: string) => void) | undefined;
 }
 
 export function Customer360Timeline({
@@ -69,11 +69,12 @@ export function Customer360Timeline({
     const rawOccurredAt = raw.occurred_at ?? raw.occurredAt ?? raw.timestamp;
     if (!rawOccurredAt || (typeof rawOccurredAt !== 'string' && typeof rawOccurredAt !== 'number') || String(rawOccurredAt).trim() === '') {
       return null;
+    }
     const occurredAt = String(rawOccurredAt).trim();
     if (isNaN(Date.parse(occurredAt))) {
       return null;
     }
-    const rawEventType = raw.event_type ?? raw.eventType ?? raw.name;
+    const rawEventType = raw.canonical_event ?? raw.event_type ?? raw.eventType ?? raw.name;
     if (!rawEventType || String(rawEventType).trim() === '') {
       return null;
     }
@@ -136,6 +137,12 @@ export function Customer360Timeline({
       }
     }
 
+    const evidenceReference = raw.evidence_reference
+      ? String(raw.evidence_reference)
+      : raw.evidenceReference
+      ? String(raw.evidenceReference)
+      : undefined;
+
     return {
       eventId,
       domain,
@@ -146,6 +153,7 @@ export function Customer360Timeline({
       sourceRecordId,
       classification,
       evidenceCard,
+      evidenceReference,
     };
   };
 
@@ -223,11 +231,11 @@ export function Customer360Timeline({
           if (custId) {
             setCustomerProfile({
               customerId: String(custId),
-              name: c.name ? String(c.name) : undefined,
-              tier: c.tier ? String(c.tier) : undefined,
-              ltvTwd: typeof c.ltv_twd === 'number' ? c.ltv_twd : typeof c.ltvTwd === 'number' ? c.ltvTwd : undefined,
-              aovTwd: typeof c.aov_twd === 'number' ? c.aov_twd : typeof c.aovTwd === 'number' ? c.aovTwd : undefined,
-              churnRiskScore: typeof c.churn_risk_score === 'number' ? c.churn_risk_score : typeof c.churnRiskScore === 'number' ? c.churnRiskScore : undefined,
+              ...(c.name ? { name: String(c.name) } : {}),
+              ...(c.tier ? { tier: String(c.tier) } : {}),
+              ...(typeof c.ltv_twd === 'number' ? { ltvTwd: c.ltv_twd } : typeof c.ltvTwd === 'number' ? { ltvTwd: c.ltvTwd } : {}),
+              ...(typeof c.aov_twd === 'number' ? { aovTwd: c.aov_twd } : typeof c.aovTwd === 'number' ? { aovTwd: c.aovTwd } : {}),
+              ...(typeof c.churn_risk_score === 'number' ? { churnRiskScore: c.churn_risk_score } : typeof c.churnRiskScore === 'number' ? { churnRiskScore: c.churnRiskScore } : {}),
             });
           } else if (!append) {
             setCustomerProfile(null);
@@ -237,8 +245,13 @@ export function Customer360Timeline({
         }
 
         // Timeline events
-        const rawEvents: Record<string, unknown>[] = Array.isArray(data.events)
+        // Timeline events (R15 items or legacy events/entries)
+        const rawEvents: Record<string, unknown>[] = Array.isArray(data.items)
+          ? data.items
+          : Array.isArray(data.events)
           ? data.events
+          : Array.isArray(data.entries)
+          ? data.entries
           : Array.isArray(data)
           ? data
           : [];
@@ -254,14 +267,30 @@ export function Customer360Timeline({
         }
 
         // Timeline gaps if instrumented
-        if (Array.isArray(data.gaps)) {
-          const mappedGaps: TimelineGap[] = data.gaps.map((g: Record<string, unknown>, idx: number) => ({
-            gapId: String(g.gap_id || g.gapId || `gap-${idx}`),
-            from: String(g.from || g.start || ''),
-            to: String(g.to || g.end || ''),
-            reason: String(g.reason || 'Data gap in telemetry stream'),
-          }));
-          setGaps(mappedGaps);
+        // Timeline gaps if instrumented or detected in entries
+        const explicitGaps: TimelineGap[] = Array.isArray(data.gaps)
+          ? data.gaps.map((g: Record<string, unknown>, idx: number) => ({
+              gapId: String(g.gap_id || g.gapId || `gap-${idx}`),
+              from: String(g.from || g.start || ''),
+              to: String(g.to || g.end || ''),
+              reason: String(g.reason || 'Data gap in telemetry stream'),
+            }))
+          : [];
+        const entryGaps: TimelineGap[] = [];
+        for (let idx = 0; idx < rawEvents.length; idx++) {
+          const item = rawEvents[idx];
+          if (item && typeof item === 'object' && item.gap_reason) {
+            entryGaps.push({
+              gapId: String(item.event_id || `gap-entry-${idx}`),
+              from: String(item.occurred_at || ''),
+              to: String(item.occurred_at || ''),
+              reason: String(item.gap_reason),
+            });
+          }
+        }
+        const combinedGaps = [...explicitGaps, ...entryGaps];
+        if (combinedGaps.length > 0) {
+          setGaps(combinedGaps);
         } else if (!append) {
           setGaps([]);
         }

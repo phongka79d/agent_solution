@@ -1,12 +1,14 @@
 /**
  * @file apps/command-center/src/lib/api-types.ts
  * Authoritative wire DTOs and shared status/state vocabulary for the Command Center.
- * Aligned with implement/06-api-and-connectors-spec.md and implement/07-human-command-center-ui.md.
+ * Aligned with apps/api/src/gateway/contracts.ts, implement/06-api-and-connectors-spec.md,
+ * and implement/07-human-command-center-ui.md.
  *
  * Rules:
  * - Browser-safe local types only; no direct imports from workspace runtime packages.
  * - Base API prefix is /api/v1.
- * - Reflects exact wire names with broad compatibility for screen slices.
+ * - Exact wire contracts aligned to authoritative backend definitions.
+ * - Strict exactOptionalPropertyTypes compatibility (explicit | undefined on optional properties).
  */
 
 // ============================================================================
@@ -42,7 +44,7 @@ export type SourceStatus =
   | 'FAIL_CLOSED';
 
 /**
- * Five-tier evidence separation per FR-C360-003 and 07 §5.3.
+ * Five-tier evidence separation per FR-C360-003, 07 §5.3, and 06 §8.1.3 R15.
  * Separates recorded ground truth from AI hypothesis.
  */
 export type EvidenceClassification =
@@ -65,8 +67,32 @@ export type AuthorityVerdict =
   | 'AUTH-5';
 
 /**
- * Task lifecycle state vocabulary.
- * Wire acknowledgement uses 'accepted' (R02/R03); durable store reports 'queued'.
+ * Task lifecycle wire state vocabulary (06 §8.3 C-8).
+ * Wire acknowledgement uses 'accepted' (R02/R03/R13); durable store reports 'queued' (R16).
+ */
+export type TaskWireStatus =
+  | 'accepted'
+  | 'running'
+  | 'waiting'
+  | 'awaiting_human'
+  | 'completed'
+  | 'stopped'
+  | 'failed';
+
+/**
+ * Task stored state vocabulary (03 §1 task_lifecycle_state).
+ */
+export type TaskStoredState =
+  | 'queued'
+  | 'running'
+  | 'waiting'
+  | 'awaiting_human'
+  | 'completed'
+  | 'stopped'
+  | 'failed';
+
+/**
+ * Task lifecycle union vocabulary across wire and stored states.
  */
 export type TaskLifecycleState =
   | 'accepted'
@@ -99,7 +125,7 @@ export interface ApiErrorEnvelope {
   readonly message: string;
   readonly retryable: boolean;
   readonly correlation_id: string;
-  readonly details?: Record<string, unknown> | unknown;
+  readonly details?: Record<string, unknown> | unknown | undefined;
 }
 
 // ============================================================================
@@ -112,9 +138,12 @@ export interface ApiErrorEnvelope {
 export type ApprovalDecision = 'APPROVE' | 'REJECT' | 'MODIFY' | 'PAUSE' | 'CANCEL';
 
 /**
- * Approval status enum.
- * AWAITING_HUMAN and PAUSED describe undecided queue items (PAUSED = stored PENDING + is_paused=TRUE).
- * APPROVED, REJECTED, MODIFIED, CANCELLED describe decided outcomes.
+ * Approval decision status returned by POST /api/v1/approvals/{id}/decision.
+ */
+export type ApprovalDecisionStatus = 'APPROVED' | 'REJECTED' | 'MODIFIED' | 'PAUSED' | 'CANCELLED';
+
+/**
+ * Approval status enum across queue and outcomes.
  */
 export type ApprovalStatus =
   | 'AWAITING_HUMAN'
@@ -127,12 +156,12 @@ export type ApprovalStatus =
 
 /** Query parameters for R14 GET /api/v1/approvals */
 export interface GetApprovalsParams {
-  status?: 'PENDING';
-  cursor?: string;
-  limit?: number;
+  status?: 'PENDING' | undefined;
+  cursor?: string | undefined;
+  limit?: number | undefined;
 }
 
-/** Wire item projection from R14 approval queue and supplemental detail read */
+/** Wire item projection from R14 approval queue (06 §8.1.3 R14) */
 export interface ApprovalQueueItem {
   readonly approval_id: string;
   readonly run_id: string;
@@ -142,44 +171,32 @@ export interface ApprovalQueueItem {
   readonly reason: string;
   readonly status: 'PENDING' | ApprovalStatus;
   readonly is_paused: boolean;
-  readonly decided_by?: string | null;
-  readonly decided_at?: string | null;
-  readonly decision_notes?: string | null;
+  readonly decided_by: string | null;
+  readonly decided_at: string | null;
+  readonly decision_notes: string | null;
   readonly created_at: string;
   /** SHA-256 digest of canonical reviewed payload; mandatory precondition for decisions */
   readonly payload_sha256: string;
-  readonly expires_at?: string | null;
+  readonly expires_at?: string | null | undefined;
   // Broad compatibility fields for UI consumers
-  readonly id?: string;
-  readonly title?: string;
-  readonly agent_id?: string;
-  readonly customer_id?: string;
+  readonly id?: string | undefined;
+  readonly title?: string | undefined;
+  readonly agent_id?: string | undefined;
+  readonly customer_id?: string | undefined;
 }
 
+/** Wire response from GET /api/v1/approvals */
 export interface GetApprovalsResponse {
   readonly items: readonly ApprovalQueueItem[];
-  readonly next_cursor?: string | null;
-  readonly total_count?: number;
+  readonly next_cursor: string | null;
+  readonly total_count?: number | undefined;
 }
 
-/** Supplemental approval detail read: GET /api/v1/approvals/{id} */
-export interface ApprovalDetailResponse {
-  readonly approval_id: string;
-  readonly run_id: string;
-  readonly action_id: string;
-  readonly effect_key: string;
-  readonly payload: Record<string, unknown>;
-  readonly reason: string;
-  readonly status: ApprovalStatus;
-  readonly is_paused: boolean;
-  readonly payload_sha256: string;
-  readonly created_at: string;
-  readonly expires_at?: string | null;
-  readonly decided_by?: string | null;
-  readonly decided_at?: string | null;
-  readonly decision_notes?: string | null;
-  readonly agent_id?: string;
-  readonly correlation_id?: string;
+/** Supplemental approval detail read: GET /api/v1/approvals/{id} (06 §8.2.1) */
+export interface ApprovalDetailResponse extends ApprovalQueueItem {
+  readonly tenant_id: string;
+  readonly expires_at: string | null;
+  readonly correlation_id?: string | undefined;
 }
 
 /** Wire request payload for POST /api/v1/approvals/{id}/decision */
@@ -190,14 +207,14 @@ export interface ApprovalDecisionRequest {
   /** SHA-256 of reviewed payload; server refuses stale reviews with 409 APPROVAL_STALE_PAYLOAD */
   readonly expected_payload_sha256: string;
   /** Required when decision is MODIFY; triggers fresh validation */
-  readonly modified_payload?: Record<string, unknown>;
+  readonly modified_payload?: Record<string, unknown> | undefined;
 }
 
 /** Wire response from POST /api/v1/approvals/{id}/decision */
 export interface ApprovalDecisionResponse {
   readonly approval_id: string;
   readonly task_id: string;
-  readonly status: 'APPROVED' | 'REJECTED' | 'MODIFIED' | 'PAUSED' | 'CANCELLED';
+  readonly status: ApprovalDecisionStatus;
   readonly decided_at: string;
   readonly correlation_id: string;
 }
@@ -207,60 +224,34 @@ export interface ApprovalDecisionResponse {
 // ============================================================================
 
 export interface CustomerTimelineParams {
-  cursor?: string;
-  limit?: number;
-  from?: string;
-  to?: string;
+  cursor?: string | undefined;
+  limit?: number | undefined;
+  from?: string | undefined;
+  to?: string | undefined;
 }
 
-export interface EvidenceRecordRef {
-  readonly system: string;
-  readonly external_id: string;
-  readonly verified_at: string;
-}
-
-export interface TimelineEvidenceCard {
-  readonly evidence_id: string;
-  readonly event_id: string;
-  readonly event_type: string;
-  readonly classification: EvidenceClassification;
-  readonly source_of_truth:
-    | 'ERP'
-    | 'POS'
-    | 'WMS'
-    | 'PAYMENT_GATEWAY'
-    | 'AI_INFERENCE'
-    | 'PLATFORM_ORCHESTRATOR';
-  readonly confidence_score: number;
-  readonly raw_record_ref?: EvidenceRecordRef;
-  readonly payload: Record<string, unknown>;
-}
-
-export interface CustomerTimelineEntry {
+/** R15 wire timeline entry projection (06 §8.1.3 R15 / 03 §8) */
+export interface TimelineEntry {
   readonly occurred_at: string;
   readonly source_record_id: string;
-  readonly event_name: string;
-  readonly stage?: string;
+  readonly event_id: string;
+  readonly stage: string;
+  readonly canonical_event: string | null;
   readonly classification: EvidenceClassification;
-  readonly evidence_reference?: string;
-  readonly evidence_card?: TimelineEvidenceCard;
-  readonly summary?: string;
-  readonly metadata?: Record<string, unknown>;
+  readonly evidence_reference: string | null;
+  /** A gap is returned explicitly, never as a fabricated zero entry */
+  readonly gap_reason?: string | undefined;
 }
 
+export type CustomerTimelineEntry = TimelineEntry;
+
+/** Wire response from GET /api/v1/customers/{customer_id}/timeline */
 export interface CustomerTimelineResponse {
-  readonly customer_id: string;
-  readonly identity_tier?:
-    | 'TIER_0'
-    | 'TIER_1'
-    | 'TIER_2'
-    | 'ANONYMOUS_GUEST'
-    | 'IDENTIFIED_LEAD'
-    | 'VERIFIED_CUSTOMER';
-  readonly entries: readonly CustomerTimelineEntry[];
-  readonly next_cursor?: string | null;
-  readonly has_more?: boolean;
-  readonly gap_detected?: boolean;
+  readonly items: readonly TimelineEntry[];
+  readonly next_cursor: string | null;
+  // Broad compatibility fields
+  readonly entries?: readonly TimelineEntry[] | undefined;
+  readonly customer_id?: string | undefined;
 }
 
 // ============================================================================
@@ -268,68 +259,72 @@ export interface CustomerTimelineResponse {
 // ============================================================================
 
 export interface GetRunsParams {
-  cursor?: string;
-  limit?: number;
-  agent_id?: string;
-  state?: string;
-  status?: string;
-  from?: string;
-  to?: string;
+  cursor?: string | undefined;
+  limit?: number | undefined;
+  agent_id?: string | undefined;
+  state?: string | undefined;
+  status?: string | undefined;
+  from?: string | undefined;
+  to?: string | undefined;
 }
 
 export interface AgentRunStep {
-  readonly step_number?: number;
+  readonly step_index?: number | undefined;
+  readonly step_number?: number | undefined;
   readonly skill: string;
   readonly tool: string;
-  readonly authority: AuthorityVerdict;
-  readonly approval?: string | null;
-  readonly action?: string;
+  readonly authority: AuthorityVerdict | string;
+  readonly approval?: string | null | undefined;
+  readonly action?: string | undefined;
   readonly execution_status: StepExecutionStatus;
-  readonly evidence?: string;
-  readonly outcome?: string;
+  readonly evidence?: string | null | undefined;
+  readonly outcome?: string | null | undefined;
   readonly latency_ms: number;
-  readonly cost?: number;
-  readonly error?: string | null;
+  readonly cost?: number | undefined;
+  readonly error?: string | null | undefined;
+  readonly started_at?: string | undefined;
+  readonly completed_at?: string | null | undefined;
 }
 
 export interface AgentRunProjection {
   readonly run_id: string;
-  readonly tenant_id?: string;
-  readonly agent_id: string;
+  readonly tenant_id?: string | undefined;
+  readonly agent_id?: string | undefined;
   readonly state: TaskLifecycleState;
   readonly task_version: number;
-  readonly current_step?: number;
+  readonly current_step?: number | undefined;
   readonly retry_count: number;
-  readonly last_error_class?: string | null;
-  readonly steps?: readonly AgentRunStep[];
-  readonly latency_ms?: number;
-  readonly cost?: number;
-  readonly error?: string | null;
-  readonly started_at: string;
-  readonly completed_at?: string | null;
+  readonly last_error_class?: 'RETRYABLE' | 'FATAL' | string | null | undefined;
+  readonly steps?: readonly AgentRunStep[] | undefined;
+  readonly latency_ms?: number | undefined;
+  readonly cost?: number | undefined;
+  readonly error?: string | null | undefined;
+  readonly started_at?: string | undefined;
+  readonly completed_at?: string | null | undefined;
+  readonly correlation_id?: string | undefined;
   // Broad compatibility fields for virtualized table UI
-  readonly trigger?: string;
-  readonly skill?: string;
-  readonly tool?: string;
-  readonly authority?: AuthorityVerdict;
-  readonly execution_status?: StepExecutionStatus;
+  readonly trigger?: string | undefined;
+  readonly skill?: string | undefined;
+  readonly tool?: string | undefined;
+  readonly authority?: AuthorityVerdict | undefined;
+  readonly execution_status?: StepExecutionStatus | undefined;
   readonly token_usage?: {
     readonly prompt_tokens: number;
     readonly completion_tokens: number;
     readonly total_cost_twd: number;
-  };
+  } | undefined;
 }
 
 export interface GetRunsResponse {
-  readonly runs: readonly AgentRunProjection[];
-  readonly next_cursor?: string | null;
-  readonly total_count?: number;
+  readonly items: readonly AgentRunProjection[];
+  readonly next_cursor: string | null;
+  readonly total_count?: number | undefined;
 }
 
 /** R13 operator retry request for failed, side-effect-free runs */
 export interface RunRetryRequest {
-  readonly operator_id?: string;
-  readonly reason?: string;
+  readonly operator_id?: string | undefined;
+  readonly reason?: string | undefined;
 }
 
 // ============================================================================
@@ -337,21 +332,23 @@ export interface RunRetryRequest {
 // ============================================================================
 
 export interface GetKpiSnapshotParams {
-  window?: string;
-  timezone?: string;
-  cursor?: string;
-  limit?: number;
+  window?: string | undefined;
+  timezone?: string | undefined;
+  cursor?: string | undefined;
+  limit?: number | undefined;
 }
 
 export interface KpiMetricItem<T = unknown> {
-  readonly name?: string;
+  readonly metric?: string | undefined;
+  readonly name?: string | undefined;
   readonly value: T | null;
   readonly source_status: SourceStatus;
   readonly observed_at: string | null;
-  readonly window?: string;
-  readonly timezone?: string;
-  readonly provisional?: boolean;
-  readonly note?: string;
+  readonly window?: string | undefined;
+  readonly timezone?: string | undefined;
+  readonly provisional?: boolean | undefined;
+  readonly reason?: string | undefined;
+  readonly note?: string | undefined;
 }
 
 export interface RevenueMetricValue {
@@ -422,12 +419,15 @@ export interface BaselineMetricsCollection {
 }
 
 export interface KpiSnapshotResponse {
-  readonly tenant_id?: string;
-  readonly observed_at?: string;
-  readonly timestamp?: string;
-  readonly window?: string;
-  readonly timezone?: string;
-  readonly metrics: Record<string, KpiMetricItem<unknown>> & Partial<BaselineMetricsCollection>;
+  readonly window: string;
+  readonly timezone: string;
+  readonly observed_at: string;
+  readonly metrics:
+    | readonly KpiMetricItem<unknown>[]
+    | (Record<string, KpiMetricItem<unknown>> & Partial<BaselineMetricsCollection>);
+  readonly cursor: string | null;
+  readonly tenant_id?: string | undefined;
+  readonly timestamp?: string | undefined;
 }
 
 /** Telemetry SSE stream frame contract per 07 §10 */
@@ -445,7 +445,7 @@ export interface TelemetrySSEFrame<T = unknown> {
     | 'stream.error'
     | string;
   readonly data: T;
-  readonly retry?: number;
+  readonly retry?: number | undefined;
 }
 
 // ============================================================================
@@ -483,8 +483,8 @@ export interface ConversationTakeoverHeartbeatResponse {
 
 export interface ConversationResumeRequest {
   readonly operator_id: string;
-  readonly handoff_summary?: string;
-  readonly next_agent_id?: string;
+  readonly handoff_summary?: string | undefined;
+  readonly next_agent_id?: string | undefined;
 }
 
 export interface ConversationResumeResponse {
@@ -496,9 +496,9 @@ export interface ConversationResumeResponse {
 export interface PostMessageRequest {
   readonly message: string;
   readonly idempotency_key: string;
-  readonly module?: 'marketing' | 'sales' | 'support' | 'auto';
-  readonly attachments?: readonly string[];
-  readonly sender?: 'operator' | 'customer' | 'ai';
+  readonly module?: 'marketing' | 'sales' | 'support' | 'auto' | undefined;
+  readonly attachments?: readonly string[] | undefined;
+  readonly sender?: 'operator' | 'customer' | 'ai' | undefined;
 }
 
 // ============================================================================
@@ -507,7 +507,7 @@ export interface PostMessageRequest {
 
 export interface TaskAcceptedResponse {
   readonly task_id: string;
-  readonly conversation_id?: string;
+  readonly conversation_id: string | null;
   readonly status: TaskLifecycleState;
   readonly task_version: number;
   readonly correlation_id: string;
@@ -517,27 +517,27 @@ export interface TaskStateResponse {
   readonly task_id: string;
   readonly task_version: number;
   readonly status: TaskLifecycleState;
-  readonly answer?: string;
+  readonly answer?: string | undefined;
   readonly sources?: readonly {
     readonly source_record_id: string;
     readonly source_version: string;
     readonly source_file: string;
-  }[];
+  }[] | undefined;
   readonly actions?: readonly {
     readonly operation: string;
     readonly status: string;
     readonly provider_reference: string;
-  }[];
-  readonly evidence_reference?: string;
+  }[] | undefined;
+  readonly evidence_reference?: string | undefined;
   readonly correlation_id: string;
 }
 
 export interface StorefrontStreamRequest {
   readonly message: string;
   readonly idempotency_key: string;
-  readonly session_id?: string;
-  readonly module?: 'marketing' | 'sales' | 'support' | 'auto';
-  readonly attachments?: readonly string[];
+  readonly session_id?: string | undefined;
+  readonly module?: 'marketing' | 'sales' | 'support' | 'auto' | undefined;
+  readonly attachments?: readonly string[] | undefined;
 }
 
 export interface PlatformEventEnvelope {
@@ -546,7 +546,7 @@ export interface PlatformEventEnvelope {
   readonly source: string;
   readonly occurred_at: string;
   readonly payload: Record<string, unknown>;
-  readonly session_id?: string;
+  readonly session_id?: string | undefined;
 }
 
 export interface EventIngestionResponse {

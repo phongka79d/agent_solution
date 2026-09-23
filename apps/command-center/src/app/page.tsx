@@ -33,41 +33,65 @@ function ExecutiveDashboardContent() {
     try {
       const response = await apiClient.getKpiSnapshot(
         { window: windowParam },
-        { tenantId: tenantIdParam }
+        tenantIdParam ? { tenantId: tenantIdParam } : {}
       );
 
       // Normalize response metrics into KpiMetricItem[] format
-      const rawMetrics = response.metrics;
+      const rawMetrics: unknown = response.metrics;
       const normalizedMetrics: KpiMetricItem[] = [];
 
       if (Array.isArray(rawMetrics)) {
         for (const item of rawMetrics) {
           if (item && typeof item === 'object') {
+            const mItem = item as Record<string, unknown>;
+            const metricName = typeof mItem.metric === 'string' ? mItem.metric : (typeof mItem.name === 'string' ? mItem.name : '');
+            const status = (typeof mItem.source_status === 'string' ? mItem.source_status : 'NO_DATA') as SourceStatus;
+            const obsAt = typeof mItem.observed_at === 'string' ? mItem.observed_at : (typeof response.observed_at === 'string' ? response.observed_at : null);
+            const win = typeof mItem.window === 'string' ? mItem.window : (typeof response.window === 'string' ? response.window : undefined);
+            const tz = typeof mItem.timezone === 'string' ? mItem.timezone : (typeof response.timezone === 'string' ? response.timezone : undefined);
+            const prov = typeof mItem.provisional === 'boolean' ? mItem.provisional : undefined;
+            const rsn = typeof mItem.reason === 'string' ? mItem.reason : (typeof mItem.note === 'string' ? mItem.note : undefined);
+
             normalizedMetrics.push({
-              metric: item.metric || item.name || '',
-              value: item.value ?? null,
-              source_status: (item.source_status as SourceStatus) || 'NO_DATA',
-              observed_at: item.observed_at || response.observed_at || null,
-              window: item.window || response.window,
-              timezone: item.timezone || response.timezone,
-              provisional: item.provisional,
-              reason: item.reason || item.note,
+              metric: metricName,
+              value: (mItem.value as number | string | null | Record<string, unknown>) ?? null,
+              source_status: status,
+              observed_at: obsAt,
+              ...(win !== undefined ? { window: win } : {}),
+              ...(tz !== undefined ? { timezone: tz } : {}),
+              ...(prov !== undefined ? { provisional: prov } : {}),
+              ...(rsn !== undefined ? { reason: rsn } : {}),
             });
           }
         }
       } else if (rawMetrics && typeof rawMetrics === 'object') {
-        for (const [key, val] of Object.entries(rawMetrics)) {
+        for (const [key, val] of Object.entries(rawMetrics as Record<string, unknown>)) {
           if (val && typeof val === 'object') {
             const typedVal = val as Record<string, unknown>;
+            const metricName = typeof typedVal.metric === 'string' ? typedVal.metric : (typeof typedVal.name === 'string' ? typedVal.name : key);
+            const status = (typeof typedVal.source_status === 'string' ? typedVal.source_status : 'NO_DATA') as SourceStatus;
+            const obsAt = typeof typedVal.observed_at === 'string' ? typedVal.observed_at : (typeof response.observed_at === 'string' ? response.observed_at : null);
+            const win = typeof typedVal.window === 'string' ? typedVal.window : (typeof response.window === 'string' ? response.window : undefined);
+            const tz = typeof typedVal.timezone === 'string' ? typedVal.timezone : (typeof response.timezone === 'string' ? response.timezone : undefined);
+            const prov = typeof typedVal.provisional === 'boolean' ? typedVal.provisional : undefined;
+            const rsn = typeof typedVal.reason === 'string' ? typedVal.reason : (typeof typedVal.note === 'string' ? typedVal.note : undefined);
+
             normalizedMetrics.push({
-              metric: (typedVal.metric as string) || (typedVal.name as string) || key,
-              value: (typedVal.value as number | string | null) ?? null,
-              source_status: (typedVal.source_status as SourceStatus) || 'NO_DATA',
-              observed_at: (typedVal.observed_at as string) || response.observed_at || null,
-              window: (typedVal.window as string) || response.window,
-              timezone: (typedVal.timezone as string) || response.timezone,
-              provisional: typedVal.provisional as boolean | undefined,
-              reason: (typedVal.reason as string) || (typedVal.note as string),
+              metric: metricName,
+              value: (typedVal.value as number | string | null | Record<string, unknown>) ?? null,
+              source_status: status,
+              observed_at: obsAt,
+              ...(win !== undefined ? { window: win } : {}),
+              ...(tz !== undefined ? { timezone: tz } : {}),
+              ...(prov !== undefined ? { provisional: prov } : {}),
+              ...(rsn !== undefined ? { reason: rsn } : {}),
+            });
+          } else {
+            normalizedMetrics.push({
+              metric: key,
+              value: (typeof val === 'number' || typeof val === 'string' || val === null) ? val : null,
+              source_status: 'NO_DATA',
+              observed_at: typeof response.observed_at === 'string' ? response.observed_at : null,
             });
           }
         }

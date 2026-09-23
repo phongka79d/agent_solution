@@ -68,7 +68,7 @@ export function AgentDirectory({
         existing.cost += run.cost;
       }
 
-      if (!existing.lastActive || (run.started_at && run.started_at > existing.lastActive)) {
+      if (run.started_at && (!existing.lastActive || run.started_at > existing.lastActive)) {
         existing.lastActive = run.started_at;
         existing.lastState = run.state;
       }

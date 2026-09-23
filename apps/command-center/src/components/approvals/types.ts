@@ -38,10 +38,10 @@ export type StandardRejectionCode = (typeof STANDARD_REJECTION_CODES)[number] | 
 export interface ApprovalItem {
   readonly id: string;
   readonly runId: string;
-  readonly actionId?: string;
-  readonly tenantId?: string;
+  readonly actionId?: string | undefined;
+  readonly tenantId?: string | undefined;
   readonly agentId: string;
-  readonly effectKey?: string;
+  readonly effectKey?: string | undefined;
   readonly title: string;
   readonly reason: string;
   readonly payload: Record<string, unknown>;
@@ -51,12 +51,12 @@ export interface ApprovalItem {
   readonly isPaused: boolean;
   readonly createdAt: string;
   /** Present only when the server instruments an expiry source; absent -> no countdown rendered */
-  readonly expiresAt?: string;
-  readonly decidedAt?: string;
-  readonly decidedBy?: string;
-  readonly decisionNotes?: string;
+  readonly expiresAt?: string | undefined;
+  readonly decidedAt?: string | undefined;
+  readonly decidedBy?: string | undefined;
+  readonly decisionNotes?: string | undefined;
   /** Optional customer binding in payload for cross-navigation to SCR-004 */
-  readonly customerId?: string;
+  readonly customerId?: string | undefined;
 }
 
 /** Wire request payload for POST /api/v1/approvals/{id}/decision */
@@ -66,7 +66,7 @@ export interface ApprovalDecisionRequest {
   readonly reason: string;
   readonly expected_payload_sha256: string;
   /** Required and valid only when decision === 'MODIFY' */
-  readonly modified_payload?: Record<string, unknown>;
+  readonly modified_payload?: Record<string, unknown> | undefined;
 }
 
 /** Wire response from POST /api/v1/approvals/{id}/decision */
@@ -80,11 +80,11 @@ export interface ApprovalDecisionResponse {
 
 /** Standard error response envelope from the API gateway */
 export interface ApiErrorResponse {
-  readonly error_code?: string;
+  readonly error_code?: string | undefined;
   readonly message: string;
-  readonly retryable?: boolean;
-  readonly correlation_id?: string;
-  readonly details?: Record<string, unknown>;
+  readonly retryable?: boolean | undefined;
+  readonly correlation_id?: string | undefined;
+  readonly details?: Record<string, unknown> | undefined;
 }
 
 /** Descriptive shared UI states */
