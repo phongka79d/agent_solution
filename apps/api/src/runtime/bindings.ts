@@ -302,7 +302,7 @@ type DurableRunRepository = Pick<
 >;
 
 /** Operational-log surface needed by retry classification and R16. */
-type RunEvidenceRepository = Pick<EvidenceRepository, 'readRunLogs'>;
+type RunEvidenceRepository = Pick<EvidenceRepository, 'readRunLogs' | 'readEvidenceChain'>;
 
 /** Reservation surface used to prove that a failed effect is not still indeterminate. */
 type RunReservationRepository = Pick<EffectReservationRepository, 'getReservation'>;
@@ -478,14 +478,27 @@ export function createDurableRunPort(
   return {
     read: async ({ tenant_id, run_id }) => {
       const task = await repository.getTask(tenant_id, run_id);
-      return task === null
-        ? null
-        : {
-            run_id: task.run_id,
-            task_version: task.task_version,
-            lifecycle_state: task.state,
-            correlation_id: task.correlation_id,
-          };
+      if (task === null) return null;
+      const [logs, chain] = await Promise.all([
+        evidence.readRunLogs(tenant_id, run_id),
+        evidence.readEvidenceChain(tenant_id, run_id),
+      ]);
+      const lastEvidence = chain.at(-1);
+      const actions = logs.flatMap((log) => {
+        if (!plainRecord(log.action)) return [];
+        const provider_reference = log.action['provider_reference'];
+        return typeof provider_reference === 'string'
+          ? [{ operation: log.skill, status: log.execution_status, provider_reference }]
+          : [];
+      });
+      return {
+        run_id: task.run_id,
+        task_version: task.task_version,
+        lifecycle_state: task.state,
+        correlation_id: task.correlation_id,
+        ...(lastEvidence === undefined ? {} : { evidence_reference: lastEvidence.evidence_id }),
+        ...(actions.length === 0 ? {} : { actions }),
+      };
     },
 
     classifyRetry,

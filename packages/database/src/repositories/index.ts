@@ -12,6 +12,8 @@ export type { TenantTransactionRunner } from './effect-reservations.js';
 export { DurableWorkflowRepository } from './durable-workflows.js';
 export type {
   CreateDurableTaskInput,
+  ClaimNextQueuedTaskInput,
+  ClaimTaskResult,
   DurableTaskGuard,
   DurableTaskRecord,
   DurableTaskSnapshot,
@@ -19,6 +21,8 @@ export type {
   FailureClass,
   PersistedErrorClass,
   RecordTaskFailureInput,
+  ReleaseTaskLeaseInput,
+  RenewTaskLeaseInput,
   TaskFailureOutcome,
 } from './durable-workflows.js';
 export { ApprovalRepository } from './approvals.js';

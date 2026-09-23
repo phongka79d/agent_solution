@@ -142,7 +142,15 @@ describe('createDurableRunPort', () => {
         listTasks: async () => ({ items: [durable], next_cursor: 'next' }),
         requeueFailed: async () => durable,
       },
-      { readRunLogs: async () => [log({ execution_status: 'success', error: null })] },
+      {
+        readRunLogs: async () => [log({ execution_status: 'success', error: null })],
+        readEvidenceChain: async () => [{
+          evidence_id: 'evidence-a', run_id: RUN, tenant_id: TENANT, correlation_id: 'corr-a',
+          step_index: 2, effect_key: EFFECT_KEY, previous_evidence_hash: '0'.repeat(64),
+          payload_sha256: '1'.repeat(64), chain_hash: '2'.repeat(64), signature: '3'.repeat(64),
+          raw_payload: {}, created_at: NOW,
+        }],
+      },
       { getReservation: async () => null },
     );
 
@@ -151,6 +159,7 @@ describe('createDurableRunPort', () => {
       task_version: 4,
       lifecycle_state: 'completed',
       correlation_id: 'corr-a',
+      evidence_reference: 'evidence-a',
     });
     await expect(port.list({ tenant_id: TENANT })).resolves.toEqual({
       items: [
@@ -184,7 +193,7 @@ describe('createDurableRunPort', () => {
           return queued;
         },
       },
-      { readRunLogs: async () => [log()] },
+      { readRunLogs: async () => [log()], readEvidenceChain: async () => [] },
       { getReservation: async () => null },
     );
 
@@ -210,7 +219,7 @@ describe('createDurableRunPort', () => {
           return task({ state: 'queued' });
         },
       },
-      { readRunLogs: async () => [log()] },
+      { readRunLogs: async () => [log()], readEvidenceChain: async () => [] },
       {
         getReservation: async () => ({
           tenant_id: TENANT,

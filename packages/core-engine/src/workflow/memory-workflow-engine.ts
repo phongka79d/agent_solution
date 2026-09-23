@@ -30,6 +30,7 @@ import {
   OrchestratorError,
   type ActionDraft,
   type DurableTaskCheckpoint,
+  type DurableTaskGuard,
   type PersistedErrorClass,
   type TaskLifecycleState,
 } from '../contracts/types.js';
@@ -242,11 +243,14 @@ export class MemoryWorkflowEngine implements IStatefulWorkflowEngine {
     state: TaskLifecycleState,
     reason: string,
     checkpointPayload?: unknown,
-    event?: string,
+    eventOrGuard?: string | DurableTaskGuard,
   ): Promise<void> {
     const row = this.requireTask(tenant_id, run_id);
 
-    const resolvedEvent = event ?? taskTransitionEvent(row.state, state);
+    const resolvedEvent = (typeof eventOrGuard === 'string' ? eventOrGuard : undefined) ?? taskTransitionEvent(row.state, state);
+    if (typeof eventOrGuard === 'object' && eventOrGuard.expected_task_version !== undefined && eventOrGuard.expected_task_version !== row.task_version) {
+      throw new OrchestratorError('CONCURRENT_TASK_LOCK', `Stale task version for '${run_id}'.`);
+    }
     if (resolvedEvent === null) {
       throw new OrchestratorError(
         'INVALID_TASK_STATE',

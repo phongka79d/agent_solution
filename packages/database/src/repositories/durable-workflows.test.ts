@@ -40,7 +40,7 @@ const AGENT_ID = 'agent-revenue';
 
 const CREATED_AT = new Date('2026-01-01T00:00:00.000Z');
 const UPDATED_AT = new Date('2026-01-01T00:01:00.000Z');
-const LEASE_EXPIRES_AT = new Date('2026-01-01T00:01:30.000Z');
+const LEASE_EXPIRES_AT = new Date('2099-01-01T00:01:30.000Z');
 
 /** Two neighbouring creation instants, so a page has a newest and a next key to resume from. */
 const LATER_CREATED_AT = new Date('2026-01-01T00:02:00.000Z');
@@ -463,7 +463,7 @@ describe('DurableWorkflowRepository.getTask', () => {
       state: 'running',
       task_version: 7,
       lease_owner: 'worker-1',
-      lease_expires_at: '2026-01-01T00:01:30.000Z',
+      lease_expires_at: LEASE_EXPIRES_AT.toISOString(),
       retry_count: 1,
       max_retries: 3,
       last_error_class: 'RETRYABLE',
@@ -775,7 +775,7 @@ describe('DurableWorkflowRepository.transitionTask', () => {
   it('merges a transition payload onto an open task and restates the CAS base', async () => {
     const payload = { cursor: 'step-3' };
     const { repository, client } = harnessFor({
-      lock: { rows: [taskRow({ state: 'running', task_version: 2, lease_owner: 'worker-1' })] },
+      lock: { rows: [taskRow({ state: 'running', task_version: 2, lease_owner: 'worker-1', lease_expires_at: LEASE_EXPIRES_AT })] },
       state_progress: {
         rows: [taskRow({ state: 'running', task_version: 3, state_payload: payload })],
       },

@@ -587,6 +587,15 @@ export interface DurableTaskSnapshot {
   readonly state: TaskLifecycleState;
   readonly correlation_id: string;
   readonly state_payload: unknown;
+  readonly lease_owner?: string | null;
+  readonly lease_expires_at?: string | null;
+}
+/**
+ * Optimistic and fencing guard for durable task writes (§04 §4.2).
+ */
+export interface DurableTaskGuard {
+  readonly expected_task_version?: number;
+  readonly lease_owner?: string | null;
 }
 
 /** The durable FSM of §04 §4.1–§4.2; persistence is owned by `platform_durable_tasks`, never a cache. */
@@ -598,9 +607,25 @@ export interface IStatefulWorkflowEngine {
     correlation_id: string;
     current_step: number;
     state: TaskLifecycleState;
+    state_payload?: unknown;
+    lease_owner?: string | null;
+    lease_expires_at?: string | null;
   }): Promise<void>;
-  updateTaskProgress(tenant_id: string, run_id: string, stepIndex: number, checkpointPayload: unknown): Promise<void>;
-  transitionTask(tenant_id: string, run_id: string, state: TaskLifecycleState, reason: string, checkpointPayload?: unknown): Promise<void>;
+  updateTaskProgress(
+    tenant_id: string,
+    run_id: string,
+    stepIndex: number,
+    checkpointPayload: unknown,
+    guard?: DurableTaskGuard
+  ): Promise<void>;
+  transitionTask(
+    tenant_id: string,
+    run_id: string,
+    state: TaskLifecycleState,
+    reason: string,
+    checkpointPayload?: unknown,
+    guard?: DurableTaskGuard
+  ): Promise<void>;
   getTask(tenant_id: string, run_id: string): Promise<DurableTaskSnapshot | null>;
   /** One transaction: INSERT the PENDING approval row + pause the task (§4.2). */
   pauseForApproval(params: {
@@ -629,6 +654,8 @@ export interface IStatefulWorkflowEngine {
     /** `last_error_class` accepts only RETRYABLE | FATAL; UNKNOWN is a reconciliation state (§4.4). */
     error_class: PersistedErrorClass;
     error_details: Record<string, unknown>;
+    expected_task_version?: number;
+    guard?: DurableTaskGuard;
   }): Promise<{ requeued: boolean }>;
 }
 

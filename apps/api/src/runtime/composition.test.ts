@@ -17,7 +17,7 @@ const EMPTY_REDIS: RedisInjectedClient = {
 };
 
 describe('createGatewayComposition', () => {
-  it('binds durable reads and verified identity while naming only truthful fail-closed mutations', async () => {
+  it('refuses intake and decisions without a worker execution graph', async () => {
     const composition = createGatewayComposition(ENV, { redis: EMPTY_REDIS });
 
     expect(composition.unbound).toEqual(['runs.start', 'runs.reconcile', 'approvals.decide']);

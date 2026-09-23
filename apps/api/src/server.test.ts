@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { FastifyInstance } from 'fastify';
 
@@ -81,6 +81,47 @@ describe('the /api/v1 surface', () => {
       details: { reason: 'RAW_BODY_TOO_LARGE' },
     });
 
+    await app.close();
+  });
+});
+
+describe('Customer Care turn admission', () => {
+  it('does not append a message when execution is unavailable', async () => {
+    const composition = createGatewayComposition(
+      { SESSION_SECRET: 'test-session-secret-000000', PLATFORM_SECRET: 'test-platform-secret-00000' },
+    );
+    const appendMessage = vi.fn();
+    const app = buildServer({
+      ...composition,
+      credentials: createCredentialStore({
+        operators: [],
+        sessions: [{ token: 'care-session', tenant_id: TENANT, conversation_id: 'conversation-a', session_id: 'session-a', channel: 'WEB_CHAT' }],
+        widgets: [],
+      }),
+      runtime: {
+        ...composition.runtime,
+        conversations: {
+          ...composition.runtime.conversations,
+          get: async () => ({
+            conversation_id: 'conversation-a', tenant_id: TENANT, customer_id: null,
+            channel: 'WEB_CHAT' as const, external_thread_id: 'session-a', active_agent: 'CS-01',
+            state: 'open' as const, takeover_operator_id: null,
+            last_message_at: '2026-01-01T00:00:00.000Z', created_at: '2026-01-01T00:00:00.000Z', bound: true,
+          }),
+          appendMessage,
+        },
+        receipts: { ...composition.runtime.receipts, receiptFor: async () => null },
+      },
+    });
+
+    const response = await app.inject({
+      method: 'POST', url: '/api/v1/conversations/conversation-a/messages',
+      headers: { authorization: 'Bearer care-session' },
+      payload: { message: 'Where is my order?', module: 'support', idempotency_key: 'care-request-1' },
+    });
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toMatchObject({ error_code: 'CAPABILITY_NOT_ENABLED' });
+    expect(appendMessage).not.toHaveBeenCalled();
     await app.close();
   });
 });

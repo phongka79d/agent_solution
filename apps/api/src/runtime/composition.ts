@@ -205,30 +205,16 @@ export function createGatewayComposition(
 
   const unbound_ports: string[] = [];
 
-  /**
-   * The read model and verified operator requeue are repository-backed. Starting and reconciling a
-   * run still require the complete RevenueOrchestrator graph; P0 has no truthful agent/context/PEP
-   * runtime to bind, so those mutations remain explicit refusals.
-   */
   const runs: RunPort = {
-    start: async () => unbound('runs.start', 'the orchestrator signal path is not composed'),
+    start: async () => unbound('runs.start', 'the production Customer Care orchestrator and worker graph is not bound'),
     ...durableRuns,
-    reconcile: async () =>
-      unbound(
-        'runs.reconcile',
-        'the orchestrator reconciliation/resume path is not composed',
-      ),
+    reconcile: async () => unbound('runs.reconcile', 'no provider-confirmed reconciliation source is bound'),
   };
   unbound_ports.push('runs.start', 'runs.reconcile');
 
-  /** Queue/detail are canonical PostgreSQL reads; a decision must resume through the orchestrator. */
   const approvals: ApprovalPort = {
     ...approvalReads,
-    decide: async () =>
-      unbound(
-        'approvals.decide',
-        'the orchestrator approval resume path is not composed',
-      ),
+    decide: async () => unbound('approvals.decide', 'no approval resume worker is bound'),
   };
   unbound_ports.push('approvals.decide');
 

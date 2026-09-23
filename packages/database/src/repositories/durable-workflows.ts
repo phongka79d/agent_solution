@@ -106,6 +106,42 @@ export interface CreateDurableTaskInput {
 export interface DurableTaskGuard {
   readonly expected_task_version: number;
   readonly lease_owner?: string;
+  readonly now?: Date | string | number;
+}
+
+/** Input of `claimNextQueuedTask()`: tenant, lease owner, and optional lease TTL. */
+export interface ClaimNextQueuedTaskInput {
+  readonly tenant_id: string;
+  readonly lease_owner: string;
+  readonly lease_duration_ms?: number;
+}
+
+/** Result of `claimNextQueuedTask()`: claimed task, lease owner, expiry, and version. */
+export interface ClaimTaskResult {
+  readonly task: DurableTaskRecord;
+  readonly lease_owner: string;
+  readonly lease_expires_at: string;
+  readonly task_version: number;
+}
+
+/** Input of `renewTaskLease()`: tenant, run, lease owner, version, and optional duration. */
+export interface RenewTaskLeaseInput {
+  readonly tenant_id: string;
+  readonly run_id: string;
+  readonly lease_owner: string;
+  readonly task_version: number;
+  readonly lease_duration_ms?: number;
+  readonly now?: Date | string | number;
+}
+
+/** Input of `releaseTaskLease()`: tenant, run, lease owner, version, and optional target state. */
+export interface ReleaseTaskLeaseInput {
+  readonly tenant_id: string;
+  readonly run_id: string;
+  readonly lease_owner: string;
+  readonly task_version: number;
+  readonly target_state?: DurableTaskState;
+  readonly now?: Date | string | number;
 }
 
 /** Input of `recordFailure()` (§4.4 durable recovery). */
@@ -116,6 +152,8 @@ export interface RecordTaskFailureInput {
   readonly error_details: Record<string, unknown>;
   /** Optional optimistic guard; see `DurableTaskGuard`. */
   readonly expected_task_version?: number;
+  readonly lease_owner?: string;
+  readonly now?: Date | string | number;
 }
 
 /** Outcome of `recordFailure()`: whether the task was re-queued, and the row it left behind. */
@@ -325,6 +363,46 @@ const SELECT_TASK_PAGE = `SELECT${TASK_PROJECTION}
     AND ($6::timestamptz IS NULL OR (t.created_at, t.run_id) < ($6::timestamptz, $7::varchar))
   ORDER BY t.created_at DESC, t.run_id DESC
   LIMIT $8`;
+
+/** Claim the next queued or expired-running task using SELECT FOR UPDATE SKIP LOCKED. */
+const SELECT_CLAIMABLE_TASK = `SELECT${TASK_PROJECTION}
+  FROM ${PLATFORM_DURABLE_TASKS}
+  WHERE tenant_id = $1
+    AND (
+      state = 'queued'
+      OR (state = 'running' AND lease_expires_at IS NOT NULL AND lease_expires_at < CURRENT_TIMESTAMP)
+    )
+  ORDER BY created_at ASC
+  LIMIT 1
+  FOR UPDATE SKIP LOCKED`;
+
+/** Atomically acquire lease on a task and advance to running with incremented task_version. */
+const UPDATE_CLAIM_TASK = `UPDATE ${PLATFORM_DURABLE_TASKS}
+  SET state = 'running'::agentos.task_lifecycle_state,
+      lease_owner = $2,
+      lease_expires_at = CURRENT_TIMESTAMP + ($3 * INTERVAL '1 millisecond'),
+      task_version = task_version + 1,
+      updated_at = CURRENT_TIMESTAMP
+  WHERE tenant_id = $1 AND run_id = $4 AND task_version = $5
+  RETURNING${TASK_PROJECTION}`;
+
+/** Renew an active unexpired lease for the owner. */
+const UPDATE_RENEW_LEASE = `UPDATE ${PLATFORM_DURABLE_TASKS}
+  SET lease_expires_at = CURRENT_TIMESTAMP + ($3 * INTERVAL '1 millisecond'),
+      task_version = task_version + 1,
+      updated_at = CURRENT_TIMESTAMP
+  WHERE tenant_id = $1 AND run_id = $2 AND task_version = $4 AND lease_owner = $5
+  RETURNING${TASK_PROJECTION}`;
+
+/** Release an active lease, clearing owner and expiry and setting target state. */
+const UPDATE_RELEASE_LEASE = `UPDATE ${PLATFORM_DURABLE_TASKS}
+  SET state = $3::agentos.task_lifecycle_state,
+      lease_owner = NULL,
+      lease_expires_at = NULL,
+      task_version = task_version + 1,
+      updated_at = CURRENT_TIMESTAMP
+  WHERE tenant_id = $1 AND run_id = $2 AND task_version = $4 AND lease_owner = $5
+  RETURNING${TASK_PROJECTION}`;
 
 /** Progress checkpoint (§4.2 statement 2): merge the blob, advance the cursor, bump the version. */
 const UPDATE_TASK_PROGRESS = `UPDATE ${PLATFORM_DURABLE_TASKS}
@@ -653,22 +731,11 @@ export function assertPositiveInteger(value: unknown, column: string, code: stri
  * Exported so both modules refuse a write by a worker that does not hold the run's lease with one
  * message instead of two slightly different ones.
  */
-export function assertLeaseHeld(state: DurableTaskState, lease_owner: string | undefined): void {
-  if (lease_owner === undefined) {
-    return;
-  }
-
-  if (lease_owner.trim().length === 0) {
-    throw new Error(
-      'TASK_LEASE_OWNER_REQUIRED: lease_owner must be a non-empty worker identity when supplied.',
-    );
-  }
-
-  if (state !== 'running') {
-    throw new Error(
-      `TASK_LEASE_NOT_HELD: lease_owner ${lease_owner} cannot write a task in state ${state}; ` +
-        'only a running task is owned by a worker lease (implement/04 §4.2).',
-    );
+export function assertLeaseHeld(row: Pick<DurableTaskRecord, 'state' | 'lease_owner' | 'lease_expires_at'>, lease_owner: string | undefined, now: Date = new Date()): void {
+  if (lease_owner === undefined) return;
+  if (lease_owner.trim().length === 0) throw new Error('TASK_LEASE_OWNER_REQUIRED: lease_owner must be a non-empty worker identity.');
+  if (row.state !== 'running' || row.lease_owner !== lease_owner || row.lease_expires_at === null || Date.parse(row.lease_expires_at) <= now.getTime()) {
+    throw new Error('TASK_LEASE_NOT_HELD: the worker does not hold a live lease for this run.');
   }
 }
 
@@ -916,6 +983,50 @@ export class DurableWorkflowRepository {
     });
   }
 
+  async claimNextQueuedTask(input: ClaimNextQueuedTaskInput): Promise<ClaimTaskResult | null> {
+    assertIdentifier(input.tenant_id, 'tenant_id', 36, 'TASK_TENANT_ID_REQUIRED');
+    assertIdentifier(input.lease_owner, 'lease_owner', 128, 'TASK_LEASE_OWNER_REQUIRED');
+    const ttl = input.lease_duration_ms ?? 30_000;
+    if (!Number.isInteger(ttl) || ttl < 1) throw new Error('TASK_LEASE_DURATION_INVALID');
+    return this.runInTenantTransaction(input.tenant_id, async (client) => {
+      const selected = await client.query<DurableTaskRow>(SELECT_CLAIMABLE_TASK, [input.tenant_id]);
+      const row = selected.rows[0];
+      if (!row) return null;
+      const claimed = assertSingleRow(await client.query<DurableTaskRow>(UPDATE_CLAIM_TASK, [input.tenant_id, input.lease_owner, ttl, row.run_id, row.task_version]), row.run_id);
+      if (!claimed.lease_expires_at) throw new Error('TASK_LEASE_NOT_HELD');
+      return { task: claimed, lease_owner: input.lease_owner, lease_expires_at: claimed.lease_expires_at, task_version: claimed.task_version };
+    });
+  }
+
+  async renewTaskLease(input: RenewTaskLeaseInput): Promise<DurableTaskRecord> {
+    assertIdentifier(input.tenant_id, 'tenant_id', 36, 'TASK_TENANT_ID_REQUIRED');
+    assertIdentifier(input.run_id, 'run_id', 64, 'TASK_RUN_ID_REQUIRED');
+    const ttl = input.lease_duration_ms ?? 30_000;
+    if (!Number.isInteger(ttl) || ttl < 1) throw new Error('TASK_LEASE_DURATION_INVALID');
+    return this.runInTenantTransaction(input.tenant_id, async (client) => {
+      const row = await this.lockWithin(client, input.tenant_id, input.run_id);
+      if (!row) throw new Error('DURABLE_TASK_NOT_FOUND');
+      assertLeaseHeld(row, input.lease_owner);
+      if (row.task_version !== input.task_version) throw new Error('TASK_VERSION_CONFLICT');
+      return assertSingleRow(await client.query<DurableTaskRow>(UPDATE_RENEW_LEASE, [input.tenant_id, input.run_id, ttl, input.task_version, input.lease_owner]), input.run_id);
+    });
+  }
+
+  async releaseTaskLease(input: ReleaseTaskLeaseInput): Promise<DurableTaskRecord> {
+    assertIdentifier(input.tenant_id, 'tenant_id', 36, 'TASK_TENANT_ID_REQUIRED');
+    assertIdentifier(input.run_id, 'run_id', 64, 'TASK_RUN_ID_REQUIRED');
+    return this.runInTenantTransaction(input.tenant_id, async (client) => {
+      const row = await this.lockWithin(client, input.tenant_id, input.run_id);
+      if (!row) throw new Error('DURABLE_TASK_NOT_FOUND');
+      assertLeaseHeld(row, input.lease_owner);
+      if (row.task_version !== input.task_version) throw new Error('TASK_VERSION_CONFLICT');
+      const target = input.target_state ?? 'queued';
+      assertTaskState(target);
+      if (target !== 'queued' && target !== 'waiting') throw new Error('TASK_LEASE_RELEASE_STATE_INVALID');
+      return assertSingleRow(await client.query<DurableTaskRow>(UPDATE_RELEASE_LEASE, [input.tenant_id, input.run_id, target, input.task_version, input.lease_owner]), input.run_id);
+    });
+  }
+
   /**
    * Reads the durable task of one run inside the caller's tenant scope.
    *
@@ -1050,7 +1161,7 @@ export class DurableWorkflowRepository {
     return this.runInTenantTransaction(tenant_id, async (client) => {
       const open = this.assertOpen(await this.lockWithin(client, tenant_id, run_id));
       const base = assertGuard(open, guard);
-      assertLeaseHeld(open.state, guard?.lease_owner);
+      assertLeaseHeld(open, guard?.lease_owner);
 
       const result = await client.query<DurableTaskRow>(UPDATE_TASK_PROGRESS, [
         tenant_id,
@@ -1150,7 +1261,7 @@ export class DurableWorkflowRepository {
         'TASK_PAUSE_RESUME_REQUIRES_DECISION',
       );
       const base = assertGuard(open, guard);
-      assertLeaseHeld(open.state, guard?.lease_owner);
+      assertLeaseHeld(open, guard?.lease_owner);
 
       const statement = parked
         ? UPDATE_TASK_STATE_REPLACE_PAYLOAD
@@ -1210,14 +1321,12 @@ export class DurableWorkflowRepository {
     }
 
     const error_details = serializeJsonb(input.error_details, 'TASK_ERROR_DETAILS_INVALID');
-    const guard =
-      input.expected_task_version === undefined
-        ? undefined
-        : { expected_task_version: input.expected_task_version };
+    const guard = input.expected_task_version === undefined ? undefined : { expected_task_version: input.expected_task_version };
 
     return this.runInTenantTransaction(input.tenant_id, async (client) => {
       const open = this.assertOpen(await this.lockWithin(client, input.tenant_id, input.run_id));
       const base = assertGuard(open, guard);
+      assertLeaseHeld(open, input.lease_owner);
       const requeued = input.error_class === 'RETRYABLE' && open.retry_count < open.max_retries;
 
       const statement = requeued ? UPDATE_TASK_FAILURE_REQUEUE : UPDATE_TASK_FAILURE_TERMINAL;

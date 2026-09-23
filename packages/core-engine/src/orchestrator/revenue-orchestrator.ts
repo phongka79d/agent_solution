@@ -55,6 +55,7 @@ import type {
   ISessionControl,
   IStatefulWorkflowEngine,
 } from '../contracts/index.js';
+import { canonicalizeJson } from '../durability/canonical-json.js';
 import { StageJournal, type LifecycleStage } from '../lifecycle/stages.js';
 import { assertOrchestratorBrokered } from './agent-boundary.js';
 
@@ -92,6 +93,8 @@ function outcomeFields(fields: {
 }
 
 export class RevenueOrchestrator {
+  private readonly defaultWorkerId = `worker_${randomUUID().substring(0, 8)}`;
+  private claimedWorkerId: string | null = null;
   private journal: StageJournal = new StageJournal();
 
   constructor(
@@ -107,11 +110,13 @@ export class RevenueOrchestrator {
       sessionControl: ISessionControl;
       leaseManager: DurableLeaseManager;
       workerId?: string;
+      /** The authoritative worker lease is rechecked immediately before external dispatch. */
+      assertExecutionLease?: (tenant_id: string, run_id: string) => Promise<void>;
     }
   ) {}
 
   private get workerId(): string {
-    return this.dependencies.workerId ?? `worker_${randomUUID().substring(0, 8)}`;
+    return this.dependencies.workerId ?? this.defaultWorkerId;
   }
 
   /**
@@ -152,6 +157,133 @@ export class RevenueOrchestrator {
       state: 'running',
     });
 
+    return this.runGuardedPipeline({
+      signal,
+      run_id,
+      request_id,
+      chain,
+      workerId: this.workerId,
+    });
+  }
+
+  /**
+   * Executes the full 11-step E2E lifecycle against an existing queued or claimed durable task.
+   *
+   * Verifies the DB claimed task's lease ownership and signal equality, transitions queued tasks
+   * to running, and executes the exact same guarded pipeline without creating a second task.
+   */
+  public async processQueuedSignal(
+    run_id: string,
+    signal: SignalEnvelope,
+    options?: { worker_id?: string }
+  ): Promise<OrchestratorRunResult> {
+    this.journal = new StageJournal();
+    this.claimedWorkerId = options?.worker_id ?? this.workerId;
+    // STEP 1: SIGNAL VALIDATION — fail closed before any durable action.
+    this.validateSignalEnvelope(signal);
+    this.journal.enter('SIGNAL');
+
+    const effectiveWorkerId = this.claimedWorkerId;
+    const task = await this.dependencies.workflowEngine.getTask(signal.tenant_id, run_id);
+    if (!task) {
+      throw new OrchestratorError('TASK_NOT_FOUND', `Task ${run_id} does not exist`);
+    }
+
+    if (task.state !== 'running' && task.state !== 'queued') {
+      throw new OrchestratorError('INVALID_TASK_STATE', `Cannot process queued task currently in '${task.state}'`);
+    }
+
+    // Fencing guard: verify lease ownership against the claimed DB row
+    if (!task.lease_owner || task.lease_owner !== effectiveWorkerId) {
+      throw new OrchestratorError(
+        'CONCURRENT_TASK_LOCK',
+        `Worker '${effectiveWorkerId}' does not hold active lease for task ${run_id} (held by: '${task.lease_owner ?? 'none'}')`
+      );
+    }
+
+    const expiresAtMs = task.lease_expires_at ? Date.parse(task.lease_expires_at) : Number.NaN;
+    if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
+      throw new OrchestratorError('TASK_LEASE_EXPIRED', `Execution lease for task ${run_id} is absent or expired`);
+    }
+
+    // Verify correlation and signal equality
+    if (task.correlation_id !== signal.correlation_id) {
+      throw new OrchestratorError(
+        'SIGNAL_MISMATCH',
+        `Signal correlation_id '${signal.correlation_id}' does not match task correlation_id '${task.correlation_id}'`
+      );
+    }
+
+    const payload = task.state_payload;
+    if (typeof payload !== 'object' || payload === null || Array.isArray(payload) || !('signal' in payload)) {
+      throw new OrchestratorError('CHECKPOINT_INCOMPLETE', 'Queued task has no persisted signal.');
+    }
+    const storedSignal = payload.signal;
+    if (canonicalizeJson(storedSignal) !== canonicalizeJson(signal)) {
+      throw new OrchestratorError('SIGNAL_MISMATCH', `Provided signal does not match stored queued signal for task ${run_id}`);
+    }
+    if ('plan' in payload || 'pending_action' in payload) {
+      const checkpoint = payload as unknown as DurableTaskCheckpoint;
+      if (!checkpoint.plan || !checkpoint.context || !checkpoint.request_id
+        || checkpoint.request_id !== signal.signal_id || !Number.isInteger(checkpoint.current_step)
+        || checkpoint.current_step < 1 || !checkpoint.previous_evidence_hash) {
+        throw new OrchestratorError('CHECKPOINT_INCOMPLETE', 'Claimed task has no complete persisted plan cursor.');
+      }
+      if (checkpoint.pending_action?.mutating && checkpoint.pending_action.step_index === checkpoint.current_step) {
+        throw new OrchestratorError('CHECKPOINT_REQUIRES_RECONCILIATION', 'A restarted mutating step requires reconciliation by its effect key.');
+      }
+      if (checkpoint.current_step > checkpoint.plan.steps.length) {
+        await this.dependencies.workflowEngine.transitionTask(signal.tenant_id, run_id, 'completed', 'Recovered evidenced plan verified');
+        return { run_id, lifecycle_state: 'completed' };
+      }
+      this.replayCommittedStages(checkpoint);
+      const outcome = await this.executeSteps({
+        signal, tenant_id: signal.tenant_id, run_id, correlation_id: signal.correlation_id,
+        request_id: checkpoint.request_id, plan: checkpoint.plan, context: checkpoint.context,
+        chain: { previous: checkpoint.previous_evidence_hash }, from_step: checkpoint.current_step,
+        approved_action: null, approval_ref: null,
+      });
+      if (outcome.lifecycle_state === 'completed') {
+        await this.dependencies.workflowEngine.transitionTask(signal.tenant_id, run_id, 'completed', 'Recovered plan steps verified');
+      }
+      return { run_id, lifecycle_state: outcome.lifecycle_state, ...outcomeFields(outcome) };
+    }
+
+    // Transition queued task to running if not already running
+    if (task.state === 'queued') {
+      await this.dependencies.workflowEngine.transitionTask(
+        signal.tenant_id,
+        run_id,
+        'running',
+        'Worker claimed queued task',
+        undefined,
+        { expected_task_version: task.task_version, lease_owner: effectiveWorkerId }
+      );
+    }
+
+    const request_id = signal.signal_id;
+    const chain: EvidenceChain = { previous: GENESIS_HASH };
+
+    return this.runGuardedPipeline({
+      signal,
+      run_id,
+      request_id,
+      chain,
+      workerId: effectiveWorkerId,
+    });
+  }
+
+  /**
+   * Executes the common guarded pipeline for processSignal and processQueuedSignal.
+   */
+  private async runGuardedPipeline(params: {
+    signal: SignalEnvelope;
+    run_id: string;
+    request_id: string;
+    chain: EvidenceChain;
+    workerId: string;
+  }): Promise<OrchestratorRunResult> {
+    const { signal, run_id, request_id, chain, workerId } = params;
     try {
       // STEP 2: CONTEXT HYDRATION (trusted identity resolution + session-scoped memory)
       this.journal.enter('CONTEXT');
@@ -175,7 +307,6 @@ export class RevenueOrchestrator {
       this.journal.enter('HYPOTHESIS');
       const hypothesis = await this.dependencies.agentRuntime.deriveHypothesis(signal, context);
       this.enforceEpistemicSeparation(hypothesis);
-
       // STEP 4: DECISION & ROUTING (FR-ORC-001)
       this.journal.enter('DECISION');
       const routing = assertOrchestratorBrokered(
@@ -198,6 +329,12 @@ export class RevenueOrchestrator {
       const plan = routing.requires_clarification
         ? this.buildClarificationPlan(routing, signal, context)
         : await this.dependencies.agentRuntime.formulatePlan(routing, context, hypothesis);
+      // Persist the decided plan before its first side effect. A restarted worker must replay this
+      // checkpoint rather than rederive a potentially different plan under the same request id.
+      await this.dependencies.workflowEngine.updateTaskProgress(signal.tenant_id, run_id, 1, {
+        signal, plan, current_step: 1, pending_action: null, context,
+        previous_evidence_hash: chain.previous, request_id,
+      });
 
       // STEPS 6-9: GUARDED STEP LOOP (the single guarded step engine, shared with the resume path)
       const outcome = await this.executeSteps({
@@ -263,7 +400,7 @@ export class RevenueOrchestrator {
       });
       throw error;
     } finally {
-      await this.dependencies.leaseManager.releaseLease(signal.tenant_id, run_id, this.workerId);
+      await this.dependencies.leaseManager.releaseLease(signal.tenant_id, run_id, workerId);
     }
   }
 
@@ -313,6 +450,9 @@ export class RevenueOrchestrator {
 
       // SCR-005 guard, per step (hence per retry and per resume): a takeover landing mid-run stops
       // the very next dispatch rather than only the first.
+      if (this.claimedWorkerId !== null) {
+        await this.dependencies.assertExecutionLease?.(tenant_id, run_id);
+      }
       if (await this.dependencies.sessionControl.isTakenOver(tenant_id, sessionId)) {
         const reason = 'HUMAN_TAKEOVER: session lock held by operator (SCR-005)';
         await this.dependencies.workflowEngine.transitionTask(tenant_id, run_id, 'stopped', reason);
@@ -345,6 +485,13 @@ export class RevenueOrchestrator {
         ? (params.approved_action as ActionDraft)
         : await this.draftAction(step, context, run_id, tenant_id, request_id, 0);
       this.verifyFloorPrice(action);
+      // Save the exact draft before dispatch. A restarted effect-bearing run cannot re-draft and
+      // re-send until the reservation and provider outcome have been reconciled by this key.
+      await this.dependencies.workflowEngine.updateTaskProgress(tenant_id, run_id, step.step_index, {
+        ...(params.signal === null ? {} : { signal: params.signal }),
+        plan, current_step: step.step_index, pending_action: action, context,
+        previous_evidence_hash: chain.previous, request_id,
+      });
 
       // STEP 7: recheck current policy even after a human decision was claimed.
       // A stored claim satisfies only AUTH-4 for its exact action/digest; consent, source,
@@ -616,6 +763,11 @@ export class RevenueOrchestrator {
             skill_id: action.skill_id,
           });
         }
+        await this.dependencies.workflowEngine.updateTaskProgress(tenant_id, run_id, step.step_index + 1, {
+          ...(params.signal === null ? {} : { signal: params.signal }),
+          plan, current_step: step.step_index + 1, pending_action: null, context,
+          previous_evidence_hash: chain.previous, request_id,
+        });
       } catch (error) {
         // A read-only step dispatched nothing effect-bearing, so there is nothing to reconcile and
         // the failure keeps its existing classification.
@@ -690,7 +842,7 @@ export class RevenueOrchestrator {
     const isAutomaticResume = resumeEvent.event_type === 'timer.expired'
       || resumeEvent.event_type === 'reconcile.completed';
     if ((isHumanApprovalDecision && task.state !== 'awaiting_human')
-      || (isReconciliationResolution && task.state !== 'awaiting_human')
+      || (isReconciliationResolution && task.state !== 'waiting')
       || (isAutomaticResume && task.state !== 'waiting')) {
       throw new OrchestratorError('INVALID_TASK_STATE', 'Resume event does not match the durable waiting state.');
     }
@@ -718,18 +870,22 @@ export class RevenueOrchestrator {
         if (resumeEvent.reconciliation_resolution === 'ESCALATE_MANUALLY') {
           return {
             run_id,
-            lifecycle_state: 'awaiting_human',
+            lifecycle_state: 'waiting',
             ...outcomeFields({ message: 'Provider outcome remains unresolved; no dispatch was authorized.' }),
           };
         }
-        await this.dependencies.effectGuard.resolve({
-          tenant_id: resumeEvent.tenant_id,
-          effect_key: pendingAction.effect_key,
-          status: resumeEvent.reconciliation_resolution === 'PROVIDER_CONFIRMED_SUCCEEDED' ? 'SUCCEEDED' : 'FAILED',
-          receipt: resumeEvent.reconciliation_receipt,
-        });
-        await this.dependencies.workflowEngine.transitionTask(resumeEvent.tenant_id, run_id, 'running', 'Manual provider reconciliation resolved');
-        executionResumed = true;
+        if (resumeEvent.reconciliation_resolution === 'PROVIDER_CONFIRMED_SUCCEEDED') {
+          throw new OrchestratorError(
+            'RECONCILIATION_PROVIDER_PROOF_REQUIRED',
+            'An operator-supplied receipt cannot prove provider settlement; the provider must be queried by effect key.'
+          );
+        }
+        if (resumeEvent.reconciliation_resolution === 'PROVIDER_CONFIRMED_ABSENT') {
+          throw new OrchestratorError(
+            'RECONCILIATION_PROVIDER_PROOF_REQUIRED',
+            'An operator assertion of absence cannot authorize re-dispatch without provider-side confirmation.'
+          );
+        }
       }
 
       if (isHumanApprovalDecision) {
@@ -1012,6 +1168,7 @@ export class RevenueOrchestrator {
   private async dispatchWithDeadline(action: ActionDraft, step: PlannedStep): Promise<ExecutionReceipt> {
     let deadlineTimer: NodeJS.Timeout | undefined;
     try {
+      await this.dependencies.assertExecutionLease?.(action.tenant_id, action.run_id);
       const inFlight = this.dependencies.adapterDispatcher.dispatch(action, { timeout_ms: step.timeout_ms });
       // A settlement that arrives after the deadline is late, not unhandled.
       inFlight.catch(() => undefined);
@@ -1329,4 +1486,5 @@ export class RevenueOrchestrator {
   ): Promise<void> {
     this.journal.enter('LEARNING');
   }
+
 }

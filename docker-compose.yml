@@ -226,6 +226,8 @@ services:
       NODE_ENV: ${NODE_ENV:?NODE_ENV is required}
       APP_ENV: ${APP_ENV:?APP_ENV is required}
       WORKER_HEALTH_PORT: ${WORKER_HEALTH_PORT:-4001}
+      # Explicit tenant schedule scope; blank disables Care polling rather than bypassing RLS.
+      CARE_TENANT_IDS: ${CARE_TENANT_IDS:-}
       SERVICE_NAME: agentos-worker
       API_BASE_URL: ${API_BASE_URL:?API_BASE_URL is required}
       WEB_BASE_URL: ${WEB_BASE_URL:?WEB_BASE_URL is required}

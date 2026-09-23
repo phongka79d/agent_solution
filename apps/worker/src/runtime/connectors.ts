@@ -40,6 +40,7 @@ const DEFAULT_ERP_TIMEOUT_MS = 5_000;
 
 export interface WorkerConnectorEnv {
   readonly APP_ENV?: string;
+  readonly CARE_TENANT_IDS?: string;
   readonly MOCK_ERP_ENABLED?: string;
   readonly ERP_API_BASE_URL?: string;
   readonly MOCK_SECRET_KEY?: string;
