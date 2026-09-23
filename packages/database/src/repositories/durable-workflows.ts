@@ -128,6 +128,52 @@ export interface TaskFailureOutcome {
 }
 
 /**
+ * Input of `listTasks()`: the tenant, the optional filters, the page size and the resume cursor.
+ *
+ * `agent_id` is not a column of `platform_durable_tasks`: a run is bound to the agents that acted in
+ * it by `agentos.agent_run_logs`, one row per resolved step, so the filter is an EXISTS over that
+ * ledger for a step row of THIS tenant, this run and this agent.
+ */
+export interface DurableTaskListInput {
+  readonly tenant_id: string;
+  readonly state?: DurableTaskState;
+  readonly agent_id?: string;
+  readonly from?: string;
+  readonly to?: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+/**
+ * One page of durable tasks, newest first: at most `limit` rows and the cursor of the following page
+ * (`null` at the end of the tenant's tasks for the filters asked for).
+ *
+ * The items are the published `DurableTaskRecord`s — the same projection `getTask()` returns — so a
+ * read model built from a page cannot drift from the row a resume reads back.
+ */
+export interface DurableTaskPage {
+  readonly items: readonly DurableTaskRecord[];
+  readonly next_cursor: string | null;
+}
+
+/**
+ * Input of `requeueFailed()`: the tenant, the run, why the operator re-enters it, and the
+ * optional optimistic guard.
+ *
+ * `reason` is required because a requeue is an operator decision about a failed run, and the audit
+ * trail must be able to explain it; P0 stores no transition history on the task row, so the reason
+ * is validated here and belongs to the append-only `audit_records` row the caller writes (§4.1).
+ */
+export interface RequeueFailedTaskInput {
+  readonly tenant_id: string;
+  readonly run_id: string;
+  /** Why the operator re-enters the failed run; required, and echoed in every refusal. */
+  readonly reason: string;
+  /** Optional optimistic guard; see `DurableTaskGuard`. */
+  readonly expected_task_version?: number;
+}
+
+/**
  * `agentos` is not on the connection `search_path`, so every statement is schema-qualified.
  *
  * Exported for `ApprovalRepository`, whose pause and human-decision transactions write the same
@@ -180,6 +226,21 @@ const CHECKPOINT_MEMBERS: readonly string[] = [
 /** Bare lowercase hex SHA-256, the only accepted encoding of a chain cursor. */
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 
+/** Separator of the `<created_at>|<run_id>` keyset cursor `listTasks()` publishes and accepts. */
+const CURSOR_SEPARATOR = '|';
+
+/** Default page size of `listTasks()`, and the largest page it accepts. */
+const DEFAULT_TASK_LIST_LIMIT = 50;
+const MAX_TASK_LIST_LIMIT = 200;
+
+/**
+ * The step ledger that binds a run to the agents that acted in it (`agent_run_logs`: one row per
+ * executed pipeline step, the 18-field execution audit contract of implement/04 §6.1). Read-only
+ * here: `listTasks()` filters the task page through it by `(tenant_id, run_id, agent_id)`, while the
+ * row itself is appended by `EvidenceRepository.logAgentRun()`.
+ */
+const AGENT_RUN_LOGS = 'agentos.agent_run_logs';
+
 /**
  * The columns every read publishes, in the order `toDurableTaskRecord` expects them.
  *
@@ -229,6 +290,41 @@ const SELECT_TASK = `SELECT${TASK_PROJECTION}
  */
 const SELECT_TASK_FOR_UPDATE = `${SELECT_TASK}
   FOR UPDATE`;
+
+/**
+ * One page of the tenant's durable tasks, newest first (implement/04 §4.1, the R16 read model).
+ *
+ * The page is ordered and paged by `(created_at, run_id)` — the instant the row was created, never
+ * `updated_at`, so a task a worker keeps writing does not move under the cursor and a page can
+ * neither repeat nor skip a run. Every optional predicate is part of the one statement, so the page
+ * is a single seek:
+ *
+ *  * `state` narrows the closed lifecycle enum (an absent filter binds SQL `NULL`);
+ *  * `from` / `to` are inclusive bounds on the creation instant;
+ *  * `agent_id` is bound through `agentos.agent_run_logs`: the EXISTS makes the task visible only
+ *    when THIS tenant holds a step row of THIS run for that agent, so the ledger is read
+ *    tenant-scoped by construction and a run the agent never acted in is out of scope;
+ *  * the cursor resumes strictly after `(created_at, run_id)`, the durable ordering key of the page.
+ *
+ * `t` is the task row being paged; `log` is correlated to it by tenant and run, so no other tenant's
+ * ledger row and no other run's can satisfy the filter.
+ */
+const SELECT_TASK_PAGE = `SELECT${TASK_PROJECTION}
+  FROM ${PLATFORM_DURABLE_TASKS} AS t
+  WHERE t.tenant_id = $1
+    AND ($2::agentos.task_lifecycle_state IS NULL OR t.state = $2::agentos.task_lifecycle_state)
+    AND ($3::timestamptz IS NULL OR t.created_at >= $3::timestamptz)
+    AND ($4::timestamptz IS NULL OR t.created_at <= $4::timestamptz)
+    AND ($5::varchar IS NULL OR EXISTS (
+      SELECT 1
+        FROM ${AGENT_RUN_LOGS} AS log
+        WHERE log.tenant_id = t.tenant_id
+          AND log.run_id = t.run_id
+          AND log.agent_id = $5::varchar
+    ))
+    AND ($6::timestamptz IS NULL OR (t.created_at, t.run_id) < ($6::timestamptz, $7::varchar))
+  ORDER BY t.created_at DESC, t.run_id DESC
+  LIMIT $8`;
 
 /** Progress checkpoint (§4.2 statement 2): merge the blob, advance the cursor, bump the version. */
 const UPDATE_TASK_PROGRESS = `UPDATE ${PLATFORM_DURABLE_TASKS}
@@ -293,6 +389,30 @@ const UPDATE_TASK_FAILURE_TERMINAL = `UPDATE ${PLATFORM_DURABLE_TASKS}
       task_version = task_version + 1,
       updated_at = CURRENT_TIMESTAMP
   WHERE tenant_id = $1 AND run_id = $2 AND task_version = $5
+  RETURNING${TASK_PROJECTION}`;
+
+/**
+ * The explicit operator requeue of a failed run (§4.4 recovery, the R13 re-entry).
+ *
+ * Only a `failed` row reaches this statement: the state is verified on the locked row, and the lock
+ * is held until the transaction commits, so no terminal state but `failed` can be re-entered by it.
+ * The statement writes the transition and nothing else — `state_payload` (the plan, the cursor, the
+ * drafted action and the immutable `request_id` the resumed step derives the SAME `effect_key`
+ * from), `current_step`, `retry_count`, `max_retries` and `correlation_id` are all left as the
+ * failed attempt left them, so the re-entered run resumes from the same verified cursor under its
+ * original effect identity. `last_error_class` / `error_details` are cleared because the row is
+ * queued again rather than failed, and the lease is released so a dead worker's lease cannot hold
+ * the next attempt back for its full TTL.
+ */
+const UPDATE_TASK_OPERATOR_REQUEUE = `UPDATE ${PLATFORM_DURABLE_TASKS}
+  SET state = 'queued',
+      last_error_class = NULL,
+      error_details = NULL,
+      lease_owner = NULL,
+      lease_expires_at = NULL,
+      task_version = task_version + 1,
+      updated_at = CURRENT_TIMESTAMP
+  WHERE tenant_id = $1 AND run_id = $2 AND task_version = $3
   RETURNING${TASK_PROJECTION}`;
 
 /**
@@ -553,6 +673,83 @@ export function assertLeaseHeld(state: DurableTaskState, lease_owner: string | u
 }
 
 /**
+ * Validates an ISO-8601 instant bound into a `TIMESTAMPTZ` parameter.
+ *
+ * An unparseable instant would be rejected by the planner with a bare driver error, and `created_at`
+ * is the ordering key the page is read by, so it is refused here with the field that is wrong.
+ */
+function assertInstant(value: unknown, column: string, code: string): string {
+  if (typeof value !== 'string' || Number.isNaN(Date.parse(value))) {
+    throw new Error(
+      `${code}: ${column} must be an ISO-8601 instant so the created_at bound of the page stays ` +
+        `comparable to the durable ordering key (${CODE_OWNER}).`,
+    );
+  }
+
+  return value;
+}
+
+/**
+ * Validates the agent filter of `listTasks()`.
+ *
+ * `agent_run_logs.agent_id` is a `VARCHAR(32)` identity. A blank value would match no step row and
+ * silently answer an empty page, and an oversized one cannot be a stored identity, so both are
+ * refused instead of being applied as a filter that cannot match anything.
+ */
+function assertAgentId(value: unknown): string {
+  if (typeof value !== 'string' || value.trim().length === 0 || value.length > 32) {
+    throw new Error(
+      'TASK_AGENT_ID_INVALID: agent_id must be the non-empty identity (at most 32 characters) of ' +
+        'an agent that holds a step row in agentos.agent_run_logs for the runs it acted in ' +
+        `(${CODE_OWNER}).`,
+    );
+  }
+
+  return value;
+}
+
+/**
+ * Parses the keyset cursor of `listTasks()`.
+ *
+ * A cursor is `<created_at>|<run_id>`: the exact key of the last row of the previous page, and both
+ * halves are validated in the strictest form this module publishes. The instant must be exactly the
+ * canonical ISO-8601 UTC string of the row, and the run id must be a non-empty `VARCHAR(64)` value
+ * that does not itself carry the separator — the first separator is where the cursor splits, so a
+ * run id containing one could not be published as a round-tripping cursor in the first place.
+ * Anything else is refused rather than applied as a "close enough" bound, because a wrong bound
+ * silently skips or repeats durable runs.
+ *
+ * @param cursor Candidate cursor, as handed back by a client.
+ * @returns The `(created_at, run_id)` pair the next page resumes strictly after.
+ * @throws Error `TASK_LIST_CURSOR_INVALID` when the cursor is not one this module published.
+ */
+function parseTaskListCursor(
+  cursor: unknown,
+): { readonly created_at: string; readonly run_id: string } {
+  const separator = typeof cursor === 'string' ? cursor.indexOf(CURSOR_SEPARATOR) : -1;
+  const created_at = separator < 0 ? '' : (cursor as string).slice(0, separator);
+  const run_id = separator < 0 ? '' : (cursor as string).slice(separator + 1);
+  const instant = new Date(created_at);
+
+  if (
+    separator < 0 ||
+    Number.isNaN(instant.getTime()) ||
+    instant.toISOString() !== created_at ||
+    run_id.trim().length === 0 ||
+    run_id.length > 64 ||
+    run_id.includes(CURSOR_SEPARATOR)
+  ) {
+    throw new Error(
+      `TASK_LIST_CURSOR_INVALID: ${String(cursor)} is not a task-page cursor; a cursor is ` +
+        '`<created_at>|<run_id>`, carrying the canonical ISO-8601 UTC instant and the run id of the ' +
+        `row the previous page ended on (${CODE_OWNER}).`,
+    );
+  }
+
+  return { created_at, run_id };
+}
+
+/**
  * Reads the SQLSTATE of a `pg` driver error, when the failure carries one.
  *
  * Only used to translate the two constraints an honest caller can actually hit — a unique violation
@@ -635,9 +832,10 @@ export function assertSingleRow(
  * Durable task persistence (implement/03 §1 DOMAIN 5, implement/04 §4.1-§4.2).
  *
  * The surface is the durable half of `IStatefulWorkflowEngine`: create the run's task row, read it
- * back, checkpoint progress, transition the lifecycle state, and record a classified failure. Every
- * method opens exactly one tenant-scoped transaction through `withTenantContext`, and every write
- * locks the row, compares `task_version` and increments it.
+ * back, page the tenant's rows for the operator read model, checkpoint progress, transition the
+ * lifecycle state, record a classified failure, and re-enter a failed run at the operator's explicit
+ * request. Every method opens exactly one tenant-scoped transaction through `withTenantContext`, and
+ * every write locks the row, compares `task_version` and increments it.
  *
  * The AUTH-4 pause and the human decision are NOT here: they must write `actions` and `approvals`
  * in the same transaction as the task, which is `ApprovalRepository`'s job.
@@ -732,6 +930,82 @@ export class DurableWorkflowRepository {
       const result = await client.query<DurableTaskRow>(SELECT_TASK, [tenant_id, run_id]);
 
       return result.rows[0] === undefined ? null : toDurableTaskRecord(result.rows[0]);
+    });
+  }
+
+  /**
+   * Reads one page of the tenant's durable runs, newest first (implement/04 §4.1, the R16 read model).
+   *
+   * The page is ordered and paged by `(created_at, run_id)` — the instant the row was created, never
+   * `updated_at`, so a run a worker keeps writing does not move under the cursor. `limit + 1` rows
+   * are read so `next_cursor` is `null` exactly when no further row exists; the cursor it publishes
+   * is the exact key of the last row of the page.
+   *
+   * Every filter is applied inside the tenant's transaction, so the run list a tenant reads is its
+   * own by predicate and by row-level security alike, and the `agent_id` filter reads
+   * `agentos.agent_run_logs` with the same binding.
+   *
+   * @param input Tenant, the optional state / agent / creation-window filters, page size and cursor.
+   * @returns The page, newest first, and the cursor of the following page (`null` at the end).
+   * @throws Error `TASK_STATE_INVALID` for a state outside the closed lifecycle.
+   * @throws Error `TASK_AGENT_ID_INVALID` for a blank or oversized agent filter.
+   * @throws Error `TASK_LIST_RANGE_INVALID` when `from` / `to` is not an ISO-8601 instant.
+   * @throws Error `TASK_LIST_LIMIT_INVALID` when `limit` is not an integer in 1..200.
+   * @throws Error `TASK_LIST_CURSOR_INVALID` when a cursor is not one this module published.
+   */
+  async listTasks(input: DurableTaskListInput): Promise<DurableTaskPage> {
+    assertIdentifier(input.tenant_id, 'tenant_id', 36, 'TASK_TENANT_ID_REQUIRED');
+
+    const state = input.state ?? null;
+
+    if (state !== null) {
+      assertTaskState(state);
+    }
+
+    const agent_id = input.agent_id === undefined ? null : assertAgentId(input.agent_id);
+    const from =
+      input.from === undefined
+        ? null
+        : assertInstant(input.from, 'from', 'TASK_LIST_RANGE_INVALID');
+    const to =
+      input.to === undefined ? null : assertInstant(input.to, 'to', 'TASK_LIST_RANGE_INVALID');
+    const limit = input.limit ?? DEFAULT_TASK_LIST_LIMIT;
+
+    if (
+      typeof limit !== 'number' ||
+      !Number.isInteger(limit) ||
+      limit < 1 ||
+      limit > MAX_TASK_LIST_LIMIT
+    ) {
+      throw new Error(
+        `TASK_LIST_LIMIT_INVALID: limit must be an integer between 1 and ${MAX_TASK_LIST_LIMIT} ` +
+          `(default ${DEFAULT_TASK_LIST_LIMIT}); received ${String(input.limit)}.`,
+      );
+    }
+
+    const cursor = input.cursor === undefined ? null : parseTaskListCursor(input.cursor);
+
+    return this.runInTenantTransaction(input.tenant_id, async (client) => {
+      const result = await client.query<DurableTaskRow>(SELECT_TASK_PAGE, [
+        input.tenant_id,
+        state,
+        from,
+        to,
+        agent_id,
+        cursor === null ? null : cursor.created_at,
+        cursor === null ? null : cursor.run_id,
+        limit + 1,
+      ]);
+      const rows = result.rows.slice(0, limit);
+      const last = rows[rows.length - 1];
+
+      return {
+        items: rows.map(toDurableTaskRecord),
+        next_cursor:
+          result.rows.length > limit && last !== undefined
+            ? `${last.created_at.toISOString()}${CURSOR_SEPARATOR}${last.run_id}`
+            : null,
+      };
     });
   }
 
@@ -968,6 +1242,68 @@ export class DurableWorkflowRepository {
   }
 
   /**
+   * Re-enters a FAILED run at the operator's explicit request (implement/04 §4.4 recovery, R13).
+   *
+   * This is the one transition that leaves a terminal state, and it is deliberately narrow: only
+   * `failed` may be re-entered, because it is the one terminal state that records an attempt which
+   * ended rather than a run that finished or was called off (`completed` / `stopped` are never
+   * revived). A queued, running or waiting run needs no requeue — it is already scheduled — and a
+   * parked one belongs to the approval bound to it.
+   *
+   * It is NOT the automatic retry of `recordFailure()`: no failure is classified, `retry_count` is
+   * left exactly as the failed attempt left it (an operator decision neither earns nor spends the
+   * automatic budget), and the checkpoint is untouched — the plan, the cursor, the drafted action and
+   * the immutable `request_id` stay stored, so the re-entered step derives the SAME `effect_key` and
+   * the effect reservation keeps the re-entry at-most-once. Only the failure classification and the
+   * lease are cleared, and the state moves to `queued` at `task_version + 1`.
+   *
+   * The row is locked and its state and version are verified before the single `UPDATE`, so two
+   * operators cannot both re-enter the same attempt: the loser matches 0 rows instead of reviving a
+   * run that is already scheduled again (INT-FR-ORC-OPTIMISTIC-CAS).
+   *
+   * @param input Tenant, run, why the operator re-enters the run, and the optional guard.
+   * @returns The row after the write: `queued`, at `task_version + 1`, on the same checkpoint.
+   * @throws Error `TASK_REQUEUE_REASON_REQUIRED` when the requeue names no reason.
+   * @throws Error `DURABLE_TASK_NOT_FOUND` when the tenant holds no task for the run.
+   * @throws Error `TASK_REQUEUE_NOT_FAILED` for a task in any state but `failed`.
+   * @throws Error `TASK_VERSION_INVALID` / `TASK_VERSION_CONFLICT` for a bad or stale guard.
+   */
+  async requeueFailed(input: RequeueFailedTaskInput): Promise<DurableTaskRecord> {
+    assertIdentifier(input.tenant_id, 'tenant_id', 36, 'TASK_TENANT_ID_REQUIRED');
+    assertIdentifier(input.run_id, 'run_id', 64, 'TASK_RUN_ID_REQUIRED');
+
+    if (typeof input.reason !== 'string' || input.reason.trim().length === 0) {
+      throw new Error(
+        'TASK_REQUEUE_REASON_REQUIRED: an operator requeue names why the failed run is re-entered; ' +
+          'without it neither the refusal diagnostic nor the audit record the caller appends could ' +
+          'explain the re-entry (implement/04 §4.1, §4.4).',
+      );
+    }
+
+    const guard =
+      input.expected_task_version === undefined
+        ? undefined
+        : { expected_task_version: input.expected_task_version };
+
+    return this.runInTenantTransaction(input.tenant_id, async (client) => {
+      const failed = this.assertRequeueable(
+        await this.lockWithin(client, input.tenant_id, input.run_id),
+        input.reason,
+      );
+      const base = assertGuard(failed, guard);
+
+      return assertSingleRow(
+        await client.query<DurableTaskRow>(UPDATE_TASK_OPERATOR_REQUEUE, [
+          input.tenant_id,
+          input.run_id,
+          base,
+        ]),
+        input.run_id,
+      );
+    });
+  }
+
+  /**
    * Locks the run's task inside the caller's transaction — the locking read of `lockDurableTask`.
    *
    * Every write path in this class and in `ApprovalRepository` starts with this lock and only then
@@ -1025,5 +1361,47 @@ export class DurableWorkflowRepository {
     }
 
     return locked;
+  }
+
+  /**
+   * Refuses an operator requeue of anything but a failed task, and returns the row that may be
+   * re-entered.
+   *
+   * The refusal names the state the run is actually in, because the operator's next move differs by
+   * state: an open run is already scheduled and needs no requeue, a parked one is owned by the
+   * approval bound to it, and a closed run (`completed` / `stopped`) is never revived. Only `failed`
+   * is re-enterable, and it is re-entered on the checkpoint it failed with — under the same
+   * `effect_key`, so the reservation still keeps the attempt at-most-once.
+   *
+   * @param locked Row read under `SELECT ... FOR UPDATE`, or `null` when the run has no task.
+   * @param reason Why the operator asked for the requeue; echoed when it is refused.
+   * @returns The same row, narrowed to a failed task.
+   * @throws Error `DURABLE_TASK_NOT_FOUND` / `TASK_REQUEUE_NOT_FAILED`.
+   */
+  private assertRequeueable(locked: DurableTaskRecord | null, reason: string): DurableTaskRecord {
+    if (locked === null) {
+      throw new Error(
+        'DURABLE_TASK_NOT_FOUND: this tenant holds no durable task for the run, so there is no ' +
+          'schedule of record to re-enter (implement/04 §4.2).',
+      );
+    }
+
+    if (locked.state === 'failed') {
+      return locked;
+    }
+
+    if (locked.state === 'awaiting_human') {
+      throw new Error(
+        `TASK_REQUEUE_NOT_FAILED: run ${locked.run_id} is parked in awaiting_human on approval ` +
+          `${String(locked.paused_for_approval_id)}, and only that bound human decision may move it; ` +
+          `refusing to re-enter it ('${reason}') (implement/04 §4.2 statement 4).`,
+      );
+    }
+
+    throw new Error(
+      `TASK_REQUEUE_NOT_FAILED: run ${locked.run_id} is ${locked.state}, and an operator requeue ` +
+        'only re-enters a FAILED run — an open run is already scheduled, and a closed one ' +
+        `(completed, stopped) is never revived ('${reason}') (implement/04 §4.1).`,
+    );
   }
 }

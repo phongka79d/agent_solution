@@ -10,10 +10,14 @@ export { insertEvidence } from './repositories/evidence.js';
 export { getWorkflow, insertWorkflow, updateWorkflowProgress } from './repositories/workflow.js';
 export {
   acquireSessionMutex,
+  acquireSessionTakeover,
   EFFECT_RESERVATION_TTL_SECONDS,
   effectReservationKey,
   rateLimitKey,
+  readSessionTakeover,
   releaseSessionMutex,
+  releaseSessionTakeover,
+  renewSessionTakeover,
   reserveEffectKey,
   SESSION_MUTEX_TTL_MS,
   SESSION_TAKEOVER_LOCK_TTL_MS,

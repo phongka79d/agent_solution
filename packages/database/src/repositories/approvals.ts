@@ -133,6 +133,40 @@ export interface ActionRecord {
   readonly created_at: string;
 }
 
+/**
+ * One approval with the prepared command it authorizes: the item the R14 queue renders and the
+ * object the §8.2.1 detail read returns.
+ *
+ * The `approval` half is the canonical record of implement/03 §1 DOMAIN 5, published with the digest
+ * of the bytes the human reviews; the `action` half is the row `approvals.action_id` names, so an
+ * item carries the command a decision would release and not only the ticket that gates it.
+ */
+export interface ApprovalDetailRecord {
+  readonly approval: ApprovalRecord;
+  readonly action: ActionRecord;
+}
+
+/**
+ * Input of `listPending()`: the tenant whose queue is read, the page size (default 50,
+ * maximum 200) and the resume cursor.
+ *
+ * There is no `status` member because the queue IS the `PENDING` projection (`06` §8.1.3 R14): the
+ * baseline supports no other filter, and a second value would be answered by a different read rather
+ * than by this one. An item a human parked is still undecided, so it is in this queue.
+ */
+export interface ApprovalListInput {
+  readonly tenant_id: string;
+  /** Cursor of the following page, exactly as this module published it (`<created_at>|<id>`). */
+  readonly cursor?: string;
+  readonly limit?: number;
+}
+
+/** One page of the PENDING queue: at most `limit` items and the cursor of the following page. */
+export interface ApprovalQueuePage {
+  readonly items: readonly ApprovalDetailRecord[];
+  readonly next_cursor: string | null;
+}
+
 /** Input of `pauseForApproval()`; the port's own parameter object (`IStatefulWorkflowEngine`). */
 export interface PauseForApprovalInput {
   readonly tenant_id: string;
@@ -240,6 +274,47 @@ const SELECT_ACTION_BY_EFFECT_KEY = `SELECT${ACTION_PROJECTION}
  */
 const SELECT_ACTION_BY_EFFECT_KEY_FOR_UPDATE = `${SELECT_ACTION_BY_EFFECT_KEY}
   FOR UPDATE`;
+
+/** Separator of the `<created_at>|<approval_id>` keyset cursor the queue read publishes. */
+const CURSOR_SEPARATOR = '|';
+
+/** Default page size of `listPending()`, and the largest page it accepts. */
+const DEFAULT_PENDING_LIMIT = 50;
+const MAX_PENDING_LIMIT = 200;
+
+/**
+ * One page of the PENDING queue (`06` §8.1.3 R14, implement/03 §1 DOMAIN 5 `approval_queue`).
+ *
+ * The predicate is `decision = 'PENDING'` alone and never `is_paused = FALSE`: a parked item is an
+ * UNDECIDED item, so it stays in the queue exactly once with `is_paused` set (SCR-003 renders it as
+ * PAUSED), and a row that leaves the queue is a row a human decided. The page is ordered by
+ * `(created_at, id)` - `id` breaks the tie between two rows created in the same statement - and the
+ * cursor resumes strictly after the last row of the previous page, so the keyset is total: a resumed
+ * page can neither repeat nor skip an item. The predicate leads with the
+ * `(tenant_id, decision, created_at)` prefix of `idx_approvals_pending`, and the statement reads the
+ * canonical table rather than the `approval_queue` view so the console and the resume path read one
+ * storage object.
+ */
+const SELECT_PENDING_APPROVALS = `SELECT${APPROVAL_PROJECTION}
+  FROM ${APPROVALS}
+  WHERE tenant_id = $1
+    AND decision = 'PENDING'
+    AND ($2::timestamptz IS NULL OR (created_at, id) > ($2::timestamptz, $3::uuid))
+  ORDER BY created_at ASC, id ASC
+  LIMIT $4`;
+
+/**
+ * The actions of one page of approvals, and the single action of the §8.2.1 detail read, read by the
+ * identities the page published.
+ *
+ * `approvals.action_id` is the tenant-scoped foreign key onto `actions (tenant_id, id)`
+ * (`migrations/0001_tenant_scoped_fks.sql`), so one statement under the page's own tenant predicate
+ * carries exactly the commands that page authorizes - no join, no second tenant scope, and no column
+ * published outside the projection the write path already reads back.
+ */
+const SELECT_ACTIONS_BY_IDS = `SELECT${ACTION_PROJECTION}
+  FROM ${ACTIONS}
+  WHERE tenant_id = $1 AND id = ANY($2::uuid[])`;
 
 /**
  * The `actions` row of the pause. `ON CONFLICT (tenant_id, effect_key) DO NOTHING` is the
@@ -1086,6 +1161,78 @@ function assertApprovalRow(result: QueryResult<ApprovalRow>, approval_id: string
   return toApprovalRecord(row);
 }
 
+/* ------------------------------------------------------------------------------------------------
+ * The console reads (implement/06 §8.1.3 R14, §8.2.1)
+ * ---------------------------------------------------------------------------------------------- */
+
+/**
+ * Parses the keyset cursor of `listPending()`.
+ *
+ * A cursor is `<created_at>|<approval_id>`, and both halves are validated in the strictest form this
+ * module publishes: the instant must be exactly the canonical ISO-8601 UTC string of the row this
+ * module handed out, and the identity must be its UUID. Anything else is refused rather than applied
+ * as a "close enough" bound, because a wrong bound silently skips or repeats PENDING rows
+ * (`06` §8.1.3 R14).
+ *
+ * @param cursor Candidate cursor, as handed back by a client.
+ * @returns The `(created_at, approval_id)` pair the next page resumes strictly after.
+ * @throws Error `APPROVAL_CURSOR_INVALID` when the cursor is not one this module published.
+ */
+function parsePendingCursor(
+  cursor: unknown,
+): { readonly created_at: string; readonly approval_id: string } {
+  const separator = typeof cursor === 'string' ? cursor.indexOf(CURSOR_SEPARATOR) : -1;
+  const created_at_text = separator < 0 ? '' : (cursor as string).slice(0, separator);
+  const approval_id = separator < 0 ? '' : (cursor as string).slice(separator + 1);
+  const created_at = new Date(created_at_text);
+
+  if (
+    separator < 0 ||
+    Number.isNaN(created_at.getTime()) ||
+    created_at.toISOString() !== created_at_text ||
+    !UUID.test(approval_id)
+  ) {
+    throw new Error(
+      `APPROVAL_CURSOR_INVALID: ${String(cursor)} is not a queue cursor; a cursor is ` +
+        '`<created_at>|<approval_id>`, carrying the canonical ISO-8601 UTC instant and the UUID of ' +
+        'the row the previous page ended on (implement/06 §8.1.3 R14).',
+    );
+  }
+
+  return { created_at: created_at_text, approval_id };
+}
+
+/**
+ * Publishes the action one approval authorizes out of the actions a read returned.
+ *
+ * `approvals.action_id` is a tenant-scoped foreign key onto `actions (tenant_id, id)`
+ * (`migrations/0001_tenant_scoped_fks.sql`), so an approval this tenant can read always names an
+ * action of the same tenant, and a read that cannot see it means the two halves of the binding do
+ * not agree: publishing the item without its command would show a gate nothing can be released
+ * through, so it is refused instead (implement/03 §1 DOMAIN 5).
+ *
+ * @param actions Actions the read returned, keyed by id.
+ * @param action_id Identity the approval binds.
+ * @returns The action row of that identity.
+ * @throws Error `APPROVAL_ACTION_MISSING` when the bound action is not visible in this tenant.
+ */
+function requireAction(
+  actions: ReadonlyMap<string, ActionRecord>,
+  action_id: string,
+): ActionRecord {
+  const action = actions.get(action_id);
+
+  if (action === undefined) {
+    throw new Error(
+      `APPROVAL_ACTION_MISSING: action ${action_id} is not visible in the tenant whose approval ` +
+        'binding names it, so the item cannot be published with the command it authorizes ' +
+        '(implement/03 §1 DOMAIN 5).',
+    );
+  }
+
+  return action;
+}
+
 /**
  * The AUTH-4 pause and the human decision (`agentos.approvals`, `agentos.actions`).
  *
@@ -1093,7 +1240,9 @@ function assertApprovalRow(result: QueryResult<ApprovalRow>, approval_id: string
  * gate, `claimApprovalAndResume()` decides it and moves the task. Both are idempotent where
  * idempotence is safe - a repeated pause of the same effect revision returns the row it already
  * committed instead of inserting a second authorization, and a repeated decision is refused
- * because a one-time authorization is never consumed twice.
+ * because a one-time authorization is never consumed twice. The two console reads, `getDetail()`
+ * (`06` §8.2.1) and `listPending()` (`06` §8.1.3 R14), expose the same rows without
+ * locking or writing anything, so SCR-003 renders the bytes a decision would be compared against.
  *
  * Every method opens exactly one tenant-scoped transaction through `withTenantContext`, locks the
  * task first and writes `actions`/`approvals` only after it, and restates `task_version` as the
@@ -1108,6 +1257,118 @@ export class ApprovalRepository {
    */
   constructor(runInTenantTransaction: TenantTransactionRunner = withTenantContext) {
     this.runInTenantTransaction = runInTenantTransaction;
+  }
+
+  /**
+   * Reads one approval with the action it authorizes (implement/06 §8.2.1 SCR-003 detail read).
+   *
+   * The row is read by `(tenant_id, id)` inside one tenant-scoped transaction, so an id of another
+   * tenant matches no row for the predicate and no row for row-level security alike: the caller
+   * reads `null` and the route answers `404`, never a redacted success. `payload_sha256` is derived
+   * from the stored `payload` exactly as `claimApprovalAndResume()` derives it, so the digest the
+   * operator reviews is the digest the decision compares.
+   *
+   * Nothing is locked and nothing is written - not even for the item's `PENDING` state - so this
+   * read of the console never blocks the resume path and never moves a row.
+   *
+   * @param tenant_id Tenant whose approval is read; also enforced by row-level security.
+   * @param approval_id The `approvals.id` of the queue item.
+   * @returns The approval with its action, or `null` when this tenant holds no such row.
+   * @throws Error `APPROVAL_TENANT_ID_REQUIRED` when the tenant is blank or padded.
+   * @throws Error `APPROVAL_ID_INVALID` when the id is not a UUID.
+   * @throws Error `APPROVAL_ACTION_MISSING` when the bound action is not visible in this tenant.
+   */
+  async getDetail(tenant_id: string, approval_id: string): Promise<ApprovalDetailRecord | null> {
+    assertIdentifier(tenant_id, 'tenant_id', 36, 'APPROVAL_TENANT_ID_REQUIRED');
+    const id = assertUuid(approval_id, 'approval_id', 'APPROVAL_ID_INVALID');
+
+    return this.runInTenantTransaction(tenant_id, async (client) => {
+      const result = await client.query<ApprovalRow>(SELECT_APPROVAL, [tenant_id, id]);
+      const [row] = result.rows;
+
+      if (row === undefined) {
+        return null;
+      }
+
+      const approval = toApprovalRecord(row);
+      const actions = await this.readActionsByIds(client, tenant_id, [approval.action_id]);
+
+      return { approval, action: requireAction(actions, approval.action_id) };
+    });
+  }
+
+  /**
+   * Reads one page of the PENDING approval queue, oldest first (implement/06 §8.1.3 R14).
+   *
+   * The page is the `approval_queue` projection of implement/03 §1 DOMAIN 5 read from the canonical
+   * `approvals` row, so the console and the resume path can never disagree about what is waiting: the
+   * predicate is `decision = 'PENDING'` alone, which keeps a paused-but-undecided item in the queue
+   * exactly once (`is_paused` set, `status` still `PENDING`) and drops a row the moment a human
+   * decides it. Ordering and paging are by `(created_at, id)`, the durable ordering key of the queue;
+   * the cursor resumes strictly after the last row of the previous page, and the page is read with
+   * one row more than requested so `next_cursor` is `null` exactly at the end of the queue.
+   *
+   * A tenant with no PENDING row reads an empty page instead of a fabricated item, and a tenant that
+   * is not the caller's binds a different transaction, so another tenant's queue is out of scope by
+   * predicate and by row-level security alike.
+   *
+   * @param input Tenant, page size (default 50, maximum 200) and the resume cursor.
+   * @returns The page, oldest first, each item carrying the action the approval authorizes.
+   * @throws Error `APPROVAL_TENANT_ID_REQUIRED` when the tenant is blank or padded.
+   * @throws Error `APPROVAL_LIMIT_INVALID` when `limit` is not an integer in 1..200.
+   * @throws Error `APPROVAL_CURSOR_INVALID` when the cursor is not one this module published.
+   * @throws Error `APPROVAL_ACTION_MISSING` when a listed approval's action is not visible.
+   */
+  async listPending(input: ApprovalListInput): Promise<ApprovalQueuePage> {
+    assertIdentifier(input.tenant_id, 'tenant_id', 36, 'APPROVAL_TENANT_ID_REQUIRED');
+    const limit = input.limit === undefined ? DEFAULT_PENDING_LIMIT : input.limit;
+
+    if (
+      typeof limit !== 'number' ||
+      !Number.isInteger(limit) ||
+      limit < 1 ||
+      limit > MAX_PENDING_LIMIT
+    ) {
+      throw new Error(
+        `APPROVAL_LIMIT_INVALID: limit must be an integer between 1 and ${MAX_PENDING_LIMIT} ` +
+          `(default ${DEFAULT_PENDING_LIMIT}); received ${String(input.limit)}.`,
+      );
+    }
+
+    const cursor = input.cursor === undefined ? null : parsePendingCursor(input.cursor);
+
+    return this.runInTenantTransaction(input.tenant_id, async (client) => {
+      const result = await client.query<ApprovalRow>(SELECT_PENDING_APPROVALS, [
+        input.tenant_id,
+        cursor === null ? null : cursor.created_at,
+        cursor === null ? null : cursor.approval_id,
+        limit + 1,
+      ]);
+      const rows = result.rows.slice(0, limit);
+      const last = rows[rows.length - 1];
+
+      if (last === undefined) {
+        return { items: [], next_cursor: null };
+      }
+
+      const actions = await this.readActionsByIds(
+        client,
+        input.tenant_id,
+        rows.map((row) => row.action_id),
+      );
+
+      return {
+        items: rows.map((row) => {
+          const approval = toApprovalRecord(row);
+
+          return { approval, action: requireAction(actions, approval.action_id) };
+        }),
+        next_cursor:
+          result.rows.length > limit
+            ? `${last.created_at.toISOString()}${CURSOR_SEPARATOR}${last.id}`
+            : null,
+      };
+    });
   }
 
   /**
@@ -1433,6 +1694,25 @@ export class ApprovalRepository {
     const [row] = result.rows;
 
     return row === undefined ? null : toApprovalRecord(row);
+  }
+
+  /**
+   * Reads the actions a page or a detail read published, within the transaction that read the
+   * approvals, so both halves of every item come from one tenant scope and one snapshot.
+   *
+   * The rows are keyed by id rather than joined, because `toActionRecord` reads the action
+   * projection in its own order and a joined row would have to restate every column of both halves.
+   */
+  private async readActionsByIds(
+    client: PoolClient,
+    tenant_id: string,
+    action_ids: readonly string[],
+  ): Promise<ReadonlyMap<string, ActionRecord>> {
+    const result = await client.query<ActionRow>(SELECT_ACTIONS_BY_IDS, [tenant_id, action_ids]);
+
+    return new Map(
+      result.rows.map((row): [string, ActionRecord] => [row.id, toActionRecord(row)]),
+    );
   }
 
   /**

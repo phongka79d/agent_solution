@@ -3,15 +3,10 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
 /**
- * Database-backed RLS rehearsal suite.
- *
- * The unit config (`vitest.config.ts`) excludes `src/rls.rehearsal.test.ts`
- * because it needs a real PostgreSQL instance; this config runs it after
- * `pnpm --filter @agentos/database db:migrate:rehearse` has applied the schema,
- * the composite tenant-scoped foreign keys, and the RLS policies, and has
- * created the `agentos_app` / `agentos_migrator` roles. Without `DATABASE_URL`
- * the file still runs: the pool fail-closed case executes and every database
- * case skips.
+ * Database-backed RLS policy suite. Migrations and tenant-scoped foreign keys must already
+ * be applied, and `DATABASE_URL` must use a non-bypassing application role.
+ * The privileged-fixture rehearsal in `src/rls.rehearsal.test.ts` runs separately
+ * using its own database configuration.
  */
 export default defineConfig({
   root: fileURLToPath(new URL('.', import.meta.url)),

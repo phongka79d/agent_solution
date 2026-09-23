@@ -2,25 +2,27 @@
  * @file The composition root: the one place where ports meet implementations (implement/02 §2,
  * `06` §10.1).
  *
- * Every binding is explicit, and a binding that does not exist is **not** substituted. A port with
- * no implementation in this build answers a typed `*_UNAVAILABLE` refusal at request time and is
- * named loudly at composition time, so an operator learns which capability is missing instead of
- * receiving a plausible-looking value the platform never observed. Nothing here decides business
- * policy: the reservation protocol, the approval compare-and-set, the evidence chain and the
- * process-event chain all remain with the repository that owns their table.
- *
- * The real runtime path this assembles is:
- *
- *     route -> authenticate -> port -> { orchestrator -> PEP -> skill registry -> adapter }
- *                                     -> durable repository -> connector registry
+ * Every binding is explicit. An absent implementation throws `UnboundPortError` and is named
+ * at composition time; no request receives a value the platform never observed. Reservation,
+ * approval and evidence rules remain with their owning repositories. The composed path currently
+ * reaches durable projections, identity lookup, and Redis takeover leases. Agent planning,
+ * policy evaluation and skill dispatch require a production orchestrator graph and remain unbound.
  */
 
 import { ConnectorRegistry, type EventAliasNormalizer, type HmacSha256Hex } from '@agentos/adapters';
 import {
+  createRuntimeRedisClient,
+  type RuntimeRedisClient,
+} from '@agentos/core-engine';
+import {
+  ApprovalRepository,
   AuditRepository,
   ConversationRepository,
   CustomerEventRepository,
+  DurableWorkflowRepository,
   EffectReservationRepository,
+  EvidenceRepository,
+  type RedisInjectedClient,
 } from '@agentos/database';
 
 import type {
@@ -41,10 +43,14 @@ import {
   type ChannelSecretStore,
 } from './adapters.js';
 import {
+  createApprovalReadPort,
   createConversationPort,
+  createDurableRunPort,
   createEffectGuard,
   createEventPort,
+  createIdentityPort,
   createReceiptPort,
+  createTakeoverLeasePort,
   systemClock,
   systemIdentifiers,
 } from './bindings.js';
@@ -52,10 +58,8 @@ import {
 /**
  * A capability this build does not bind.
  *
- * Raised when a route reaches a port whose implementation is absent — after planning, after policy
- * and after any reservation, so the refusal never leaves a half-applied effect behind. It is not a
- * fallback: no value is returned, nothing is cached, and the operator sees exactly which
- * capability is missing.
+ * Raised before the missing operation mutates durable state. No value is returned and no
+ * reservation is created on these paths; the gateway reports a typed refusal.
  */
 export class UnboundPortError extends Error {
   constructor(readonly port: string, readonly capability: string) {
@@ -81,6 +85,10 @@ export interface GatewayEnv {
   /** The deployment's ingress HMAC secret; the platform ingress signature falls back to it. */
   readonly WEBHOOK_HMAC_SECRET?: string;
   readonly READINESS_ATTEMPTS?: string;
+  readonly REDIS_HOST?: string;
+  readonly REDIS_PORT?: string;
+  readonly REDIS_PASSWORD?: string;
+  readonly REDIS_DB?: string;
 }
 
 /** The assembled gateway: the routes' runtime, the credential store and the derivation binding. */
@@ -127,6 +135,27 @@ function resolveSecrets(env: GatewayEnv): {
   };
 }
 
+/** Redis configuration is optional only when no Redis field is present (unit-test composition). */
+function redisConfiguration(env: GatewayEnv): {
+  readonly host: string;
+  readonly port: number;
+  readonly password: string;
+  readonly db: number;
+} | null {
+  const configured =
+    env.REDIS_HOST !== undefined ||
+    env.REDIS_PORT !== undefined ||
+    env.REDIS_PASSWORD !== undefined ||
+    env.REDIS_DB !== undefined;
+  if (!configured) return null;
+
+  const host = env.REDIS_HOST ?? '';
+  const password = env.REDIS_PASSWORD ?? '';
+  const port = Number.parseInt(env.REDIS_PORT ?? '6379', 10);
+  const db = Number.parseInt(env.REDIS_DB ?? '0', 10);
+  return { host, port, password, db };
+}
+
 /**
  * Assembles the durable gateway over the repositories that already own their tables.
  *
@@ -144,6 +173,8 @@ export function createGatewayComposition(
     readonly channelSecrets?: ChannelSecretStore;
     readonly hmac?: HmacSha256Hex;
     readonly connectors?: ConnectorRegistry;
+    /** Injected takeover store. The composition closes only clients it constructed itself. */
+    readonly redis?: RedisInjectedClient;
   },
 ): GatewayComposition {
   const { session_secret, platform_secret } = resolveSecrets(env);
@@ -152,47 +183,67 @@ export function createGatewayComposition(
   const conversationsRepository = new ConversationRepository();
   const eventsRepository = new CustomerEventRepository();
   const reservationsRepository = new EffectReservationRepository();
+  const workflowsRepository = new DurableWorkflowRepository();
+  const approvalsRepository = new ApprovalRepository();
+  const evidenceRepository = new EvidenceRepository();
   const auditRepository = new AuditRepository();
 
   const effectGuard = createEffectGuard(reservationsRepository);
+  const durableRuns = createDurableRunPort(
+    workflowsRepository,
+    evidenceRepository,
+    reservationsRepository,
+  );
+  const approvalReads = createApprovalReadPort(approvalsRepository);
+
+  let ownedRedis: RuntimeRedisClient | null = null;
+  const redisConfig = options?.redis === undefined ? redisConfiguration(env) : null;
+  if (options?.redis === undefined && redisConfig !== null) {
+    ownedRedis = createRuntimeRedisClient(redisConfig);
+  }
+  const redis = options?.redis ?? ownedRedis;
 
   const unbound_ports: string[] = [];
 
   /**
-   * The run port. `start` and the read side require the orchestrator's signal path, which this
-   * build does not assemble (no agent runtime, no context aggregator, no policy binding is
-   * composed), so every method refuses with the capability name instead of returning a fabricated
-   * run.
+   * The read model and verified operator requeue are repository-backed. Starting and reconciling a
+   * run still require the complete RevenueOrchestrator graph; P0 has no truthful agent/context/PEP
+   * runtime to bind, so those mutations remain explicit refusals.
    */
   const runs: RunPort = {
     start: async () => unbound('runs.start', 'the orchestrator signal path is not composed'),
-    read: async () => unbound('runs.read', 'the durable task projection is not composed'),
-    classifyRetry: async () => unbound('runs.classifyRetry', 'failure classification is not composed'),
-    retry: async () => unbound('runs.retry', 'the re-queue path is not composed'),
-    reconcile: async () => unbound('runs.reconcile', 'the reconciliation settlement is not composed'),
-    list: async () => unbound('runs.list', 'the run read model is not composed'),
+    ...durableRuns,
+    reconcile: async () =>
+      unbound(
+        'runs.reconcile',
+        'the orchestrator reconciliation/resume path is not composed',
+      ),
   };
-  unbound_ports.push('runs.start/read/classifyRetry/retry/reconcile/list');
+  unbound_ports.push('runs.start', 'runs.reconcile');
 
-  /**
-   * The approval port. The decision path is `claimApprovalAndResume` on the repository, but it
-   * needs the stored action draft that only an approval read can supply, and this build composes no
-   * approval read model — so the decision is refused rather than reconstructed from a guess.
-   */
+  /** Queue/detail are canonical PostgreSQL reads; a decision must resume through the orchestrator. */
   const approvals: ApprovalPort = {
-    list: async () => unbound('approvals.list', 'the approval queue projection is not composed'),
-    detail: async () => unbound('approvals.detail', 'the approval detail read is not composed'),
-    decide: async () => unbound('approvals.decide', 'the approval decision read model is not composed'),
+    ...approvalReads,
+    decide: async () =>
+      unbound(
+        'approvals.decide',
+        'the orchestrator approval resume path is not composed',
+      ),
   };
-  unbound_ports.push('approvals.list/detail/decide');
+  unbound_ports.push('approvals.decide');
 
-  const takeover: TakeoverLeasePort = {
-    acquire: async () => unbound('takeover.acquire', 'no lease store is bound in this build'),
-    renew: async () => unbound('takeover.renew', 'no lease store is bound in this build'),
-    release: async () => unbound('takeover.release', 'no lease store is bound in this build'),
-    holder: async () => unbound('takeover.holder', 'no lease store is bound in this build'),
-  };
-  unbound_ports.push('takeover.acquire/renew/release/holder');
+  const takeover: TakeoverLeasePort =
+    redis === null
+      ? {
+          acquire: async () => unbound('takeover.acquire', 'no Redis lease store is configured'),
+          renew: async () => unbound('takeover.renew', 'no Redis lease store is configured'),
+          release: async () => unbound('takeover.release', 'no Redis lease store is configured'),
+          holder: async () => unbound('takeover.holder', 'no Redis lease store is configured'),
+        }
+      : createTakeoverLeasePort(redis, systemClock);
+  if (redis === null) {
+    unbound_ports.push('takeover.acquire/renew/release/holder');
+  }
 
   /**
    * The telemetry stream. Nothing is instrumented in this build, so the subscription ends
@@ -222,10 +273,7 @@ export function createGatewayComposition(
     }),
   };
 
-  const identity: IdentityPort = {
-    resolveCustomer: async () => unbound('identity.resolveCustomer', 'identity resolution is not composed'),
-  };
-  unbound_ports.push('identity.resolveCustomer');
+  const identity: IdentityPort = createIdentityPort();
 
   const audit: GatewayAuditPort = {
     record: async (input) => {
@@ -297,7 +345,9 @@ export function createGatewayComposition(
     normalizer: createCanonicalEventNormalizer(),
     unbound: unbound_ports,
     close: async () => {
-      await Promise.resolve();
+      if (ownedRedis !== null) {
+        await ownedRedis.quit();
+      }
     },
   };
 }

@@ -52,6 +52,12 @@ export const DEPENDENCIES: readonly string[] = [
 export function buildServer(deps: RouteDependencies): FastifyInstance {
   const app = Fastify({ logger: false });
 
+  if (deps.close !== undefined) {
+    app.addHook('onClose', async () => {
+      await deps.close?.();
+    });
+  }
+
   // A refusal raised before a handler runs — the authentication hook, a request parser — must leave
   // in the same envelope as one raised inside a handler. Without this, a thrown `preHandler` would
   // be answered with Fastify's own error body and an unauthenticated delivery would read as a

@@ -10,6 +10,7 @@ export { assertOrchestratorBrokered } from './orchestrator/agent-boundary.js';
 export * from './durability/canonical-json.js';
 export * from './durability/effect-guard.js';
 export * from './durability/evidence.js';
+export * from './durability/redis-client.js';
 export * from './policy/index.js';
 // The in-memory guard is the canonical `IEffectGuard` bound to a Map, so a route or connector test
 // exercises the real effect-key derivation, fingerprinting and reservation protocol instead of a
