@@ -110,6 +110,10 @@ const KNOWN_KEYS = new Set([
   'CORS_ALLOWED_ORIGINS',
   'LOG_LEVEL',
   'MOCK_ERP_ENABLED',
+  // The shared secret the platform signs API-001 calls with while the mock system of record is
+  // enabled. It is a local/CI credential, so it belongs in the same placeholder scan: a managed
+  // profile that somehow carries the mock secret must fail rather than sign against a fixture.
+  'MOCK_SECRET_KEY',
   'STORAGE_PROVIDER',
   'PAYPAL_MODE',
   'LINE_CHANNEL_ID',

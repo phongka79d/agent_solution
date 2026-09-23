@@ -11,6 +11,18 @@ export * from './durability/canonical-json.js';
 export * from './durability/effect-guard.js';
 export * from './durability/evidence.js';
 export * from './policy/index.js';
+// The in-memory guard is the canonical `IEffectGuard` bound to a Map, so a route or connector test
+// exercises the real effect-key derivation, fingerprinting and reservation protocol instead of a
+// hand-rolled double. `EffectReservationStatus` is deliberately not re-exported: `contracts/types.ts`
+// already owns that name with the full stored vocabulary.
+export {
+  MemoryEffectGuard,
+  EFFECT_RESERVATION_WINDOW_MS,
+} from './effects/memory-effect-guard.js';
+export type {
+  MemoryEffectGuardOptions,
+  EffectReservationRow,
+} from './effects/memory-effect-guard.js';
 
 /** Package identity surfaced by `apps/api` and `apps/worker` health payloads. */
 export const packageName = '@agentos/core-engine';

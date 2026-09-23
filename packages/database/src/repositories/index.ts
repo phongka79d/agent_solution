@@ -59,3 +59,23 @@ export type {
   ExecutionStatus,
   ImmutableEvidenceRecord,
 } from './audit-evidence.js';
+export { ConversationRepository } from './conversations.js';
+export type {
+  AppendConversationMessageInput,
+  BindOrCreateConversationInput,
+  BoundConversationRecord,
+  ConversationMessageRecord,
+  ConversationMessageScope,
+  ConversationRecord,
+  ConversationState,
+  MessageSenderType,
+} from './conversations.js';
+export { CustomerEventRepository } from './customer-events.js';
+export type {
+  AppendCustomerEventInput,
+  CustomerEventAppendResult,
+  CustomerEventReceipt,
+  CustomerEventTimeline,
+  CustomerEventTimelineItem,
+  CustomerEventTimelineQuery,
+} from './customer-events.js';

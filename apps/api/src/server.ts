@@ -7,7 +7,18 @@ import { packageName as databasePackageName } from '@agentos/database';
 import { packageName as skillsPackageName } from '@agentos/skills';
 import Fastify, { type FastifyInstance } from 'fastify';
 
-import { registerRoutes } from './routes/index.js';
+import { registerRoutes, type RouteDependencies } from './routes/index.js';
+import { createGatewayComposition } from './runtime/composition.js';
+import {
+  GatewayFailureError,
+  correlationIdOf,
+  failureFor,
+  replyFailure,
+  toErrorResponse,
+} from './gateway/http.js';
+import type { GatewayFailure } from './gateway/contracts.js';
+import { installRawBodyPreservation } from './gateway/raw-body.js';
+import { registerWebSocketStream } from './gateway/websocket.js';
 
 export const DEFAULT_PORT = 4000;
 
@@ -28,8 +39,36 @@ export const DEPENDENCIES: readonly string[] = [
   databasePackageName,
 ];
 
-export function buildServer(): FastifyInstance {
+/**
+ * Builds the HTTP surface.
+ *
+ * The route groups are registered with the injected runtime, credential store and canonical-event
+ * normaliser rather than with ambient state, so a server can only be built once the durable
+ * bindings exist — a missing binding fails here, at composition, and never at request time.
+ *
+ * @param deps The gateway composition: runtime, credentials and the connector-layer derivation.
+ * @returns A Fastify instance answering `/health` and the `/api/v1` surface.
+ */
+export function buildServer(deps: RouteDependencies): FastifyInstance {
   const app = Fastify({ logger: false });
+
+  // A refusal raised before a handler runs — the authentication hook, a request parser — must leave
+  // in the same envelope as one raised inside a handler. Without this, a thrown `preHandler` would
+  // be answered with Fastify's own error body and an unauthenticated delivery would read as a
+  // server fault instead of a 401.
+  app.setErrorHandler((error, request, reply) => {
+    const correlation_id = correlationIdOf(request, deps.runtime);
+    const client_error = clientFailure(error);
+
+    if (client_error !== undefined) {
+      return reply
+        .status(client_error.http_status)
+        .header('content-type', 'application/json; charset=utf-8')
+        .send(toErrorResponse(client_error, correlation_id));
+    }
+
+    return replyFailure(reply, error, correlation_id);
+  });
 
   app.get('/health', async () => ({
     status: 'ok',
@@ -37,9 +76,46 @@ export function buildServer(): FastifyInstance {
     dependencies: [...DEPENDENCIES],
   }));
 
-  registerRoutes(app);
+  // R04 verifies the signature over the bytes the caller actually sent, so the preserving parser is
+  // installed by the composition root before any route can read a delivery (`06` §8.1.1).
+  installRawBodyPreservation(app);
+
+  // R10 is a WebSocket operation (`06` §1.1, §8.1.2) and therefore never a Fastify route: its
+  // handshake rides the HTTP server Fastify already owns, so it is mounted here beside the routes.
+  registerWebSocketStream(app, { runtime: deps.runtime, credentials: deps.credentials });
+
+  registerRoutes(app, deps);
 
   return app;
+}
+
+/**
+ * Maps an error the framework raised for a malformed delivery onto the gateway's vocabulary.
+ *
+ * Fastify reports an unparseable JSON body, an oversized delivery and similar transport-level
+ * problems as its own 4xx errors. They belong to the caller, so they are answered
+ * `VALIDATION_FAILED` with the reason kept in `details` — never as a server fault, and never with
+ * the parser's raw text.
+ *
+ * @param error The thrown value.
+ * @returns The refusal to answer with, or `undefined` when the error is not a framework client error.
+ */
+function clientFailure(error: unknown): GatewayFailure | undefined {
+  if (error instanceof GatewayFailureError) return undefined;
+
+  const status = (error as { readonly statusCode?: unknown }).statusCode;
+  if (typeof status !== 'number' || status < 400 || status >= 500) return undefined;
+
+  // A delivery rejected for its size is one condition, whether the gateway's own parser caught it or
+  // the framework's body limit did, so both are named the same in `details`.
+  const oversized =
+    status === 413 ||
+    (error instanceof Error && error.message === 'RAW_BODY_TOO_LARGE') ||
+    (error as { readonly code?: unknown }).code === 'FST_ERR_CTP_BODY_TOO_LONG';
+
+  return failureFor('VALIDATION_FAILED', 'the delivery could not be read as a request', {
+    reason: oversized ? 'RAW_BODY_TOO_LARGE' : 'MALFORMED_REQUEST',
+  });
 }
 
 /**
@@ -249,7 +325,14 @@ export async function startServer(): Promise<FastifyInstance> {
   );
   const { realProbes } = await loadModule<ProbesModule>(probesUrl());
 
-  const app = buildServer();
+  const composition = createGatewayComposition(process.env);
+  const app = buildServer(composition);
+
+  // Every capability this build does not bind is named at boot rather than discovered by an
+  // operator during an incident. A route that needs one answers 503 `UNBOUND_PORT`.
+  for (const port of composition.unbound) {
+    process.stdout.write(`api: capability not bound in this build: ${port}\n`);
+  }
   const port = Number.parseInt(process.env.PORT ?? '', 10) || DEFAULT_PORT;
 
   app.get('/ready', async (_request, reply) => {
