@@ -7,10 +7,20 @@ import type {
   RedisInjectedClient,
 } from '@agentos/database';
 
+import type { IEffectGuard } from '@agentos/core-engine/contracts';
+import type { TenantTransactionRunner } from '@agentos/database';
+
+/**
+ * The `pg` client handed to a tenant transaction, named through the runner's own signature so this
+ * workspace does not need `pg`'s types to script one.
+ */
+type ScriptedClient = Parameters<Parameters<TenantTransactionRunner>[1]>[0];
+
 import {
   createApprovalReadPort,
   createDurableRunPort,
   createIdentityPort,
+  createStartRunPort,
   createTakeoverLeasePort,
 } from './bindings.js';
 
@@ -18,6 +28,9 @@ const TENANT = '11111111-1111-4111-8111-111111111111';
 const RUN = 'run-a';
 const EFFECT_KEY = 'effect-1';
 const NOW = '2026-09-23T00:00:00.000Z';
+/** Real SHA-256 digests: the reservation repository validates the fingerprint's shape. */
+const DIGEST_A = 'a'.repeat(64);
+const DIGEST_B = 'b'.repeat(64);
 
 function task(overrides: Partial<DurableTaskRecord> = {}): DurableTaskRecord {
   return {
@@ -386,5 +399,216 @@ describe('createIdentityPort', () => {
       }),
     ).resolves.toEqual({ customer_id: null, verdict: 'UNRESOLVED' });
     expect(lookups).toBe(0);
+  });
+});
+
+describe('createStartRunPort', () => {
+  const guard: IEffectGuard = {
+    computeEffectKey: () => 'effect-care-1',
+    computeRequestFingerprint: (payload) => {
+      return (payload as { message?: string })?.message === 'different' ? DIGEST_B : DIGEST_A;
+    },
+    reserve: async () => ({ kind: 'RESERVED' as const }),
+    resolve: async () => {},
+    reconcile: async () => ({ outcome: 'INDETERMINATE' as const }),
+  };
+
+  function createTestRunner(handler: (sql: string) => Record<string, unknown>[]) {
+    const client = {
+      async query<R extends Record<string, unknown>>(sql: string): Promise<{ rows: R[]; rowCount: number; command: string; oid: number; fields: unknown[] }> {
+        const rows = handler(sql) as R[];
+        return { rows, rowCount: rows.length, command: '', oid: 0, fields: [] };
+      },
+    } as unknown as ScriptedClient;
+
+    return async <T>(_tenant: string, work: (c: ScriptedClient) => Promise<T>): Promise<T> => {
+      return work(client);
+    };
+  }
+
+  it('admits a new run on first delivery and returns task identity', async () => {
+    const runner = createTestRunner((sql) => {
+      if (sql.includes('INSERT INTO agentos.effect_reservations')) {
+        return [
+          {
+            tenant_id: TENANT,
+            effect_key: 'effect-care-1',
+            request_id: 'req-1',
+            request_fingerprint: DIGEST_A,
+            run_id: 'minted-run-1',
+            step_index: 0,
+            skill_id: 'conversation.turn',
+            status: 'RESERVED',
+            response_receipt: null,
+            reserved_at: new Date(),
+            resolved_at: null,
+            expires_at: new Date(Date.now() + 100000),
+            expired: false,
+          },
+        ];
+      }
+      if (sql.includes('INSERT INTO agentos.platform_durable_tasks')) {
+        return [
+          {
+            tenant_id: TENANT,
+            run_id: 'minted-run-1',
+            correlation_id: 'corr-1',
+            current_step: 0,
+            state: 'queued',
+            task_version: 1,
+            retry_count: 0,
+            max_retries: 3,
+            last_error_class: null,
+            last_error_details: null,
+            lease_owner: null,
+            lease_expires_at: null,
+            state_payload: {},
+            created_at: new Date(),
+            updated_at: new Date(),
+          },
+        ];
+      }
+      return [];
+    });
+
+    const port = createStartRunPort({
+      guard,
+      workflows: { getTask: async () => null },
+      ids: () => 'minted-run-1',
+      runner,
+    });
+
+    const started = await port.start({
+      tenant_id: TENANT,
+      correlation_id: 'corr-1',
+      request_id: 'req-1',
+      source_channel: 'WEB_CHAT',
+      event_type: 'message.received',
+      session_id: 'session-1',
+      channel_type: 'WEB_CHAT',
+      payload: { message: 'hello', conversation_id: 'conv-1' },
+    });
+
+    expect(started).toEqual({
+      run_id: 'minted-run-1',
+      task_version: 1,
+      correlation_id: 'corr-1',
+      lifecycle_state: 'queued',
+    });
+  });
+
+  it('returns existing task identity on REPLAY / IN_FLIGHT duplicate', async () => {
+    const runner = createTestRunner((sql) => {
+      if (sql.includes('INSERT INTO agentos.effect_reservations')) {
+        return []; // conflict
+      }
+      if (sql.includes('FOR UPDATE')) {
+        return [
+          {
+            tenant_id: TENANT,
+            effect_key: 'effect-care-1',
+            request_id: 'req-1',
+            request_fingerprint: DIGEST_A,
+            run_id: 'existing-run-id',
+            step_index: 0,
+            skill_id: 'conversation.turn',
+            status: 'RESERVED',
+            response_receipt: null,
+            reserved_at: new Date(),
+            resolved_at: null,
+            expires_at: new Date(Date.now() + 100000),
+            expired: false,
+          },
+        ];
+      }
+      return [];
+    });
+
+    const port = createStartRunPort({
+      guard,
+      workflows: {
+        getTask: async (_tenant, runId) => {
+          return task({
+            run_id: runId,
+            task_version: 2,
+            correlation_id: 'orig-corr',
+            state: 'running',
+          });
+        },
+      },
+      ids: () => 'unused-run-id',
+      runner,
+    });
+
+    const started = await port.start({
+      tenant_id: TENANT,
+      correlation_id: 'corr-2',
+      request_id: 'req-1',
+      source_channel: 'WEB_CHAT',
+      event_type: 'message.received',
+      session_id: 'session-1',
+      channel_type: 'WEB_CHAT',
+      payload: { message: 'hello', conversation_id: 'conv-1' },
+    });
+
+    expect(started).toEqual({
+      run_id: 'existing-run-id',
+      task_version: 2,
+      correlation_id: 'orig-corr',
+      lifecycle_state: 'running',
+    });
+  });
+
+  it('throws IDEMPOTENCY_CONFLICT on payload conflict', async () => {
+    const runner = createTestRunner((sql) => {
+      if (sql.includes('INSERT INTO agentos.effect_reservations')) {
+        return [];
+      }
+      if (sql.includes('FOR UPDATE')) {
+        return [
+          {
+            tenant_id: TENANT,
+            effect_key: 'effect-care-1',
+            request_id: 'req-1',
+            request_fingerprint: DIGEST_A, // existing was fingerprint-care-1
+            run_id: 'existing-run-id',
+            step_index: 0,
+            skill_id: 'conversation.turn',
+            status: 'RESERVED',
+            response_receipt: null,
+            reserved_at: new Date(),
+            resolved_at: null,
+            expires_at: new Date(Date.now() + 100000),
+            expired: false,
+          },
+        ];
+      }
+      return [];
+    });
+
+    const port = createStartRunPort({
+      guard,
+      workflows: { getTask: async () => null },
+      ids: () => 'minted-run-2',
+      runner,
+    });
+
+    await expect(
+      port.start({
+        tenant_id: TENANT,
+        correlation_id: 'corr-different',
+        request_id: 'req-1',
+        source_channel: 'WEB_CHAT',
+        event_type: 'message.received',
+        session_id: 'session-1',
+        channel_type: 'WEB_CHAT',
+        payload: { message: 'different', conversation_id: 'conv-1' },
+      }),
+    ).rejects.toMatchObject({
+      failure: {
+        error_code: 'IDEMPOTENCY_CONFLICT',
+        http_status: 409,
+      },
+    });
   });
 });

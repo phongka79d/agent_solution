@@ -7,9 +7,25 @@
  * this package publishes as a type-only entry point.
  */
 
+export {
+  admitCareTurn,
+  CONVERSATION_TURN_SKILL,
+} from './run-admission.js';
+export type {
+  AdmitCareTurnInput,
+  AdmissionOutcome,
+} from './run-admission.js';
+
+export {
+  insertReservationRow,
+  lockReservationRow,
+  insertEffectReservation,
+  lockEffectReservation,
+} from './effect-reservations.js';
 export { EffectReservationRepository } from './effect-reservations.js';
 export type { TenantTransactionRunner } from './effect-reservations.js';
 export { DurableWorkflowRepository } from './durable-workflows.js';
+export { insertDurableTask } from './durable-workflows.js';
 export type {
   CreateDurableTaskInput,
   ClaimNextQueuedTaskInput,

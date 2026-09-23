@@ -161,8 +161,10 @@ export function registerConversationRoutes(
 
         const message = requiredString(body, 'message', MESSAGE_MAX_LENGTH);
         const idempotency_key = requiredString(body, 'idempotency_key', IDEMPOTENCY_KEY_MAX_LENGTH);
-        if (body?.module !== 'support') {
-          fail('CAPABILITY_NOT_ENABLED', 'only Customer Care turns are enabled');
+        const rawModule = body?.module;
+        const normalizedModule = rawModule === undefined || rawModule === 'auto' ? 'support' : rawModule;
+        if (normalizedModule !== 'support') {
+          fail('CAPABILITY_NOT_ENABLED', 'only Customer Care support turns are enabled');
         }
 
         const conversation = await runtime.conversations.get(principal.tenant_id, conversation_id);
@@ -202,7 +204,8 @@ export function registerConversationRoutes(
         });
         const request_fingerprint = runtime.effects.computeRequestFingerprint({
           message,
-          module: body?.module ?? null,
+          conversation_id,
+          module: normalizedModule,
           attachments: body?.attachments ?? null,
         });
 
@@ -245,7 +248,7 @@ export function registerConversationRoutes(
           payload: {
             message,
             conversation_id,
-            ...(body?.module === undefined ? {} : { module: body.module }),
+            module: normalizedModule,
             ...(body?.attachments === undefined ? {} : { attachments: [...body.attachments] }),
           },
         });

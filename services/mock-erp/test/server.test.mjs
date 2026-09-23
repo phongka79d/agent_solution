@@ -288,3 +288,50 @@ test('an unscoped read is refused instead of answering for an unnamed tenant', a
     server.close();
   }
 });
+
+test('orders status returns documented order DTO or indistinguishable 404 for unknown/wrong customer', async () => {
+  const server = await start();
+  const careTenant = '11111111-1111-1111-1111-111111111111';
+  try {
+    const success = await post(
+      server,
+      '/api/v1/orders/status',
+      { key: 'ORD-A-1' },
+      { tenant: careTenant },
+    );
+    assert.equal(success.status, 200);
+    assert.equal(typeof success.body.snapshot_at, 'string');
+    assert.equal(success.body.order_id, 'ORD-A-1');
+    assert.equal(success.body.customer_id, 'aaaaaaaa-0000-4000-8000-00000000000a');
+    assert.equal(success.body.status, 'SHIPPED');
+
+    const unknownRef = await post(
+      server,
+      '/api/v1/orders/status',
+      { key: 'ORD-UNKNOWN-999' },
+      { tenant: careTenant },
+    );
+    assert.equal(unknownRef.status, 404);
+    assert.deepEqual(unknownRef.body, { code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE' });
+
+    const unknownTenant = await post(
+      server,
+      '/api/v1/orders/status',
+      { key: 'ORD-A-1' },
+      { tenant: '99999999-9999-4999-8999-999999999999' },
+    );
+    assert.equal(unknownTenant.status, 404);
+    assert.deepEqual(unknownTenant.body, { code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE' });
+
+    const wrongCustomer = await post(
+      server,
+      '/api/v1/orders/status',
+      { key: 'ORD-A-1', customer_id: 'wrong-customer-id' },
+      { tenant: careTenant },
+    );
+    assert.equal(wrongCustomer.status, 404);
+    assert.deepEqual(wrongCustomer.body, { code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE' });
+  } finally {
+    server.close();
+  }
+});

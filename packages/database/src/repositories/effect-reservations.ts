@@ -276,6 +276,93 @@ function serializeReceipt(receipt: unknown): string | null {
  *    the row primitives the core-engine port declares, sharing the same statements as the methods
  *    above so there is exactly one implementation of each transition.
  */
+/**
+ * Inserts one reservation row within an existing client transaction.
+ * Returns null if the reservation key already exists (ON CONFLICT DO NOTHING).
+ *
+ * @param client PostgreSQL client in an active transaction.
+ * @param input Reservation request.
+ * @param request_fingerprint Normalized request fingerprint.
+ * @returns The inserted reservation record or null.
+ */
+export async function insertReservationRow(
+  client: PoolClient,
+  input: EffectReservationRequest,
+  request_fingerprint?: string,
+): Promise<EffectReservationRecord | null> {
+  assertEffectKey(input.effect_key);
+  const fingerprint = request_fingerprint ?? normalizeFingerprint(input.request_fingerprint);
+
+  const params: unknown[] = [
+    input.tenant_id,
+    input.effect_key,
+    input.request_id,
+    fingerprint,
+    input.run_id,
+    input.step_index,
+    input.skill_id,
+  ];
+  let statement = INSERT_RESERVATION;
+
+  if (input.expires_at !== undefined) {
+    statement = INSERT_RESERVATION_WITH_EXPIRY;
+    params.push(input.expires_at);
+  }
+
+  try {
+    const result = await client.query<EffectReservationRow>(statement, params);
+    const row = result.rows[0];
+
+    return row === undefined ? null : toRecord(row);
+  } catch (error) {
+    const code =
+      typeof error === 'object' && error !== null
+        ? (error as { code?: unknown }).code
+        : undefined;
+
+    if (code === '23505') {
+      const constraint = (error as { constraint?: unknown }).constraint;
+
+      throw new Error(
+        'EFFECT_RESERVATION_IDENTITY_IN_USE: the inbound request identity ' +
+          `(tenant_id, request_id, skill_id, step_index) is already bound to another effect key` +
+          `${typeof constraint === 'string' ? ` (constraint ${constraint})` : ''}; a second action ` +
+          'revision of the same inbound request cannot be reserved (implement/03 §1 DOMAIN 5).',
+        { cause: error },
+      );
+    }
+
+    throw error;
+  }
+}
+
+export const insertEffectReservation = insertReservationRow;
+
+/**
+ * Locks one reservation row FOR UPDATE within an existing client transaction.
+ *
+ * @param client PostgreSQL client in an active transaction.
+ * @param tenant_id Tenant identifier.
+ * @param effect_key Effect key.
+ * @returns The locked reservation record, or null if not found.
+ */
+export async function lockReservationRow(
+  client: PoolClient,
+  tenant_id: string,
+  effect_key: string,
+): Promise<EffectReservationRecord | null> {
+  assertEffectKey(effect_key);
+  const result = await client.query<EffectReservationRow>(SELECT_RESERVATION_FOR_UPDATE, [
+    tenant_id,
+    effect_key,
+  ]);
+  const row = result.rows[0];
+
+  return row === undefined ? null : toRecord(row);
+}
+
+export const lockEffectReservation = lockReservationRow;
+
 export class EffectReservationRepository {
   private readonly runInTenantTransaction: TenantTransactionRunner;
 
@@ -435,9 +522,7 @@ export class EffectReservationRepository {
     const request_fingerprint = normalizeFingerprint(input.request_fingerprint);
 
     return this.runInTenantTransaction(input.tenant_id, async (client) => {
-      const row = await this.insertWithin(client, input, request_fingerprint);
-
-      return row === null ? null : toRecord(row);
+      return insertReservationRow(client, input, request_fingerprint);
     });
   }
 
@@ -518,50 +603,8 @@ export class EffectReservationRepository {
     client: PoolClient,
     input: EffectReservationRequest,
     request_fingerprint: string,
-  ): Promise<EffectReservationRow | null> {
-    const params: unknown[] = [
-      input.tenant_id,
-      input.effect_key,
-      input.request_id,
-      request_fingerprint,
-      input.run_id,
-      input.step_index,
-      input.skill_id,
-    ];
-    let statement = INSERT_RESERVATION;
-
-    if (input.expires_at !== undefined) {
-      statement = INSERT_RESERVATION_WITH_EXPIRY;
-      params.push(input.expires_at);
-    }
-
-    try {
-      const result = await client.query<EffectReservationRow>(statement, params);
-
-      return result.rows[0] ?? null;
-    } catch (error) {
-      // 23505 unique_violation is the only way this insert can lose an argument beyond the key
-      // conflict the ON CONFLICT clause absorbs: the inbound request identity is already bound to a
-      // different effect key (uq_effect_reservation_request), which this keyspace forbids.
-      const code =
-        typeof error === 'object' && error !== null
-          ? (error as { code?: unknown }).code
-          : undefined;
-
-      if (code === '23505') {
-        const constraint = (error as { constraint?: unknown }).constraint;
-
-        throw new Error(
-          'EFFECT_RESERVATION_IDENTITY_IN_USE: the inbound request identity ' +
-            `(tenant_id, request_id, skill_id, step_index) is already bound to another effect key` +
-            `${typeof constraint === 'string' ? ` (constraint ${constraint})` : ''}; a second action ` +
-            'revision of the same inbound request cannot be reserved (implement/03 §1 DOMAIN 5).',
-          { cause: error },
-        );
-      }
-
-      throw error;
-    }
+  ): Promise<EffectReservationRecord | null> {
+    return insertReservationRow(client, input, request_fingerprint);
   }
 
   /**

@@ -161,6 +161,24 @@ jobs:
         env:
           DATABASE_URL: postgresql://agentos_app:agentos_app_password@127.0.0.1:5432/agent_os_rehearsal
         run: pnpm test:rls-policies
+      # The P1 Customer Care path has no skip path either: it drives the gateway,
+      # the durable task store, the skill runtime and the evidence/audit writers
+      # against the rehearsed schema, and fails when a prerequisite is missing.
+      # The host smokes it drives are built only implicit in job 1, so this job
+      # builds the workspaces it loads before running it.
+      - name: Build the workspaces the Care path smoke loads
+        run: pnpm build
+      - name: Verify the P1 Customer Care execution path end to end
+        env:
+          APP_ENV: ci
+          NODE_ENV: test
+          DATABASE_URL: postgresql://agentos_app:agentos_app_password@127.0.0.1:5432/agent_os_rehearsal
+          CARE_TENANT_IDS: 11111111-1111-1111-1111-111111111111
+          SESSION_SECRET: ci-session-secret-0000000000
+          PLATFORM_SECRET: ci-platform-secret-0000000
+          AUDIT_HMAC_SECRET: ci-audit-hmac-secret-000000
+          MOCK_SECRET_KEY: ci-mock-erp-shared-secret
+        run: pnpm test:integration
 
   adversarial-and-security-tests:
     name: 4. Adversarial Security and Governance Tests

@@ -896,6 +896,71 @@ export function assertSingleRow(
 }
 
 /**
+ * Inserts one durable task row within an existing client transaction.
+ *
+ * @param client PostgreSQL client in an active transaction.
+ * @param input Task properties.
+ * @returns The inserted row at task_version 1.
+ */
+export async function insertDurableTask(
+  client: PoolClient,
+  input: CreateDurableTaskInput,
+): Promise<DurableTaskRecord> {
+  assertIdentifier(input.tenant_id, 'tenant_id', 36, 'TASK_TENANT_ID_REQUIRED');
+  assertIdentifier(input.run_id, 'run_id', 64, 'TASK_RUN_ID_REQUIRED');
+  assertIdentifier(input.correlation_id, 'correlation_id', 64, 'TASK_CORRELATION_ID_REQUIRED');
+
+  const state = input.state ?? 'queued';
+  assertTaskState(state);
+
+  const current_step = input.current_step ?? 1;
+  if (typeof current_step !== 'number' || !Number.isInteger(current_step) || current_step < 0) {
+    throw new Error(
+      `TASK_CURRENT_STEP_INVALID: current_step must be an integer >= 0 (${CODE_OWNER}).`,
+    );
+  }
+
+  const max_retries = input.max_retries ?? 3;
+  if (typeof max_retries !== 'number' || !Number.isInteger(max_retries) || max_retries < 0) {
+    throw new Error(
+      'TASK_MAX_RETRIES_INVALID: max_retries must be an integer >= 0; it bounds how often the ' +
+        'task is re-queued on a RETRYABLE failure (implement/04 §4.4).',
+    );
+  }
+
+  if (PARKED_STATES.includes(state)) {
+    assertCompleteCheckpoint(input.state_payload);
+  }
+
+  const state_payload = serializeJsonb(input.state_payload ?? {}, 'TASK_PAYLOAD_UNSERIALIZABLE');
+
+  try {
+    const result = await client.query<DurableTaskRow>(INSERT_TASK, [
+      input.tenant_id,
+      input.run_id,
+      input.correlation_id,
+      current_step,
+      state,
+      max_retries,
+      state_payload,
+    ]);
+
+    return assertSingleRow(result, input.run_id);
+  } catch (error) {
+    if (errorCode(error) === '23505') {
+      throw new Error(
+        `DURABLE_TASK_EXISTS: run ${input.run_id} already has a durable task in this tenant ` +
+          '(uq_platform_tasks_run); a retry reuses the run, it never creates a second schedule ' +
+          'of record (implement/04 §4.2).',
+        { cause: error },
+      );
+    }
+
+    throw error;
+  }
+}
+
+/**
  * Durable task persistence (implement/03 §1 DOMAIN 5, implement/04 §4.1-§4.2).
  *
  * The surface is the durable half of `IStatefulWorkflowEngine`: create the run's task row, read it
@@ -953,35 +1018,11 @@ export class DurableWorkflowRepository {
       assertCompleteCheckpoint(input.state_payload);
     }
 
-    const state_payload = serializeJsonb(input.state_payload ?? {}, 'TASK_PAYLOAD_UNSERIALIZABLE');
-
     return this.runInTenantTransaction(input.tenant_id, async (client) => {
-      try {
-        const result = await client.query<DurableTaskRow>(INSERT_TASK, [
-          input.tenant_id,
-          input.run_id,
-          input.correlation_id,
-          current_step,
-          state,
-          max_retries,
-          state_payload,
-        ]);
-
-        return assertSingleRow(result, input.run_id);
-      } catch (error) {
-        if (errorCode(error) === '23505') {
-          throw new Error(
-            `DURABLE_TASK_EXISTS: run ${input.run_id} already has a durable task in this tenant ` +
-              '(uq_platform_tasks_run); a retry reuses the run, it never creates a second schedule ' +
-              'of record (implement/04 §4.2).',
-            { cause: error },
-          );
-        }
-
-        throw error;
-      }
+      return insertDurableTask(client, input);
     });
   }
+
 
   async claimNextQueuedTask(input: ClaimNextQueuedTaskInput): Promise<ClaimTaskResult | null> {
     assertIdentifier(input.tenant_id, 'tenant_id', 36, 'TASK_TENANT_ID_REQUIRED');

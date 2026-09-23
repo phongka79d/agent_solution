@@ -72,3 +72,28 @@ export async function findIdentity(
     return row ?? null;
   });
 }
+
+/**
+ * Resolves a verified identity row by primary key `id`, scoped to the tenant.
+ *
+ * @param tenantId - Authenticated tenant UUID bound to the transaction.
+ * @param id - Identity UUID to resolve.
+ * @returns The identity row if verified, or `null` when this tenant has no such identity or when it is not verified.
+ * @throws Error `TENANT_CONTEXT_REQUIRED` when `tenantId` is blank or not a single UUID.
+ */
+export async function findVerifiedIdentityById(
+  tenantId: string,
+  id: string,
+): Promise<CustomerIdentityRow | null> {
+  return withTenantContext(tenantId, async (client) => {
+    const result = await client.query(
+      `SELECT ${IDENTITY_COLUMNS} FROM agentos.customer_identities
+        WHERE tenant_id = $1 AND id = $2 AND verified_at IS NOT NULL`,
+      [tenantId, id],
+    );
+
+    const row = result.rows[0] as CustomerIdentityRow | undefined;
+
+    return row ?? null;
+  });
+}

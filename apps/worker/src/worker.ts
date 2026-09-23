@@ -12,6 +12,11 @@ import type { ActionDraft, ExecutionReceipt, SignalEnvelope } from '@agentos/cor
 import { createWorkerConnectors, type WorkerConnectorEnv, type WorkerConnectorOptions } from './runtime/connectors.js';
 import { nodeHmacSha256Hex } from './runtime/hmac.js';
 
+import {
+  createCareOrchestratorFactory,
+  getUnboundCapabilities,
+  type CareOrchestratorFactoryOptions,
+} from './runtime/care/index.js';
 /**
  * Workspace packages this worker is allowed to depend on (02 §2 dependency DAG).
  */
@@ -60,6 +65,7 @@ export interface WorkerExecutionOptions extends WorkerConnectorOptions {
   readonly leaseDurationMs?: number;
   readonly autoStartPolling?: boolean;
   readonly onError?: (tenant_id: string, error: unknown) => void;
+  readonly careFactoryOptions?: CareOrchestratorFactoryOptions;
 }
 
 /**
@@ -91,6 +97,28 @@ export async function releaseLeaseIfHeld(
   }
 }
 
+function isCompleteCheckpoint(payload: Record<string, unknown>): boolean {
+  const target: Record<string, unknown> = ('checkpoint' in payload && payload.checkpoint && typeof payload.checkpoint === 'object' && !Array.isArray(payload.checkpoint))
+    ? (payload.checkpoint as Record<string, unknown>)
+    : payload;
+
+  const plan = target.plan;
+  const hasPlan = typeof plan === 'object' && plan !== null && 'steps' in plan && Array.isArray(plan.steps);
+
+  const context = target.context;
+  const hasContext = typeof context === 'object' && context !== null && 'tenant_id' in context && typeof context.tenant_id === 'string';
+
+  const hypothesis = target.hypothesis;
+  const hasHypothesis = typeof hypothesis === 'object' && hypothesis !== null && 'classification' in hypothesis && hypothesis.classification === 'HYPOTHESIS';
+
+  const pendingAction = target.pending_action;
+  const hasPendingAction = typeof pendingAction === 'object' && pendingAction !== null && 'action_id' in pendingAction && typeof pendingAction.action_id === 'string';
+
+  const completedSteps = target.completed_steps;
+  const hasCompletedSteps = Array.isArray(completedSteps);
+
+  return Boolean(hasPlan && hasContext && hasHypothesis && hasPendingAction && hasCompletedSteps);
+}
 /**
  * Executes a single claimed durable task under the worker lease.
  * Fails closed on non-P1 channels, non-support module, or missing authoritative input.
@@ -116,6 +144,34 @@ export async function processClaimedTask(params: {
       return;
     }
     const payload = taskRecord.state_payload;
+    if (typeof payload === 'object' && payload !== null && !Array.isArray(payload) && 'resume_event' in payload) {
+      if (!isCompleteCheckpoint(payload as Record<string, unknown>)) {
+        await workflowRepository.recordFailure({
+          tenant_id,
+          run_id: taskRecord.run_id,
+          error_class: 'FATAL',
+          error_details: { code: 'CHECKPOINT_INCOMPLETE' },
+          expected_task_version: taskRecord.task_version,
+          lease_owner: worker_id,
+        });
+        return;
+      }
+
+      const orchestrator = await orchestratorFactory?.(tenant_id);
+      if (!orchestrator) {
+        await workflowRepository.recordFailure({
+          tenant_id,
+          run_id: taskRecord.run_id,
+          error_class: 'FATAL',
+          error_details: { code: 'CARE_ORCHESTRATOR_UNBOUND' },
+          lease_owner: worker_id,
+        });
+        return;
+      }
+
+      await orchestrator.resumeTask(taskRecord.run_id, payload.resume_event as never);
+      return;
+    }
     const signal = typeof payload === 'object' && payload !== null && !Array.isArray(payload)
       && 'signal' in payload ? payload.signal : null;
     const valid = typeof signal === 'object' && signal !== null && !Array.isArray(signal)
@@ -183,7 +239,11 @@ export function startWorker(
   );
 
   const tenantIds = [...rawTenants];
-  if (tenantIds.some((id) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))) {
+  // The tenant identifier is a `uuid` column, so the check is the generic UUID shape. The RFC 4122
+  // version/variant nibbles are deliberately not required: the pilot's synthetic tenant
+  // (`11111111-1111-1111-1111-111111111111`) is a real row in the fixtures, and rejecting it here
+  // would refuse the registered tenant rather than an unregistered one.
+  if (tenantIds.some((id) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))) {
     throw new Error('CARE_TENANT_IDS_INVALID: expected comma-separated tenant UUIDs');
   }
   const pollIntervalMs = options.pollIntervalMs ?? 1000;
@@ -194,7 +254,25 @@ export function startWorker(
   }
 
   const workflowRepository = options.workflowRepository ?? new DurableWorkflowRepository();
-  const orchestratorFactory = options.orchestratorFactory;
+  const careFactoryOptions: CareOrchestratorFactoryOptions = options.careFactoryOptions ?? {
+    workerId,
+    workflowRepository: workflowRepository as DurableWorkflowRepository,
+    // The connector's own read surface, or `null` when no system of record is bound — in which
+    // case the order skill refuses at dispatch instead of the worker substituting a cached value.
+    erp_read: connectors.erp_read,
+    env,
+  };
+
+  const unboundCapabilities = getUnboundCapabilities(careFactoryOptions);
+  for (const cap of unboundCapabilities) {
+    blockers.push(`CARE_CAPABILITY_UNBOUND: ${cap}`);
+  }
+
+  const careFactory = unboundCapabilities.length === 0
+    ? createCareOrchestratorFactory(careFactoryOptions)
+    : null;
+
+  const orchestratorFactory = options.orchestratorFactory ?? careFactory;
 
   if (tenantIds.length === 0) {
     blockers.push('CARE_TENANT_IDS_EMPTY: No tenants configured; background polling disabled (fail closed).');

@@ -47,6 +47,7 @@ import {
   createConversationPort,
   createDurableRunPort,
   createEffectGuard,
+  createStartRunPort,
   createEventPort,
   createIdentityPort,
   createReceiptPort,
@@ -205,16 +206,43 @@ export function createGatewayComposition(
 
   const unbound_ports: string[] = [];
 
+  const startRunPort = createStartRunPort({
+    guard: effectGuard,
+    workflows: workflowsRepository,
+    ids: systemIdentifiers,
+    clock: systemClock,
+  });
+
   const runs: RunPort = {
-    start: async () => unbound('runs.start', 'the production Customer Care orchestrator and worker graph is not bound'),
+    ...startRunPort,
     ...durableRuns,
-    reconcile: async () => unbound('runs.reconcile', 'no provider-confirmed reconciliation source is bound'),
+    // Fail closed with the missing input named. The resolution itself is the operator's (R18) and
+    // the reservation settlement is available; what this build has no way to do is hand the parked
+    // task back to an executor. `04` §4.2(1) admits `waiting`/`awaiting_human` in the claim
+    // predicate, but the worker's claim statement (`SELECT_CLAIMABLE_TASK`) selects `queued` or an
+    // expired `running` lease only, so a settled run would stay parked forever. Inventing a second
+    // resume protocol here would be a shadow of the documented one; the gap is reported instead.
+    reconcile: async () =>
+      unbound(
+        'runs.reconcile',
+        'no reconciliation completion handoff is specified: a parked task cannot be handed back to an executor',
+      ),
   };
-  unbound_ports.push('runs.start', 'runs.reconcile');
+  unbound_ports.push('runs.reconcile');
 
   const approvals: ApprovalPort = {
     ...approvalReads,
-    decide: async () => unbound('approvals.decide', 'no approval resume worker is bound'),
+    // A decision is the single-use `claimApprovalAndResume` transaction (`04` §4.2(4)), and the
+    // real components guard it with the worker lease plus a current policy and SCR-005 takeover
+    // recheck before the one-time claim (`RevenueOrchestrator.resumeTask`). The gateway holds no
+    // lease and cannot re-run that recheck, so deciding here would consume the run's only resume
+    // authority without those guards. The durable handoff that would let a worker execute the
+    // recorded decision is what is missing, and it is reported rather than improvised.
+    decide: async () =>
+      unbound(
+        'approvals.decide',
+        'no approval decision handoff is specified: the decision transaction requires a worker lease and policy recheck, and no worker may claim a parked task',
+      ),
   };
   unbound_ports.push('approvals.decide');
 

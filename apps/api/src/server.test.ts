@@ -4,7 +4,7 @@ import type { FastifyInstance } from 'fastify';
 
 import { MAX_RAW_BODY_BYTES } from './gateway/raw-body.js';
 import { createCredentialStore } from './gateway/principal.js';
-import { createGatewayComposition } from './runtime/composition.js';
+import { createGatewayComposition, UnboundPortError } from './runtime/composition.js';
 import { buildServer, DEPENDENCIES } from './server.js';
 
 /** One tenant's operator, so a route can be reached past authentication. */
@@ -86,7 +86,7 @@ describe('the /api/v1 surface', () => {
 });
 
 describe('Customer Care turn admission', () => {
-  it('does not append a message when execution is unavailable', async () => {
+  it('does not append a message when the execution path is unbound', async () => {
     const composition = createGatewayComposition(
       { SESSION_SECRET: 'test-session-secret-000000', PLATFORM_SECRET: 'test-platform-secret-00000' },
     );
@@ -100,6 +100,14 @@ describe('Customer Care turn admission', () => {
       }),
       runtime: {
         ...composition.runtime,
+        // The default composition binds `runs.start`; this deployment case is the one where the
+        // port is absent, which must still refuse the turn before anything is written.
+        runs: {
+          ...composition.runtime.runs,
+          start: async () => {
+            throw new UnboundPortError('runs.start', 'no orchestrator graph is bound in this deployment');
+          },
+        },
         conversations: {
           ...composition.runtime.conversations,
           get: async () => ({
@@ -122,6 +130,55 @@ describe('Customer Care turn admission', () => {
     expect(response.statusCode).toBe(403);
     expect(response.json()).toMatchObject({ error_code: 'CAPABILITY_NOT_ENABLED' });
     expect(appendMessage).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('admits the turn through the bound start port before the message is appended', async () => {
+    const composition = createGatewayComposition(
+      { SESSION_SECRET: 'test-session-secret-000000', PLATFORM_SECRET: 'test-platform-secret-00000' },
+    );
+    const appendMessage = vi.fn();
+    const start = vi.fn(async () => ({
+      run_id: 'run-admitted-1',
+      task_version: 1,
+      correlation_id: 'conversation-a',
+      lifecycle_state: 'queued' as const,
+    }));
+    const app = buildServer({
+      ...composition,
+      credentials: createCredentialStore({
+        operators: [],
+        sessions: [{ token: 'care-session', tenant_id: TENANT, conversation_id: 'conversation-a', session_id: 'session-a', channel: 'WEB_CHAT' }],
+        widgets: [],
+      }),
+      runtime: {
+        ...composition.runtime,
+        runs: { ...composition.runtime.runs, start },
+        conversations: {
+          ...composition.runtime.conversations,
+          get: async () => ({
+            conversation_id: 'conversation-a', tenant_id: TENANT, customer_id: null,
+            channel: 'WEB_CHAT' as const, external_thread_id: 'session-a', active_agent: 'CS-01',
+            state: 'open' as const, takeover_operator_id: null,
+            last_message_at: '2026-01-01T00:00:00.000Z', created_at: '2026-01-01T00:00:00.000Z', bound: true,
+          }),
+          appendMessage,
+        },
+        receipts: { ...composition.runtime.receipts, receiptFor: async () => null, storeReceipt: vi.fn() },
+        audit: { ...composition.runtime.audit, record: vi.fn() },
+      },
+    });
+
+    const response = await app.inject({
+      method: 'POST', url: '/api/v1/conversations/conversation-a/messages',
+      headers: { authorization: 'Bearer care-session' },
+      payload: { message: 'Where is my order?', idempotency_key: `care-request-${Date.now()}` },
+    });
+
+    expect(response.statusCode, JSON.stringify(response.json())).toBe(202);
+    expect(response.json()).toMatchObject({ task_id: 'run-admitted-1', status: 'accepted' });
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(appendMessage).toHaveBeenCalledTimes(1);
     await app.close();
   });
 });

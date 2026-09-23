@@ -143,8 +143,33 @@ describe('createWorkerConnectors', () => {
     const connectors = createWorkerConnectors({ APP_ENV: 'ci' }, { hmac: nodeHmacSha256Hex });
 
     expect(connectors.bound).toEqual([]);
+    expect(connectors.erp_read).toBeNull();
     expect(connectors.unbound).toHaveLength(1);
     expect(connectors.unbound[0]).toMatch(/API-001/);
     await expect(connectors.dispatcher.dispatch(draft())).rejects.toThrow(/CONNECTOR_NOT_FOUND/);
+  });
+
+  it('exposes erp_read which performs signed read against the provider', async () => {
+    const { server, base_url } = await startMockErp();
+    try {
+      const connectors = createWorkerConnectors(
+        { ...LOCAL_ENV, ERP_API_BASE_URL: base_url, CARE_KNOWLEDGE_ROOT: '/custom/root' },
+        { hmac: nodeHmacSha256Hex, authority: { authorize: () => true } },
+      );
+
+      expect(connectors.erp_read).not.toBeNull();
+      const result = await connectors.erp_read!.read({
+        tenant_id: '11111111-1111-1111-1111-111111111111',
+        resource: 'orders',
+        key: 'ORD-A-1',
+      });
+
+      expect(result.resource).toBe('orders');
+      expect(result.observed_at).toBeDefined();
+      expect(result.value.order_id).toBe('ORD-A-1');
+      expect(result.value.customer_id).toBe('aaaaaaaa-0000-4000-8000-00000000000a');
+    } finally {
+      server.close();
+    }
   });
 });

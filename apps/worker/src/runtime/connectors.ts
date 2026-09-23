@@ -2,6 +2,7 @@ import {
   Api001ErpConnector,
   ConnectorRegistry,
   createAdapterDispatcher,
+  type ConnectorReadResult,
   type ErpMutationAuthority,
   type HmacSha256Hex,
 } from '@agentos/adapters';
@@ -41,10 +42,20 @@ const DEFAULT_ERP_TIMEOUT_MS = 5_000;
 export interface WorkerConnectorEnv {
   readonly APP_ENV?: string;
   readonly CARE_TENANT_IDS?: string;
+  readonly CARE_KNOWLEDGE_ROOT?: string;
   readonly MOCK_ERP_ENABLED?: string;
   readonly ERP_API_BASE_URL?: string;
   readonly MOCK_SECRET_KEY?: string;
   readonly ERP_TIMEOUT_MS?: string;
+}
+
+/** Read interface to the authoritative ERP system of record. */
+export interface ErpReadPort {
+  read(input: {
+    readonly tenant_id: string;
+    readonly resource: string;
+    readonly key?: string;
+  }): Promise<ConnectorReadResult>;
 }
 
 export interface WorkerConnectorOptions {
@@ -64,6 +75,8 @@ export interface WorkerConnectors {
   readonly registry: ConnectorRegistry;
   /** The engine-facing dispatcher over this registry, with unknown targets refused before transport. */
   readonly dispatcher: IAdapterDispatcher;
+  /** Authoritative ERP read boundary when bound; null when no ERP connector is configured. */
+  readonly erp_read: ErpReadPort | null;
   /** Connector ids reachable in this process, in registration order. */
   readonly bound: readonly string[];
   /** Capabilities this build does not bind, named for the boot log and the report. */
@@ -92,9 +105,9 @@ export function createWorkerConnectors(
   const app_env = env.APP_ENV ?? '';
   const mock_enabled = env.MOCK_ERP_ENABLED === 'true';
   const registry = new ConnectorRegistry();
+  let erp_read: ErpReadPort | null = null;
   const bound: string[] = [];
   const unbound: string[] = [];
-
   if (mock_enabled && MANAGED_ENVS.includes(app_env)) {
     throw new Error(
       `MOCK_ERP_FORBIDDEN: MOCK_ERP_ENABLED=true is refused for APP_ENV=${app_env}; a managed deployment must reach an audited system of record, not a simulated one`,
@@ -144,7 +157,7 @@ export function createWorkerConnectors(
       read: (input) => connector.read(input),
     });
     bound.push(API_001_CONNECTOR_ID);
-
+    erp_read = connector;
     if (options.authority === undefined) {
       unbound.push(
         'API-001 mutation authority: no approval-backed authority is bound, so every dispatch is refused before the provider is contacted',
@@ -167,7 +180,7 @@ export function createWorkerConnectors(
       ),
   });
 
-  return { registry, dispatcher, bound, unbound };
+  return { registry, dispatcher, erp_read, bound, unbound };
 }
 
 /** Reads the request deadline; an unparseable value is refused rather than silently defaulted. */

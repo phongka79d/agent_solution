@@ -13,7 +13,7 @@ x-qdrant-api-key: &qdrant-api-key ${QDRANT_API_KEY:?QDRANT_API_KEY is required}
 services:
   postgres:
     image: pgvector/pgvector:pg16
-    container_name: agentos-postgres
+    container_name: ${COMPOSE_CONTAINER_PREFIX:-agentos}-postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-agentos_dev}
@@ -39,7 +39,7 @@ services:
 
   redis:
     image: redis:7.2-alpine
-    container_name: agentos-redis
+    container_name: ${COMPOSE_CONTAINER_PREFIX:-agentos}-redis
     restart: unless-stopped
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
@@ -70,7 +70,7 @@ services:
 
   qdrant:
     image: qdrant/qdrant:v1.9.2
-    container_name: agentos-qdrant
+    container_name: ${COMPOSE_CONTAINER_PREFIX:-agentos}-qdrant
     restart: unless-stopped
     ports:
       - "${QDRANT__SERVICE__HTTP_PORT:-6333}:6333"
@@ -96,7 +96,7 @@ services:
     build:
       context: ./services/mock-erp
       dockerfile: Dockerfile
-    container_name: agentos-mock-erp
+    container_name: ${COMPOSE_CONTAINER_PREFIX:-agentos}-mock-erp
     restart: unless-stopped
     labels:
       agentos.deploy: local-ci-only
@@ -123,7 +123,7 @@ services:
   temporal:
     profiles: ["workflows"]
     image: temporalio/auto-setup:1.23.0
-    container_name: agentos-temporal
+    container_name: ${COMPOSE_CONTAINER_PREFIX:-agentos}-temporal
     restart: unless-stopped
     depends_on:
       postgres:
@@ -143,7 +143,7 @@ services:
   temporal-ui:
     profiles: ["workflows"]
     image: temporalio/ui:2.26.2
-    container_name: agentos-temporal-ui
+    container_name: ${COMPOSE_CONTAINER_PREFIX:-agentos}-temporal-ui
     restart: unless-stopped
     depends_on:
       - temporal
@@ -159,7 +159,7 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.api
-    container_name: agentos-api
+    container_name: ${COMPOSE_CONTAINER_PREFIX:-agentos}-api
     restart: unless-stopped
     ports:
       - "${PORT:-4000}:4000"
@@ -220,7 +220,7 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.worker
-    container_name: agentos-worker
+    container_name: ${COMPOSE_CONTAINER_PREFIX:-agentos}-worker
     restart: unless-stopped
     environment:
       NODE_ENV: ${NODE_ENV:?NODE_ENV is required}
@@ -283,7 +283,7 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.command-center
-    container_name: agentos-command-center
+    container_name: ${COMPOSE_CONTAINER_PREFIX:-agentos}-command-center
     restart: unless-stopped
     ports:
       - "${WEB_PORT:-3000}:3000"
