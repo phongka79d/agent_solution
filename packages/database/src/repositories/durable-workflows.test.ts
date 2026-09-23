@@ -5,9 +5,12 @@ import { DurableWorkflowRepository } from './durable-workflows.js';
 import type {
   CreateDurableTaskInput,
   DurableTaskGuard,
+  DurableTaskListInput,
+  DurableTaskPage,
   DurableTaskRecord,
   DurableTaskState,
   RecordTaskFailureInput,
+  RequeueFailedTaskInput,
 } from './durable-workflows.js';
 
 /**
@@ -20,20 +23,32 @@ import type {
  * re-implementing the guards inside the test.
  *
  * What is asserted is what a caller observes: which statement a write takes (merge, replace, state
- * only, re-queue, terminal), which version it restates as the CAS base and which version it
- * publishes back, that a stale writer is refused instead of overwriting a newer checkpoint, and
- * that `UNKNOWN` and an incomplete checkpoint never reach the row. The live half (RLS denial,
- * enums, CHECK constraints) belongs to `src/rls.test.ts` and is not duplicated here.
+ * only, re-queue, operator requeue, terminal), which version it restates as the CAS base and which
+ * version it publishes back, that a stale writer is refused instead of overwriting a newer
+ * checkpoint, how the paged read is seeked, filtered and resumed, and that `UNKNOWN` and an
+ * incomplete checkpoint never reach the row. The live half (RLS denial, enums, CHECK constraints)
+ * belongs to `src/rls.test.ts` and is not duplicated here.
  */
 
 /** Tenant bound to every statement; the repository is tenant-scoped by construction. */
 const TENANT = '11111111-1111-1111-1111-111111111111';
+const OTHER_TENANT = '22222222-2222-2222-2222-222222222222';
 const RUN_ID = 'RUN-1';
+const SECOND_RUN_ID = 'RUN-2';
 const CORRELATION_ID = 'CORR-1';
+const AGENT_ID = 'agent-revenue';
 
 const CREATED_AT = new Date('2026-01-01T00:00:00.000Z');
 const UPDATED_AT = new Date('2026-01-01T00:01:00.000Z');
 const LEASE_EXPIRES_AT = new Date('2026-01-01T00:01:30.000Z');
+
+/** Two neighbouring creation instants, so a page has a newest and a next key to resume from. */
+const LATER_CREATED_AT = new Date('2026-01-01T00:02:00.000Z');
+const EARLIER_CREATED_AT = new Date('2025-12-31T23:00:00.000Z');
+
+/** An inclusive creation window, as the R16 read model accepts it. */
+const LIST_FROM = '2025-12-01T00:00:00.000Z';
+const LIST_TO = '2026-02-01T00:00:00.000Z';
 
 /** Bare lowercase hex SHA-256 chain cursors: the genesis digest and a predecessor record. */
 const GENESIS_HASH = '0'.repeat(64);
@@ -69,16 +84,24 @@ type StatementKind =
   | 'insert'
   | 'lock'
   | 'read'
+  | 'list'
   | 'progress'
   | 'state'
   | 'park'
   | 'state_progress'
   | 'requeue'
+  | 'operator_requeue'
   | 'fail';
 
 function classify(sql: string): StatementKind {
   if (sql.startsWith('INSERT INTO agentos.platform_durable_tasks')) {
     return 'insert';
+  }
+
+  // The paged read is the only statement correlated to a second relation, so it is named by its
+  // aliased FROM before the plain read below claims every other SELECT.
+  if (sql.includes('FROM agentos.platform_durable_tasks AS t')) {
+    return 'list';
   }
 
   if (sql.includes('FOR UPDATE')) {
@@ -91,6 +114,10 @@ function classify(sql: string): StatementKind {
 
   if (sql.includes('retry_count = retry_count + 1')) {
     return 'requeue';
+  }
+
+  if (sql.includes('last_error_class = NULL')) {
+    return 'operator_requeue';
   }
 
   if (sql.includes("SET state = 'failed'")) {
@@ -265,15 +292,36 @@ function failureInput(overrides: Partial<RecordTaskFailureInput> = {}): RecordTa
   return Object.assign(input, overrides);
 }
 
-/** The parameters bound to the single statement of `kind`; fails the test when it was never issued. */
-function bindingsOf(client: ScriptedClient, kind: StatementKind): readonly unknown[] {
+function listQuery(overrides: Partial<DurableTaskListInput> = {}): DurableTaskListInput {
+  const input: DurableTaskListInput = { tenant_id: TENANT };
+
+  return Object.assign(input, overrides);
+}
+
+function requeueInput(overrides: Partial<RequeueFailedTaskInput> = {}): RequeueFailedTaskInput {
+  const input: RequeueFailedTaskInput = {
+    tenant_id: TENANT,
+    run_id: RUN_ID,
+    reason: 'provider incident resolved',
+  };
+
+  return Object.assign(input, overrides);
+}
+
+/** The single statement of `kind` the repository issued; fails the test when it was never issued. */
+function statementOf(client: ScriptedClient, kind: StatementKind): IssuedStatement {
   const statement = client.statements.find((candidate) => candidate.kind === kind);
 
   if (statement === undefined) {
     throw new Error(`SCRIPTED_STATEMENT_MISSING: no ${kind} statement was issued.`);
   }
 
-  return statement.params;
+  return statement;
+}
+
+/** The parameters bound to the single statement of `kind`; fails the test when it was never issued. */
+function bindingsOf(client: ScriptedClient, kind: StatementKind): readonly unknown[] {
+  return statementOf(client, kind).params;
 }
 
 /** The message of the error `work` failed with; fails the test when it did not fail. */
@@ -431,6 +479,141 @@ describe('DurableWorkflowRepository.getTask', () => {
     const { repository } = harnessFor({ read: { rows: [] } });
 
     await expect(repository.getTask(TENANT, RUN_ID)).resolves.toBeNull();
+  });
+});
+
+describe('DurableWorkflowRepository.listTasks', () => {
+  it('reads the newest page with one row more than requested and publishes the cursor of its last item', async () => {
+    const { repository, client, boundTenants } = harnessFor({
+      list: {
+        rows: [
+          taskRow({ run_id: SECOND_RUN_ID, created_at: LATER_CREATED_AT, state: 'failed' }),
+          taskRow({ run_id: RUN_ID, state: 'running', task_version: 4 }),
+          taskRow({ run_id: 'RUN-0', created_at: EARLIER_CREATED_AT }),
+        ],
+      },
+    });
+
+    const page: DurableTaskPage = await repository.listTasks(listQuery({ limit: 2 }));
+
+    expect(boundTenants).toEqual([TENANT]);
+    expect(client.statements.map((statement) => statement.kind)).toEqual(['list']);
+    // No filter was named, so each one binds SQL NULL and the page is read one row past its size.
+    expect(bindingsOf(client, 'list')).toEqual([TENANT, null, null, null, null, null, null, 3]);
+    expect(page.items.map((item) => item.run_id)).toEqual([SECOND_RUN_ID, RUN_ID]);
+    // The items are the same published row `getTask()` returns, timestamps included.
+    expect(page.items[0]).toMatchObject({
+      run_id: SECOND_RUN_ID,
+      state: 'failed',
+      created_at: LATER_CREATED_AT.toISOString(),
+      updated_at: UPDATED_AT.toISOString(),
+    });
+    expect(page.next_cursor).toBe(`${CREATED_AT.toISOString()}|${RUN_ID}`);
+  });
+
+  it('ends the page without a cursor when the tenant has no further task, and pages 50 by default', async () => {
+    const { repository, client } = harnessFor({
+      list: { rows: [taskRow({ run_id: SECOND_RUN_ID, created_at: LATER_CREATED_AT })] },
+    });
+
+    const page = await repository.listTasks(listQuery());
+
+    expect(page.items.map((item) => item.run_id)).toEqual([SECOND_RUN_ID]);
+    expect(page.next_cursor).toBeNull();
+    expect(bindingsOf(client, 'list')[7]).toBe(51);
+  });
+
+  it('binds the state, window and agent filters and resumes strictly after the cursor key', async () => {
+    const cursor = `${CREATED_AT.toISOString()}|${RUN_ID}`;
+    const { repository, client } = harnessFor({ list: { rows: [] } });
+
+    await expect(
+      repository.listTasks(
+        listQuery({ state: 'failed', agent_id: AGENT_ID, from: LIST_FROM, to: LIST_TO, cursor }),
+      ),
+    ).resolves.toEqual({ items: [], next_cursor: null });
+
+    expect(bindingsOf(client, 'list')).toEqual([
+      TENANT,
+      'failed',
+      LIST_FROM,
+      LIST_TO,
+      AGENT_ID,
+      CREATED_AT.toISOString(),
+      RUN_ID,
+      51,
+    ]);
+  });
+
+  it('filters the page through the step ledger of the agent, scoped to the task tenant and run', async () => {
+    const { repository, client } = harnessFor({ list: { rows: [] } });
+
+    await repository.listTasks(listQuery({ agent_id: AGENT_ID }));
+
+    const { sql } = statementOf(client, 'list');
+
+    // `agent_run_logs` has no column on the task row: the agent is bound by an EXISTS correlated to
+    // the row being paged by tenant and run, so no other tenant's ledger row can make a task visible.
+    expect(sql).toContain('FROM agentos.agent_run_logs AS log');
+    expect(sql).toContain('log.tenant_id = t.tenant_id');
+    expect(sql).toContain('log.run_id = t.run_id');
+    expect(sql).toContain('log.agent_id = $5::varchar');
+    // Newest first, keyset on the durable key of the page.
+    expect(sql).toContain('ORDER BY t.created_at DESC, t.run_id DESC');
+    expect(sql).toContain('(t.created_at, t.run_id) < ($6::timestamptz, $7::varchar)');
+  });
+
+  it('reads the page of the tenant its transaction was bound to', async () => {
+    const { repository, client, boundTenants } = harnessFor({ list: { rows: [] } });
+
+    await repository.listTasks(listQuery({ tenant_id: OTHER_TENANT }));
+
+    expect(boundTenants).toEqual([OTHER_TENANT]);
+    expect(bindingsOf(client, 'list')[0]).toBe(OTHER_TENANT);
+  });
+
+  it('refuses a filter, a page size or a cursor it did not publish, before opening a transaction', async () => {
+    const { repository, client, boundTenants } = harnessFor({});
+
+    const filters: readonly { readonly input: DurableTaskListInput; readonly code: string }[] = [
+      { input: listQuery({ state: 'UNKNOWN' as DurableTaskState }), code: 'TASK_STATE_INVALID' },
+      { input: listQuery({ agent_id: '   ' }), code: 'TASK_AGENT_ID_INVALID' },
+      { input: listQuery({ agent_id: 'a'.repeat(33) }), code: 'TASK_AGENT_ID_INVALID' },
+      { input: listQuery({ from: 'yesterday' }), code: 'TASK_LIST_RANGE_INVALID' },
+      { input: listQuery({ to: '' }), code: 'TASK_LIST_RANGE_INVALID' },
+      { input: listQuery({ limit: 0 }), code: 'TASK_LIST_LIMIT_INVALID' },
+      { input: listQuery({ limit: 201 }), code: 'TASK_LIST_LIMIT_INVALID' },
+      { input: listQuery({ limit: 2.5 }), code: 'TASK_LIST_LIMIT_INVALID' },
+    ];
+    // Cursors this module never published: a missing half, a blank or oversized run id, a run id
+    // carrying the separator, and an instant that is not the canonical ISO-8601 string of the row.
+    const malformed_cursors: readonly unknown[] = [
+      '',
+      'not-a-cursor',
+      CREATED_AT.toISOString(),
+      `${CREATED_AT.toISOString()}|`,
+      `${CREATED_AT.toISOString()}|   `,
+      `${CREATED_AT.toISOString()}|${RUN_ID}|extra`,
+      `2026-01-01T00:00:00Z|${RUN_ID}`,
+      `${CREATED_AT.toISOString()}|${'R'.repeat(65)}`,
+    ];
+    const cases = [
+      ...filters,
+      ...malformed_cursors.map((cursor) => ({
+        input: listQuery({ cursor: cursor as string }),
+        code: 'TASK_LIST_CURSOR_INVALID',
+      })),
+    ];
+
+    for (const { input, code } of cases) {
+      expect(
+        await refusalOf(repository.listTasks(input)),
+        `${code} ${JSON.stringify(input)}`,
+      ).toContain(code);
+    }
+
+    expect(boundTenants).toEqual([]);
+    expect(client.statements).toEqual([]);
   });
 });
 
@@ -854,5 +1037,158 @@ describe('DurableWorkflowRepository.recordFailure', () => {
 
     expect(parked.client.statements.map((statement) => statement.kind)).toEqual(['lock']);
     expect(stale.client.statements.map((statement) => statement.kind)).toEqual(['lock']);
+  });
+});
+
+describe('DurableWorkflowRepository.requeueFailed', () => {
+  it('re-enters a failed run in place, clearing the failure and the lease and keeping the checkpoint', async () => {
+    const checkpoint = { plan: { steps: [] }, current_step: 4, request_id: 'REQ-1' };
+    const { repository, client, boundTenants } = harnessFor({
+      lock: {
+        rows: [
+          taskRow({
+            state: 'failed',
+            current_step: 4,
+            task_version: 6,
+            retry_count: 2,
+            last_error_class: 'FATAL',
+            error_details: { code: 'PROVIDER_REJECTED' },
+            lease_owner: 'worker-1',
+            lease_expires_at: LEASE_EXPIRES_AT,
+            state_payload: checkpoint,
+          }),
+        ],
+      },
+      operator_requeue: {
+        rows: [
+          taskRow({
+            state: 'queued',
+            current_step: 4,
+            task_version: 7,
+            retry_count: 2,
+            error_details: null,
+            state_payload: checkpoint,
+          }),
+        ],
+      },
+    });
+
+    const record = await repository.requeueFailed(
+      requeueInput({ reason: 'provider incident resolved', expected_task_version: 6 }),
+    );
+
+    expect(boundTenants).toEqual([TENANT]);
+    // One lock and one transition: the requeue creates no task and issues no second write.
+    expect(client.statements.map((statement) => statement.kind)).toEqual([
+      'lock',
+      'operator_requeue',
+    ]);
+    expect(bindingsOf(client, 'operator_requeue')).toEqual([TENANT, RUN_ID, 6]);
+    expect(record).toMatchObject({
+      state: 'queued',
+      task_version: 7,
+      current_step: 4,
+      retry_count: 2,
+      last_error_class: null,
+      error_details: null,
+      lease_owner: null,
+      lease_expires_at: null,
+      state_payload: checkpoint,
+    });
+
+    // Only the transition, the failure classification and the lease are written: the checkpoint, the
+    // cursor, the retry budget and the effect identity of the failed attempt are not restated, so the
+    // re-entered step runs on the SAME effect_key.
+    const { sql } = statementOf(client, 'operator_requeue');
+    const written = sql.slice(sql.indexOf('SET '), sql.indexOf('WHERE'));
+
+    expect(written).toContain("state = 'queued'");
+    expect(written).toContain('last_error_class = NULL');
+    expect(written).toContain('error_details = NULL');
+    expect(written).toContain('lease_owner = NULL');
+    expect(written).toContain('lease_expires_at = NULL');
+    expect(written).toContain('task_version = task_version + 1');
+
+    for (const untouched of [
+      'state_payload',
+      'current_step',
+      'retry_count',
+      'max_retries',
+      'correlation_id',
+      'paused_for_approval_id',
+    ]) {
+      expect(written, untouched).not.toContain(untouched);
+    }
+  });
+
+  it('uses the locked version as the CAS base when the operator supplies no guard', async () => {
+    const { repository, client } = harnessFor({
+      lock: { rows: [taskRow({ state: 'failed', task_version: 9 })] },
+      operator_requeue: { rows: [taskRow({ state: 'queued', task_version: 10 })] },
+    });
+
+    const record = await repository.requeueFailed(requeueInput());
+
+    expect(bindingsOf(client, 'operator_requeue')).toEqual([TENANT, RUN_ID, 9]);
+    expect(record.task_version).toBe(10);
+  });
+
+  it('refuses every state but failed, naming the approval that owns a parked run', async () => {
+    const states: readonly DurableTaskState[] = ['queued', 'running', 'waiting', 'completed', 'stopped'];
+
+    for (const state of states) {
+      const { repository, client } = harnessFor({ lock: { rows: [taskRow({ state })] } });
+
+      expect(await refusalOf(repository.requeueFailed(requeueInput())), state).toContain(
+        'TASK_REQUEUE_NOT_FAILED',
+      );
+      // The state is verified on the locked row, so no transition is issued for any of them.
+      expect(client.statements.map((statement) => statement.kind)).toEqual(['lock']);
+    }
+
+    const parked = harnessFor({
+      lock: {
+        rows: [taskRow({ state: 'awaiting_human', paused_for_approval_id: 'approval-3' })],
+      },
+    });
+
+    const refusal = await refusalOf(parked.repository.requeueFailed(requeueInput()));
+
+    expect(refusal).toContain('TASK_REQUEUE_NOT_FAILED');
+    expect(refusal).toContain('approval-3');
+    expect(parked.client.statements.map((statement) => statement.kind)).toEqual(['lock']);
+  });
+
+  it('refuses a stale operator version and a run the bound tenant does not hold', async () => {
+    const stale = harnessFor({ lock: { rows: [taskRow({ state: 'failed', task_version: 6 })] } });
+    const missing = harnessFor({ lock: { rows: [] } });
+
+    expect(
+      await refusalOf(stale.repository.requeueFailed(requeueInput({ expected_task_version: 5 }))),
+    ).toContain('TASK_VERSION_CONFLICT');
+    expect(
+      await refusalOf(missing.repository.requeueFailed(requeueInput({ tenant_id: OTHER_TENANT }))),
+    ).toContain('DURABLE_TASK_NOT_FOUND');
+
+    expect(stale.client.statements.map((statement) => statement.kind)).toEqual(['lock']);
+    expect(missing.boundTenants).toEqual([OTHER_TENANT]);
+    expect(bindingsOf(missing.client, 'lock')).toEqual([OTHER_TENANT, RUN_ID]);
+  });
+
+  it('requires the operator reason and the addressed run before opening a transaction', async () => {
+    const { repository, client, boundTenants } = harnessFor({});
+
+    const cases: readonly { readonly input: RequeueFailedTaskInput; readonly code: string }[] = [
+      { input: requeueInput({ reason: '   ' }), code: 'TASK_REQUEUE_REASON_REQUIRED' },
+      { input: requeueInput({ run_id: '' }), code: 'TASK_RUN_ID_REQUIRED' },
+      { input: requeueInput({ tenant_id: ' ' }), code: 'TASK_TENANT_ID_REQUIRED' },
+    ];
+
+    for (const { input, code } of cases) {
+      expect(await refusalOf(repository.requeueFailed(input)), code).toContain(code);
+    }
+
+    expect(boundTenants).toEqual([]);
+    expect(client.statements).toEqual([]);
   });
 });

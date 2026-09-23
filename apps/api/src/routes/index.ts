@@ -31,6 +31,8 @@ export interface RouteDependencies {
       readonly alias_table_version: number;
     };
   };
+  /** Releases resources owned by this composition. Test doubles may omit it. */
+  readonly close?: () => Promise<void>;
 }
 
 /**

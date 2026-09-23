@@ -6,6 +6,7 @@ import type {
   ActionStatus,
   ApprovalActionDraft,
   ApprovalDecision,
+  ApprovalListInput,
   ApprovalStatus,
   ClaimApprovalAndResumeInput,
   PauseForApprovalInput,
@@ -13,7 +14,8 @@ import type {
 import type { DurableTaskRow } from './durable-workflows.js';
 
 /**
- * Unit suite for the AUTH-4 pause and the human decision (implement/04 §4.2, implement/08 §7.2).
+ * Unit suite for the AUTH-4 pause, the human decision that releases it, and the two console reads
+ * over the same rows (implement/04 §4.2, implement/06 §8.1.3 R14 / §8.2.1, implement/08 §7.2).
  *
  * The repository is exercised against a scripted `pg` client instead of PostgreSQL: every statement
  * it issues is classified, recorded, and answered from a per-transition script. That keeps the
@@ -119,8 +121,11 @@ type StatementKind =
   | 'lock_task'
   | 'insert_action'
   | 'lock_action'
+  | 'read_actions'
   | 'insert_approval'
   | 'lock_approval'
+  | 'read_approval'
+  | 'list_pending'
   | 'lock_approval_by_effect_key'
   | 'pause_task'
   | 'hold_task'
@@ -174,11 +179,19 @@ function classify(sql: string): StatementKind {
   }
 
   if (sql.startsWith('SELECT') && sql.includes('FROM agentos.actions')) {
-    return 'lock_action';
+    return sql.includes('ANY(') ? 'read_actions' : 'lock_action';
   }
 
   if (sql.startsWith('SELECT') && sql.includes('FROM agentos.approvals')) {
-    return sql.includes('effect_key = $2') ? 'lock_approval_by_effect_key' : 'lock_approval';
+    if (sql.includes("decision = 'PENDING'")) {
+      return 'list_pending';
+    }
+
+    if (sql.includes('effect_key = $2')) {
+      return 'lock_approval_by_effect_key';
+    }
+
+    return sql.includes('FOR UPDATE') ? 'lock_approval' : 'read_approval';
   }
 
   throw new Error(`SCRIPTED_STATEMENT_UNKNOWN: no test scripts the statement "${sql}".`);
@@ -375,6 +388,33 @@ function actionRow(overrides: Partial<ActionRow> = {}): ActionRow {
   };
 
   return Object.assign(row, overrides);
+}
+
+/** One instant, so the `(created_at, id)` order of two queue rows is observable. */
+const LATER_CREATED_AT = new Date('2026-01-01T00:01:00.000Z');
+
+/** A second PENDING approval, one queue position behind the default binding. */
+function pendingApprovalRow(overrides: Partial<ApprovalRow> = {}): ApprovalRow {
+  return approvalRow({
+    id: OTHER_APPROVAL_ID,
+    action_id: OTHER_ACTION_ID,
+    run_id: OTHER_RUN_ID,
+    effect_key: OTHER_EFFECT_KEY,
+    payload: OTHER_PAYLOAD,
+    created_at: LATER_CREATED_AT,
+    ...overrides,
+  });
+}
+
+/** The action of the second PENDING approval. */
+function pendingActionRow(overrides: Partial<ActionRow> = {}): ActionRow {
+  return actionRow({
+    id: OTHER_ACTION_ID,
+    effect_key: OTHER_EFFECT_KEY,
+    action_revision: 2,
+    action_payload: OTHER_PAYLOAD,
+    ...overrides,
+  });
 }
 
 /** One durable task row, running by default; a case overrides the state it is about. */
@@ -1505,5 +1545,278 @@ describe('ApprovalRepository.claimApprovalAndResume', () => {
       'lock_approval',
       'modify_action',
     ]);
+  });
+});
+
+describe('ApprovalRepository.listPending', () => {
+  it('publishes the queue oldest-first with the action of each item and its reviewed digest', async () => {
+    const { repository, client, boundTenants } = harnessFor({
+      list_pending: { rows: [approvalRow(), pendingApprovalRow()] },
+      read_actions: { rows: [actionRow(), pendingActionRow()] },
+    });
+
+    const page = await repository.listPending({ tenant_id: TENANT });
+
+    expect(boundTenants).toEqual([TENANT]);
+    expect(statementsOf(client)).toEqual(['list_pending', 'read_actions']);
+
+    const [first, second] = page.items;
+
+    expect(first?.approval).toEqual({
+      id: APPROVAL_ID,
+      tenant_id: TENANT,
+      run_id: RUN_ID,
+      action_id: ACTION_ID,
+      campaign_id: null,
+      effect_key: EFFECT_KEY,
+      authority_required: 'AUTH-4',
+      payload: PAYLOAD,
+      payload_sha256: PAYLOAD_SHA256,
+      reason: REASON,
+      operator_id: null,
+      decision: 'PENDING',
+      is_paused: false,
+      review_comment: null,
+      decided_at: null,
+      created_at: CREATED_AT.toISOString(),
+    });
+    expect(first?.action).toEqual({
+      id: ACTION_ID,
+      tenant_id: TENANT,
+      decision_id: null,
+      skill_name: SKILL_ID,
+      effect_key: EFFECT_KEY,
+      action_revision: 1,
+      target_channel: ADAPTER_TARGET,
+      action_payload: PAYLOAD,
+      status: 'pending',
+      created_at: CREATED_AT.toISOString(),
+    });
+    expect(second?.approval.id).toBe(OTHER_APPROVAL_ID);
+    expect(second?.approval.payload_sha256).toBe(sha256CanonicalJson(OTHER_PAYLOAD));
+    expect(second?.action.id).toBe(OTHER_ACTION_ID);
+    expect(second?.action.action_revision).toBe(2);
+
+    // The page is read one row past the page size (default 50), and the actions are read by the
+    // identities the page published, in one statement under the same tenant.
+    expect(bindingsOf(client, 'list_pending')).toEqual([TENANT, null, null, 51]);
+    expect(bindingsOf(client, 'read_actions')).toEqual([TENANT, [ACTION_ID, OTHER_ACTION_ID]]);
+  });
+
+  it('pages by (created_at, id) and resumes strictly after the row the previous page ended on', async () => {
+    const { repository, client } = harnessFor({
+      // The first read answers one row more than it publishes: the extra row is what tells the page
+      // it is not the last one, and it must not be published or have its action read.
+      list_pending: (params) =>
+        params[1] === null
+          ? { rows: [approvalRow(), pendingApprovalRow()] }
+          : { rows: [pendingApprovalRow()] },
+      read_actions: (params) => ({
+        rows: (params[1] as readonly string[]).map((id) =>
+          id === ACTION_ID ? actionRow() : pendingActionRow(),
+        ),
+      }),
+    });
+
+    const first = await repository.listPending({ tenant_id: TENANT, limit: 1 });
+    const cursor = first.next_cursor;
+
+    expect(first.items.map((item) => item.approval.id)).toEqual([APPROVAL_ID]);
+    expect(cursor).toBe(`${CREATED_AT.toISOString()}|${APPROVAL_ID}`);
+    expect(bindingsOf(client, 'read_actions')).toEqual([TENANT, [ACTION_ID]]);
+
+    if (cursor === null) {
+      throw new Error('the first page of two rows must hand back the cursor of its last row');
+    }
+
+    const second = await repository.listPending({
+      tenant_id: TENANT,
+      limit: 1,
+      cursor,
+    });
+
+    expect(second.items.map((item) => item.approval.id)).toEqual([OTHER_APPROVAL_ID]);
+    expect(second.next_cursor).toBeNull();
+
+    const pages = client.statements.filter((statement) => statement.kind === 'list_pending');
+
+    expect(pages.map((statement) => statement.params)).toEqual([
+      [TENANT, null, null, 2],
+      [TENANT, CREATED_AT.toISOString(), APPROVAL_ID, 2],
+    ]);
+  });
+
+  it('lists a paused-but-undecided item once, as the PENDING row it still is', async () => {
+    const { repository, client } = harnessFor({
+      list_pending: { rows: [approvalRow({ is_paused: true })] },
+      read_actions: { rows: [actionRow()] },
+    });
+
+    const page = await repository.listPending({ tenant_id: TENANT });
+    const [statement] = client.statements;
+
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0]?.approval.decision).toBe('PENDING');
+    expect(page.items[0]?.approval.is_paused).toBe(true);
+    expect(page.items[0]?.action.id).toBe(ACTION_ID);
+
+    // The queue IS the PENDING projection: the predicate is the decision alone, so a parked item is
+    // never filtered out of the console it was parked for, and the projected `is_paused` column is
+    // what renders it as PAUSED (`06` §8.1.3 R14).
+    expect(statement?.sql).toContain("decision = 'PENDING'");
+    expect(statement?.sql).not.toContain('is_paused =');
+  });
+
+  it('binds every statement to the calling tenant and answers another tenant with an empty queue', async () => {
+    const { repository, client, boundTenants } = harnessFor({ list_pending: { rows: [] } });
+
+    const page = await repository.listPending({ tenant_id: OTHER_TENANT });
+
+    expect(page).toEqual({ items: [], next_cursor: null });
+    expect(boundTenants).toEqual([OTHER_TENANT]);
+    // No row was published, so no action is read: an empty tenant costs one statement, not two.
+    expect(statementsOf(client)).toEqual(['list_pending']);
+    expect(bindingsOf(client, 'list_pending')).toEqual([OTHER_TENANT, null, null, 51]);
+  });
+
+  it('refuses a limit or a cursor it cannot honor, before any transaction opens', async () => {
+    const cases: readonly (readonly [string, ApprovalListInput])[] = [
+      ['APPROVAL_LIMIT_INVALID', { tenant_id: TENANT, limit: 0 }],
+      ['APPROVAL_LIMIT_INVALID', { tenant_id: TENANT, limit: 201 }],
+      ['APPROVAL_LIMIT_INVALID', { tenant_id: TENANT, limit: 1.5 }],
+      ['APPROVAL_LIMIT_INVALID', { tenant_id: TENANT, limit: Number.NaN }],
+      ['APPROVAL_LIMIT_INVALID', { tenant_id: TENANT, limit: '10' as unknown as number }],
+      ['APPROVAL_CURSOR_INVALID', { tenant_id: TENANT, cursor: 'not-a-cursor' }],
+      ['APPROVAL_CURSOR_INVALID', { tenant_id: TENANT, cursor: '' }],
+      [
+        'APPROVAL_CURSOR_INVALID',
+        { tenant_id: TENANT, cursor: `${CREATED_AT.toISOString()}|approval-1` },
+      ],
+      ['APPROVAL_CURSOR_INVALID', { tenant_id: TENANT, cursor: `${CREATED_AT.toISOString()}|` }],
+      // The same instant in another spelling is not the cursor this module published.
+      [
+        'APPROVAL_CURSOR_INVALID',
+        { tenant_id: TENANT, cursor: `2026-01-01T00:00:00Z|${APPROVAL_ID}` },
+      ],
+      ['APPROVAL_TENANT_ID_REQUIRED', { tenant_id: '   ' }],
+    ];
+
+    for (const [code, input] of cases) {
+      const { repository, client, boundTenants } = harnessFor({});
+
+      await expect(repository.listPending(input)).rejects.toThrow(code);
+      expect(statementsOf(client)).toEqual([]);
+      expect(boundTenants).toEqual([]);
+    }
+  });
+
+  it('refuses to publish an item whose action is not visible in the tenant', async () => {
+    const { repository, client } = harnessFor({
+      list_pending: { rows: [approvalRow()] },
+      read_actions: { rows: [] },
+    });
+
+    await expect(repository.listPending({ tenant_id: TENANT })).rejects.toThrow(
+      'APPROVAL_ACTION_MISSING',
+    );
+    expect(statementsOf(client)).toEqual(['list_pending', 'read_actions']);
+  });
+});
+
+describe('ApprovalRepository.getDetail', () => {
+  it('reads one approval with its action and the digest of the reviewed payload', async () => {
+    const { repository, client, boundTenants } = harnessFor({
+      read_approval: { rows: [approvalRow()] },
+      read_actions: { rows: [actionRow()] },
+    });
+
+    const detail = await repository.getDetail(TENANT, APPROVAL_ID);
+
+    expect(boundTenants).toEqual([TENANT]);
+    // A read locks nothing: neither statement is a locking read, and no write is issued.
+    expect(statementsOf(client)).toEqual(['read_approval', 'read_actions']);
+    expect(bindingsOf(client, 'read_approval')).toEqual([TENANT, APPROVAL_ID]);
+    expect(bindingsOf(client, 'read_actions')).toEqual([TENANT, [ACTION_ID]]);
+
+    expect(detail?.approval.id).toBe(APPROVAL_ID);
+    expect(detail?.approval.run_id).toBe(RUN_ID);
+    expect(detail?.approval.payload).toEqual(PAYLOAD);
+    expect(detail?.approval.payload_sha256).toBe(PAYLOAD_SHA256);
+    expect(detail?.approval.reason).toBe(REASON);
+    expect(detail?.approval.decision).toBe('PENDING');
+    expect(detail?.approval.created_at).toBe(CREATED_AT.toISOString());
+    expect(detail?.action).toEqual({
+      id: ACTION_ID,
+      tenant_id: TENANT,
+      decision_id: null,
+      skill_name: SKILL_ID,
+      effect_key: EFFECT_KEY,
+      action_revision: 1,
+      target_channel: ADAPTER_TARGET,
+      action_payload: PAYLOAD,
+      status: 'pending',
+      created_at: CREATED_AT.toISOString(),
+    });
+  });
+
+  it('reads a decided approval too, so the console renders what it decided', async () => {
+    const { repository } = harnessFor({
+      read_approval: { rows: [decidedApprovalRow('APPROVED')] },
+      read_actions: { rows: [actionRow({ status: 'authorized' })] },
+    });
+
+    const detail = await repository.getDetail(TENANT, APPROVAL_ID);
+
+    expect(detail?.approval.decision).toBe('APPROVED');
+    expect(detail?.approval.operator_id).toBe(OPERATOR_ID);
+    expect(detail?.approval.review_comment).toBe(COMMENT);
+    expect(detail?.approval.decided_at).toBe(DECIDED_AT.toISOString());
+    expect(detail?.action.status).toBe('authorized');
+  });
+
+  it('answers null for a missing and for another tenant id, without reading an action', async () => {
+    const missing = harnessFor({ read_approval: { rows: [] } });
+
+    await expect(missing.repository.getDetail(TENANT, APPROVAL_ID)).resolves.toBeNull();
+    expect(statementsOf(missing.client)).toEqual(['read_approval']);
+    expect(bindingsOf(missing.client, 'read_approval')).toEqual([TENANT, APPROVAL_ID]);
+
+    // Row-level security is the second half of the same predicate: an id of another tenant is read
+    // in that other tenant's transaction, matches no row, and is answered as absent rather than
+    // redacted (`06` §8.2.1).
+    const foreign = harnessFor({ read_approval: { rows: [] } });
+
+    await expect(foreign.repository.getDetail(OTHER_TENANT, APPROVAL_ID)).resolves.toBeNull();
+    expect(foreign.boundTenants).toEqual([OTHER_TENANT]);
+    expect(bindingsOf(foreign.client, 'read_approval')).toEqual([OTHER_TENANT, APPROVAL_ID]);
+  });
+
+  it('refuses an id that is not a UUID, and a blank tenant, before any transaction opens', async () => {
+    const cases: readonly (readonly [string, string, string])[] = [
+      ['APPROVAL_ID_INVALID', TENANT, 'APV-CAMP-15'],
+      ['APPROVAL_ID_INVALID', TENANT, `${APPROVAL_ID} `],
+      ['APPROVAL_TENANT_ID_REQUIRED', '', APPROVAL_ID],
+      ['APPROVAL_TENANT_ID_REQUIRED', '  ', APPROVAL_ID],
+    ];
+
+    for (const [code, tenant_id, approval_id] of cases) {
+      const { repository, client, boundTenants } = harnessFor({});
+
+      await expect(repository.getDetail(tenant_id, approval_id)).rejects.toThrow(code);
+      expect(statementsOf(client)).toEqual([]);
+      expect(boundTenants).toEqual([]);
+    }
+  });
+
+  it('refuses to publish an approval whose action is not visible in the tenant', async () => {
+    const { repository, client } = harnessFor({
+      read_approval: { rows: [approvalRow()] },
+      read_actions: { rows: [] },
+    });
+
+    await expect(repository.getDetail(TENANT, APPROVAL_ID)).rejects.toThrow(
+      'APPROVAL_ACTION_MISSING',
+    );
+    expect(statementsOf(client)).toEqual(['read_approval', 'read_actions']);
   });
 });

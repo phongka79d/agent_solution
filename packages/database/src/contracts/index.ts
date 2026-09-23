@@ -263,9 +263,9 @@ export interface IdempotencyReservation {
 }
 
 /**
- * Injected Redis client surface used by the mutex and idempotency helpers. This
- * package never constructs a client of its own, and a caller must never supply a
- * key that is not tenant-scoped.
+ * Injected Redis client surface used by the mutex, idempotency and takeover-lease
+ * helpers. This package never constructs a client of its own, and a caller must never
+ * supply a key that is not tenant-scoped.
  */
 export interface RedisInjectedClient {
   set(
@@ -274,11 +274,76 @@ export interface RedisInjectedClient {
     ...args: ReadonlyArray<string | number>
   ): Promise<string | null>;
   get(key: string): Promise<string | null>;
+  /**
+   * Remaining lifetime of `key` in milliseconds, with the Redis sentinels: `-2` when the
+   * key does not exist and `-1` when it exists without an expiry.
+   */
+  pttl(key: string): Promise<number>;
   eval(
     script: string,
     numberOfKeys: number,
     ...args: ReadonlyArray<string | number>
   ): Promise<unknown>;
+}
+
+/**
+ * Outcome of an `acquire`/`renew`/`release` on the operator takeover lease (SCR-005).
+ * `ACQUIRED` created the lease, `RENEWED` extended one the same operator already held,
+ * `HELD_BY_ANOTHER_OPERATOR` refused to touch another operator's hold, `NOT_HELD` found
+ * no lease attributable to this operator, and `EXPIRED` found no live lease at all.
+ */
+export type SessionTakeoverOutcome =
+  | 'ACQUIRED'
+  | 'RENEWED'
+  | 'HELD_BY_ANOTHER_OPERATOR'
+  | 'NOT_HELD'
+  | 'EXPIRED';
+
+/**
+ * One live operator takeover lease (SCR-005): the operator holding the conversation and the
+ * instant its lease ends. `expires_at` is derived on read from the injected clock and the
+ * key's remaining PTTL; it is never stored on the key.
+ */
+export interface SessionTakeoverLease {
+  readonly operator_id: string;
+  readonly expires_at: string;
+}
+
+/**
+ * Result of an `acquire`/`renew`/`release`. `lease` is the live lease this call may report
+ * for the caller: `null` when the call refused, when nothing is held, and when the lease
+ * belongs to another operator and is therefore not this caller's to read.
+ */
+export interface SessionTakeoverResult {
+  readonly outcome: SessionTakeoverOutcome;
+  readonly lease: SessionTakeoverLease | null;
+}
+
+/**
+ * Input of the takeover lease store. The conversation is the session subject of the
+ * canonical key (`07` §6.2), so a conversation id — never a separate session resource —
+ * names the lease.
+ */
+export interface SessionTakeoverRequest {
+  readonly tenant_id: string;
+  readonly conversation_id: string;
+  readonly operator_id: string;
+}
+
+/**
+ * Input of `acquireSessionTakeover()`: the wire's `ttl_seconds` is a whole second count, and
+ * the lease it writes is always bounded by it.
+ */
+export interface SessionTakeoverAcquireRequest extends SessionTakeoverRequest {
+  readonly ttl_seconds: number;
+}
+
+/**
+ * Input of `renewSessionTakeover()`: the wire's `extend_seconds` is a whole second count, and
+ * it extends an existing lease instead of creating one.
+ */
+export interface SessionTakeoverRenewRequest extends SessionTakeoverRequest {
+  readonly extend_seconds: number;
 }
 
 /**

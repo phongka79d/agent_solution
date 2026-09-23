@@ -137,6 +137,36 @@ const CONNECTOR_CODE_MAP: Readonly<Record<string, GatewayErrorCode_>> = Object.f
   REPLAY_WINDOW_EXCEEDED: 'SIGNATURE_INVALID',
 });
 
+/** Plain repository errors carry their stable code as the prefix of a sanitized internal message. */
+const REPOSITORY_CODE_MAP: Readonly<Record<string, GatewayErrorCode_>> = Object.freeze({
+  PORT_UNBOUND: 'CAPABILITY_NOT_ENABLED',
+  APPROVAL_STALE_PAYLOAD: 'APPROVAL_STALE_PAYLOAD',
+  APPROVAL_NOT_CLAIMABLE: 'APPROVAL_NOT_CLAIMABLE',
+  APPROVAL_NOT_FOUND: 'NOT_FOUND',
+  DURABLE_TASK_NOT_FOUND: 'TASK_NOT_FOUND',
+  TASK_NOT_FOUND: 'TASK_NOT_FOUND',
+  TASK_REQUEUE_NOT_FAILED: 'RUN_NOT_RETRYABLE',
+  TASK_VERSION_CONFLICT: 'RUN_NOT_RETRYABLE',
+  RUN_RECONCILIATION_REQUIRED: 'RUN_NOT_RECONCILABLE',
+  TASK_LIST_CURSOR_INVALID: 'VALIDATION_FAILED',
+  TASK_LIST_LIMIT_INVALID: 'VALIDATION_FAILED',
+  TASK_LIST_RANGE_INVALID: 'VALIDATION_FAILED',
+  TASK_AGENT_ID_INVALID: 'VALIDATION_FAILED',
+  APPROVAL_CURSOR_INVALID: 'VALIDATION_FAILED',
+  APPROVAL_LIMIT_INVALID: 'VALIDATION_FAILED',
+  SESSION_TAKEOVER_WINDOW_INVALID: 'VALIDATION_FAILED',
+  SESSION_ID_REQUIRED: 'VALIDATION_FAILED',
+  OPERATOR_ID_REQUIRED: 'VALIDATION_FAILED',
+  TENANT_CONTEXT_REQUIRED: 'VALIDATION_FAILED',
+});
+
+function messageCode(error: unknown): string | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const separator = error.message.indexOf(':');
+  const code = separator === -1 ? error.message : error.message.slice(0, separator);
+  return /^[A-Z][A-Z0-9_]*$/.test(code) ? code : undefined;
+}
+
 /** A layer error carrying a stable `code` string; the engine and the skill layer both use one. */
 interface CodedError {
   readonly code: string;
@@ -190,6 +220,12 @@ export function mapError(error: unknown, correlation_id: string): ErrorResponse 
       return toErrorResponse(failureFor(mapped, `${mapped} [${error.code}]`), correlation_id);
     }
   }
+  const repositoryCode = messageCode(error);
+  const repositoryMapped = repositoryCode === undefined ? undefined : REPOSITORY_CODE_MAP[repositoryCode];
+  if (repositoryMapped !== undefined) {
+    return toErrorResponse(failureFor(repositoryMapped, `${repositoryMapped} [${repositoryCode}]`), correlation_id);
+  }
+
 
   return toErrorResponse(
     failureFor('INTERNAL_ERROR', 'the request could not be completed'),

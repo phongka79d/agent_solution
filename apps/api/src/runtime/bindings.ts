@@ -15,22 +15,50 @@
 
 import { createHmac, randomUUID } from 'node:crypto';
 
-import { computeEffectKey, computeRequestFingerprint } from '@agentos/core-engine';
+import {
+  canonicalizeJson,
+  computeEffectKey,
+  computeRequestFingerprint,
+} from '@agentos/core-engine';
 import type { IEffectGuard, ReservationOutcome } from '@agentos/core-engine/contracts';
 import {
+  acquireSessionTakeover,
+  findIdentity,
+  readSessionTakeover,
+  releaseSessionTakeover,
+  renewSessionTakeover,
+  type AgentRunLog,
   type AppendCustomerEventInput,
+  type ApprovalRepository,
   type ConversationRepository,
   type CustomerEventRepository,
+  type DurableTaskRecord,
+  type DurableWorkflowRepository,
   type EffectReservationRepository,
+  type EvidenceRepository,
+  type RedisInjectedClient,
   type TenantTransactionRunner,
 } from '@agentos/database';
 
-import type { ChannelId, EvidenceClassification, TimelineEntry } from '../gateway/contracts.js';
 import type {
+  ApprovalDetailResponse,
+  ApprovalQueueItem,
+  ChannelId,
+  EvidenceClassification,
+  RetryableFailureClass,
+  RunProjection,
+  RunStepProjection,
+  TimelineEntry,
+} from '../gateway/contracts.js';
+import type {
+  ApprovalPort,
   ConversationPort,
   ConversationRecord,
   EventPort,
+  IdentityPort,
   ReceiptPort,
+  RunPort,
+  TakeoverLeasePort,
 } from '../gateway/ports.js';
 
 /** Encodes the canonical effect key and request fingerprint of one reservable effect. */
@@ -263,6 +291,354 @@ export function createReceiptPort(guard: IEffectGuard): ReceiptPort {
 
     storeReceipt: async (tenant_id, effect_key, receipt) => {
       await guard.resolve({ tenant_id, effect_key, status: 'SUCCEEDED', receipt });
+    },
+  };
+}
+
+/** Repository surface needed by the truthful durable run projection. */
+type DurableRunRepository = Pick<
+  DurableWorkflowRepository,
+  'getTask' | 'listTasks' | 'requeueFailed'
+>;
+
+/** Operational-log surface needed by retry classification and R16. */
+type RunEvidenceRepository = Pick<EvidenceRepository, 'readRunLogs'>;
+
+/** Reservation surface used to prove that a failed effect is not still indeterminate. */
+type RunReservationRepository = Pick<EffectReservationRepository, 'getReservation'>;
+
+/** Approval read surface. Decisions stay with the unavailable orchestrator resume graph. */
+type ApprovalReadRepository = Pick<ApprovalRepository, 'getDetail' | 'listPending'>;
+
+/** A JSON object as stored by PostgreSQL JSONB. */
+function plainRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const prototype: unknown = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+/** Reads the persisted error code without trusting a free-text message. */
+function errorCodeOf(value: unknown): string | null {
+  if (!plainRecord(value)) return null;
+  const code = value['code'];
+  return typeof code === 'string' && code.length > 0 ? code : null;
+}
+
+/** Reads the deterministic effect key from a complete checkpoint or a stored run-log action. */
+function effectKeyOf(task: DurableTaskRecord, logs: readonly AgentRunLog[]): string | null {
+  if (plainRecord(task.state_payload)) {
+    const pending = task.state_payload['pending_action'];
+    if (plainRecord(pending) && typeof pending['effect_key'] === 'string') {
+      return pending['effect_key'];
+    }
+  }
+
+  for (let index = logs.length - 1; index >= 0; index -= 1) {
+    const action = logs[index]?.action;
+    if (plainRecord(action) && typeof action['effect_key'] === 'string') {
+      return action['effect_key'];
+    }
+  }
+
+  return null;
+}
+
+/** Closed mapping of stored pre-effect failures to R13's verified side-effect-free classes. */
+function retryClassOf(code: string | null): RetryableFailureClass | null {
+  switch (code) {
+    case 'SCHEMA_VALIDATION_ERROR':
+    case 'OUTPUT_SCHEMA_VALIDATION_ERROR':
+    case 'CANONICAL_JSON_INVALID':
+    case 'POLICY_INPUT_INVALID':
+      return 'SCHEMA_VALIDATION_FAILURE';
+
+    case 'AUTHORITY_DENIED':
+    case 'INSUFFICIENT_AUTHORITY':
+    case 'INVALID_CLEARANCE':
+    case 'PROHIBITED_ACTION':
+    case 'UNAUTHORIZED_AGENT':
+    case 'CLEARANCE_REQUIRED':
+      return 'AUTHORITY_DENY';
+
+    case 'TENANT_CONTEXT_REQUIRED':
+    case 'CROSS_TENANT_ASSERTION':
+    case 'CROSS_CUSTOMER_ASSERTION':
+    case 'IDENTITY_UNVERIFIED':
+    case 'UNKNOWN_AGENT':
+    case 'UNKNOWN_SKILL':
+    case 'AGENT_TO_AGENT_FORBIDDEN':
+    case 'PROMPT_INJECTION_BLOCKED':
+    case 'HYPOTHESIS_PROMOTION_REJECTED':
+    case 'CONSENT_REQUIRED':
+    case 'P_FLOOR_UNAVAILABLE':
+    case 'ERR_ARBITRARY_PRICING':
+    case 'ERR_FLOOR_PRICE_VIOLATION':
+    case 'AUTHORITATIVE_SOURCE_UNAVAILABLE':
+    case 'EFFECT_KEY_REQUIRED':
+    case 'IDEMPOTENCY_CONFLICT':
+    case 'HUMAN_TAKEOVER':
+    case 'EVIDENCE_REQUIRED':
+    case 'AUDIT_SECRET_MISSING':
+    case 'AUDIT_UNAVAILABLE':
+    case 'APPROVAL_QUEUE_UNAVAILABLE':
+      return 'FAIL_CLOSED';
+
+    case 'PROVIDER_RATE_LIMITED':
+    case 'PROVIDER_UNAVAILABLE':
+    case 'CONNECTOR_NOT_FOUND':
+    case 'CONNECTOR_NOT_ENABLED':
+      return 'PRE_DISPATCH_PROVIDER_REJECTION';
+
+    default:
+      return null;
+  }
+}
+
+/** Extracts the persisted USD cost without inventing a zero for an unrecognised shape. */
+function costOf(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (plainRecord(value)) {
+    const total = value['total_cost_usd'];
+    if (typeof total === 'number' && Number.isFinite(total)) return total;
+  }
+  throw new Error('RUN_LOG_PROJECTION_INVALID: cost has no numeric total_cost_usd');
+}
+
+/** Maps one durable operational-log row without dropping any structured value. */
+function toRunStep(log: AgentRunLog): RunStepProjection {
+  return {
+    step_index: log.step_index,
+    skill: log.skill,
+    tool: log.tool,
+    authority: log.authority,
+    approval: log.approval === null ? 'null' : canonicalizeJson(log.approval),
+    action: canonicalizeJson(log.action),
+    execution_status: log.execution_status,
+    evidence: log.evidence === null ? null : canonicalizeJson(log.evidence),
+    outcome: log.outcome === null ? null : canonicalizeJson(log.outcome),
+    latency_ms: log.latency_ms,
+    cost: costOf(log.cost),
+    error: log.error === null ? null : canonicalizeJson(log.error),
+    started_at: log.started_at,
+    completed_at: log.completed_at,
+  };
+}
+
+/** Maps the PostgreSQL schedule of record plus its step log onto R16. */
+async function toRunProjection(
+  task: DurableTaskRecord,
+  evidence: RunEvidenceRepository,
+): Promise<RunProjection> {
+  const logs = await evidence.readRunLogs(task.tenant_id, task.run_id);
+  return {
+    run_id: task.run_id,
+    state: task.state,
+    task_version: task.task_version,
+    current_step: task.current_step,
+    retry_count: task.retry_count,
+    last_error_class: task.last_error_class,
+    steps: logs.map(toRunStep),
+    correlation_id: task.correlation_id,
+  };
+}
+
+/**
+ * Binds the durable run read model and the narrow operator requeue path.
+ *
+ * Start and reconciliation are intentionally absent: both require the complete RevenueOrchestrator
+ * graph, including current policy, skill execution, evidence and leases. The composition root keeps
+ * those two capabilities fail-closed instead of mutating repositories behind the orchestrator.
+ */
+export function createDurableRunPort(
+  repository: DurableRunRepository,
+  evidence: RunEvidenceRepository,
+  reservations: RunReservationRepository,
+): Pick<RunPort, 'read' | 'classifyRetry' | 'retry' | 'list'> {
+  const classifyRetry: RunPort['classifyRetry'] = async (tenant_id, run_id) => {
+    const task = await repository.getTask(tenant_id, run_id);
+    if (task === null) return { retryable: false, reason: 'NOT_FOUND' };
+    if (task.state !== 'failed') return { retryable: false, reason: 'NOT_FAILED' };
+
+    const logs = await evidence.readRunLogs(tenant_id, run_id);
+    const effect_key = effectKeyOf(task, logs);
+    const failure_class = retryClassOf(errorCodeOf(task.error_details));
+    if (effect_key === null || failure_class === null) {
+      return { retryable: false, reason: 'UNKNOWN' };
+    }
+
+    const reservation = await reservations.getReservation(tenant_id, effect_key);
+    if (reservation !== null && reservation.status !== 'FAILED') {
+      // RESERVED means the effect may have landed; SUCCEEDED means it did. Neither is retryable.
+      return { retryable: false, reason: 'UNKNOWN' };
+    }
+
+    return { retryable: true, failure_class, effect_key };
+  };
+
+  return {
+    read: async ({ tenant_id, run_id }) => {
+      const task = await repository.getTask(tenant_id, run_id);
+      return task === null
+        ? null
+        : {
+            run_id: task.run_id,
+            task_version: task.task_version,
+            lifecycle_state: task.state,
+            correlation_id: task.correlation_id,
+          };
+    },
+
+    classifyRetry,
+
+    retry: async (input) => {
+      const classification = await classifyRetry(input.tenant_id, input.run_id);
+      if (!classification.retryable) {
+        if (classification.reason === 'UNKNOWN') {
+          throw new Error(
+            'RUN_RECONCILIATION_REQUIRED: the effect is not proven absent and must be reconciled before any retry',
+          );
+        }
+        throw new Error('TASK_REQUEUE_NOT_FAILED: only a failed durable task can be re-queued');
+      }
+
+      const task = await repository.requeueFailed({
+        tenant_id: input.tenant_id,
+        run_id: input.run_id,
+        reason: input.reason,
+      });
+      return {
+        run_id: task.run_id,
+        task_version: task.task_version,
+        correlation_id: task.correlation_id,
+        lifecycle_state: task.state,
+      };
+    },
+
+    list: async (input) => {
+      const page = await repository.listTasks(input);
+      return {
+        items: await Promise.all(page.items.map((task) => toRunProjection(task, evidence))),
+        next_cursor: page.next_cursor,
+      };
+    },
+  };
+}
+
+/** Structural approval row used by the gateway mapper without importing repository internals. */
+interface ApprovalDetailRecordLike {
+  readonly approval: {
+    readonly id: string;
+    readonly tenant_id: string;
+    readonly run_id: string;
+    readonly action_id: string;
+    readonly effect_key: string;
+    readonly payload: unknown;
+    readonly payload_sha256: string;
+    readonly reason: string;
+    readonly operator_id: string | null;
+    readonly decision: string;
+    readonly is_paused: boolean;
+    readonly review_comment: string | null;
+    readonly decided_at: string | null;
+    readonly created_at: string;
+  };
+}
+
+/** Maps the single canonical approval row onto the queue contract. */
+function toApprovalQueueItem(detail: ApprovalDetailRecordLike): ApprovalQueueItem {
+  const { approval } = detail;
+  if (approval.decision !== 'PENDING') {
+    throw new Error(
+      'APPROVAL_DETAIL_STATUS_UNREPRESENTABLE: this gateway contract publishes the PENDING queue only',
+    );
+  }
+  if (!plainRecord(approval.payload)) {
+    throw new Error('APPROVAL_PAYLOAD_INVALID: the reviewed approval payload is not a JSON object');
+  }
+
+  return {
+    approval_id: approval.id,
+    run_id: approval.run_id,
+    action_id: approval.action_id,
+    effect_key: approval.effect_key,
+    payload: approval.payload,
+    reason: approval.reason,
+    status: 'PENDING',
+    is_paused: approval.is_paused,
+    decided_by: approval.operator_id,
+    decided_at: approval.decided_at,
+    decision_notes: approval.review_comment,
+    created_at: approval.created_at,
+    payload_sha256: approval.payload_sha256,
+  };
+}
+
+/** Binds the approval queue and detail reads to their canonical PostgreSQL rows. */
+export function createApprovalReadPort(
+  repository: ApprovalReadRepository,
+): Pick<ApprovalPort, 'list' | 'detail'> {
+  return {
+    list: async (input) => {
+      const page = await repository.listPending({
+        tenant_id: input.tenant_id,
+        ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+        ...(input.limit === undefined ? {} : { limit: input.limit }),
+      });
+      return {
+        items: page.items.map(toApprovalQueueItem),
+        next_cursor: page.next_cursor,
+      };
+    },
+
+    detail: async (tenant_id, approval_id): Promise<ApprovalDetailResponse | null> => {
+      const detail = await repository.getDetail(tenant_id, approval_id);
+      return detail === null
+        ? null
+        : {
+            ...toApprovalQueueItem(detail),
+            tenant_id: detail.approval.tenant_id,
+            // No owner-approved approval TTL or stored expiry exists in P0.
+            expires_at: null,
+          };
+    },
+  };
+}
+
+/** Binds SCR-005 to the canonical tenant/conversation-scoped Redis lease helpers. */
+export function createTakeoverLeasePort(
+  redis: RedisInjectedClient,
+  now: () => Date = systemClock,
+): TakeoverLeasePort {
+  return {
+    acquire: async (input) => acquireSessionTakeover(redis, input, now),
+    renew: async (input) => renewSessionTakeover(redis, input, now),
+    release: async (input) => releaseSessionTakeover(redis, input),
+    holder: async (tenant_id, conversation_id) =>
+      readSessionTakeover(redis, tenant_id, conversation_id, now),
+  };
+}
+
+/** Function seam for the tenant-scoped verified channel-identity read. */
+export type CustomerIdentityLookup = typeof findIdentity;
+
+/** Binds identity only from a verified exact tenant/channel row; claims never become answers. */
+export function createIdentityPort(
+  lookup: CustomerIdentityLookup = findIdentity,
+): IdentityPort {
+  return {
+    resolveCustomer: async (input) => {
+      if (input.channel_identifier === undefined || input.channel_identifier.length === 0) {
+        return { customer_id: null, verdict: 'UNRESOLVED' };
+      }
+
+      const identity = await lookup(
+        input.tenant_id,
+        input.channel_type,
+        input.channel_identifier,
+      );
+      return identity === null || identity.verified_at === null
+        ? { customer_id: null, verdict: 'UNRESOLVED' }
+        : { customer_id: identity.customer_id, verdict: 'CHANNEL_IDENTIFIER_EXACT' };
     },
   };
 }
