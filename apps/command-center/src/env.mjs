@@ -2,13 +2,39 @@
 // Next.js instrumentation imports this module, so it must stay free of `node:` schemes
 // that the Next 14 webpack build cannot load.
 
-import {
-  APP_ENVS,
-  MANAGED_APP_ENVS,
-  NODE_ENVS,
-  PROFILE_NODE_ENV,
-  isPlaceholder,
-} from '../../../packages/core-engine/src/config/env.validator.mjs';
+export const APP_ENVS = ['local', 'ci', 'staging', 'sandbox', 'production'];
+export const NODE_ENVS = ['development', 'test', 'production'];
+export const PROFILE_NODE_ENV = {
+  local: 'development',
+  ci: 'test',
+  staging: 'production',
+  sandbox: 'production',
+  production: 'production',
+};
+export const MANAGED_APP_ENVS = ['staging', 'sandbox', 'production'];
+
+const PLACEHOLDER_PATTERN =
+  /(mock|placeholder|example\.invalid|super_secret|agentos_internal_service_mesh_key|hmac_signature_validation_secret|local_only_audit_chain_signing|change[-_]me|test[-_](?:secret|key|password))/i;
+
+const BANNER_VALUES = [
+  'postgres_dev_secret_password',
+  'redis_dev_secret_password',
+  'qdrant_dev_secret_api_key',
+  'mock_erp_hmac_secret_key',
+  'agentos_app_password',
+  'sk-proj-mock',
+  'sk-ant-mock',
+  'sk_test_mock',
+  'whsec_mock',
+  '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+];
+
+export function isPlaceholder(value) {
+  if (typeof value !== 'string' || value === '') return false;
+  if (PLACEHOLDER_PATTERN.test(value)) return true;
+  const lowered = value.toLowerCase();
+  return BANNER_VALUES.some((banner) => lowered.includes(banner));
+}
 
 export const DEFAULT_PORT = 3000;
 export const MIN_NEXTAUTH_SECRET_LENGTH = 32;
