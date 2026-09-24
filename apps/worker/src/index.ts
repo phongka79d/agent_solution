@@ -1,8 +1,8 @@
 // Worker process entry (`node apps/worker/dist/index.js`).
 //
-// The durable worker starts first and stays the reason this process exists; the health listener
-// from apps/worker/src/server.mjs runs alongside it on WORKER_HEALTH_PORT (default 4001) so an
-// orchestrator can probe the container. Both are closed on SIGINT/SIGTERM.
+// The connector and health listener start independently. Durable Care polling starts only when
+// a tenant scope and an authentic orchestrator factory are both bound; an unbound graph is logged
+// and never consumes queued tasks. Both handles close on SIGINT/SIGTERM.
 //
 // The boot module is JavaScript and is therefore imported at runtime: tsc has `rootDir: src` and
 // never emits `src/server.mjs`, so the specifier is resolved from import.meta.url against the two
@@ -56,6 +56,9 @@ process.stdout.write(`worker started [${worker.dependencies.join(', ')}]\n`);
 process.stdout.write(`worker connectors reachable: ${worker.connectors.bound.join(', ') || '(none)'}\n`);
 for (const capability of worker.connectors.unbound) {
   process.stdout.write(`worker: capability not bound in this build: ${capability}\n`);
+}
+for (const blocker of worker.blockers ?? []) {
+  process.stdout.write(`worker: capability not bound in this build: ${blocker}\n`);
 }
 
 // Runtime-selected specifier, so a static import cannot express it: tsc must not emit or copy

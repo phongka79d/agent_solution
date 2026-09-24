@@ -55,6 +55,7 @@ import type {
   ISessionControl,
   IStatefulWorkflowEngine,
 } from '../contracts/index.js';
+import { canonicalizeJson } from '../durability/canonical-json.js';
 import { StageJournal, type LifecycleStage } from '../lifecycle/stages.js';
 import { assertOrchestratorBrokered } from './agent-boundary.js';
 
@@ -92,6 +93,8 @@ function outcomeFields(fields: {
 }
 
 export class RevenueOrchestrator {
+  private readonly defaultWorkerId = `worker_${randomUUID().substring(0, 8)}`;
+  private claimedWorkerId: string | null = null;
   private journal: StageJournal = new StageJournal();
 
   constructor(
@@ -107,11 +110,13 @@ export class RevenueOrchestrator {
       sessionControl: ISessionControl;
       leaseManager: DurableLeaseManager;
       workerId?: string;
+      /** The authoritative worker lease is rechecked immediately before external dispatch. */
+      assertExecutionLease?: (tenant_id: string, run_id: string) => Promise<void>;
     }
   ) {}
 
   private get workerId(): string {
-    return this.dependencies.workerId ?? `worker_${randomUUID().substring(0, 8)}`;
+    return this.dependencies.workerId ?? this.defaultWorkerId;
   }
 
   /**
@@ -152,100 +157,287 @@ export class RevenueOrchestrator {
       state: 'running',
     });
 
-    try {
-      // STEP 2: CONTEXT HYDRATION (trusted identity resolution + session-scoped memory)
-      this.journal.enter('CONTEXT');
-      const context = await this.dependencies.contextAggregator.hydrateContext(
+    return this.runGuardedPipeline({
+      signal,
+      run_id,
+      request_id,
+      chain,
+      workerId: this.workerId,
+    });
+  }
+
+  /**
+   * Executes the full 11-step E2E lifecycle against an existing queued or claimed durable task.
+   *
+   * Verifies the DB claimed task's lease ownership and signal equality, transitions queued tasks
+   * to running, and executes the exact same guarded pipeline without creating a second task.
+   */
+  public async processQueuedSignal(
+    run_id: string,
+    signal: SignalEnvelope,
+    options?: { worker_id?: string }
+  ): Promise<OrchestratorRunResult> {
+    this.journal = new StageJournal();
+    this.claimedWorkerId = options?.worker_id ?? this.workerId;
+    // STEP 1: SIGNAL VALIDATION — fail closed before any durable action.
+    this.validateSignalEnvelope(signal);
+
+    const effectiveWorkerId = this.claimedWorkerId;
+    const task = await this.dependencies.workflowEngine.getTask(signal.tenant_id, run_id);
+    if (!task) {
+      throw new OrchestratorError('TASK_NOT_FOUND', `Task ${run_id} does not exist`);
+    }
+
+    if (task.state !== 'running' && task.state !== 'queued') {
+      throw new OrchestratorError('INVALID_TASK_STATE', `Cannot process queued task currently in '${task.state}'`);
+    }
+
+    // Fencing guard: verify lease ownership against the claimed DB row
+    if (!task.lease_owner || task.lease_owner !== effectiveWorkerId) {
+      throw new OrchestratorError(
+        'CONCURRENT_TASK_LOCK',
+        `Worker '${effectiveWorkerId}' does not hold active lease for task ${run_id} (held by: '${task.lease_owner ?? 'none'}')`
+      );
+    }
+
+    const expiresAtMs = task.lease_expires_at ? Date.parse(task.lease_expires_at) : Number.NaN;
+    if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
+      throw new OrchestratorError('TASK_LEASE_EXPIRED', `Execution lease for task ${run_id} is absent or expired`);
+    }
+
+    // Verify correlation and signal equality
+    if (task.correlation_id !== signal.correlation_id) {
+      throw new OrchestratorError(
+        'SIGNAL_MISMATCH',
+        `Signal correlation_id '${signal.correlation_id}' does not match task correlation_id '${task.correlation_id}'`
+      );
+    }
+
+    const payload = task.state_payload;
+    if (typeof payload !== 'object' || payload === null || Array.isArray(payload) || !('signal' in payload)) {
+      throw new OrchestratorError('CHECKPOINT_INCOMPLETE', 'Queued task has no persisted signal.');
+    }
+    const storedSignal = payload.signal;
+    if (canonicalizeJson(storedSignal) !== canonicalizeJson(signal)) {
+      throw new OrchestratorError('SIGNAL_MISMATCH', `Provided signal does not match stored queued signal for task ${run_id}`);
+    }
+    if ('plan' in payload || 'pending_action' in payload) {
+      const checkpoint = payload as unknown as DurableTaskCheckpoint;
+
+      // A reattempt of a persisted plan runs inside the SAME durable-recovery envelope as a first
+      // pass: a checkpoint that cannot be resumed, and a step that fails again, are both outcomes of
+      // this attempt — they must be parked or booked (§4.4) and spend the retry budget, never leave
+      // the run re-queueable with nothing recorded. Only refusals about *who* may run the task (the
+      // claim, the lease, the correlation) stay outside the envelope, because they are not the
+      // run's own failure and must not consume its budget.
+      return await this.withDurableRecovery(
+        { tenant_id: signal.tenant_id, run_id, workerId: effectiveWorkerId, checkpoint },
+        async () => {
+          if (!checkpoint.plan || !checkpoint.context || !checkpoint.request_id
+            || checkpoint.request_id !== signal.signal_id || !Number.isInteger(checkpoint.current_step)
+            || checkpoint.current_step < 1 || !checkpoint.previous_evidence_hash) {
+            throw new OrchestratorError('CHECKPOINT_INCOMPLETE', 'Claimed task has no complete persisted plan cursor.');
+          }
+          if (checkpoint.pending_action?.mutating && checkpoint.pending_action.step_index === checkpoint.current_step) {
+            throw new OrchestratorError('CHECKPOINT_REQUIRES_RECONCILIATION', 'A restarted mutating step requires reconciliation by its effect key.');
+          }
+          if (checkpoint.current_step > checkpoint.plan.steps.length) {
+            await this.dependencies.workflowEngine.transitionTask(signal.tenant_id, run_id, 'completed', 'Recovered evidenced plan verified');
+            return { run_id, lifecycle_state: 'completed' as const };
+          }
+          this.replayCommittedStages(checkpoint);
+          const outcome = await this.executeSteps({
+            signal, tenant_id: signal.tenant_id, run_id, correlation_id: signal.correlation_id,
+            request_id: checkpoint.request_id, plan: checkpoint.plan, context: checkpoint.context,
+            chain: { previous: checkpoint.previous_evidence_hash }, from_step: checkpoint.current_step,
+            approved_action: null, approval_ref: null,
+          });
+          if (outcome.lifecycle_state === 'completed') {
+            await this.dependencies.workflowEngine.transitionTask(signal.tenant_id, run_id, 'completed', 'Recovered plan steps verified');
+          }
+          return { run_id, lifecycle_state: outcome.lifecycle_state, ...outcomeFields(outcome) };
+        },
+      );
+    }
+
+    // The reattempt branch replays SIGNAL from the checkpoint, so the first-pass path enters it
+    // here: exactly one SIGNAL entry on either path, and no illegal repeat on a re-driven task.
+    this.journal.enter('SIGNAL');
+
+    // Transition queued task to running if not already running
+    if (task.state === 'queued') {
+      await this.dependencies.workflowEngine.transitionTask(
         signal.tenant_id,
-        signal.subject,
-        signal.correlation_id
-      );
-      const sessionId = context.working_memory.session_id;
-
-      if (await this.dependencies.sessionControl.isTakenOver(signal.tenant_id, sessionId)) {
-        await this.dependencies.workflowEngine.transitionTask(signal.tenant_id, run_id, 'stopped', 'HUMAN_TAKEOVER at step [2. CONTEXT] (SCR-005)');
-        return {
-          run_id,
-          lifecycle_state: 'stopped',
-          ...outcomeFields({ message: 'Session locked by human operator' }),
-        };
-      }
-
-      // STEP 3: HYPOTHESIS FORMATION (explicitly HYPOTHESIS-class, cannot write to FACT)
-      this.journal.enter('HYPOTHESIS');
-      const hypothesis = await this.dependencies.agentRuntime.deriveHypothesis(signal, context);
-      this.enforceEpistemicSeparation(hypothesis);
-
-      // STEP 4: DECISION & ROUTING (FR-ORC-001)
-      this.journal.enter('DECISION');
-      const routing = assertOrchestratorBrokered(
-        await this.dependencies.agentRuntime.resolveRouting(signal, context, hypothesis),
-      );
-
-      if (routing.target_agent === 'HUMAN_HANDOFF') {
-        await this.dependencies.workflowEngine.transitionTask(signal.tenant_id, run_id, 'awaiting_human', 'Routed to human agent queue');
-        return {
-          run_id,
-          lifecycle_state: 'awaiting_human',
-          ...outcomeFields({ message: 'Escalated to human operator' }),
-        };
-      }
-
-      // STEP 5: PLAN FORMULATION. The Single Clarification Rule produces a one-step plan, so a
-      // clarification message passes the SAME authority, reservation and evidence guards as any
-      // other outbound action (it is a real external mutation).
-      this.journal.enter('PLAN');
-      const plan = routing.requires_clarification
-        ? this.buildClarificationPlan(routing, signal, context)
-        : await this.dependencies.agentRuntime.formulatePlan(routing, context, hypothesis);
-
-      // STEPS 6-9: GUARDED STEP LOOP (the single guarded step engine, shared with the resume path)
-      const outcome = await this.executeSteps({
-        signal,
-        tenant_id: signal.tenant_id,
         run_id,
-        correlation_id: signal.correlation_id,
-        request_id,
-        plan,
-        context,
-        chain,
-        from_step: 1,
-        approved_action: null,
-        approval_ref: null,
-      });
-      if (outcome.lifecycle_state !== 'completed') {
+        'running',
+        'Worker claimed queued task',
+        undefined,
+        { expected_task_version: task.task_version, lease_owner: effectiveWorkerId }
+      );
+    }
+
+    const request_id = signal.signal_id;
+    const chain: EvidenceChain = { previous: GENESIS_HASH };
+
+    return this.runGuardedPipeline({
+      signal,
+      run_id,
+      request_id,
+      chain,
+      workerId: effectiveWorkerId,
+    });
+  }
+
+  /**
+   * Executes the common guarded pipeline for processSignal and processQueuedSignal.
+   */
+  private async runGuardedPipeline(params: {
+    signal: SignalEnvelope;
+    run_id: string;
+    request_id: string;
+    chain: EvidenceChain;
+    workerId: string;
+  }): Promise<OrchestratorRunResult> {
+    const { signal, run_id, request_id, chain, workerId } = params;
+
+    return await this.withDurableRecovery(
+      { tenant_id: signal.tenant_id, run_id, workerId },
+      async () => {
+        // STEP 2: CONTEXT HYDRATION (trusted identity resolution + session-scoped memory)
+        this.journal.enter('CONTEXT');
+        const context = await this.dependencies.contextAggregator.hydrateContext(
+          signal.tenant_id,
+          signal.subject,
+          signal.correlation_id
+        );
+        const sessionId = context.working_memory.session_id;
+
+        if (await this.dependencies.sessionControl.isTakenOver(signal.tenant_id, sessionId)) {
+          await this.dependencies.workflowEngine.transitionTask(signal.tenant_id, run_id, 'stopped', 'HUMAN_TAKEOVER at step [2. CONTEXT] (SCR-005)');
+          return {
+            run_id,
+            lifecycle_state: 'stopped',
+            ...outcomeFields({ message: 'Session locked by human operator' }),
+          };
+        }
+
+        // STEP 3: HYPOTHESIS FORMATION (explicitly HYPOTHESIS-class, cannot write to FACT)
+        this.journal.enter('HYPOTHESIS');
+        const hypothesis = await this.dependencies.agentRuntime.deriveHypothesis(signal, context);
+        this.enforceEpistemicSeparation(hypothesis);
+        // STEP 4: DECISION & ROUTING (FR-ORC-001)
+        this.journal.enter('DECISION');
+        const routing = assertOrchestratorBrokered(
+          await this.dependencies.agentRuntime.resolveRouting(signal, context, hypothesis),
+        );
+
+        if (routing.target_agent === 'HUMAN_HANDOFF') {
+          await this.dependencies.workflowEngine.transitionTask(signal.tenant_id, run_id, 'awaiting_human', 'Routed to human agent queue');
+          return {
+            run_id,
+            lifecycle_state: 'awaiting_human',
+            ...outcomeFields({ message: 'Escalated to human operator' }),
+          };
+        }
+
+        // STEP 5: PLAN FORMULATION. The Single Clarification Rule produces a one-step plan, so a
+        // clarification message passes the SAME authority, reservation and evidence guards as any
+        // other outbound action (it is a real external mutation).
+        this.journal.enter('PLAN');
+        const plan = routing.requires_clarification
+          ? this.buildClarificationPlan(routing, signal, context)
+          : await this.dependencies.agentRuntime.formulatePlan(routing, context, hypothesis);
+        // Persist the decided plan before its first side effect. A restarted worker must replay this
+        // checkpoint rather than rederive a potentially different plan under the same request id.
+        await this.dependencies.workflowEngine.updateTaskProgress(signal.tenant_id, run_id, 1, {
+          signal, plan, current_step: 1, pending_action: null, context,
+          previous_evidence_hash: chain.previous, request_id,
+        });
+
+        // STEPS 6-9: GUARDED STEP LOOP (the single guarded step engine, shared with the resume path)
+        const outcome = await this.executeSteps({
+          signal,
+          tenant_id: signal.tenant_id,
+          run_id,
+          correlation_id: signal.correlation_id,
+          request_id,
+          plan,
+          context,
+          chain,
+          from_step: 1,
+          approved_action: null,
+          approval_ref: null,
+        });
+        if (outcome.lifecycle_state !== 'completed') {
+          return {
+            run_id,
+            lifecycle_state: outcome.lifecycle_state,
+            ...outcomeFields(outcome),
+          };
+        }
+
+        // STEPS 10-11: OUTCOME BASELINE & LEARNING UPDATE. Only a run that produced step evidence has
+        // an outcome to attribute; a plan that produced none (an empty plan, or a resume past the last
+        // step) completes without claiming either stage rather than recording a stage it never reached.
+        if (outcome.evidence !== undefined) {
+          this.journal.enter('OUTCOME');
+          await this.updateLearningMemory(signal.tenant_id, run_id, hypothesis, outcome.evidence);
+        }
+        await this.dependencies.workflowEngine.transitionTask(signal.tenant_id, run_id, 'completed', 'All plan steps verified');
+
         return {
           run_id,
-          lifecycle_state: outcome.lifecycle_state,
+          lifecycle_state: 'completed',
           ...outcomeFields(outcome),
         };
-      }
+      },
+    );
+  }
 
-      // STEPS 10-11: OUTCOME BASELINE & LEARNING UPDATE. Only a run that produced step evidence has
-      // an outcome to attribute; a plan that produced none (an empty plan, or a resume past the last
-      // step) completes without claiming either stage rather than recording a stage it never reached.
-      if (outcome.evidence !== undefined) {
-        this.journal.enter('OUTCOME');
-        await this.updateLearningMemory(signal.tenant_id, run_id, hypothesis, outcome.evidence);
-      }
-      await this.dependencies.workflowEngine.transitionTask(signal.tenant_id, run_id, 'completed', 'All plan steps verified');
+  /**
+   * The one durable-recovery envelope around an execution attempt (§4.4).
+   *
+   * A classified failure is booked exactly once (`UNKNOWN` parks the task for reconciliation by
+   * `effect_key` rather than being persisted as an error class), and the attempt's lease is released
+   * in every case — including the early returns for a stopped, escalated or recovered run. Both
+   * entry paths run inside it: a first pass through `runGuardedPipeline`, and a reattempt of a
+   * persisted plan inside `processQueuedSignal`, so a repeat failure spends the retry budget instead
+   * of re-queueing itself forever without accounting.
+   */
+  private async withDurableRecovery(
+    params: { tenant_id: string; run_id: string; workerId: string; checkpoint?: unknown },
+    attempt: () => Promise<OrchestratorRunResult>,
+  ): Promise<OrchestratorRunResult> {
+    const { tenant_id, run_id, workerId } = params;
 
-      return {
-        run_id,
-        lifecycle_state: 'completed',
-        ...outcomeFields(outcome),
-      };
+    try {
+      return await attempt();
     } catch (error) {
-      // Durable recovery (§4.4). `UNKNOWN` is not a persisted error class: an indeterminate
-      // external outcome is a reconciliation state, so the durable task is parked in `waiting`
-      // and the scheduler resolves it by `effect_key` — it is neither failed nor re-dispatched.
       const failure_class = this.classifyFailure(error);
-      if (failure_class === 'UNKNOWN') {
+      // A restarted mutating step is the same reconciliation state as an indeterminate provider
+      // outcome: its effect may have landed under an unsettled reservation, so it is parked for
+      // resolution by `effect_key` instead of being failed or re-dispatched (§4.4).
+      const requires_reconciliation = failure_class === 'UNKNOWN'
+        || (error instanceof OrchestratorError && error.code === 'CHECKPOINT_REQUIRES_RECONCILIATION');
+      if (requires_reconciliation) {
+        // `waiting` is stored with a REPLACED `state_payload`, and the repository refuses a park
+        // whose checkpoint is incomplete (§4.2): the validated checkpoint of the reattempt is passed
+        // through verbatim, which is also the blob the scheduler would resume from.
+        if (params.checkpoint === undefined) {
+          await this.dependencies.workflowEngine.recordFailure({
+            tenant_id,
+            run_id,
+            error_class: 'FATAL',
+            error_details: this.serializeError(error),
+          });
+          throw error;
+        }
         await this.dependencies.workflowEngine.transitionTask(
-          signal.tenant_id,
+          tenant_id,
           run_id,
           'waiting',
-          'EFFECT_UNKNOWN: provider outcome indeterminate; reconciliation scheduled (§4.4)'
+          'EFFECT_UNKNOWN: provider outcome indeterminate; reconciliation scheduled (§4.4)',
+          params.checkpoint,
         );
         return {
           run_id,
@@ -256,14 +448,14 @@ export class RevenueOrchestrator {
       // RETRYABLE (re-queued under max_retries) or FATAL (terminal): hand the classified failure
       // to the durable scheduler.
       await this.dependencies.workflowEngine.recordFailure({
-        tenant_id: signal.tenant_id,
+        tenant_id,
         run_id,
         error_class: failure_class,
         error_details: this.serializeError(error),
       });
       throw error;
     } finally {
-      await this.dependencies.leaseManager.releaseLease(signal.tenant_id, run_id, this.workerId);
+      await this.dependencies.leaseManager.releaseLease(tenant_id, run_id, workerId);
     }
   }
 
@@ -313,6 +505,9 @@ export class RevenueOrchestrator {
 
       // SCR-005 guard, per step (hence per retry and per resume): a takeover landing mid-run stops
       // the very next dispatch rather than only the first.
+      if (this.claimedWorkerId !== null) {
+        await this.dependencies.assertExecutionLease?.(tenant_id, run_id);
+      }
       if (await this.dependencies.sessionControl.isTakenOver(tenant_id, sessionId)) {
         const reason = 'HUMAN_TAKEOVER: session lock held by operator (SCR-005)';
         await this.dependencies.workflowEngine.transitionTask(tenant_id, run_id, 'stopped', reason);
@@ -345,6 +540,13 @@ export class RevenueOrchestrator {
         ? (params.approved_action as ActionDraft)
         : await this.draftAction(step, context, run_id, tenant_id, request_id, 0);
       this.verifyFloorPrice(action);
+      // Save the exact draft before dispatch. A restarted effect-bearing run cannot re-draft and
+      // re-send until the reservation and provider outcome have been reconciled by this key.
+      await this.dependencies.workflowEngine.updateTaskProgress(tenant_id, run_id, step.step_index, {
+        ...(params.signal === null ? {} : { signal: params.signal }),
+        plan, current_step: step.step_index, pending_action: action, context,
+        previous_evidence_hash: chain.previous, request_id,
+      });
 
       // STEP 7: recheck current policy even after a human decision was claimed.
       // A stored claim satisfies only AUTH-4 for its exact action/digest; consent, source,
@@ -616,6 +818,11 @@ export class RevenueOrchestrator {
             skill_id: action.skill_id,
           });
         }
+        await this.dependencies.workflowEngine.updateTaskProgress(tenant_id, run_id, step.step_index + 1, {
+          ...(params.signal === null ? {} : { signal: params.signal }),
+          plan, current_step: step.step_index + 1, pending_action: null, context,
+          previous_evidence_hash: chain.previous, request_id,
+        });
       } catch (error) {
         // A read-only step dispatched nothing effect-bearing, so there is nothing to reconcile and
         // the failure keeps its existing classification.
@@ -690,7 +897,7 @@ export class RevenueOrchestrator {
     const isAutomaticResume = resumeEvent.event_type === 'timer.expired'
       || resumeEvent.event_type === 'reconcile.completed';
     if ((isHumanApprovalDecision && task.state !== 'awaiting_human')
-      || (isReconciliationResolution && task.state !== 'awaiting_human')
+      || (isReconciliationResolution && task.state !== 'waiting')
       || (isAutomaticResume && task.state !== 'waiting')) {
       throw new OrchestratorError('INVALID_TASK_STATE', 'Resume event does not match the durable waiting state.');
     }
@@ -718,18 +925,22 @@ export class RevenueOrchestrator {
         if (resumeEvent.reconciliation_resolution === 'ESCALATE_MANUALLY') {
           return {
             run_id,
-            lifecycle_state: 'awaiting_human',
+            lifecycle_state: 'waiting',
             ...outcomeFields({ message: 'Provider outcome remains unresolved; no dispatch was authorized.' }),
           };
         }
-        await this.dependencies.effectGuard.resolve({
-          tenant_id: resumeEvent.tenant_id,
-          effect_key: pendingAction.effect_key,
-          status: resumeEvent.reconciliation_resolution === 'PROVIDER_CONFIRMED_SUCCEEDED' ? 'SUCCEEDED' : 'FAILED',
-          receipt: resumeEvent.reconciliation_receipt,
-        });
-        await this.dependencies.workflowEngine.transitionTask(resumeEvent.tenant_id, run_id, 'running', 'Manual provider reconciliation resolved');
-        executionResumed = true;
+        if (resumeEvent.reconciliation_resolution === 'PROVIDER_CONFIRMED_SUCCEEDED') {
+          throw new OrchestratorError(
+            'RECONCILIATION_PROVIDER_PROOF_REQUIRED',
+            'An operator-supplied receipt cannot prove provider settlement; the provider must be queried by effect key.'
+          );
+        }
+        if (resumeEvent.reconciliation_resolution === 'PROVIDER_CONFIRMED_ABSENT') {
+          throw new OrchestratorError(
+            'RECONCILIATION_PROVIDER_PROOF_REQUIRED',
+            'An operator assertion of absence cannot authorize re-dispatch without provider-side confirmation.'
+          );
+        }
       }
 
       if (isHumanApprovalDecision) {
@@ -1012,6 +1223,7 @@ export class RevenueOrchestrator {
   private async dispatchWithDeadline(action: ActionDraft, step: PlannedStep): Promise<ExecutionReceipt> {
     let deadlineTimer: NodeJS.Timeout | undefined;
     try {
+      await this.dependencies.assertExecutionLease?.(action.tenant_id, action.run_id);
       const inFlight = this.dependencies.adapterDispatcher.dispatch(action, { timeout_ms: step.timeout_ms });
       // A settlement that arrives after the deadline is late, not unhandled.
       inFlight.catch(() => undefined);
@@ -1329,4 +1541,5 @@ export class RevenueOrchestrator {
   ): Promise<void> {
     this.journal.enter('LEARNING');
   }
+
 }

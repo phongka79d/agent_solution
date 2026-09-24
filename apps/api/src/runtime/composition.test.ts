@@ -17,10 +17,11 @@ const EMPTY_REDIS: RedisInjectedClient = {
 };
 
 describe('createGatewayComposition', () => {
-  it('binds durable reads and verified identity while naming only truthful fail-closed mutations', async () => {
+  it('refuses intake and decisions without a worker execution graph', async () => {
     const composition = createGatewayComposition(ENV, { redis: EMPTY_REDIS });
 
-    expect(composition.unbound).toEqual(['runs.start', 'runs.reconcile', 'approvals.decide']);
+    expect(composition.unbound).toEqual(['runs.reconcile', 'approvals.decide']);
+    expect(composition.unbound).not.toContain('runs.start');
     expect(composition.unbound).not.toContain('runs.read');
     expect(composition.unbound).not.toContain('runs.list');
     expect(composition.unbound).not.toContain('approvals.list');
@@ -36,18 +37,6 @@ describe('createGatewayComposition', () => {
     ).resolves.toEqual({ customer_id: null, verdict: 'UNRESOLVED' });
     await expect(composition.runtime.takeover.holder('tenant-a', 'conversation-a')).resolves.toBeNull();
 
-    await expect(
-      composition.runtime.runs.start({
-        tenant_id: 'tenant-a',
-        correlation_id: 'correlation-a',
-        request_id: 'request-a',
-        source_channel: 'WEB_CHAT',
-        event_type: 'message.received',
-        session_id: 'session-a',
-        channel_type: 'WEB_CHAT',
-        payload: {},
-      }),
-    ).rejects.toMatchObject({ port: 'runs.start', name: 'UnboundPortError' });
     await expect(
       composition.runtime.approvals.decide({
         tenant_id: 'tenant-a',

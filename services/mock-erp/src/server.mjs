@@ -1,5 +1,6 @@
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
 import { CANONICAL_EVENTS, CATALOG_ITEM, CUSTOMER, TENANT_ID, WAREHOUSE } from './fixtures.mjs';
@@ -9,6 +10,8 @@ const MANAGED = new Set(['staging', 'sandbox', 'production']);
 
 /** The API-001 mutating path (`06` §2, `ERP_ACTION_PATH_TEMPLATE`) with a bounded action id. */
 const ACTION_PATH = /^\/api\/v1\/actions\/([A-Za-z0-9._:-]{1,128})$/;
+
+const ORDERS_FIXTURE_URL = new URL('../../../testcases/fixtures/offline/orders.json', import.meta.url);
 
 export function assertBootEnv(env = process.env) {
   const appEnv = env.APP_ENV ?? '';
@@ -224,7 +227,39 @@ export function createServer(env = process.env, deps = {}) {
       return;
     }
     if (req.method === 'POST' && url.pathname === '/api/v1/orders/status') {
-      send(res, 404, { code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE' });
+      const orderRef = typeof body?.key === 'string'
+        ? body.key
+        : (typeof body?.order_identifier === 'string'
+          ? body.order_identifier
+          : (typeof body?.order_id === 'string' ? body.order_id : null));
+      if (!orderRef) {
+        send(res, 404, { code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE' });
+        return;
+      }
+      let orders = [];
+      try {
+        const raw = await readFile(ORDERS_FIXTURE_URL, 'utf8');
+        const parsed = JSON.parse(raw);
+        orders = Array.isArray(parsed.orders) ? parsed.orders : [];
+      } catch {
+        send(res, 404, { code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE' });
+        return;
+      }
+      const match = orders.find(
+        (o) => o.tenant_id === scope && (o.order_id === orderRef || o.order_number === orderRef),
+      );
+      if (!match) {
+        send(res, 404, { code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE' });
+        return;
+      }
+      if (body?.customer_id !== undefined && match.customer_id !== body.customer_id) {
+        send(res, 404, { code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE' });
+        return;
+      }
+      send(res, 200, {
+        snapshot_at: new Date().toISOString(),
+        ...match,
+      });
       return;
     }
     if (req.method === 'POST' && url.pathname === '/api/v1/customers/lookup') {

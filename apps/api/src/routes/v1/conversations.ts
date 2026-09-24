@@ -161,10 +161,24 @@ export function registerConversationRoutes(
 
         const message = requiredString(body, 'message', MESSAGE_MAX_LENGTH);
         const idempotency_key = requiredString(body, 'idempotency_key', IDEMPOTENCY_KEY_MAX_LENGTH);
+        const rawModule = body?.module;
+        const normalizedModule = rawModule === undefined || rawModule === 'auto' ? 'support' : rawModule;
+        if (normalizedModule !== 'support') {
+          fail('CAPABILITY_NOT_ENABLED', 'only Customer Care support turns are enabled');
+        }
 
         const conversation = await runtime.conversations.get(principal.tenant_id, conversation_id);
         if (conversation === null) {
           fail('CONVERSATION_NOT_FOUND', 'this tenant holds no conversation with that identifier');
+        }
+        if (principal.kind === 'CHANNEL_SESSION' && principal.conversation_id !== conversation_id) {
+          fail('AUTHENTICATION_FAILED', 'this session credential does not own the requested conversation');
+        }
+        if (principal.kind === 'WIDGET_SESSION' && principal.session_id !== conversation.external_thread_id) {
+          fail('AUTHENTICATION_FAILED', 'this widget session does not own the requested conversation');
+        }
+        if (conversation.channel !== 'WEB_CHAT') {
+          fail('CAPABILITY_NOT_ENABLED', 'only WEB_CHAT Customer Care turns are enabled');
         }
 
         // A conversation held by another operator is locked: the message is refused rather than
@@ -190,7 +204,8 @@ export function registerConversationRoutes(
         });
         const request_fingerprint = runtime.effects.computeRequestFingerprint({
           message,
-          module: body?.module ?? null,
+          conversation_id,
+          module: normalizedModule,
           attachments: body?.attachments ?? null,
         });
 
@@ -220,14 +235,6 @@ export function registerConversationRoutes(
         const session_id = principal.session_id ?? conversation.external_thread_id;
         const verified_customer_id = conversation.customer_id;
 
-        await runtime.conversations.appendMessage({
-          tenant_id: principal.tenant_id,
-          conversation_id,
-          sender_type: 'customer',
-          sender_id: session_id,
-          content: message,
-        });
-
         const started = await runtime.runs.start({
           tenant_id: principal.tenant_id,
           correlation_id,
@@ -241,9 +248,16 @@ export function registerConversationRoutes(
           payload: {
             message,
             conversation_id,
-            ...(body?.module === undefined ? {} : { module: body.module }),
+            module: normalizedModule,
             ...(body?.attachments === undefined ? {} : { attachments: [...body.attachments] }),
           },
+        });
+        await runtime.conversations.appendMessage({
+          tenant_id: principal.tenant_id,
+          conversation_id,
+          sender_type: 'customer',
+          sender_id: session_id,
+          content: message,
         });
 
         const receipt: Record<string, unknown> = {

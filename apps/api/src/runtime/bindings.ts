@@ -19,10 +19,13 @@ import {
   canonicalizeJson,
   computeEffectKey,
   computeRequestFingerprint,
+  EFFECT_RESERVATION_TTL_MS,
 } from '@agentos/core-engine';
 import type { IEffectGuard, ReservationOutcome } from '@agentos/core-engine/contracts';
 import {
   acquireSessionTakeover,
+  admitCareTurn,
+  CONVERSATION_TURN_SKILL,
   findIdentity,
   readSessionTakeover,
   releaseSessionTakeover,
@@ -40,6 +43,7 @@ import {
   type TenantTransactionRunner,
 } from '@agentos/database';
 
+import { fail } from '../gateway/http.js';
 import type {
   ApprovalDetailResponse,
   ApprovalQueueItem,
@@ -58,6 +62,7 @@ import type {
   IdentityPort,
   ReceiptPort,
   RunPort,
+  StartedRun,
   TakeoverLeasePort,
 } from '../gateway/ports.js';
 
@@ -302,7 +307,7 @@ type DurableRunRepository = Pick<
 >;
 
 /** Operational-log surface needed by retry classification and R16. */
-type RunEvidenceRepository = Pick<EvidenceRepository, 'readRunLogs'>;
+type RunEvidenceRepository = Pick<EvidenceRepository, 'readRunLogs' | 'readEvidenceChain'>;
 
 /** Reservation surface used to prove that a failed effect is not still indeterminate. */
 type RunReservationRepository = Pick<EffectReservationRepository, 'getReservation'>;
@@ -478,14 +483,27 @@ export function createDurableRunPort(
   return {
     read: async ({ tenant_id, run_id }) => {
       const task = await repository.getTask(tenant_id, run_id);
-      return task === null
-        ? null
-        : {
-            run_id: task.run_id,
-            task_version: task.task_version,
-            lifecycle_state: task.state,
-            correlation_id: task.correlation_id,
-          };
+      if (task === null) return null;
+      const [logs, chain] = await Promise.all([
+        evidence.readRunLogs(tenant_id, run_id),
+        evidence.readEvidenceChain(tenant_id, run_id),
+      ]);
+      const lastEvidence = chain.at(-1);
+      const actions = logs.flatMap((log) => {
+        if (!plainRecord(log.action)) return [];
+        const provider_reference = log.action['provider_reference'];
+        return typeof provider_reference === 'string'
+          ? [{ operation: log.skill, status: log.execution_status, provider_reference }]
+          : [];
+      });
+      return {
+        run_id: task.run_id,
+        task_version: task.task_version,
+        lifecycle_state: task.state,
+        correlation_id: task.correlation_id,
+        ...(lastEvidence === undefined ? {} : { evidence_reference: lastEvidence.evidence_id }),
+        ...(actions.length === 0 ? {} : { actions }),
+      };
     },
 
     classifyRetry,
@@ -519,6 +537,159 @@ export function createDurableRunPort(
       return {
         items: await Promise.all(page.items.map((task) => toRunProjection(task, evidence))),
         next_cursor: page.next_cursor,
+      };
+    },
+  };
+}
+
+export interface StartRunPortOptions {
+  readonly guard: IEffectGuard;
+  readonly workflows: Pick<DurableWorkflowRepository, 'getTask'>;
+  readonly ids?: () => string;
+  readonly clock?: () => Date;
+  readonly runner?: TenantTransactionRunner;
+}
+
+/**
+ * Binds `RunPort.start` for Customer Care turns.
+ *
+ * Computes `effect_key` and `request_fingerprint` with the injected `IEffectGuard` over
+ * `{tenant_id, skill_id: CONVERSATION_TURN_SKILL, step_index: 0, action_revision: 0, request_id}`
+ * and the canonical payload `{message, conversation_id, module, attachments}`.
+ * Admits the turn via `admitCareTurn` in one transaction.
+ * On REPLAY/IN_FLIGHT returns the existing task identity.
+ * On CONFLICT throws IDEMPOTENCY_CONFLICT refusal.
+ */
+export function createStartRunPort(
+  options: StartRunPortOptions,
+): Pick<RunPort, 'start'>;
+export function createStartRunPort(
+  guard: IEffectGuard,
+  workflows: Pick<DurableWorkflowRepository, 'getTask'>,
+  options?: {
+    readonly ids?: () => string;
+    readonly clock?: () => Date;
+    readonly runner?: TenantTransactionRunner;
+  },
+): Pick<RunPort, 'start'>;
+export function createStartRunPort(
+  guardOrOptions: IEffectGuard | StartRunPortOptions,
+  workflowsArg?: Pick<DurableWorkflowRepository, 'getTask'>,
+  extraOptions?: {
+    readonly ids?: () => string;
+    readonly clock?: () => Date;
+    readonly runner?: TenantTransactionRunner;
+  },
+): Pick<RunPort, 'start'> {
+  const options: StartRunPortOptions =
+    'guard' in guardOrOptions
+      ? guardOrOptions
+      : {
+          guard: guardOrOptions,
+          workflows: workflowsArg!,
+          ...(extraOptions?.ids === undefined ? {} : { ids: extraOptions.ids }),
+          ...(extraOptions?.clock === undefined ? {} : { clock: extraOptions.clock }),
+          ...(extraOptions?.runner === undefined ? {} : { runner: extraOptions.runner }),
+        };
+
+  const { guard, workflows } = options;
+  const ids = options.ids ?? systemIdentifiers;
+  const clock = options.clock ?? systemClock;
+  const runner = options.runner;
+
+  return {
+    async start(input): Promise<StartedRun> {
+      const canonicalPayload = {
+        message: input.payload['message'],
+        conversation_id: input.payload['conversation_id'],
+        module: input.payload['module'] ?? 'support',
+        attachments: input.payload['attachments'] ?? null,
+      };
+
+      const effect_key = guard.computeEffectKey({
+        tenant_id: input.tenant_id,
+        skill_id: CONVERSATION_TURN_SKILL,
+        step_index: 0,
+        action_revision: 0,
+        request_id: input.request_id,
+      });
+
+      const request_fingerprint = guard.computeRequestFingerprint(canonicalPayload);
+      const run_id = ids();
+
+      // The canonical `SignalEnvelope`: `signal_id` IS the immutable inbound identity the effect key
+      // is derived from, and the session/channel binding travels nested under `subject` because that
+      // is the only place the context aggregator may read identity from.
+      const signal: Record<string, unknown> = {
+        signal_id: input.request_id,
+        tenant_id: input.tenant_id,
+        correlation_id: input.correlation_id,
+        source_channel: input.source_channel,
+        event_type: input.event_type,
+        timestamp: clock().toISOString(),
+        payload: input.payload,
+        subject: {
+          session_id: input.session_id,
+          channel_type: input.channel_type,
+          ...(input.channel_identifier === undefined ? {} : { channel_identifier: input.channel_identifier }),
+          ...(input.verified_customer_id === undefined ? {} : { verified_customer_id: input.verified_customer_id }),
+        },
+      };
+
+      const outcome = await admitCareTurn(
+        {
+          tenant_id: input.tenant_id,
+          effect_key,
+          request_id: input.request_id,
+          request_fingerprint,
+          run_id,
+          correlation_id: input.correlation_id,
+          signal,
+          skill_id: CONVERSATION_TURN_SKILL,
+          step_index: 0,
+          // The window is the effect guard's own constant, so the row admission writes and the row
+          // the guard later reads share one number instead of two that could drift apart.
+          reservation_ttl_ms: EFFECT_RESERVATION_TTL_MS,
+          now: clock,
+        },
+        runner,
+      );
+
+      if (outcome.kind === 'CONFLICT') {
+        fail(
+          'IDEMPOTENCY_CONFLICT',
+          'this idempotency key was already claimed for a different payload; the turn is not started again',
+        );
+      }
+
+      if (outcome.kind === 'RECONCILE_REQUIRED') {
+        fail(
+          'INTERNAL_ERROR',
+          'the turn reservation requires reconciliation before it can be started again',
+        );
+      }
+
+      if (outcome.kind === 'ADMITTED') {
+        return {
+          run_id: outcome.task.run_id,
+          task_version: outcome.task.task_version,
+          correlation_id: outcome.task.correlation_id,
+          lifecycle_state: outcome.task.state,
+        };
+      }
+
+      const existingTask = await workflows.getTask(input.tenant_id, outcome.run_id);
+      if (existingTask === null) {
+        throw new Error(
+          `DURABLE_TASK_NOT_FOUND: task for admitted run ${outcome.run_id} not found in tenant ${input.tenant_id}.`,
+        );
+      }
+
+      return {
+        run_id: outcome.run_id,
+        task_version: existingTask.task_version,
+        correlation_id: existingTask.correlation_id,
+        lifecycle_state: existingTask.state,
       };
     },
   };

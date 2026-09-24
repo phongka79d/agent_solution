@@ -12,19 +12,25 @@ import type {
   ActionDraft,
   AgentRunLogRecord,
   ApprovalGateResult,
-  DurableTaskCheckpoint,
+  DurableTaskGuard,
+  DurableTaskSnapshot,
   ExecutionPlan,
   ExecutionReceipt,
   HydratedContext,
   HypothesisRecord,
   ImmutableEvidenceRecord,
-  PersistedErrorClass,
+  IStatefulWorkflowEngine,
   ResolvedSubject,
   RoutingDecision,
   SignalEnvelope,
   SignalSubject,
-  TaskLifecycleState,
 } from './types.js';
+
+export type {
+  DurableTaskGuard,
+  DurableTaskSnapshot,
+  IStatefulWorkflowEngine,
+};
 
 // ============================================================================
 // Effect deduplication (§3.2.3)
@@ -113,52 +119,6 @@ export interface IPolicyEngine {
   evaluateAuthority(action: ActionDraft, context: HydratedContext): Promise<ApprovalGateResult>;
 }
 
-export interface IStatefulWorkflowEngine {
-  /** Every durable-task method is tenant-scoped: the primary key and the RLS predicate both lead with `tenant_id` (NFR-006). */
-  createTask(task: {
-    run_id: string;
-    tenant_id: string;
-    correlation_id: string;
-    current_step: number;
-    state: TaskLifecycleState;
-  }): Promise<void>;
-  updateTaskProgress(tenant_id: string, run_id: string, stepIndex: number, checkpointPayload: unknown): Promise<void>;
-  transitionTask(tenant_id: string, run_id: string, state: TaskLifecycleState, reason: string, checkpointPayload?: unknown): Promise<void>;
-  getTask(tenant_id: string, run_id: string): Promise<{
-    task_version: number;
-    state: TaskLifecycleState;
-    correlation_id: string;
-    state_payload: DurableTaskCheckpoint | null;
-  } | null>;
-  /** One transaction: INSERT the PENDING approval row + pause the task (§4.2). */
-  pauseForApproval(params: {
-    tenant_id: string;
-    run_id: string;
-    expected_task_version: number;
-    checkpoint: unknown;
-    approval: { action_id: string; effect_key: string; payload: unknown; reason: string };
-  }): Promise<{ approval_id: string }>;
-  /** One transaction: decide and resume/stop, or retain PENDING + awaiting_human for PAUSE (§4.2). */
-  claimApprovalAndResume(params: {
-    tenant_id: string;
-    run_id: string;
-    approval_id: string;
-    effect_key: string;
-    expected_payload_sha256: string;
-    authorized_action: ActionDraft | null;
-    decision: 'APPROVED' | 'MODIFIED' | 'REJECTED' | 'PAUSE' | 'CANCELLED';
-    operator_id: string; // must match the authenticated decision principal, never payload-only authority
-    review_comment: string | null;
-  }): Promise<{ claimed: boolean }>;
-  /** §4.4 durable recovery: classify, count, re-queue or fail terminally. */
-  recordFailure(params: {
-    tenant_id: string;
-    run_id: string;
-    /** `platform_durable_tasks.last_error_class` accepts only RETRYABLE | FATAL; UNKNOWN is a reconciliation state, not a stored class (§4.4). */
-    error_class: PersistedErrorClass;
-    error_details: Record<string, unknown>;
-  }): Promise<{ requeued: boolean }>;
-}
 
 export interface IEvidenceLogger {
   createImmutableRecord(params: {

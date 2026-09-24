@@ -189,6 +189,17 @@ const SELECT_CONVERSATION = `SELECT${CONVERSATION_PROJECTION}
   WHERE tenant_id = $1 AND id = $2`;
 
 /**
+ * Every conversation of one thread inside the caller's tenant scope.
+ *
+ * `(tenant_id, channel, external_thread_id)` is the unique key, so a thread id can hold one row per
+ * channel; the caller that does not know the channel reads them all and refuses an ambiguous answer
+ * instead of picking one.
+ */
+const SELECT_CONVERSATIONS_BY_TENANT_THREAD = `SELECT${CONVERSATION_PROJECTION}
+  FROM ${CONVERSATIONS}
+  WHERE tenant_id = $1 AND external_thread_id = $2`;
+
+/**
  * The conversation-control transition (R06/R08): exactly one row of this tenant is moved, and a
  * wrong tenant or an unknown id matches nothing — `setState()` reports that as `false` and never
  * inserts the row it was asked to move.
@@ -470,6 +481,45 @@ export class ConversationRepository {
       }
 
       return { ...toConversationRecord(held), bound: true };
+    });
+  }
+
+  /**
+   * Reads the conversation one channel thread is bound to, inside the caller's tenant scope.
+   *
+   * The durable takeover state of SCR-005 lives on this row, and the worker's session identity is a
+   * channel thread, so this is the read that answers "is this session under human control" without
+   * inventing a session-keyed second store. A thread this tenant holds no row for is `null`; a
+   * thread id bound on more than one channel is refused rather than guessed, because picking one
+   * would let a takeover in one channel pass unnoticed in another.
+   *
+   * @param tenant_id Tenant that owns the conversation; also enforced by row-level security.
+   * @param external_thread_id Channel thread identity, as bound by `bindOrCreate()`.
+   * @returns The stored conversation, or `null` when this tenant holds none for the thread.
+   * @throws Error `CONVERSATION_THREAD_AMBIGUOUS` when the tenant holds more than one row for it.
+   */
+  async getByThread(tenant_id: string, external_thread_id: string): Promise<ConversationRecord | null> {
+    assertIdentifier(tenant_id, 'tenant_id', 36, 'CONVERSATION_TENANT_ID_REQUIRED');
+    assertIdentifier(external_thread_id, 'external_thread_id', 128, 'CONVERSATION_THREAD_REQUIRED');
+
+    return this.runInTenantTransaction(tenant_id, async (client) => {
+      const result = await client.query<ConversationRow>(SELECT_CONVERSATIONS_BY_TENANT_THREAD, [
+        tenant_id,
+        external_thread_id,
+      ]);
+
+      if (result.rows.length > 1) {
+        throw new Error(
+          `CONVERSATION_THREAD_AMBIGUOUS: this tenant holds ${String(result.rows.length)} ` +
+            `conversations for thread '${external_thread_id}', so the thread does not identify one ` +
+            'conversation; the caller must address the conversation by its id instead of guessing ' +
+            `which channel was meant (${CODE_OWNER}).`,
+        );
+      }
+
+      const row = result.rows[0];
+
+      return row === undefined ? null : toConversationRecord(row);
     });
   }
 

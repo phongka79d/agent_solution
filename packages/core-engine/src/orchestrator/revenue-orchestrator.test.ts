@@ -18,8 +18,11 @@ import {
   type IEvidenceLogger,
   type PlannedStep,
   type PlatformAgentId,
+  type ActionDraft,
   type RoutingDecision,
   type SignalEnvelope,
+  type DurableLeaseManager,
+  type IStatefulWorkflowEngine,
 } from '../contracts/index.js';
 import { computeEffectKey } from '../effects/effect-key.js';
 import { MemoryEffectGuard } from '../effects/memory-effect-guard.js';
@@ -119,11 +122,20 @@ interface HarnessOptions {
   readonly isTakenOver?: () => Promise<boolean>;
   /** Evidence writer override (a failing audit/evidence store is a governance case, not a bug). */
   readonly evidenceLogger?: IEvidenceLogger;
+  /** Durable engine override, so the claimed-queue reattempt path can be driven with a spy. */
+  readonly workflowEngine?: IStatefulWorkflowEngine;
+  /** Lease manager override, so a case can assert the attempt's release. */
+  readonly leaseManager?: DurableLeaseManager;
 }
 
 function harness(options: HarnessOptions = {}) {
   const effectGuard = options.effectGuard ?? new MemoryEffectGuard();
-  const workflow = new MemoryWorkflowEngine();
+  // The default engine is kept in its concrete type: cases that read the stored approval rows back
+  // need the memory binding's own surface, while `workflow` stays the injected interface.
+  const memoryWorkflow = options.workflowEngine instanceof MemoryWorkflowEngine
+    ? options.workflowEngine
+    : new MemoryWorkflowEngine();
+  const workflow = options.workflowEngine ?? memoryWorkflow;
   const evidenceLogger = options.evidenceLogger ?? new MemoryEvidenceLogger('test-hmac-secret');
   const hydrate = vi.fn(async () => context());
   const deriveHypothesis = vi.fn(async () => options.hypothesisRecord ?? hypothesis());
@@ -171,10 +183,10 @@ function harness(options: HarnessOptions = {}) {
       isTakenOver: options.isTakenOver ?? (async () => false),
       returnToAgent: async () => undefined,
     },
-    leaseManager: new MemoryLeaseManager(),
+    leaseManager: options.leaseManager ?? new MemoryLeaseManager(),
     workerId: 'worker-test',
   });
-  return { orchestrator, effectGuard, workflow, evidenceLogger, hydrate, deriveHypothesis, resolveRouting, formulatePlan, dispatch };
+  return { orchestrator, effectGuard, workflow, memoryWorkflow, evidenceLogger, hydrate, deriveHypothesis, resolveRouting, formulatePlan, dispatch };
 }
 
 describe('RevenueOrchestrator', () => {
@@ -334,9 +346,122 @@ describe('RevenueOrchestrator', () => {
     expect(effectGuard.peek(TENANT, key)?.status).toBe('RESERVED');
   });
 
+  /**
+   * A durable task claimed by the worker, already past PLAN, so `processQueuedSignal` re-enters the
+   * persisted plan instead of re-deciding it. The engine is a spy because this path is about what
+   * the orchestrator writes back to it.
+   */
+  function reattemptHarness(options: {
+    readonly step?: PlannedStep;
+    readonly pendingAction?: ActionDraft | null;
+    readonly dispatch?: () => Promise<ExecutionReceipt>;
+  } = {}) {
+    const run_id = 'run-requeued-1';
+    const plannedStep = options.step ?? step({ skill_id: 'skill.test.read', mutating: false });
+    const checkpoint = {
+      signal: signal(),
+      plan: plan([plannedStep]),
+      context: context(),
+      current_step: 1,
+      pending_action: options.pendingAction ?? null,
+      previous_evidence_hash: GENESIS_HASH,
+      request_id: SIGNAL_ID,
+    };
+    const workflow = {
+      getTask: vi.fn(async () => ({
+        task_version: 4,
+        state: 'running' as const,
+        correlation_id: 'corr-1',
+        state_payload: checkpoint,
+        lease_owner: 'worker-test',
+        lease_expires_at: new Date(Date.now() + 30_000).toISOString(),
+      })),
+      updateTaskProgress: vi.fn(async () => undefined),
+      transitionTask: vi.fn(async () => undefined),
+      recordFailure: vi.fn(async () => ({ requeued: true })),
+    } as unknown as IStatefulWorkflowEngine;
+    const leaseManager: DurableLeaseManager = {
+      acquireLease: vi.fn(async () => true),
+      releaseLease: vi.fn(async () => undefined),
+    };
+    const { orchestrator } = harness({
+      workflowEngine: workflow,
+      leaseManager,
+      dispatch: options.dispatch ?? (async () => receipt()),
+      steps: [plannedStep],
+    });
+
+    return { orchestrator, run_id, workflow, leaseManager, checkpoint };
+  }
+
+  it('books the failure of a re-claimed run instead of returning it to the queue unrecorded', async () => {
+    // §4.4: the reattempt of a persisted plan is an attempt like any other. Before this, a second
+    // failure escaped with no error class and no retry consumed, so the run returned to `queued`
+    // and was claimed again forever.
+    const { orchestrator, run_id, workflow, leaseManager } = reattemptHarness({
+      dispatch: async () => {
+        throw new OrchestratorError('PROVIDER_UNAVAILABLE', 'provider is down');
+      },
+    });
+
+    await expect(
+      orchestrator.processQueuedSignal(run_id, signal(), { worker_id: 'worker-test' }),
+    ).rejects.toMatchObject({ code: 'PROVIDER_UNAVAILABLE' });
+
+    expect(workflow.recordFailure).toHaveBeenCalledTimes(1);
+    const [failure] = vi.mocked(workflow.recordFailure).mock.calls[0] as [
+      { tenant_id: string; run_id: string; error_class: string; error_details: { code: string; message: string } },
+    ];
+    expect(failure.tenant_id).toBe(TENANT);
+    expect(failure.run_id).toBe(run_id);
+    expect(failure.error_class).toBe('RETRYABLE');
+    expect(failure.error_details.code).toBe('PROVIDER_UNAVAILABLE');
+    expect(failure.error_details.message).toContain('provider is down');
+    expect(leaseManager.releaseLease).toHaveBeenCalledWith(TENANT, run_id, 'worker-test');
+  });
+
+  it('parks a restarted mutating step on the checkpoint waiting requires', async () => {
+    // §4.2 stores `waiting` with a REPLACED payload, so the park must carry the complete checkpoint:
+    // the transport would refuse anything less, and the scheduler resumes from exactly these members.
+    const pendingAction = {
+      action_id: 'action-1',
+      run_id: 'run-requeued-1',
+      tenant_id: TENANT,
+      agent_id: 'SAL-01' as PlatformAgentId,
+      skill_id: 'skill.test.mutate',
+      adapter_target: 'web',
+      step_index: 1,
+      mutating: true,
+      price_bearing: false,
+      request_id: SIGNAL_ID,
+      action_revision: 0,
+      effect_key: 'effect-key-1',
+      required_authority: 'AUTH-1' as AuthorityLevel,
+      payload: { text: 'hello' },
+    };
+    const { orchestrator, run_id, workflow, checkpoint } = reattemptHarness({
+      step: step({ skill_id: 'skill.test.mutate', mutating: true }),
+      pendingAction,
+    });
+
+    const result = await orchestrator.processQueuedSignal(run_id, signal(), {
+      worker_id: 'worker-test',
+    });
+
+    expect(result.lifecycle_state).toBe('waiting');
+    expect(workflow.transitionTask).toHaveBeenCalledWith(
+      TENANT,
+      run_id,
+      'waiting',
+      expect.stringContaining('reconciliation'),
+      checkpoint,
+    );
+    expect(workflow.recordFailure).not.toHaveBeenCalled();
+  });
+
   it('refuses an AUTH-4 release while an operator holds the SCR-005 lock and leaves the approval claimable', async () => {
     let takeover = false;
-    const { orchestrator, dispatch, workflow } = harness({
+    const { orchestrator, dispatch, workflow, memoryWorkflow } = harness({
       steps: [step({ required_authority: 'AUTH-4' satisfies AuthorityLevel })],
       isTakenOver: async () => takeover,
     });
@@ -344,7 +469,7 @@ describe('RevenueOrchestrator', () => {
 
     const paused = await orchestrator.processSignal(signal());
     expect(paused.lifecycle_state).toBe('awaiting_human');
-    const approval = workflow.listApprovals(TENANT, paused.run_id)[0];
+    const approval = memoryWorkflow.listApprovals(TENANT, paused.run_id)[0];
     if (approval === undefined) throw new Error('the AUTH-4 pause must leave one PENDING approval row');
     expect(approval.decision).toBe('PENDING');
 
@@ -361,7 +486,7 @@ describe('RevenueOrchestrator', () => {
     })).rejects.toMatchObject({ code: 'HUMAN_TAKEOVER' });
 
     expect(claim).not.toHaveBeenCalled();
-    expect(workflow.listApprovals(TENANT, paused.run_id)[0]?.decision).toBe('PENDING');
+    expect(memoryWorkflow.listApprovals(TENANT, paused.run_id)[0]?.decision).toBe('PENDING');
     expect((await workflow.getTask(TENANT, paused.run_id))?.state).toBe('awaiting_human');
     expect(dispatch).not.toHaveBeenCalled();
 
@@ -382,13 +507,13 @@ describe('RevenueOrchestrator', () => {
 
   it('still lets a rejection resolve the run while an operator holds the lock', async () => {
     let takeover = false;
-    const { orchestrator, workflow } = harness({
+    const { orchestrator, memoryWorkflow } = harness({
       steps: [step({ required_authority: 'AUTH-4' satisfies AuthorityLevel })],
       isTakenOver: async () => takeover,
     });
 
     const paused = await orchestrator.processSignal(signal());
-    const approval = workflow.listApprovals(TENANT, paused.run_id)[0];
+    const approval = memoryWorkflow.listApprovals(TENANT, paused.run_id)[0];
     if (approval === undefined) throw new Error('the AUTH-4 pause must leave one PENDING approval row');
 
     // A rejection opens no dispatch, so the lock must not freeze the operator out of resolving the
@@ -404,7 +529,7 @@ describe('RevenueOrchestrator', () => {
     });
 
     expect(rejected.lifecycle_state).toBe('stopped');
-    expect(workflow.listApprovals(TENANT, paused.run_id)[0]?.decision).toBe('REJECTED');
+    expect(memoryWorkflow.listApprovals(TENANT, paused.run_id)[0]?.decision).toBe('REJECTED');
   });
 
   it('stops the next plan step when an operator takes over between steps', async () => {
