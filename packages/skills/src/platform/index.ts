@@ -13,6 +13,7 @@ import { createSkillRegistry, type SkillRegistry } from '../registry.js';
 import { createCareSkills } from './care/index.js';
 import { createMarketingSkills } from './mkt/index.js';
 import { createSalesSkills } from './sales/index.js';
+export { createSalesSkills } from './sales/index.js';
 
 /** The §4 registry order: seven Marketing rows, eight Sales rows, eight Care rows. */
 export function createPlatformSkills(deps: PlatformSkillDependencies): readonly ISkillContract[] {

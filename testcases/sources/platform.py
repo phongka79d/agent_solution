@@ -104,6 +104,13 @@ def _case(
 
 T1 = "11111111-1111-1111-1111-111111111111"
 T2 = "22222222-2222-2222-2222-222222222222"
+# Offline acceptance fixtures keep the logical handles used by the specifications in their
+# customer fixtures, while runtime order ownership uses the deterministic UUIDs required by
+# agentos.customers.id. Keep this map as the single source of that relationship.
+CUSTOMER_RUNTIME_IDS = {
+    "cust-a": "aaaaaaaa-0000-4000-8000-00000000000a",
+    "cust-b": "bbbbbbbb-0000-4000-8000-00000000000b",
+}
 CLOCK = "2026-01-15T10:00:00Z"
 
 FIXTURES = {
@@ -365,34 +372,65 @@ FIXTURES = {
             {
                 "order_id": "ORD-A-1",
                 "tenant_id": T1,
-                "customer_id": "cust-a",
+                "customer_id": CUSTOMER_RUNTIME_IDS["cust-a"],
+                "logical_customer_ref": "cust-a",
                 "order_number": "T1-0001",
                 "sku_id": "SKU-OK",
+                "product_name": "Standard Widget",
                 "quantity": 1,
+                "unit_price": 1000,
                 "total_amount": 1000,
+                "total_price": 1000,
                 "currency": "TWD",
-                "status": "fulfilled",
+                "status": "SHIPPED",
                 "fulfillment_status": "SHIPPED",
                 "payment_status": "PAID",
                 "invoice_number": "AB12345678",
+                "tracking_number": "TRK-123456",
+                "order_date": "2026-01-04T09:12:00Z",
+                "line_items": [
+                    {
+                        "sku_id": "SKU-OK",
+                        "product_name": "Standard Widget",
+                        "quantity": 1,
+                        "unit_price": 1000,
+                        "currency": "TWD",
+                    }
+                ],
             },
             {
                 "order_id": "ORD-B-1",
                 "tenant_id": T1,
-                "customer_id": "cust-b",
+                "customer_id": CUSTOMER_RUNTIME_IDS["cust-b"],
+                "logical_customer_ref": "cust-b",
                 "order_number": "T1-0002",
                 "sku_id": "SKU-OK",
+                "product_name": "Standard Widget",
                 "quantity": 1,
+                "unit_price": 800,
                 "total_amount": 800,
+                "total_price": 800,
                 "currency": "TWD",
-                "status": "paid",
+                "status": "DELIVERED",
                 "fulfillment_status": "DELIVERED",
                 "payment_status": "PAID",
+                "tracking_number": "TRK-987654",
+                "order_date": "2026-01-05T14:30:00Z",
+                "line_items": [
+                    {
+                        "sku_id": "SKU-OK",
+                        "product_name": "Standard Widget",
+                        "quantity": 1,
+                        "unit_price": 800,
+                        "currency": "TWD",
+                    }
+                ],
             },
             {
                 "order_id": "ORD-DRAFT-1",
                 "tenant_id": T1,
-                "customer_id": "cust-a",
+                "customer_id": CUSTOMER_RUNTIME_IDS["cust-a"],
+                "logical_customer_ref": "cust-a",
                 "status": "draft",
                 "adapter_status": "DRAFT_RESERVED",
                 "reservation_ttl_seconds": 900,
