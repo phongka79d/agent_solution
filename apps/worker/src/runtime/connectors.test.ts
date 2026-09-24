@@ -167,7 +167,8 @@ describe('createWorkerConnectors', () => {
       expect(result.resource).toBe('orders');
       expect(result.observed_at).toBeDefined();
       expect(result.value.order_id).toBe('ORD-A-1');
-      expect(result.value.customer_id).toBe('cust-a');
+      expect(result.value.customer_id).toBe('aaaaaaaa-0000-4000-8000-00000000000a');
+      expect(result.value.logical_customer_ref).toBe('cust-a');
     } finally {
       server.close();
     }
