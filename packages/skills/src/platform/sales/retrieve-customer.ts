@@ -52,6 +52,7 @@ const output_schema: Record<string, unknown> = {
     rfm_segment: { type: 'string' },
     last_order_date: { type: ['string', 'null'] },
   },
+  additionalProperties: false,
 };
 
 /** The declarative half of the row; `skill_id` is supplied by the factory (§4.2 skill 11). */

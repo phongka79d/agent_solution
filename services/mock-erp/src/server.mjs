@@ -162,29 +162,40 @@ export function createServer(env = process.env, deps = {}) {
       return;
     }
     if (boot.latency > 0) await sleep(boot.latency);
-
     if (req.method === 'GET' && url.pathname === '/api/v1/catalog/items') {
-      send(res, 200, { items: [CATALOG_ITEM] });
+      if (scope !== TENANT_ID) {
+        send(res, 404, { code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE' });
+        return;
+      }
+      send(res, 200, { items: [CATALOG_ITEM], snapshot_at: now().toISOString() });
       return;
     }
     if (req.method === 'POST' && url.pathname === '/api/v1/inventory/lookup') {
+      if (scope !== TENANT_ID) {
+        send(res, 404, { code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE' });
+        return;
+      }
       const skuIds = Array.isArray(body.sku_ids) ? body.sku_ids : [];
       if (skuIds.some((sku) => sku !== CATALOG_ITEM.sku)) {
         send(res, 404, { code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE' });
         return;
       }
-      send(res, 200, skuIds.map((sku) => ({
-        tenant_id: body.tenant_id,
-        sku_id: sku,
-        total_available_to_promise: WAREHOUSE.available_to_promise,
-        in_stock: true,
-        warehouse_breakdown: [WAREHOUSE],
-        snapshot_at: new Date().toISOString(),
-      })));
+      send(res, 200, {
+        snapshot_at: now().toISOString(),
+        items: skuIds.map((sku) => ({
+          tenant_id: scope,
+          sku_id: sku,
+          total_available_to_promise: WAREHOUSE.available_to_promise,
+          available_quantity: WAREHOUSE.available_to_promise,
+          in_stock: WAREHOUSE.available_to_promise > 0,
+          warehouse_breakdown: [WAREHOUSE],
+        })),
+      });
       return;
     }
+
     if (req.method === 'POST' && url.pathname === '/api/v1/prices/lookup') {
-      if (body.sku_id !== CATALOG_ITEM.sku) {
+      if (scope !== TENANT_ID || body.sku_id !== CATALOG_ITEM.sku) {
         send(res, 404, { code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE' });
         return;
       }

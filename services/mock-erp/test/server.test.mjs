@@ -109,24 +109,54 @@ test('local /health returns 200', async () => {
   }
 });
 
-test('inventory lookup returns ATP and price lookup does not invent a floor', async () => {
+test('catalog and inventory lookups return timestamped authoritative envelopes', async () => {
   const server = await start();
   try {
-    const stock = await post(server, '/api/v1/inventory/lookup', {
+    const catalog = await get(server, '/api/v1/catalog/items');
+    assert.equal(catalog.status, 200);
+    assert.equal(typeof catalog.body.snapshot_at, 'string');
+    assert.deepEqual(catalog.body.items.map((item) => item.sku), ['SKU-LOCAL-1']);
+
+    const inventory = await post(server, '/api/v1/inventory/lookup', {
       tenant_id: TENANT_ID,
       sku_ids: ['SKU-LOCAL-1'],
     });
-    assert.equal(stock.status, 200);
-    assert.equal(stock.body[0].total_available_to_promise, 5);
-
-    const price = await post(server, '/api/v1/prices/lookup', {
+    assert.equal(inventory.status, 200);
+    assert.equal(typeof inventory.body.snapshot_at, 'string');
+    assert.deepEqual(inventory.body.items, [{
       tenant_id: TENANT_ID,
       sku_id: 'SKU-LOCAL-1',
-      quantity: 1,
-    });
-    assert.equal(price.status, 409);
-    assert.equal(price.body.code, 'P_FLOOR_UNAVAILABLE');
-    assert.equal(Object.hasOwn(price.body, 'mathematical_floor_price'), false);
+      total_available_to_promise: 5,
+      available_quantity: 5,
+      in_stock: true,
+      warehouse_breakdown: [ {
+        warehouse_id: 'WH-1',
+        warehouse_name: 'Local fixture warehouse',
+        physical_qty: 7,
+        reserved_qty: 2,
+        available_to_promise: 5,
+      } ],
+    }]);
+  } finally {
+    server.close();
+  }
+});
+
+test('signed non-fixture tenant cannot read another tenant catalog or inventory fixtures', async () => {
+  const server = await start();
+  const otherTenant = '11111111-1111-4111-8111-111111111111';
+  try {
+    const catalog = await get(server, '/api/v1/catalog/items', { tenant: otherTenant });
+    assert.equal(catalog.status, 404);
+    assert.deepEqual(catalog.body, { code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE' });
+
+    const inventory = await post(server, '/api/v1/inventory/lookup', {
+      tenant_id: otherTenant,
+      sku_ids: ['SKU-LOCAL-1'],
+    }, { tenant: otherTenant });
+    assert.equal(inventory.status, 404);
+    assert.deepEqual(inventory.body, { code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE' });
+    assert.equal(inventory.text.includes('SKU-LOCAL-1'), false);
   } finally {
     server.close();
   }

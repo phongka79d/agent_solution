@@ -52,6 +52,7 @@ const output_schema: Record<string, unknown> = {
     lead_time_days: { type: 'integer' },
     checked_at: { type: 'string', format: 'date-time' },
   },
+  additionalProperties: false,
 };
 
 /** The declarative half of the row; `skill_id` is supplied by the factory (§4.2 skill 9). */

@@ -90,6 +90,7 @@ const output_schema: Record<string, unknown> = {
         name: { type: 'string' },
         price: { type: 'number' },
       },
+      additionalProperties: false,
     },
     reason: { type: 'string' },
     evidence: {

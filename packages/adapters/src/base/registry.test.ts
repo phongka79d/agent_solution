@@ -17,10 +17,11 @@ import {
 import type { ConnectorDescriptor, RegisteredConnector } from './registry.js';
 import { ConnectorRegistry, DuplicateConnectorError, UnknownConnectorError } from './registry.js';
 
-/** One host-side call the transport double observed; only the routing facts are asserted. */
+/** One host-side call the transport double observed. */
 interface RecordedCall {
   readonly method: 'GET' | 'POST';
   readonly path: string;
+  readonly body?: Record<string, unknown>;
 }
 
 /** Transport answers the double replays in order; the last one repeats. */
@@ -43,7 +44,11 @@ function createTransportDouble(outcomes: readonly TransportOutcome[]): {
     calls,
     transport: {
       async request(input) {
-        calls.push({ method: input.method, path: input.path });
+        calls.push({
+          method: input.method,
+          path: input.path,
+          ...(input.body === undefined ? {} : { body: input.body }),
+        });
         const outcome = outcomes[Math.min(served, outcomes.length - 1)];
         served += 1;
         if (outcome === undefined) {
@@ -262,40 +267,35 @@ describe('Api001ErpConnector', () => {
     expect(rejected.calls).toHaveLength(1);
   });
 
-  it('reaches the transport on every read and dates the value from the provider envelope', async () => {
+  it('maps inventory keys to the API-001 tenant-scoped SKU lookup DTO', async () => {
     const { transport, calls } = createTransportDouble([
       {
         ok: true,
         status: 200,
-        body: { snapshot_at: '2026-09-22T01:02:03.000Z', available_to_promise: 7 },
+        body: {
+          snapshot_at: '2026-09-22T01:02:03.000Z',
+          tenant_id: 'tenant-fixture',
+          items: [{ sku_id: 'SKU-1', tenant_id: 'tenant-fixture', total_available_to_promise: 7 }],
+        },
       },
     ]);
-    const connector = new Api001ErpConnector({
-      transport,
-      authority: createAuthorityDouble(true).authority,
-    });
+    const connector = new Api001ErpConnector({ transport, authority: createAuthorityDouble(true).authority });
 
-    const first = await connector.read({
-      tenant_id: 'tenant-fixture',
-      resource: 'inventory',
-      key: 'SKU-1',
-    });
-    const second = await connector.read({
-      tenant_id: 'tenant-fixture',
-      resource: 'inventory',
-      key: 'SKU-1',
-    });
+    const result = await connector.read({ tenant_id: 'tenant-fixture', resource: 'inventory', key: 'SKU-1' });
 
-    // No read is served from a stale entry: the same input reaches the provider twice.
     expect(calls).toEqual([
-      { method: 'POST', path: '/api/v1/inventory/lookup' },
-      { method: 'POST', path: '/api/v1/inventory/lookup' },
+      {
+        method: 'POST',
+        path: '/api/v1/inventory/lookup',
+        body: { tenant_id: 'tenant-fixture', sku_ids: ['SKU-1'] },
+      },
     ]);
-    expect(first.tenant_id).toBe('tenant-fixture');
-    expect(first.observed_at).toBe('2026-09-22T01:02:03.000Z');
-    expect(first.resource).toBe('inventory');
-    expect(first.value.available_to_promise).toBe(7);
-    expect(second.observed_at).toBe(first.observed_at);
+    expect(result.value).toEqual({
+      snapshot_at: '2026-09-22T01:02:03.000Z',
+      tenant_id: 'tenant-fixture',
+      items: [{ sku_id: 'SKU-1', tenant_id: 'tenant-fixture', total_available_to_promise: 7 }],
+    });
+    expect(result.observed_at).toBe('2026-09-22T01:02:03.000Z');
   });
 
   it('refuses a dispatch with no server-side authority without touching the transport', async () => {

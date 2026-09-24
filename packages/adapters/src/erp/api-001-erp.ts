@@ -224,10 +224,13 @@ export class Api001ErpConnector implements AdapterPort {
     }
 
     const route = ERP_RESOURCE_ROUTES[resource];
-    // The key travels through the only channel the frozen transport exposes. The host projects it
-    // onto the API-001 DTO field of the route it calls (`sku_id`, `sku_ids`, `customer_id`, …); the
-    // connector must not guess DTO field names, so it passes the key verbatim.
-    const body = input.key === undefined ? null : { key: input.key };
+    // API-001 inventory lookup accepts a SKU list, while other resource groups retain the
+    // connector's generic key envelope. Keep the projection here at the named route boundary.
+    const body = input.key === undefined
+      ? null
+      : resource === 'inventory'
+        ? { tenant_id: input.tenant_id, sku_ids: [input.key] }
+        : { key: input.key };
     const result = await this.transport.request(
       requestOf({ method: route.method, path: route.path, tenant_id: input.tenant_id }, body),
     );
