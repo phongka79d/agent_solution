@@ -348,7 +348,11 @@ describe('Api001ErpConnector', () => {
     const receipt = await connector.dispatch(draft);
 
     expect(calls).toEqual([
-      { method: 'POST', path: ERP_ACTION_PATH_TEMPLATE.replace('{action_id}', draft.action_id) },
+      {
+        method: 'POST',
+        path: ERP_ACTION_PATH_TEMPLATE.replace('{action_id}', draft.action_id),
+        body: draft.payload,
+      },
     ]);
     expect(receipt.adapter_status).toBe('SUCCESS');
     expect(receipt.execution_id).toBe(`API-001:${draft.action_id}:${draft.action_revision}`);

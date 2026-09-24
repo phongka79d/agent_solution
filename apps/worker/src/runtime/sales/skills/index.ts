@@ -6,11 +6,13 @@ import { createSalesSkillToolPort } from './tool-port.js';
 import type { SalesSkillOptions, SalesSkillServices } from './types.js';
 
 export type {
+  ErpReadPort,
   SalesContextAggregatorLike,
   SalesRecommendationRevenueEvidence,
   SalesRecommendationRevenueEvidencePort,
   SalesSkillOptions,
   SalesSkillServices,
+  SalesSkillToolPortOptions,
 } from './types.js';
 export { SalesSkillToolError, createSalesSkillToolPort } from './tool-port.js';
 export { createSalesSkillDispatcher } from './dispatcher.js';

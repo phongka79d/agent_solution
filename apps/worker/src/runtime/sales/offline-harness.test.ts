@@ -6,7 +6,6 @@ import {
   createSalesOfflineHarness,
   PILOT_02_OFFLINE_FIXTURE,
   SALES_P2_DISABLED_SKILLS,
-  SalesOfflineHarnessError,
 } from './index.js';
 
 const readContext = {
@@ -147,7 +146,7 @@ describe('SalesOfflineHarness', () => {
     await expect(harness.erp_read!.read({
       tenant_id: foreignTenant,
       resource: 'products',
-    })).rejects.toMatchObject<SalesOfflineHarnessError>({
+    })).rejects.toMatchObject({
       code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE',
     });
     expect(harness.context.verifiedCustomerFor(foreignTenant, PILOT_02_OFFLINE_FIXTURE.correlation_id)).toBeNull();
@@ -186,7 +185,7 @@ describe('SalesOfflineHarness', () => {
       caught = error;
     }
 
-    expect(caught).toMatchObject<SalesOfflineHarnessError>({ code: 'P_FLOOR_UNAVAILABLE' });
+    expect(caught).toMatchObject({ code: 'P_FLOOR_UNAVAILABLE' });
     expect(harness.effect_dispatches).toEqual([]);
   });
 
@@ -199,7 +198,7 @@ describe('SalesOfflineHarness', () => {
       caught = error;
     }
 
-    expect(caught).toMatchObject<SalesOfflineHarnessError>({ code: 'SKILL_DISABLED' });
+    expect(caught).toMatchObject({ code: 'SKILL_DISABLED' });
     expect(harness.effect_dispatches).toEqual([]);
   });
 

@@ -333,7 +333,7 @@ export class SalesAgentRuntime implements IAgentRuntime {
 
   async resolveRouting(
     _signal: SignalEnvelope,
-    context: HydratedContext,
+    _context: HydratedContext,
     hypothesis: HypothesisRecord,
   ): Promise<RoutingDecision> {
     const rationale = this.retainedRationales.get(hypothesis);

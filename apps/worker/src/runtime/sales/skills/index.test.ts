@@ -7,7 +7,6 @@ import type { ErpReadPort } from '../../connectors.js';
 
 import {
   createSalesSkillServices,
-  SalesSkillToolError,
   type SalesRecommendationRevenueEvidencePort,
 } from './index.js';
 
@@ -328,7 +327,7 @@ describe('SalesSkillServices', () => {
         granted_authority: 'AUTH-1' as const,
         effect_key: 'effect-read-invalid-product',
       },
-    })).rejects.toMatchObject<SalesSkillToolError>({
+    })).rejects.toMatchObject({
       code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE',
     });
   });
@@ -376,7 +375,7 @@ describe('SalesSkillServices', () => {
         granted_authority: 'AUTH-1' as const,
         effect_key: 'effect-read-3',
       },
-    })).rejects.toMatchObject<SalesSkillToolError>({
+    })).rejects.toMatchObject({
       code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE',
     });
   });

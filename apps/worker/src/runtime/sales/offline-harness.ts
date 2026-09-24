@@ -268,10 +268,8 @@ export class SalesOfflineHarness {
       context: this.context,
       resolve_correlation_id,
       resolve_grant,
+      ...(this.revenue_evidence === undefined ? {} : { revenue_evidence: this.revenue_evidence }),
     };
-    if (this.revenue_evidence !== undefined) {
-      skillOptions.revenue_evidence = this.revenue_evidence;
-    }
     return createSalesSkillServices(skillOptions);
   }
 
