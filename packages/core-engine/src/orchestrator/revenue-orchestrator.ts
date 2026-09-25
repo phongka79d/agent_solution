@@ -1074,9 +1074,27 @@ export class RevenueOrchestrator {
         }
         reconciledEffect = await this.reconcileProviderEffect(pendingAction);
         reconciledAction = pendingAction;
+        const resumeCheckpoint: DurableTaskCheckpoint = {
+          plan: checkpoint.plan,
+          current_step: checkpoint.current_step,
+          pending_action: checkpoint.pending_action,
+          context: checkpoint.context,
+          previous_evidence_hash: checkpoint.previous_evidence_hash,
+          request_id: checkpoint.request_id,
+        };
         // The operator event requests a provider check; it is not proof and its receipt is never
-        // persisted. Consume it only after the provider returned a decisive result.
-        await clearResumeEvent('Provider reconciliation proof consumed for the parked effect.');
+        // persisted. Consume it by one fenced transition to running with the resume checkpoint,
+        // so a crash or write interruption cannot leave an unclaimable waiting row.
+        await this.dependencies.workflowEngine.transitionTask(
+          resumeEvent.tenant_id,
+          run_id,
+          'running',
+          'Provider reconciliation proof authorized guarded resume',
+          resumeCheckpoint,
+          hasDurableFence
+            ? { expected_task_version: task.task_version, lease_owner: this.workerId }
+            : undefined,
+        );
         const refreshed = await this.dependencies.workflowEngine.getTask(resumeEvent.tenant_id, run_id);
         if (!refreshed) {
           throw new OrchestratorError('TASK_NOT_FOUND', 'The task disappeared after provider reconciliation proof.');
@@ -1084,16 +1102,6 @@ export class RevenueOrchestrator {
         task = refreshed;
         checkpoint = readCompleteResumeCheckpoint(task.state_payload, run_id);
         reconciledAction = checkpoint.pending_action ?? pendingAction;
-        await this.dependencies.workflowEngine.transitionTask(
-          resumeEvent.tenant_id,
-          run_id,
-          'running',
-          'Provider reconciliation proof authorized guarded resume',
-          undefined,
-          hasDurableFence
-            ? { expected_task_version: task.task_version, lease_owner: this.workerId }
-            : undefined,
-        );
         executionResumed = true;
       }
 

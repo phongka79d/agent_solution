@@ -237,6 +237,14 @@ export class EffectGuard implements IEffectGuard {
 
     const current = await this.repository.getReservation(input.tenant_id, input.effect_key);
 
+    // A worker may crash after durable settlement but before its task resume event is consumed.
+    // Matching status is the durable outcome already established by the first attempt; keep the
+    // stored receipt and let the retry finish event consumption instead of treating the replay as a
+    // conflicting second settlement.
+    if (current?.status === input.status) {
+      return;
+    }
+
     throw new OrchestratorError(
       'RESERVATION_NOT_SETTLEABLE',
       `effect_key ${input.effect_key} was not settled as ${input.status}: the durable row is `

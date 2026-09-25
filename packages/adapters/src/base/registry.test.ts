@@ -377,4 +377,141 @@ describe('Api001ErpConnector', () => {
     expect(receipt.provider_reference).toBeNull();
     expect(receipt.response_payload.failure_class).toBe('UNKNOWN');
   });
+
+  it('reconciles an effect to SUCCEEDED with an execution receipt when the provider returns 200', async () => {
+    const { transport, calls } = createTransportDouble([
+      {
+        ok: true,
+        status: 200,
+        body: { document_number: 'SO-2002', status: 'CONFIRMED' },
+      },
+    ]);
+    const connector = new Api001ErpConnector({
+      transport,
+      authority: createAuthorityDouble(true).authority,
+    });
+
+    const result = await connector.reconcile({
+      tenant_id: 'tenant-fixture',
+      effect_key: 'eff-123',
+      action_id: 'act-456',
+    });
+
+    expect(calls).toEqual([
+      { method: 'GET', path: '/api/v1/actions/act-456' },
+    ]);
+    expect(result.outcome).toBe('SUCCEEDED');
+    expect(result.receipt).toBeDefined();
+    expect(result.receipt?.adapter_status).toBe('SUCCESS');
+    expect(result.receipt?.execution_id).toBe('API-001:act-456:reconciled');
+    expect(result.receipt?.provider_reference).toBe('SO-2002');
+    expect(result.receipt?.response_payload).toEqual({
+      provider_status: 200,
+      provider_envelope: { document_number: 'SO-2002', status: 'CONFIRMED' },
+      reconciled: true,
+    });
+  });
+
+  it('reconciles an effect to FAILED when the provider returns 404', async () => {
+    const { transport, calls } = createTransportDouble([
+      { ok: false, failure_class: 'PROVIDER_REJECTED', status: 404 },
+    ]);
+    const connector = new Api001ErpConnector({
+      transport,
+      authority: createAuthorityDouble(true).authority,
+    });
+
+    const result = await connector.reconcile({
+      tenant_id: 'tenant-fixture',
+      effect_key: 'eff-123',
+    });
+
+    expect(calls).toEqual([
+      { method: 'GET', path: '/api/v1/actions/eff-123' },
+    ]);
+    expect(result.outcome).toBe('FAILED');
+    expect(result.receipt).toBeUndefined();
+  });
+
+  it('falls back to querying effect_key when action_id returns 404 and reports FAILED when both return 404', async () => {
+    const { transport, calls } = createTransportDouble([
+      { ok: false, failure_class: 'PROVIDER_REJECTED', status: 404 },
+      { ok: false, failure_class: 'PROVIDER_REJECTED', status: 404 },
+    ]);
+    const connector = new Api001ErpConnector({
+      transport,
+      authority: createAuthorityDouble(true).authority,
+    });
+
+    const result = await connector.reconcile({
+      tenant_id: 'tenant-fixture',
+      effect_key: 'eff-fallback',
+      action_id: 'act-primary',
+    });
+
+    expect(calls).toEqual([
+      { method: 'GET', path: '/api/v1/actions/act-primary' },
+      { method: 'GET', path: '/api/v1/actions/eff-fallback' },
+    ]);
+    expect(result.outcome).toBe('FAILED');
+    expect(result.receipt).toBeUndefined();
+  });
+
+  it('reconciles an effect to INDETERMINATE on network failure or 5xx provider error', async () => {
+    const timeout = createTransportDouble([
+      { ok: false, failure_class: 'TIMEOUT', status: null },
+    ]);
+    const serverError = createTransportDouble([
+      { ok: false, failure_class: 'UNKNOWN', status: 500 },
+    ]);
+    const serviceUnavailable = createTransportDouble([
+      { ok: false, failure_class: 'PROVIDER_REJECTED', status: 503 },
+    ]);
+
+    const authority = createAuthorityDouble(true).authority;
+    const timeoutConnector = new Api001ErpConnector({ transport: timeout.transport, authority });
+    const serverErrorConnector = new Api001ErpConnector({ transport: serverError.transport, authority });
+    const serviceUnavailableConnector = new Api001ErpConnector({ transport: serviceUnavailable.transport, authority });
+
+    const timeoutResult = await timeoutConnector.reconcile({
+      tenant_id: 'tenant-fixture',
+      effect_key: 'eff-123',
+    });
+    const serverErrorResult = await serverErrorConnector.reconcile({
+      tenant_id: 'tenant-fixture',
+      effect_key: 'eff-123',
+    });
+    const serviceUnavailableResult = await serviceUnavailableConnector.reconcile({
+      tenant_id: 'tenant-fixture',
+      effect_key: 'eff-123',
+    });
+
+    expect(timeoutResult).toEqual({ outcome: 'INDETERMINATE' });
+    expect(serverErrorResult).toEqual({ outcome: 'INDETERMINATE' });
+    expect(serviceUnavailableResult).toEqual({ outcome: 'INDETERMINATE' });
+    expect(timeout.calls).toHaveLength(1);
+    expect(serverError.calls).toHaveLength(1);
+    expect(serviceUnavailable.calls).toHaveLength(1);
+  });
+
+  it('refuses reconcile without a tenant id without touching the transport', async () => {
+    const { transport, calls } = createTransportDouble([
+      { ok: true, status: 200, body: {} },
+    ]);
+    const connector = new Api001ErpConnector({
+      transport,
+      authority: createAuthorityDouble(true).authority,
+    });
+
+    const caught = await captureRejection(() =>
+      connector.reconcile({ tenant_id: '', effect_key: 'eff-123' }),
+    );
+
+    expect(caught).toBeInstanceOf(ErpRefusalError);
+    if (!(caught instanceof ErpRefusalError)) {
+      throw new Error('expected an ErpRefusalError');
+    }
+    expect(caught.refusal_code).toBe('TENANT_UNSCOPED');
+    expect(calls).toHaveLength(0);
+  });
 });

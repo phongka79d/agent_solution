@@ -899,5 +899,60 @@ describe('CareSkillServices', () => {
         }),
       ).rejects.toThrowError(/INVALID_CLEARANCE/);
     });
+
+    it('CareSkillDispatcher.reconcile fails closed to INDETERMINATE for non-ERP targets without calling erp_reconcile', async () => {
+      const erp_reconcile = vi.fn().mockResolvedValue({ outcome: 'FAILED' as const });
+      const erp_read = {
+        read: vi.fn(),
+        reconcile: erp_reconcile,
+      };
+      const options = createMockOptions({ erp_read: erp_read as unknown as ErpReadPort });
+      const services = createCareSkillServices(options);
+
+      expect(services.dispatcher.reconcile).toBeDefined();
+
+      // Non-ERP adapter_target (e.g. Orchestrator.HandoffBus) must return INDETERMINATE without calling erp_reconcile
+      const handoffResult = await services.dispatcher.reconcile!({
+        tenant_id: TENANT_ID,
+        effect_key: HANDOFF_EFFECT_KEY,
+        action_id: '00000000-0000-0000-0000-000000000001',
+        adapter_target: 'Orchestrator.HandoffBus',
+        skill_id: 'skill.care.escalate_to_human',
+      });
+
+      expect(handoffResult).toEqual({ outcome: 'INDETERMINATE' });
+      expect(erp_reconcile).not.toHaveBeenCalled();
+
+      // Non-API-001 skill with undefined adapter_target also returns INDETERMINATE fail-closed
+      const nonErpSkillResult = await services.dispatcher.reconcile!({
+        tenant_id: TENANT_ID,
+        effect_key: HANDOFF_EFFECT_KEY,
+        skill_id: 'skill.care.escalate_to_human',
+      });
+
+      expect(nonErpSkillResult).toEqual({ outcome: 'INDETERMINATE' });
+      expect(erp_reconcile).not.toHaveBeenCalled();
+
+      // API-001 target preserves existing behavior and invokes erp_reconcile
+      erp_reconcile.mockResolvedValueOnce({ outcome: 'SUCCEEDED' as const });
+      const api001Result = await services.dispatcher.reconcile!({
+        tenant_id: TENANT_ID,
+        effect_key: HANDOFF_EFFECT_KEY,
+        adapter_target: 'API-001',
+      });
+
+      expect(api001Result).toEqual({ outcome: 'SUCCEEDED' });
+      expect(erp_reconcile).toHaveBeenCalledTimes(1);
+
+      // Undefined adapter_target preserves existing behavior and invokes erp_reconcile
+      erp_reconcile.mockResolvedValueOnce({ outcome: 'SUCCEEDED' as const });
+      const undefinedTargetResult = await services.dispatcher.reconcile!({
+        tenant_id: TENANT_ID,
+        effect_key: HANDOFF_EFFECT_KEY,
+      });
+
+      expect(undefinedTargetResult).toEqual({ outcome: 'SUCCEEDED' });
+      expect(erp_reconcile).toHaveBeenCalledTimes(2);
+    });
   });
 });

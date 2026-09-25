@@ -167,6 +167,8 @@ export interface PolicyDecision {
   readonly requirementSource: 'REGISTRY' | 'PROPOSAL' | null;
   /** Set exactly when an approval route owns a durable PENDING row. */
   readonly approvalTicketId: string | null;
+  /** Deterministic effect key from proposal payload (BR-005); null for non-mutating actions without one. */
+  readonly effectKey: string | null;
   /** SHA-256 of the canonical payload; the digest an approval row is bound to (§08 §7.2). */
   readonly payloadSha256: string | null;
   readonly evaluatedAt: string;
@@ -370,6 +372,8 @@ export interface PolicyAuditRecord {
   readonly rule_id: PolicyRuleId | null;
   readonly error_code: PolicyDenyCode | null;
   readonly approval_id: string | null;
+  /** Deterministic effect key from proposal payload (BR-005); null for non-mutating actions without one. */
+  readonly effect_key: string | null;
   readonly payload_sha256: string | null;
   readonly occurred_at: string;
 }
@@ -1484,6 +1488,7 @@ export class PolicyEnforcementPoint {
         rule_id: decision.ruleId,
         error_code: decision.errorCode,
         approval_id: decision.approvalTicketId,
+        effect_key: decision.effectKey,
         payload_sha256: decision.payloadSha256,
         occurred_at: decision.evaluatedAt,
       });
@@ -1521,6 +1526,7 @@ export class PolicyEnforcementPoint {
       grantedAuthority: authority.granted,
       resolvedRequirement: authority.requirement,
       requirementSource: authority.requirementSource,
+      effectKey: base.effect_key,
       payloadSha256: base.payload_sha256,
       evaluatedAt: base.evaluated_at,
       auditStatus,

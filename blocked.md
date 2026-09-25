@@ -2,13 +2,14 @@
 
 ## Status
 
-The P1 Customer Care execution graph is bound end to end for the pilot's Care path, including the
+The P1 Customer Care execution graph is bound end to end for the pilot Care path, including the
 operator-driven approval and reconciliation handoffs. Provider proof is bound via API-001 / mock GET:
 confirmed success durably settles the reservation and replays the proven receipt without a second dispatch;
 confirmed absence durably settles FAILED, reopens the SAME effect key, and permits exactly one re-dispatch.
-Operator labels or receipts are not proof. Optional adapters, live external ERP connections, live
-PostgreSQL/RLS, Docker smoke, and PILOT-04 remain explicitly out-of-scope or fail-closed. Nothing here
-invents a second orchestrator, policy engine, skill system, queue, approval protocol or idempotency mechanism.
+The provider-proof resume path consumes decisive events with one fenced running transition and recognizes
+an already-settled matching reservation on replay, so an interruption cannot leave an unclaimable waiting row or trigger a duplicate settlement failure. Care reconciliation is target-bound: HandoffBus
+actions never query API-001. Optional adapters, live external ERP, PostgreSQL/RLS and Docker remain
+environment-gated; the offline E2E-OFF-ESC/PILOT-04 harness is executable and currently passes.
 
 | Path | State |
 |---|---|
@@ -18,6 +19,7 @@ invents a second orchestrator, policy engine, skill system, queue, approval prot
 | `runs.read` / `runs.list` / `runs.classifyRetry` / `runs.retry` (R13/R16) | Bound (`createDurableRunPort`) |
 | `approvals.decide` (R05) | Bound — API queues one durable approval event; the worker owns guarded claim/resume |
 | `runs.reconcile` (R18) | Bound — API queues one durable reconciliation event; the worker consumes it via authoritative API-001/mock GET provider proof (success settles/replays; confirmed absence settles FAILED and reopens same key for re-dispatch) |
+| `PILOT-04 / E2E-OFF-ESC` | Bound — offline harness covers complaint escalation, durable handoff replay, Case FSM/version fencing, exact-bound AUTH-4 approval resume, takeover silence, human resume and isolation |
 
 ## Bound paths
 
@@ -76,7 +78,7 @@ The worker consumes the event under the same task-version and lease fence. Opera
 - Provider-confirmed `ABSENT` / `FAILED`: durably settles the reservation as FAILED, reopens the SAME effect key in `effect_reservations`, and permits exactly one re-dispatch under that key.
 - Provider indeterminate or unavailable: fails closed without consuming or deleting the resume event, leaving the task parked in `waiting` until decisive proof is available.
 
-**Remaining P1 blocker:** none in the handoff or provider-proof path for the pilot Care slice. Live PostgreSQL/RLS, migration rehearsal, Docker smoke, PILOT-04, and live external ERP connections require external services or live database state and remain unavailable in this run.
+**Remaining P1 blocker:** none in the locally exercised Care handoff, policy, approval, takeover, reconciliation, or offline PILOT-04 paths. Live PostgreSQL/RLS, migration rehearsal, Docker smoke, and live external ERP evidence remain environment-gated.
 ## Intentionally unavailable capabilities
 
 These stay fail-closed and are listed by the runtime rather than stubbed:
@@ -99,19 +101,23 @@ These stay fail-closed and are listed by the runtime rather than stubbed:
 - Telemetry stream and command-center projections without a configured source: explicit
   empty/`NO_DATA` frames, never fabricated values.
 
-## Verification evidence
+Current verification evidence for the P1B runtime slice:
 
-Current local evidence for the P1B runtime slice; no live database was used:
+- Root `pnpm typecheck`: 14/14 tasks passed.
+- Root `pnpm lint`: 9/9 tasks passed.
+- Root `pnpm test:unit`: 14/14 tasks passed; database 233, core 201, worker 142 and API 62 tests passed.
+- Root `pnpm test:contracts`, `pnpm test:adversarial`, `pnpm test:security` and `pnpm build`: 7/7, 7/7, 7/7 and 9/9 tasks passed.
+- Root `pnpm test:pilots`: 6/6 tasks passed; E2E-OFF-ESC/PILOT-04 ran 7 tests successfully.
+- Focused assertions cover provider-proof crash replay, target-bound reconciliation, durable queue claim, HTTP takeover silence, approvals.decide queueing, API-001 proof mapping, Vietnamese complaint/human-request routing, policy audit/effect binding, and the complete offline pilot.
 
-- Database: `pnpm --filter @agentos/database exec vitest run` — 11 files, 228 tests passed; lint, typecheck and build passed.
-- Core engine: `pnpm --filter @agentos/core-engine exec vitest run src` — 13 files, 194 tests passed; lint, typecheck and build passed.
-- Worker: `pnpm --filter @agentos/worker exec vitest run` — 9 files, 115 tests passed; lint, typecheck and build passed.
-- API: `pnpm --filter @agentos/api exec vitest run src` — 6 files, 45 tests passed; lint, typecheck and build passed.
-- Root gates: `pnpm typecheck`, `pnpm lint`, `pnpm test:unit`, `pnpm test:contracts`, `pnpm test:adversarial` and `pnpm test:security` completed successfully; `pnpm build` completed with 9 successful tasks.
-- The focused handoff assertions cover durable queue replay/conflict, task-version and lease fencing, approval binding consumption, takeover suppression, manual reconciliation consumption, API-001/mock GET provider proof reconciliation (success replay without duplicate dispatch, confirmed absence settling FAILED and reopening the same key for re-dispatch), and consumed-event lease release.
+Environment-gated results:
+- PostgreSQL migration rehearsal and RLS: blocked by password authentication failure for `agentos_app` (SQLSTATE `28P01`).
+- P1 database-backed integration smoke: timed out with all database-backed Care cases failing.
+- Docker smoke: images built and inspected, but service startup hit an existing `/agentos-postgres` container-name conflict; no container was removed.
+- Live external ERP/PILOT-04 evidence remains unavailable; the local API-001/mock and offline harness are the exercised substitutes.
 
-Not run by design: live PostgreSQL/RLS tests, migration rehearsal, Docker smoke, and PILOT-04. Those require external services or live database state and remain unavailable in this run.
+These environment results are not code-gate failures; they require the corresponding external services and credentials.
 
 ## Decision
 
-No P1 handoff blocker remains. Provider proof for the pilot slice is bound via API-001 / mock GET; keep optional adapters, real external ERP connections, live PostgreSQL/RLS, and non-P1 capabilities fail-closed; do not add a second approval status, parallel queue, blind reservation settlement or speculative provider result.
+Local P1B behavior is bound and exercised, including the offline pilot. Merge readiness remains blocked only by the remaining environment-gated checks; do not claim live PostgreSQL/RLS, Docker, migration or external ERP evidence.

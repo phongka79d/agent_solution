@@ -562,6 +562,26 @@ describe('EffectGuard.resolve', () => {
       response_receipt: RECEIPT,
     });
   });
+  it('accepts a matching settlement after a worker interruption and preserves the durable receipt', async () => {
+    const { guard, reservations } = createHarness();
+    const input = request(guard);
+
+    await guard.reserve(input);
+    await guard.resolve({ tenant_id: TENANT, effect_key: input.effect_key, status: 'SUCCEEDED', receipt: RECEIPT });
+
+    // The first worker settled the row but crashed before consuming its resume event.
+    await expect(guard.resolve({
+      tenant_id: TENANT,
+      effect_key: input.effect_key,
+      status: 'SUCCEEDED',
+      receipt: { provider_reference: 'a-different-retry-payload' },
+    })).resolves.toBeUndefined();
+
+    expect(await reservations.getReservation(TENANT, input.effect_key)).toMatchObject({
+      status: 'SUCCEEDED',
+      response_receipt: RECEIPT,
+    });
+  });
 
   it('never records an indeterminate outcome as a settlement', async () => {
     const { guard, reservations } = createHarness();

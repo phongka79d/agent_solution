@@ -165,6 +165,9 @@ export class MemoryEffectGuard implements IEffectGuard {
         `no reservation exists for effect_key ${input.effect_key}; a settlement may not create one (BR-006).`,
       );
     }
+    if (row.status === input.status) {
+      return;
+    }
     const settled: EffectReservationRow = { ...row, status: input.status, receipt: input.receipt };
     this.rows.set(key, Object.freeze(settled));
   }

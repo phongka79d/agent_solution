@@ -1004,18 +1004,117 @@ describe('RevenueOrchestrator', () => {
     const result = await orchestrator.resumeTask('run-fenced-1', resumeEvent);
     expect(result.lifecycle_state).toBe('completed');
     expect(transitions[0]).toEqual({
-      state: 'waiting',
+      state: 'running',
       guard: { expected_task_version: 10, lease_owner: 'worker-test' },
     });
-    expect(transitions[1]).toEqual({
-      state: 'running',
-      guard: { expected_task_version: 11, lease_owner: 'worker-test' },
-    });
-    const finalTransition = transitions[2];
+    expect(transitions).toHaveLength(2);
+    const finalTransition = transitions[1];
     expect(finalTransition).toBeDefined();
     if (!finalTransition) {
       throw new Error('Expected final transition');
     }
     expect(finalTransition.state).toBe('completed');
+  });
+
+  it('prevents unclaimable waiting row on provider-proof write interruption and replays safely on retry', async () => {
+    const effectGuard = new MemoryEffectGuard();
+    const backing = new MemoryEvidenceLogger('test-hmac-secret');
+    const providerReceipt: ExecutionReceipt = {
+      execution_id: 'provider-proof-replay-1',
+      adapter_status: 'SUCCESS',
+      provider_reference: 'prov-tx-replay-42',
+      response_payload: { settled: true },
+      latency_ms: 30,
+      token_usage: { prompt: 2, completion: 2, total_cost_usd: 0.0001 },
+    };
+
+    const { orchestrator, workflow, dispatch } = harness({
+      effectGuard,
+      evidenceLogger: backing,
+      dispatch: async () => {
+        throw new OrchestratorError('DISPATCH_TIMEOUT', 'initial dispatch timed out');
+      },
+      reconcile: async () => ({
+        outcome: 'SUCCEEDED',
+        receipt: providerReceipt,
+      }),
+    });
+
+    const waiting = await orchestrator.processSignal(signal());
+    const key = computeEffectKey({
+      tenant_id: TENANT,
+      skill_id: 'skill.test.dispatch',
+      step_index: 1,
+      action_revision: 0,
+      request_id: SIGNAL_ID,
+    });
+
+    expect(effectGuard.peek(TENANT, key)?.status).toBe('RESERVED');
+    expect(dispatch).toHaveBeenCalledTimes(1);
+
+    const resumeEvent = {
+      tenant_id: TENANT,
+      event_type: 'human.reconcile' as const,
+      operator_id: 'operator-1',
+      reconciliation_resolution: 'PROVIDER_CONFIRMED_SUCCEEDED' as const,
+      reconciliation_receipt: { receipt_id: 'operator-receipt-1' },
+      reason: 'verifying interruption replay does not leave unclaimable waiting row',
+    };
+    const taskBefore = await workflow.getTask(TENANT, waiting.run_id);
+    await workflow.transitionTask(
+      TENANT,
+      waiting.run_id,
+      'waiting',
+      'queue reconciliation resume event',
+      {
+        ...(taskBefore?.state_payload as Record<string, unknown>),
+        resume_event: resumeEvent,
+      },
+    );
+
+    // Simulate a write interruption on the decisive transition to 'running'
+    const originalTransition = workflow.transitionTask.bind(workflow);
+    let failRunningTransition = true;
+    vi.spyOn(workflow, 'transitionTask').mockImplementation(async (tenant_id, run_id, state, reason, cp?, guard?) => {
+      if (failRunningTransition && state === 'running') {
+        failRunningTransition = false;
+        throw new OrchestratorError('WRITE_INTERRUPTED', 'Simulated network drop during transition to running');
+      }
+      return originalTransition(tenant_id, run_id, state, reason, cp, guard);
+    });
+
+    // 1. The interrupted attempt throws without advancing execution
+    await expect(orchestrator.resumeTask(waiting.run_id, resumeEvent)).rejects.toMatchObject({
+      code: 'WRITE_INTERRUPTED',
+    });
+
+    // 2. The task remains claimable in 'waiting' with resume_event intact (no unclaimable row created)
+    const taskAfterInterruption = await workflow.getTask(TENANT, waiting.run_id);
+    expect(taskAfterInterruption?.state).toBe('waiting');
+    expect(taskAfterInterruption?.state_payload).toHaveProperty('resume_event');
+    expect((taskAfterInterruption?.state_payload as Record<string, unknown>)['resume_event']).toEqual(resumeEvent);
+
+    // 3. Retry after interruption: worker re-claims and resumes idempotently
+    const retried = await orchestrator.resumeTask(waiting.run_id, resumeEvent);
+    expect(retried.lifecycle_state).toBe('completed');
+
+    // 4. Reservation settlement is preserved, no second dispatch occurred, and task is completed without event
+    const settled = effectGuard.peek(TENANT, key);
+    expect(settled?.status).toBe('SUCCEEDED');
+    expect(settled?.receipt).toEqual(providerReceipt);
+    expect(dispatch).toHaveBeenCalledTimes(1);
+
+    const taskFinal = await workflow.getTask(TENANT, waiting.run_id);
+    expect(taskFinal?.state).toBe('completed');
+    expect(taskFinal?.state_payload).not.toHaveProperty('resume_event');
+
+    const evidenceList = backing.listEvidence(TENANT, waiting.run_id);
+    expect(evidenceList).toHaveLength(1);
+    const evidencePayload = JSON.parse(evidenceList[0]!.raw_payload) as {
+      replayed: boolean;
+      receipt: unknown;
+    };
+    expect(evidencePayload.replayed).toBe(true);
+    expect(evidencePayload.receipt).toEqual(providerReceipt);
   });
 });

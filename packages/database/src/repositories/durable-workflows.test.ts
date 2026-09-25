@@ -93,7 +93,9 @@ type StatementKind =
   | 'requeue'
   | 'operator_requeue'
   | 'fail'
-  | 'reconcile';
+  | 'reconcile'
+  | 'claim_select'
+  | 'claim';
 
 function classify(sql: string): StatementKind {
   if (sql.startsWith('INSERT INTO agentos.platform_durable_tasks')) {
@@ -106,12 +108,20 @@ function classify(sql: string): StatementKind {
     return 'list';
   }
 
+  if (sql.includes('FOR UPDATE SKIP LOCKED')) {
+    return 'claim_select';
+  }
+
   if (sql.includes('FOR UPDATE')) {
     return 'lock';
   }
 
   if (sql.startsWith('SELECT')) {
     return 'read';
+  }
+
+  if (sql.includes("WHEN state IN ('waiting', 'awaiting_human') THEN state")) {
+    return 'claim';
   }
 
   if (sql.includes("SET state = 'waiting'") && sql.includes('state_payload = state_payload || $3::jsonb')) {
@@ -1293,5 +1303,196 @@ describe('DurableWorkflowRepository.queueReconciliation', () => {
       })),
     ).rejects.toThrow('RECONCILIATION_EVENT_CONFLICT');
     expect(client.statements.map((statement) => statement.kind)).toEqual(['lock']);
+  });
+});
+
+describe('DurableWorkflowRepository.claimNextQueuedTask', () => {
+  it('claims a waiting task carrying a resume_event with the task-version and lease fence and returns it as claimable', async () => {
+    const resumeEvent = {
+      tenant_id: TENANT,
+      event_type: 'human.reconcile',
+      operator_id: 'operator-1',
+      reconciliation_resolution: 'ESCALATE_MANUALLY',
+      reason: 'provider outcome requires manual follow-up',
+    };
+    const queuedPayload = { ...completeCheckpoint(), resume_event: resumeEvent };
+    const { repository, client, boundTenants } = harnessFor({
+      claim_select: {
+        rows: [
+          taskRow({
+            state: 'waiting',
+            task_version: 4,
+            state_payload: queuedPayload,
+            lease_owner: null,
+            lease_expires_at: null,
+          }),
+        ],
+      },
+      claim: {
+        rows: [
+          taskRow({
+            state: 'waiting',
+            task_version: 5,
+            state_payload: queuedPayload,
+            lease_owner: 'worker-1',
+            lease_expires_at: LEASE_EXPIRES_AT,
+          }),
+        ],
+      },
+    });
+
+    const result = await repository.claimNextQueuedTask({
+      tenant_id: TENANT,
+      lease_owner: 'worker-1',
+      lease_duration_ms: 30_000,
+    });
+
+    expect(boundTenants).toEqual([TENANT]);
+    expect(client.statements.map((statement) => statement.kind)).toEqual(['claim_select', 'claim']);
+    expect(bindingsOf(client, 'claim_select')).toEqual([TENANT]);
+    expect(bindingsOf(client, 'claim')).toEqual([
+      TENANT,
+      'worker-1',
+      30_000,
+      RUN_ID,
+      4,
+    ]);
+    expect(result).toEqual({
+      task: {
+        task_id: 'aaaaaaaa-0000-4000-8000-000000000001',
+        tenant_id: TENANT,
+        run_id: RUN_ID,
+        correlation_id: CORRELATION_ID,
+        current_step: 1,
+        state: 'waiting',
+        task_version: 5,
+        lease_owner: 'worker-1',
+        lease_expires_at: LEASE_EXPIRES_AT.toISOString(),
+        retry_count: 0,
+        max_retries: 3,
+        last_error_class: null,
+        paused_for_approval_id: null,
+        state_payload: queuedPayload,
+        error_details: {},
+        created_at: CREATED_AT.toISOString(),
+        updated_at: UPDATED_AT.toISOString(),
+      },
+      lease_owner: 'worker-1',
+      lease_expires_at: LEASE_EXPIRES_AT.toISOString(),
+      task_version: 5,
+    });
+    expect(result?.task.state).toBe('waiting');
+  });
+
+  it('claims an awaiting_human task carrying a resume_event without rewriting its lifecycle state', async () => {
+    const resumeEvent = {
+      tenant_id: TENANT,
+      event_type: 'approval.decision',
+      decision: 'APPROVED',
+    };
+    const queuedPayload = { ...completeCheckpoint(), resume_event: resumeEvent };
+    const { repository, client, boundTenants } = harnessFor({
+      claim_select: {
+        rows: [
+          taskRow({
+            state: 'awaiting_human',
+            task_version: 2,
+            state_payload: queuedPayload,
+            lease_owner: null,
+            lease_expires_at: null,
+          }),
+        ],
+      },
+      claim: {
+        rows: [
+          taskRow({
+            state: 'awaiting_human',
+            task_version: 3,
+            state_payload: queuedPayload,
+            lease_owner: 'worker-human',
+            lease_expires_at: LEASE_EXPIRES_AT,
+          }),
+        ],
+      },
+    });
+
+    const result = await repository.claimNextQueuedTask({
+      tenant_id: TENANT,
+      lease_owner: 'worker-human',
+      lease_duration_ms: 15_000,
+    });
+
+    expect(boundTenants).toEqual([TENANT]);
+    expect(client.statements.map((statement) => statement.kind)).toEqual(['claim_select', 'claim']);
+    expect(bindingsOf(client, 'claim_select')).toEqual([TENANT]);
+    expect(bindingsOf(client, 'claim')).toEqual([
+      TENANT,
+      'worker-human',
+      15_000,
+      RUN_ID,
+      2,
+    ]);
+    expect(result?.task.state).toBe('awaiting_human');
+    expect(result?.task.task_version).toBe(3);
+    expect(result?.lease_owner).toBe('worker-human');
+    expect(result?.task.state_payload).toEqual(queuedPayload);
+  });
+
+  it('returns null when no claimable task exists for the tenant', async () => {
+    const { repository, client, boundTenants } = harnessFor({
+      claim_select: { rows: [] },
+    });
+
+    const result = await repository.claimNextQueuedTask({
+      tenant_id: TENANT,
+      lease_owner: 'worker-1',
+    });
+
+    expect(boundTenants).toEqual([TENANT]);
+    expect(client.statements.map((statement) => statement.kind)).toEqual(['claim_select']);
+    expect(bindingsOf(client, 'claim_select')).toEqual([TENANT]);
+    expect(result).toBeNull();
+  });
+
+  it('fails with TASK_WRITE_LOST when the task-version CAS fence conflicts on claim update', async () => {
+    const { repository, client } = harnessFor({
+      claim_select: {
+        rows: [taskRow({ state: 'waiting', task_version: 4 })],
+      },
+      claim: {
+        rows: [],
+      },
+    });
+
+    await expect(
+      repository.claimNextQueuedTask({
+        tenant_id: TENANT,
+        lease_owner: 'worker-1',
+      }),
+    ).rejects.toThrow('TASK_WRITE_LOST');
+    expect(client.statements.map((statement) => statement.kind)).toEqual(['claim_select', 'claim']);
+  });
+
+  it('validates tenant_id, lease_owner, and lease_duration_ms before opening a transaction', async () => {
+    const { repository, client, boundTenants } = harnessFor({});
+
+    await expect(
+      repository.claimNextQueuedTask({ tenant_id: '', lease_owner: 'worker-1' }),
+    ).rejects.toThrow('TASK_TENANT_ID_REQUIRED');
+
+    await expect(
+      repository.claimNextQueuedTask({ tenant_id: TENANT, lease_owner: '' }),
+    ).rejects.toThrow('TASK_LEASE_OWNER_REQUIRED');
+
+    await expect(
+      repository.claimNextQueuedTask({
+        tenant_id: TENANT,
+        lease_owner: 'worker-1',
+        lease_duration_ms: -1,
+      }),
+    ).rejects.toThrow('TASK_LEASE_DURATION_INVALID');
+
+    expect(boundTenants).toEqual([]);
+    expect(client.statements).toEqual([]);
   });
 });

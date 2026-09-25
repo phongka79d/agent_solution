@@ -79,11 +79,12 @@ const ALLOWED_PAYLOAD_FIELDS: Readonly<Record<string, Readonly<Record<string, tr
     effect_key: true,
   }),
   'skill.care.escalate_to_human': Object.freeze({
-    reason: true,
-    summary: true,
-    urgency: true,
-    session_id: true,
     tenant_id: true,
+    session_id: true,
+    conversation_id: true,
+    customer_id: true,
+    escalation_reason: true,
+    summary_context: true,
     effect_key: true,
   }),
   'skill.care.analyze_churn_risk': Object.freeze({
@@ -296,6 +297,13 @@ export class CarePolicyEngine implements IPolicyEngine {
         `CROSS_TENANT_ASSERTION: action tenant '${action.tenant_id}' does not match context tenant '${context.tenant_id}'.`,
       );
     }
+    const assertedTenant = payload.tenant_id;
+    if (assertedTenant && assertedTenant !== context.tenant_id) {
+      throw new OrchestratorError(
+        'CROSS_TENANT_ASSERTION',
+        `CROSS_TENANT_ASSERTION: payload tenant '${String(assertedTenant)}' does not match context tenant '${context.tenant_id}'.`,
+      );
+    }
 
     // Customer identity assertion
     if (action.skill_id === 'skill.care.lookup_order') {
@@ -312,8 +320,17 @@ export class CarePolicyEngine implements IPolicyEngine {
           `CROSS_CUSTOMER_ASSERTION: payload customer '${String(assertedCustomer)}' does not match verified '${context.customer.customer_id}'.`,
         );
       }
+    } else {
+      const assertedCustomer = payload.customer_id;
+      if (assertedCustomer) {
+        if (!context.customer || assertedCustomer !== context.customer.customer_id) {
+          throw new OrchestratorError(
+            'CROSS_CUSTOMER_ASSERTION',
+            `CROSS_CUSTOMER_ASSERTION: payload customer '${String(assertedCustomer)}' does not match verified '${context.customer?.customer_id ?? 'none'}'.`,
+          );
+        }
+      }
     }
-
     return action;
   }
 

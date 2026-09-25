@@ -127,6 +127,12 @@ export function createCareSkillDispatcher(options: CareSkillDispatcherOptions): 
       readonly outcome: 'SUCCEEDED' | 'FAILED' | 'INDETERMINATE';
       readonly receipt?: ExecutionReceipt;
     }> {
+      const isApi001 = input.adapter_target !== undefined
+        ? input.adapter_target === 'API-001' || input.adapter_target.startsWith('API-001.')
+        : input.skill_id !== 'skill.care.escalate_to_human';
+      if (!isApi001) {
+        return { outcome: 'INDETERMINATE' };
+      }
       if (options.erp_reconcile) {
         return await options.erp_reconcile(input);
       }

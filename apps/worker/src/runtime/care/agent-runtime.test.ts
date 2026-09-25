@@ -297,7 +297,11 @@ describe('CareAgentRuntime', () => {
     ['payment issue', 'I was charged twice for the same order.', 'payment', 'skill.care.search_faq'],
     ['complaint', 'My parcel arrived damaged and this is unacceptable.', 'complaint', 'HUMAN_HANDOFF'],
     ['usage support', 'How do I activate the warranty?', 'usage', 'skill.care.search_faq'],
-    ['human request', 'I want to talk to a human agent.', 'human_escalation', 'HUMAN_HANDOFF']
+    ['human request', 'I want to talk to a human agent.', 'human_escalation', 'HUMAN_HANDOFF'],
+    ['Vietnamese explicit human request (người thật)', 'Tôi muốn gặp người thật để trao đổi.', 'human_escalation', 'HUMAN_HANDOFF'],
+    ['Vietnamese explicit human request (nhân viên tư vấn)', 'Cho tôi nói chuyện với nhân viên tư vấn.', 'human_escalation', 'HUMAN_HANDOFF'],
+    ['Vietnamese complaint (khiếu nại, rất tệ)', 'Tôi muốn khiếu nại về chất lượng dịch vụ rất tệ.', 'complaint', 'HUMAN_HANDOFF'],
+    ['Vietnamese complaint (hư hỏng, bực mình)', 'Hàng bị hư hỏng khi nhận được, tôi rất bực mình.', 'complaint', 'HUMAN_HANDOFF']
   ])('classifies %s and uses only its permitted route', async (_name, message, expectedIntent, expectedTarget) => {
     const signal: SignalEnvelope = {
       signal_id: `sig-${String(expectedIntent)}`,
@@ -323,7 +327,9 @@ describe('CareAgentRuntime', () => {
         tenant_id,
         session_id: 'sess-1',
         conversation_id: '33333333-3333-4333-8333-333333333333',
+        escalation_reason: expectedIntent === 'complaint' ? 'customer_complaint' : 'customer_requested_human',
       });
+      expect(plan.fallback_strategy).toBe('ESCALATE_HUMAN');
 
       const unboundMemory = { ...verifiedContext.working_memory };
       delete unboundMemory.conversation_id;
@@ -338,6 +344,128 @@ describe('CareAgentRuntime', () => {
       const plan = await runtime.formulatePlan(routing, verifiedContext, hypothesis);
       expect(plan.steps.map((step) => step.skill_id)).toEqual([expectedTarget]);
     }
+  });
+
+  it('routes Vietnamese explicit human request to HUMAN_HANDOFF with customer_requested_human escalation plan and no unrelated tools', async () => {
+    const signal: SignalEnvelope = {
+      signal_id: 'sig-vi-human-1',
+      tenant_id,
+      correlation_id: 'corr-1',
+      source_channel: 'WEB_CHAT',
+      event_type: 'message.received',
+      timestamp: '2026-09-01T00:00:00Z',
+      subject: {
+        session_id: 'sess-1',
+        channel_type: 'web',
+      },
+      payload: {
+        message: 'Tôi muốn gặp người thật để giải quyết vấn đề này.',
+        module: 'support',
+      },
+    };
+
+    const hypothesis = await runtime.deriveHypothesis(signal, verifiedContext);
+    expect(hypothesis.classification).toBe('HYPOTHESIS');
+    expect(hypothesis.intent).toBe('human_escalation');
+    expect(hypothesis.confidence).toBe(0.9);
+    expect(hypothesis.derived_from_signals).toContain('sig-vi-human-1');
+    expect(hypothesis.reasoning).toBe('Deterministic Customer Care classification: human_escalation.');
+
+    const routing = await runtime.resolveRouting(signal, verifiedContext, hypothesis);
+    expect(routing.target_agent).toBe('HUMAN_HANDOFF');
+    expect(routing.requires_clarification).toBe(false);
+    expect(routing.rationalization).toBe(hypothesis.reasoning);
+
+    const plan = await runtime.formulatePlan(routing, verifiedContext, hypothesis);
+    expect(plan.fallback_strategy).toBe('ESCALATE_HUMAN');
+    expect(plan.steps).toHaveLength(1);
+
+    const step = plan.steps[0]!;
+    expect(step.step_index).toBe(1);
+    expect(step.agent_id).toBe('CS-01');
+    expect(step.skill_id).toBe('skill.care.escalate_to_human');
+    expect(step.adapter_target).toBe('Orchestrator.HandoffBus');
+    expect(step.required_authority).toBe('AUTH-3');
+    expect(step.mutating).toBe(true);
+    expect(step.idempotent).toBe(false);
+    expect(step.price_bearing).toBe(false);
+    expect(step.timeout_ms).toBe(1000);
+    expect(step.depends_on_steps).toEqual([]);
+    expect(step.input_parameters).toEqual({
+      tenant_id,
+      session_id: 'sess-1',
+      conversation_id: '33333333-3333-4333-8333-333333333333',
+      customer_id: 'cust-verified-42',
+      escalation_reason: 'customer_requested_human',
+      summary_context: hypothesis.reasoning,
+    });
+
+    // Ensure no unrelated tool calls are present in the plan
+    const executedSkills = plan.steps.map((s) => s.skill_id);
+    expect(executedSkills).toEqual(['skill.care.escalate_to_human']);
+    expect(executedSkills).not.toContain('skill.care.lookup_order');
+    expect(executedSkills).not.toContain('skill.care.search_faq');
+  });
+
+  it('routes Vietnamese complaint to HUMAN_HANDOFF with customer_complaint escalation plan and no unrelated tools', async () => {
+    const signal: SignalEnvelope = {
+      signal_id: 'sig-vi-complaint-1',
+      tenant_id,
+      correlation_id: 'corr-1',
+      source_channel: 'WEB_CHAT',
+      event_type: 'message.received',
+      timestamp: '2026-09-01T00:00:00Z',
+      subject: {
+        session_id: 'sess-1',
+        channel_type: 'web',
+      },
+      payload: {
+        message: 'Sản phẩm bị hư hỏng khi nhận hàng, dịch vụ quá tệ và tôi muốn khiếu nại.',
+        module: 'support',
+      },
+    };
+
+    const hypothesis = await runtime.deriveHypothesis(signal, verifiedContext);
+    expect(hypothesis.classification).toBe('HYPOTHESIS');
+    expect(hypothesis.intent).toBe('complaint');
+    expect(hypothesis.confidence).toBe(0.9);
+    expect(hypothesis.derived_from_signals).toContain('sig-vi-complaint-1');
+    expect(hypothesis.reasoning).toBe('Deterministic Customer Care classification: complaint.');
+
+    const routing = await runtime.resolveRouting(signal, verifiedContext, hypothesis);
+    expect(routing.target_agent).toBe('HUMAN_HANDOFF');
+    expect(routing.requires_clarification).toBe(false);
+    expect(routing.rationalization).toBe(hypothesis.reasoning);
+
+    const plan = await runtime.formulatePlan(routing, verifiedContext, hypothesis);
+    expect(plan.fallback_strategy).toBe('ESCALATE_HUMAN');
+    expect(plan.steps).toHaveLength(1);
+
+    const step = plan.steps[0]!;
+    expect(step.step_index).toBe(1);
+    expect(step.agent_id).toBe('CS-01');
+    expect(step.skill_id).toBe('skill.care.escalate_to_human');
+    expect(step.adapter_target).toBe('Orchestrator.HandoffBus');
+    expect(step.required_authority).toBe('AUTH-3');
+    expect(step.mutating).toBe(true);
+    expect(step.idempotent).toBe(false);
+    expect(step.price_bearing).toBe(false);
+    expect(step.timeout_ms).toBe(1000);
+    expect(step.depends_on_steps).toEqual([]);
+    expect(step.input_parameters).toEqual({
+      tenant_id,
+      session_id: 'sess-1',
+      conversation_id: '33333333-3333-4333-8333-333333333333',
+      customer_id: 'cust-verified-42',
+      escalation_reason: 'customer_complaint',
+      summary_context: hypothesis.reasoning,
+    });
+
+    // Ensure no unrelated tool calls are present in the plan
+    const executedSkills = plan.steps.map((s) => s.skill_id);
+    expect(executedSkills).toEqual(['skill.care.escalate_to_human']);
+    expect(executedSkills).not.toContain('skill.care.lookup_order');
+    expect(executedSkills).not.toContain('skill.care.search_faq');
   });
   it('refuses plan generation with empty steps when registry row is missing', async () => {
     const emptyRuntime = new CareAgentRuntime({

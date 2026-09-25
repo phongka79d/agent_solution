@@ -17,8 +17,8 @@ function buildHarness() {
     channel: 'WEB_CHAT',
     external_thread_id: 'thread-a',
     active_agent: 'auto',
-    state: 'open' as const,
-    takeover_operator_id: null,
+    state: 'open' as 'open' | 'paused_takeover' | 'closed',
+    takeover_operator_id: null as string | null,
     last_message_at: '2026-09-23T00:00:00.000Z',
     created_at: '2026-09-23T00:00:00.000Z',
   };
@@ -70,7 +70,7 @@ function buildHarness() {
     }),
   });
 
-  return { app, appendMessage, receipts, start };
+  return { app, appendMessage, conversation, receipts, start };
 }
 
 function buildTakeoverHarness() {
@@ -337,6 +337,28 @@ describe('POST /conversations/:conversation_id/messages shared Care admission', 
         correlation_id: 'corr-existing',
       });
       expect(start).toHaveBeenCalledTimes(1);
+      expect(appendMessage).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('rejects message admission with HTTP 409 and CONVERSATION_LOCKED when conversation.state=paused_takeover', async () => {
+    const { app, appendMessage, conversation, start } = buildHarness();
+    conversation.state = 'paused_takeover';
+    const url = `/conversations/${CONVERSATION_ID}/messages`;
+    const headers = { authorization: `Bearer ${SESSION_TOKEN}` };
+    const body = { message: 'Where is my order?', idempotency_key: 'turn-paused', module: 'support' };
+
+    try {
+      const response = await app.inject({ method: 'POST', url, headers, payload: body });
+
+      expect(response.statusCode).toBe(409);
+      expect(response.json()).toMatchObject({
+        error_code: 'CONVERSATION_LOCKED',
+        retryable: false,
+      });
+      expect(start).not.toHaveBeenCalled();
       expect(appendMessage).not.toHaveBeenCalled();
     } finally {
       await app.close();
