@@ -33,6 +33,11 @@ const DECISIONS: readonly ApprovalDecision[] = ['APPROVE', 'REJECT', 'MODIFY', '
 function isDecision(value: unknown): value is ApprovalDecision {
   return typeof value === 'string' && (DECISIONS as readonly string[]).includes(value);
 }
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
 
 /**
  * Registers R14, the §8.2.1 detail read and R05 on the `/api/v1` prefix.
@@ -148,7 +153,7 @@ export function registerApprovalRoutes(
         }
 
         const body: unknown = request.body;
-        if (typeof body !== 'object' || body === null) {
+        if (!isPlainRecord(body)) {
           fail('VALIDATION_FAILED', 'the request body must be a JSON object');
         }
 
@@ -166,6 +171,9 @@ export function registerApprovalRoutes(
             'VALIDATION_FAILED',
             'expected_payload_sha256 is required: the decision must restate the payload digest the approver reviewed',
           );
+        }
+        if (decision === 'MODIFY' && !isPlainRecord(candidate.modified_payload)) {
+          fail('VALIDATION_FAILED', 'modified_payload must be a JSON object for a MODIFY decision');
         }
         if (decision !== 'MODIFY' && candidate.modified_payload !== undefined) {
           fail('VALIDATION_FAILED', 'modified_payload is only valid on a MODIFY decision');
@@ -211,11 +219,11 @@ export function registerApprovalRoutes(
           approval_id: decided.approval_id,
           task_id: decided.task_id,
           status: decided.status,
-          decided_at: decided.decided_at,
+          queued_at: decided.queued_at,
           correlation_id,
         };
 
-        return reply.code(200).send(response);
+        return reply.code(202).send(response);
       } catch (error) {
         return replyFailure(reply, error, correlationIdOf(request, runtime));
       }

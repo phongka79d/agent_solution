@@ -88,6 +88,9 @@ const INSERT_RECOMMENDATION =
 const INSERT_SERVICE_CASE =
   'INSERT INTO agentos.service_cases (id, tenant_id, customer_id, conversation_id, case_number, category, subject) ' +
   "VALUES ($1, $2, $3, $4, $5, 'general', 'fixture subject')";
+const INSERT_SERVICE_CASE_EVENT =
+  'INSERT INTO agentos.service_case_events (tenant_id, case_id, effect_key, request_fingerprint, action_type, actor_id, case_version, next_state, action_details, result_payload) ' +
+  "VALUES ($1, $2, $3, $4, 'CREATE', 'rls-fixture', 1, 'NEW', '{}'::jsonb, '{}'::jsonb)";
 
 const INSERT_NEW_CUSTOMER =
   'INSERT INTO agentos.customers (id, tenant_id, display_name) VALUES ($1, $2, $3)';
@@ -569,6 +572,61 @@ describe.skipIf(!hasDatabaseUrl)('agentos_app RLS rehearsal (real PostgreSQL)', 
       );
 
       expect(accepted.rowCount).toBe(1);
+    });
+    it('isolates durable case receipts to their tenant and parent case', async () => {
+      const caseIdA = randomUUID();
+      const caseIdB = randomUUID();
+      const receiptKey = () => randomUUID().replaceAll('-', '').repeat(2);
+
+      await asAppRole(fixturePool, TENANT_A, (client) =>
+        client.query(INSERT_SERVICE_CASE, [
+          caseIdA,
+          TENANT_A,
+          CUSTOMER_A,
+          CONVERSATION_A,
+          `RLS-CASE-${caseIdA}`,
+        ]),
+      );
+      await asAppRole(fixturePool, TENANT_B, (client) =>
+        client.query(INSERT_SERVICE_CASE, [
+          caseIdB,
+          TENANT_B,
+          CUSTOMER_B,
+          CONVERSATION_B,
+          `RLS-CASE-${caseIdB}`,
+        ]),
+      );
+
+      await asAppRole(fixturePool, TENANT_A, (client) =>
+        client.query(INSERT_SERVICE_CASE_EVENT, [TENANT_A, caseIdA, receiptKey(), receiptKey()]),
+      );
+      await asAppRole(fixturePool, TENANT_B, (client) =>
+        client.query(INSERT_SERVICE_CASE_EVENT, [TENANT_B, caseIdB, receiptKey(), receiptKey()]),
+      );
+
+      const visible = await asAppRole(fixturePool, TENANT_A, (client) =>
+        client.query<{ case_id: string }>('SELECT case_id::text AS case_id FROM agentos.service_case_events WHERE case_id = ANY($1::uuid[]) ORDER BY case_id', [[caseIdA, caseIdB]]),
+      );
+      expect(visible.rows.map((row) => row.case_id)).toEqual([caseIdA]);
+
+      const updateReceipt = await captureFailure(() =>
+        asAppRole(fixturePool, TENANT_A, (client) =>
+          client.query("UPDATE agentos.service_case_events SET actor_id = 'tampered' WHERE case_id = $1", [caseIdA]),
+        ),
+      );
+      expectSqlState(updateReceipt, '42501');
+      const deleteReceipt = await captureFailure(() =>
+        asAppRole(fixturePool, TENANT_A, (client) =>
+          client.query('DELETE FROM agentos.service_case_events WHERE case_id = $1', [caseIdA]),
+        ),
+      );
+      expectSqlState(deleteReceipt, '42501');
+      const mismatchedCase = await captureFailure(() =>
+        asAppRole(fixturePool, TENANT_A, (client) =>
+          client.query(INSERT_SERVICE_CASE_EVENT, [TENANT_A, caseIdB, receiptKey(), receiptKey()]),
+        ),
+      );
+      expectSqlState(mismatchedCase, '23503');
     });
   });
 });

@@ -333,13 +333,14 @@ export interface ApprovalDecisionRequest {
   readonly modified_payload?: Record<string, unknown>;
 }
 
-export type ApprovalDecisionStatus = 'APPROVED' | 'REJECTED' | 'MODIFIED' | 'PAUSED' | 'CANCELLED';
+/** The decision is queued as a durable worker handoff; the worker performs the guarded claim. */
+export type ApprovalDecisionStatus = 'QUEUED';
 
 export interface ApprovalDecisionResponse {
   readonly approval_id: string;
   readonly task_id: string;
   readonly status: ApprovalDecisionStatus;
-  readonly decided_at: string;
+  readonly queued_at: string;
   readonly correlation_id: string;
 }
 

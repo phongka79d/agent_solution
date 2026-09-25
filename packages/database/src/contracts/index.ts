@@ -532,3 +532,6 @@ export type EffectReservationOutcome =
   | { readonly kind: 'IN_FLIGHT' }
   | { readonly kind: 'RECONCILE_REQUIRED' }
   | { readonly kind: 'CONFLICT' };
+
+export * from './service-cases.js';
+export * from './care-handoffs.js';

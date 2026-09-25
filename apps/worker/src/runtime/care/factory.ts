@@ -41,6 +41,7 @@ import {
   withTenantContext,
   type TenantTransactionRunner,
 } from '@agentos/database';
+import { DEFAULT_P0_PLATFORM_SKILL_ENABLEMENT } from '@agentos/skills';
 
 import { CareAgentRuntime, type SkillRegistryResolver } from './agent-runtime.js';
 import { CareContextAggregator, type CareContextAggregatorRepositories } from './context-aggregator.js';
@@ -49,9 +50,17 @@ import { createCareAdapters } from './adapters.js';
 import {
   createCareSkillServices,
   type CareSkillEnv,
+  type CareSkillOptions,
   type CareSkillServices,
 } from './skills/index.js';
 import type { ErpReadPort } from '../connectors.js';
+
+export const DEFAULT_P1B_CARE_SKILL_ENABLEMENT: NonNullable<CareSkillOptions['skill_enablement']> = Object.freeze({
+  enabled_skill_ids: Object.freeze([
+    ...DEFAULT_P0_PLATFORM_SKILL_ENABLEMENT.enabled_skill_ids,
+    'skill.care.escalate_to_human',
+  ]),
+});
 
 export type { CareSkillEnv };
 
@@ -89,6 +98,9 @@ export interface CareOrchestratorFactoryOptions {
   readonly auditSecret?: string | undefined;
   readonly erp_read?: ErpReadPort | null | undefined;
   readonly env?: CareSkillEnv | undefined;
+  readonly case_sla_target_hours?: CareSkillOptions['case_sla_target_hours'] | undefined;
+  readonly handoff_repository?: CareSkillOptions['handoff_repository'] | undefined;
+  readonly skill_enablement?: CareSkillOptions['skill_enablement'] | undefined;
   readonly now?: (() => Date) | undefined;
   readonly resolve_grant?: ((tenant_id: string, agent_id: string) => Promise<AssignableAuthority | null>) | undefined;
   readonly resolve_correlation_id?: ((tenant_id: string, run_id: string) => Promise<string>) | undefined;
@@ -149,6 +161,17 @@ export function getUnboundCapabilities(options: CareOrchestratorFactoryOptions =
     if (options.erp_read === null || options.erp_read === undefined) {
       unbound.push('API-001 (ERP read port is not bound)');
     }
+  }
+  const caseManagementEnabled = (
+    options.skill_enablement ?? DEFAULT_P0_PLATFORM_SKILL_ENABLEMENT
+  ).enabled_skill_ids.includes('skill.care.manage_case');
+  if (
+    !options.skillServices
+    && !options.adapterDispatcher
+    && caseManagementEnabled
+    && !options.case_sla_target_hours
+  ) {
+    unbound.push('PostgreSQL.CaseManagementStore: no tenant-specific SLA policy is bound; case creation and priority changes refuse');
   }
 
   if (options.skillServices?.unbound && options.skillServices.unbound.length > 0) {
@@ -232,6 +255,9 @@ export function createCareOrchestratorFactory(
       erp_read: options.erp_read ?? null,
       env: options.env ?? {},
       ...(options.now ? { now: options.now } : {}),
+      ...(options.case_sla_target_hours ? { case_sla_target_hours: options.case_sla_target_hours } : {}),
+      ...(options.handoff_repository ? { handoff_repository: options.handoff_repository } : {}),
+      skill_enablement: options.skill_enablement ?? DEFAULT_P1B_CARE_SKILL_ENABLEMENT,
       resolve_correlation_id: resolveCorrelationId,
       resolve_grant: resolveGrant,
     });

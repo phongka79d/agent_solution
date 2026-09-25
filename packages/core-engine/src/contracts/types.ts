@@ -107,8 +107,10 @@ export interface SignalEnvelope {
 }
 
 export interface SignalSubject {
-  /** Server-issued, unique per conversation/visit. Mandatory, including for anonymous traffic. */
+  /** Server-issued session identity, distinct from the durable conversation row UUID. */
   readonly session_id: string;
+  /** Canonical tenant-scoped conversation UUID resolved by the API; never client-asserted. */
+  readonly conversation_id?: string;
   readonly channel_type: string; // 'line' | 'whatsapp' | 'web' | 'sms' | ...
   /** Channel-native UID (LINE UID, WhatsApp WAID, web visitor id). Exact-match join key only. */
   readonly channel_identifier?: string;
@@ -138,6 +140,8 @@ export interface Customer360Fact {
 export interface WorkingMemoryContext {
   /** Server-issued unique session id. Anonymous sessions are isolated per `session_id`. */
   readonly session_id: string;
+  /** Canonical conversation row UUID, present only after its tenant/channel/thread binding is verified. */
+  readonly conversation_id?: string;
   readonly active_cart_id?: string;
   readonly last_touch_channel: string;
   readonly turn_count: number;
@@ -269,6 +273,8 @@ export interface ActionDraft {
   readonly computed_price_floor?: number;
   readonly floor_source?: string;
   readonly proposed_price?: number;
+  /** Canonical digest reviewed by SCR-003; required by the skill runtime for AUTH-4 dispatch. */
+  readonly approval_payload_digest?: string;
   /** Set only when an AUTH-4 approval authorized this exact action. */
   readonly approval_id?: string;
 }
@@ -545,6 +551,10 @@ export interface IEffectGuard {
     effect_key: string;
     skill_id: string;
   }): Promise<{ outcome: 'SUCCEEDED' | 'FAILED' | 'INDETERMINATE'; receipt?: unknown }>;
+  reopenForRetry?(input: {
+    tenant_id: string;
+    effect_key: string;
+  }): Promise<boolean>;
 }
 
 /**
@@ -646,6 +656,10 @@ export interface IStatefulWorkflowEngine {
     decision: 'APPROVED' | 'MODIFIED' | 'REJECTED' | 'PAUSE' | 'CANCELLED';
     operator_id: string;
     review_comment: string | null;
+    /** Worker fence for the exact leased resume event. */
+    expected_task_version?: number;
+    lease_owner?: string;
+    expected_resume_event?: Record<string, unknown>;
   }): Promise<{ claimed: boolean }>;
   /** §4.4 durable recovery: classify, count, re-queue or fail terminally. */
   recordFailure(params: {

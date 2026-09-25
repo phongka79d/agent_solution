@@ -194,9 +194,12 @@ describe('agentos row-level security (live PostgreSQL)', () => {
                   to_regclass('agentos.approval_queue')::text     AS approval_queue,
                   to_regclass('agentos.effect_reservations')::text AS effect_reservations,
                   to_regclass('agentos.platform_durable_tasks')::text AS platform_durable_tasks,
+                  to_regclass('agentos.care_handoffs')::text        AS care_handoffs,
                   to_regclass('agentos.evidence_records')::text   AS evidence_records,
                   to_regclass('agentos.audit_records')::text      AS audit_records,
-                  to_regclass('agentos.agent_run_logs')::text     AS agent_run_logs`,
+                  to_regclass('agentos.agent_run_logs')::text     AS agent_run_logs,
+                  to_regclass('agentos.service_cases')::text      AS service_cases,
+                  to_regclass('agentos.service_case_events')::text AS service_case_events`,
         ),
       );
 

@@ -324,6 +324,62 @@ export class Api001ErpConnector implements AdapterPort {
   }
 
   /**
+   * Reconciles an effect outcome with the provider by querying the action endpoint.
+   * Uses GET /api/v1/actions/{action_id} to observe whether the action was recorded by the provider.
+   */
+  async reconcile(input: {
+    readonly tenant_id: string;
+    readonly effect_key: string;
+    readonly action_id?: string;
+  }): Promise<{
+    readonly outcome: 'SUCCEEDED' | 'FAILED' | 'INDETERMINATE';
+    readonly receipt?: ExecutionReceipt;
+  }> {
+    if (input.tenant_id.length === 0) {
+      throw new ErpRefusalError(
+        'TENANT_UNSCOPED',
+        this.adapterId,
+        'reconcile requires a tenant id from the authenticated principal',
+      );
+    }
+
+    let targetId = input.action_id ?? input.effect_key;
+    let path = ERP_ACTION_PATH_TEMPLATE.replace('{action_id}', targetId);
+    let result = await this.transport.request(
+      requestOf({ method: 'GET', path, tenant_id: input.tenant_id }, null),
+    );
+
+    if (!result.ok && result.status === 404 && input.action_id && input.effect_key && input.action_id !== input.effect_key) {
+      targetId = input.effect_key;
+      path = ERP_ACTION_PATH_TEMPLATE.replace('{action_id}', targetId);
+      result = await this.transport.request(
+        requestOf({ method: 'GET', path, tenant_id: input.tenant_id }, null),
+      );
+    }
+
+    if (result.ok && result.status === 200) {
+      const provider_reference = firstStringField(result.body, PROVIDER_REFERENCE_FIELDS);
+      return {
+        outcome: 'SUCCEEDED',
+        receipt: {
+          execution_id: `${this.adapterId}:${targetId}:reconciled`,
+          adapter_status: 'SUCCESS',
+          provider_reference,
+          response_payload: { provider_status: result.status, provider_envelope: result.body, reconciled: true },
+          latency_ms: 0,
+          token_usage: { prompt: 0, completion: 0, total_cost_usd: 0 },
+        },
+      };
+    }
+
+    if (!result.ok && result.status === 404) {
+      return { outcome: 'FAILED' };
+    }
+
+    return { outcome: 'INDETERMINATE' };
+  }
+
+  /**
    * Receipt for a dispatch that reached the provider but was not confirmed. `latency_ms` is 0 because
    * this package has no clock: a fabricated duration would be indistinguishable from a measurement.
    */

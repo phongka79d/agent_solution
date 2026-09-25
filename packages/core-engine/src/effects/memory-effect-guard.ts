@@ -194,6 +194,24 @@ export class MemoryEffectGuard implements IEffectGuard {
     return { outcome: 'INDETERMINATE' };
   }
 
+  public async reopenForRetry(input: {
+    tenant_id: string;
+    effect_key: string;
+  }): Promise<boolean> {
+    const key = rowKey(input.tenant_id, input.effect_key);
+    const row = this.rows.get(key);
+    if (row === undefined || row.status !== 'FAILED') {
+      return false;
+    }
+    const expiresAt = new Date(this.now().getTime() + this.reservationWindowMs).toISOString();
+    this.rows.set(key, Object.freeze({
+      ...row,
+      status: 'RESERVED',
+      expires_at: expiresAt,
+    }));
+    return true;
+  }
+
   /**
    * Read-only view of the stored row, mirroring the durable `effect_reservations` read path. Rows
    * are frozen, so inspecting them cannot change a reservation.

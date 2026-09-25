@@ -36,6 +36,19 @@ export {
   SECOND_BRAIN_COLLECTION,
 } from './memory/qdrant.js';
 export type * from './contracts/index.js';
+export { ServiceCaseRepository } from './repositories/service-cases.js';
 
 /** Durable PostgreSQL repositories and their structural ports. */
 export * from './repositories/index.js';
+export type {
+  CareHandoffClaimOutcome,
+  CareHandoffCompletionOutcome,
+  CareHandoffEnqueueResult,
+  CareHandoffExecutionReceipt,
+  CareHandoffOutput,
+  CareHandoffReconciliation,
+  ClaimCareHandoffInput,
+  CompleteCareHandoffInput,
+  EnqueueCareHandoffInput,
+  ReconcileCareHandoffInput,
+} from './contracts/care-handoffs.js';

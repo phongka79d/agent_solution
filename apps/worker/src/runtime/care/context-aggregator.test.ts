@@ -164,9 +164,9 @@ describe('CareContextAggregator', () => {
     expect(aggregator.verificationReferenceFor('corr-3')).toBe('ident-bound');
   });
 
-  it('hydrates working memory with takeover state from durable conversation', async () => {
+  it('hydrates takeover and message history only through the canonical tenant-bound conversation UUID', async () => {
     const pausedConversation: ConversationRecord = {
-      conversation_id: 'conv-takeover',
+      conversation_id: '22222222-2222-4222-8222-222222222222',
       tenant_id,
       customer_id: 'cust-100',
       channel: 'web',
@@ -177,7 +177,6 @@ describe('CareContextAggregator', () => {
       last_message_at: '2026-09-01T12:00:00Z',
       created_at: '2026-09-01T10:00:00Z',
     };
-
     const messages: readonly ConversationMessageRecord[] = [
       {
         message_id: 'msg-1',
@@ -201,25 +200,82 @@ describe('CareContextAggregator', () => {
         created_at: '2026-09-01T10:02:00Z',
       },
     ];
+    let conversationLookupId: string | undefined;
+    let historyLookupId: string | undefined;
 
     const aggregator = new CareContextAggregator({
       repositories: {
         findIdentity: async () => null,
         getProfile: async () => null,
-        getConversation: async () => pausedConversation,
-        listMessages: async () => messages,
+        getConversation: async (_tenant_id, conversation_id) => {
+          conversationLookupId = conversation_id;
+          return pausedConversation;
+        },
+        listMessages: async (scope) => {
+          historyLookupId = scope.conversation_id;
+          return messages;
+        },
       },
     });
-
     const subject: SignalSubject = {
-      session_id: 'conv-takeover',
+      session_id: 'thread-1',
+      conversation_id: pausedConversation.conversation_id,
       channel_type: 'web',
+      channel_identifier: 'thread-1',
     };
 
     const context = await aggregator.hydrateContext(tenant_id, subject, correlation_id);
 
-    expect(context.working_memory.session_id).toBe('conv-takeover');
+    expect(conversationLookupId).toBe(pausedConversation.conversation_id);
+    expect(historyLookupId).toBe(pausedConversation.conversation_id);
+    expect(context.working_memory.session_id).toBe('thread-1');
+    expect(context.working_memory.conversation_id).toBe(pausedConversation.conversation_id);
     expect(context.working_memory.takeover_active).toBe(true);
     expect(context.working_memory.turn_count).toBe(3);
+  });
+
+  it.each([
+    ['tenant', { tenant_id: 'different-tenant' }],
+    ['channel', { channel: 'LINE' }],
+    ['thread', { external_thread_id: 'different-thread' }],
+  ] as const)('does not expose history or handoff identity when the persisted %s binding differs', async (_kind, mismatch) => {
+    const conversation: ConversationRecord = {
+      conversation_id: '22222222-2222-4222-8222-222222222222',
+      tenant_id,
+      customer_id: null,
+      channel: 'web',
+      external_thread_id: 'thread-1',
+      active_agent: 'CS-01',
+      state: 'paused_takeover',
+      takeover_operator_id: 'operator-1',
+      last_message_at: '2026-09-01T12:00:00Z',
+      created_at: '2026-09-01T10:00:00Z',
+    };
+    const mismatchedConversation: ConversationRecord = { ...conversation, ...mismatch };
+    let historyReads = 0;
+    const aggregator = new CareContextAggregator({
+      repositories: {
+        findIdentity: async () => null,
+        getProfile: async () => null,
+        getConversation: async () => mismatchedConversation,
+        listMessages: async () => {
+          historyReads += 1;
+          return [];
+        },
+      },
+    });
+    const subject: SignalSubject = {
+      session_id: 'thread-1',
+      conversation_id: conversation.conversation_id,
+      channel_type: 'web',
+      channel_identifier: 'thread-1',
+    };
+
+    const context = await aggregator.hydrateContext(tenant_id, subject, correlation_id);
+
+    expect(context.working_memory.conversation_id).toBeUndefined();
+    expect(context.working_memory.takeover_active).toBe(false);
+    expect(context.working_memory.turn_count).toBe(1);
+    expect(historyReads).toBe(0);
   });
 });

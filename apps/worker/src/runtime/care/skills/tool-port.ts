@@ -2,9 +2,15 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { withTenantContext } from '@agentos/database';
+import {
+  CareHandoffRepository,
+  ServiceCaseRepository,
+  withTenantContext,
+  type EnqueueCareHandoffInput,
+  type ManageServiceCaseInput,
+} from '@agentos/database';
 import { ErpRefusalError } from '@agentos/adapters';
-import { listApprovedKnowledge } from '@agentos/core-engine';
+import { computeRequestFingerprint, listApprovedKnowledge } from '@agentos/core-engine';
 import type { SkillToolInvocation, SkillToolPort } from '@agentos/skills';
 
 import type { CareSkillOptions, VerifiedCustomerIdentity } from './types.js';
@@ -149,6 +155,8 @@ function scoreFaqMatch(entry: FaqEntry, queryTokens: readonly string[], queryTex
 export function createCareSkillToolPort(options: CareSkillOptions): SkillToolPort {
   const defaultKnowledgeRoot = fileURLToPath(new URL('../../../../../../packages/second-brain', import.meta.url));
   const knowledgeRoot = (options.env.CARE_KNOWLEDGE_ROOT?.trim() || defaultKnowledgeRoot);
+  const caseRepository = options.case_repository ?? new ServiceCaseRepository();
+  const handoffRepository = options.handoff_repository ?? new CareHandoffRepository();
 
   return {
     async invoke<TInput, TOutput>(invocation: SkillToolInvocation<TInput>): Promise<TOutput> {
@@ -231,6 +239,224 @@ export function createCareSkillToolPort(options: CareSkillOptions): SkillToolPor
         } as TOutput;
       }
 
+      if (binding === 'Orchestrator.HandoffBus') {
+        const input = invocation.input as {
+          readonly tenant_id: string;
+          readonly session_id: string;
+          readonly conversation_id: string;
+          readonly customer_id?: string;
+          readonly escalation_reason: string;
+          readonly summary_context?: string;
+        };
+        const trustedTenantId = invocation.context.tenant_id;
+        if (input.tenant_id !== trustedTenantId) {
+          throw new CareSkillToolError(
+            'TENANT_SCOPE_MISMATCH',
+            'handoff payload tenant_id must match the orchestrator-bound tenant',
+          );
+        }
+
+        const enqueueInput: EnqueueCareHandoffInput = {
+          tenant_id: trustedTenantId,
+          effect_key: invocation.context.effect_key,
+          request_fingerprint: computeRequestFingerprint(invocation.input as Record<string, unknown>),
+          run_id: invocation.context.run_id,
+          session_id: input.session_id,
+          conversation_id: input.conversation_id,
+          ...(input.customer_id === undefined ? {} : { customer_id: input.customer_id }),
+          escalation_reason: input.escalation_reason,
+          ...(input.summary_context === undefined ? {} : { summary_context: input.summary_context }),
+        };
+        const reconcileHandoff = async () => {
+          try {
+            return await handoffRepository.reconcile({
+              tenant_id: enqueueInput.tenant_id,
+              effect_key: enqueueInput.effect_key,
+              request_fingerprint: enqueueInput.request_fingerprint,
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : '';
+            const codeAndDetail = /^([A-Z][A-Z0-9_]+):\s*(.*)$/s.exec(message);
+            if (
+              codeAndDetail
+              && codeAndDetail[1] !== undefined
+              && codeAndDetail[1] !== 'HANDOFF_QUEUE_TIMEOUT'
+              && (codeAndDetail[1].startsWith('HANDOFF_') || codeAndDetail[1] === 'IDEMPOTENCY_CONFLICT')
+            ) {
+              throw new CareSkillToolError(codeAndDetail[1], codeAndDetail[2] || codeAndDetail[1]);
+            }
+            throw new CareSkillToolError(
+              'QUEUE_DOWN',
+              'the handoff outcome could not be reconciled; no enqueue retry was attempted',
+            );
+          }
+        };
+        const recoverHandoff = async (): Promise<TOutput> => {
+          const reconciled = await reconcileHandoff();
+          if (reconciled.state === 'COMMITTED') return reconciled.output as TOutput;
+          throw new CareSkillToolError(
+            'QUEUE_DOWN',
+            'no committed handoff receipt was found; no enqueue retry was attempted',
+          );
+        };
+        const signal = invocation.context.signal;
+        if (signal?.aborted) return recoverHandoff();
+
+        const operation = handoffRepository.enqueue(enqueueInput).then(
+          (result) => ({ kind: 'completed' as const, output: result.output }),
+          (error: unknown) => ({ kind: 'failed' as const, error }),
+        );
+        let outcome: Awaited<typeof operation> | { readonly kind: 'aborted' };
+        if (!signal) {
+          outcome = await operation;
+        } else {
+          let onAbort!: () => void;
+          const aborted = new Promise<{ readonly kind: 'aborted' }>((resolve) => {
+            onAbort = () => resolve({ kind: 'aborted' });
+            signal.addEventListener('abort', onAbort, { once: true });
+            if (signal.aborted) onAbort();
+          });
+          try {
+            outcome = await Promise.race([operation, aborted]);
+          } finally {
+            signal.removeEventListener('abort', onAbort);
+          }
+        }
+        if (outcome.kind === 'aborted') return recoverHandoff();
+        if (outcome.kind === 'completed') return outcome.output as TOutput;
+
+        const message = outcome.error instanceof Error ? outcome.error.message : '';
+        const codeAndDetail = /^([A-Z][A-Z0-9_]+):\s*(.*)$/s.exec(message);
+        if (
+          codeAndDetail
+          && codeAndDetail[1] !== undefined
+          && codeAndDetail[1] !== 'HANDOFF_QUEUE_TIMEOUT'
+          && (codeAndDetail[1].startsWith('HANDOFF_') || codeAndDetail[1] === 'IDEMPOTENCY_CONFLICT')
+        ) {
+          throw new CareSkillToolError(codeAndDetail[1]!, codeAndDetail[2] || codeAndDetail[1]!);
+        }
+        return recoverHandoff();
+      }
+
+      if (binding === 'PostgreSQL.CaseManagementStore') {
+        const input = invocation.input as Omit<
+          ManageServiceCaseInput,
+          'effect_key' | 'request_fingerprint' | 'actor_id' | 'sla_target_hours'
+        >;
+        const trustedTenantId = invocation.context.tenant_id;
+        if (input.tenant_id !== trustedTenantId) {
+          throw new CareSkillToolError(
+            'TENANT_SCOPE_MISMATCH',
+            'case payload tenant_id must match the orchestrator-bound tenant',
+          );
+        }
+
+        let slaTargetHours: number | undefined;
+        if (options.case_sla_target_hours) {
+          let configuredHours: number | null;
+          try {
+            configuredHours = await options.case_sla_target_hours(trustedTenantId, input.priority);
+          } catch {
+            throw new CareSkillToolError(
+              'CASE_SLA_POLICY_UNAVAILABLE',
+              'the tenant-specific case SLA policy could not be resolved',
+            );
+          }
+          if (configuredHours !== null) {
+            if (!Number.isSafeInteger(configuredHours) || configuredHours < 1) {
+              throw new CareSkillToolError(
+                'CASE_SLA_POLICY_UNAVAILABLE',
+                'the tenant-specific case SLA policy returned an invalid target',
+              );
+            }
+            slaTargetHours = configuredHours;
+          }
+        }
+        if (input.action_type === 'CREATE' && slaTargetHours === undefined) {
+          throw new CareSkillToolError(
+            'CASE_SLA_POLICY_UNAVAILABLE',
+            'case creation requires an authoritative tenant-specific SLA target',
+          );
+        }
+
+        const mutation: ManageServiceCaseInput = {
+          ...input,
+          tenant_id: trustedTenantId,
+          effect_key: invocation.context.effect_key,
+          request_fingerprint: computeRequestFingerprint(input as Record<string, unknown>),
+          actor_id: invocation.context.caller_agent,
+          ...(slaTargetHours === undefined ? {} : { sla_target_hours: slaTargetHours }),
+        };
+        const reconcileMutation = async () => {
+          try {
+            return await caseRepository.reconcile(mutation);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : '';
+            const codeAndDetail = /^([A-Z][A-Z0-9_]+):\s*(.*)$/s.exec(message);
+            if (codeAndDetail?.[1] === 'IDEMPOTENCY_CONFLICT' || codeAndDetail?.[1] === 'CASE_BINDING_MISMATCH') {
+              throw new CareSkillToolError(codeAndDetail[1], codeAndDetail[2] || codeAndDetail[1]);
+            }
+            throw new CareSkillToolError(
+              'CASE_RECONCILIATION_FAILED',
+              'the durable effect could not be reconciled; no automatic retry was attempted',
+            );
+          }
+        };
+        const uncommittedError = (result: Extract<Awaited<ReturnType<typeof caseRepository.reconcile>>, { readonly state: 'NOT_COMMITTED' }>) => {
+          const latest = result.current_case_version === null
+            ? ''
+            : ' (current version ' + result.current_case_version + ', status ' + result.current_status + ')';
+          return new CareSkillToolError(
+            'CASE_EFFECT_NOT_COMMITTED',
+            'no durable receipt exists for this effect' + latest + '; automatic retry is disabled',
+          );
+        };
+        const signal = invocation.context.signal;
+        if (signal?.aborted) {
+          const reconciled = await reconcileMutation();
+          if (reconciled.state === 'COMMITTED') return reconciled.output as TOutput;
+          throw uncommittedError(reconciled);
+        }
+
+        const operation = caseRepository.manage(mutation).then(
+          (output) => ({ kind: 'completed' as const, output }),
+          (error: unknown) => ({ kind: 'failed' as const, error }),
+        );
+        let outcome: Awaited<typeof operation> | { readonly kind: 'aborted' };
+        if (!signal) {
+          outcome = await operation;
+        } else {
+          let onAbort!: () => void;
+          const aborted = new Promise<{ readonly kind: 'aborted' }>((resolve) => {
+            onAbort = () => resolve({ kind: 'aborted' });
+            signal.addEventListener('abort', onAbort, { once: true });
+            if (signal.aborted) onAbort();
+          });
+          try {
+            outcome = await Promise.race([operation, aborted]);
+          } finally {
+            signal.removeEventListener('abort', onAbort);
+          }
+        }
+        if (outcome.kind === 'aborted') {
+          const reconciled = await reconcileMutation();
+          if (reconciled.state === 'COMMITTED') return reconciled.output as TOutput;
+          throw uncommittedError(reconciled);
+        }
+        if (outcome.kind === 'completed') return outcome.output as TOutput;
+
+        const error = outcome.error;
+        if (error instanceof CareSkillToolError) throw error;
+        const message = error instanceof Error ? error.message : '';
+        const codeAndDetail = /^([A-Z][A-Z0-9_]+):\s*(.*)$/s.exec(message);
+        if (codeAndDetail) {
+          throw new CareSkillToolError(codeAndDetail[1]!, codeAndDetail[2] || codeAndDetail[1]!);
+        }
+
+        const reconciled = await reconcileMutation();
+        if (reconciled.state === 'COMMITTED') return reconciled.output as TOutput;
+        throw uncommittedError(reconciled);
+      }
       if (binding === 'API-001.OrderConnector') {
         if (!options.erp_read) {
           throw new CareSkillToolError(

@@ -23,6 +23,7 @@ import {
   type SignalEnvelope,
   type DurableLeaseManager,
   type IStatefulWorkflowEngine,
+  type DurableTaskGuard,
 } from '../contracts/index.js';
 import { computeEffectKey } from '../effects/effect-key.js';
 import { MemoryEffectGuard } from '../effects/memory-effect-guard.js';
@@ -116,7 +117,7 @@ interface HarnessOptions {
   readonly steps?: PlannedStep[];
   readonly agents?: PlatformAgentId[];
   readonly hypothesisRecord?: HypothesisRecord;
-  readonly dispatch?: () => Promise<ExecutionReceipt>;
+  readonly dispatch?: (action?: ActionDraft) => Promise<ExecutionReceipt>;
   readonly effectGuard?: MemoryEffectGuard;
   /** Live SCR-005 lock state, so a case can hold the lock and release it mid-flight. */
   readonly isTakenOver?: () => Promise<boolean>;
@@ -126,6 +127,16 @@ interface HarnessOptions {
   readonly workflowEngine?: IStatefulWorkflowEngine;
   /** Lease manager override, so a case can assert the attempt's release. */
   readonly leaseManager?: DurableLeaseManager;
+  readonly reconcile?: (input: {
+    readonly tenant_id: string;
+    readonly effect_key: string;
+    readonly action_id?: string;
+    readonly adapter_target?: string;
+    readonly skill_id?: string;
+  }) => Promise<{
+    readonly outcome: 'SUCCEEDED' | 'FAILED' | 'INDETERMINATE';
+    readonly receipt?: ExecutionReceipt | unknown;
+  }>;
 }
 
 function harness(options: HarnessOptions = {}) {
@@ -151,7 +162,8 @@ function harness(options: HarnessOptions = {}) {
     const agents = options.agents ?? ['SAL-01'];
     return plan(agents.map((agent_id, index) => step({ step_index: index + 1, agent_id })));
   });
-  const dispatch = vi.fn(options.dispatch ?? (async () => receipt()));
+  const dispatch = vi.fn(options.dispatch ?? (async (_action?: ActionDraft) => receipt()));
+  const reconcile = options.reconcile !== undefined ? vi.fn(options.reconcile) : undefined;
   const orchestrator = new RevenueOrchestrator({
     contextAggregator: { hydrateContext: hydrate },
     agentRuntime: { deriveHypothesis, resolveRouting, formulatePlan },
@@ -177,7 +189,10 @@ function harness(options: HarnessOptions = {}) {
     workflowEngine: workflow,
     evidenceLogger,
     auditTrail: { append: async () => undefined },
-    adapterDispatcher: { dispatch },
+    adapterDispatcher: {
+      dispatch,
+      ...(reconcile !== undefined ? { reconcile } : {}),
+    },
     effectGuard,
     sessionControl: {
       isTakenOver: options.isTakenOver ?? (async () => false),
@@ -186,7 +201,16 @@ function harness(options: HarnessOptions = {}) {
     leaseManager: options.leaseManager ?? new MemoryLeaseManager(),
     workerId: 'worker-test',
   });
-  return { orchestrator, effectGuard, workflow, memoryWorkflow, evidenceLogger, hydrate, deriveHypothesis, resolveRouting, formulatePlan, dispatch };
+  return { orchestrator, effectGuard, workflow, memoryWorkflow, evidenceLogger, hydrate, deriveHypothesis, resolveRouting, formulatePlan, dispatch, reconcile };
+}
+
+function getDispatchedAction(dispatch: { mock: { calls: unknown[] } }, index: number): ActionDraft {
+  const calls = dispatch.mock.calls as unknown[][];
+  const call = calls[index];
+  if (!call || call[0] === undefined) {
+    throw new Error(`Expected dispatch call at index ${index}`);
+  }
+  return call[0] as ActionDraft;
 }
 
 describe('RevenueOrchestrator', () => {
@@ -599,5 +623,399 @@ describe('RevenueOrchestrator', () => {
     expect(dispatch).toHaveBeenCalledTimes(1);
     expect(reconciled.lifecycle_state).toBe('completed');
     expect(backing.listEvidence(TENANT, result.run_id)).toHaveLength(1);
+  });
+  it('consumes manual escalation without leaving a reclaimable resume event', async () => {
+    const { orchestrator, workflow } = harness({
+      dispatch: async () => {
+        throw new OrchestratorError('DISPATCH_TIMEOUT', 'deadline');
+      },
+    });
+
+    const waiting = await orchestrator.processSignal(signal());
+    const resumed = await orchestrator.resumeTask(waiting.run_id, {
+      tenant_id: TENANT,
+      event_type: 'human.reconcile',
+      operator_id: 'operator-1',
+      reconciliation_resolution: 'ESCALATE_MANUALLY',
+      reason: 'provider outcome needs manual follow-up',
+    });
+
+    expect(resumed.lifecycle_state).toBe('waiting');
+    const task = await workflow.getTask(TENANT, waiting.run_id);
+    expect(task?.state).toBe('waiting');
+    expect(task?.state_payload).not.toHaveProperty('resume_event');
+  });
+  it('rejects operator-only provider proof and retains the reconciliation event on unavailable proof', async () => {
+    const { orchestrator, workflow, dispatch } = harness({
+      dispatch: async () => {
+        throw new OrchestratorError('DISPATCH_TIMEOUT', 'deadline');
+      },
+    });
+
+    const waiting = await orchestrator.processSignal(signal());
+    const resumeEvent = {
+      tenant_id: TENANT,
+      event_type: 'human.reconcile' as const,
+      operator_id: 'operator-1',
+      reconciliation_resolution: 'PROVIDER_CONFIRMED_ABSENT' as const,
+      reconciliation_receipt: { receipt_id: 'operator-receipt-1' },
+      reason: 'operator claimed absence without provider proof',
+    };
+    const taskBefore = await workflow.getTask(TENANT, waiting.run_id);
+    await workflow.transitionTask(
+      TENANT,
+      waiting.run_id,
+      'waiting',
+      'queue reconciliation resume event',
+      {
+        ...(taskBefore?.state_payload as Record<string, unknown>),
+        resume_event: resumeEvent,
+      },
+    );
+
+    await expect(orchestrator.resumeTask(waiting.run_id, resumeEvent)).rejects.toMatchObject({
+      code: 'RECONCILIATION_PROVIDER_UNAVAILABLE',
+    });
+
+    const task = await workflow.getTask(TENANT, waiting.run_id);
+    expect(task?.state).toBe('waiting');
+    expect(task?.state_payload).toHaveProperty('resume_event');
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects operator-only provider proof and retains the reconciliation event on indeterminate proof', async () => {
+    const { orchestrator, workflow, dispatch, reconcile } = harness({
+      dispatch: async () => {
+        throw new OrchestratorError('DISPATCH_TIMEOUT', 'deadline');
+      },
+      reconcile: async () => ({ outcome: 'INDETERMINATE' }),
+    });
+
+    const waiting = await orchestrator.processSignal(signal());
+    const resumeEvent = {
+      tenant_id: TENANT,
+      event_type: 'human.reconcile' as const,
+      operator_id: 'operator-1',
+      reconciliation_resolution: 'PROVIDER_CONFIRMED_SUCCEEDED' as const,
+      reconciliation_receipt: { receipt_id: 'operator-receipt-1' },
+      reason: 'operator claimed success but provider returned indeterminate',
+    };
+    const taskBefore = await workflow.getTask(TENANT, waiting.run_id);
+    await workflow.transitionTask(
+      TENANT,
+      waiting.run_id,
+      'waiting',
+      'queue reconciliation resume event',
+      {
+        ...(taskBefore?.state_payload as Record<string, unknown>),
+        resume_event: resumeEvent,
+      },
+    );
+
+    await expect(orchestrator.resumeTask(waiting.run_id, resumeEvent)).rejects.toMatchObject({
+      code: 'RECONCILIATION_PROVIDER_PROOF_REQUIRED',
+    });
+
+    expect(reconcile).toHaveBeenCalledTimes(1);
+    const task = await workflow.getTask(TENANT, waiting.run_id);
+    expect(task?.state).toBe('waiting');
+    expect(task?.state_payload).toHaveProperty('resume_event');
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('replays provider-confirmed success without second dispatch, ignoring operator receipts and clearing resume event', async () => {
+    const effectGuard = new MemoryEffectGuard();
+    const backing = new MemoryEvidenceLogger('test-hmac-secret');
+    const providerReceipt: ExecutionReceipt = {
+      execution_id: 'provider-proof-1',
+      adapter_status: 'SUCCESS',
+      provider_reference: 'prov-tx-999',
+      response_payload: { verified: true },
+      latency_ms: 42,
+      token_usage: { prompt: 1, completion: 2, total_cost_usd: 0.0001 },
+    };
+
+    const { orchestrator, workflow, dispatch, reconcile } = harness({
+      effectGuard,
+      evidenceLogger: backing,
+      dispatch: async () => {
+        throw new OrchestratorError('DISPATCH_TIMEOUT', 'deadline');
+      },
+      reconcile: async () => ({
+        outcome: 'SUCCEEDED',
+        receipt: providerReceipt,
+      }),
+    });
+
+    const waiting = await orchestrator.processSignal(signal());
+    const key = computeEffectKey({
+      tenant_id: TENANT,
+      skill_id: 'skill.test.dispatch',
+      step_index: 1,
+      action_revision: 0,
+      request_id: SIGNAL_ID,
+    });
+
+    expect(effectGuard.peek(TENANT, key)?.status).toBe('RESERVED');
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    const initialAction = getDispatchedAction(dispatch, 0);
+    expect(initialAction.effect_key).toBe(key);
+
+    const resumeEvent = {
+      tenant_id: TENANT,
+      event_type: 'human.reconcile' as const,
+      operator_id: 'operator-1',
+      reconciliation_resolution: 'PROVIDER_CONFIRMED_ABSENT' as const,
+      reconciliation_receipt: { receipt_id: 'bogus-operator-receipt' },
+      reason: 'verifying provider proof precedence',
+    };
+    const taskBefore = await workflow.getTask(TENANT, waiting.run_id);
+    await workflow.transitionTask(
+      TENANT,
+      waiting.run_id,
+      'waiting',
+      'queue reconciliation resume event',
+      {
+        ...(taskBefore?.state_payload as Record<string, unknown>),
+        resume_event: resumeEvent,
+      },
+    );
+
+    const result = await orchestrator.resumeTask(waiting.run_id, resumeEvent);
+
+    expect(result.lifecycle_state).toBe('completed');
+    expect(reconcile).toHaveBeenCalledWith({
+      tenant_id: TENANT,
+      effect_key: key,
+      action_id: initialAction.action_id,
+      adapter_target: 'web',
+      skill_id: 'skill.test.dispatch',
+    });
+    expect(dispatch).toHaveBeenCalledTimes(1);
+
+    const settled = effectGuard.peek(TENANT, key);
+    expect(settled?.status).toBe('SUCCEEDED');
+    expect(settled?.receipt).toEqual(providerReceipt);
+
+    const task = await workflow.getTask(TENANT, waiting.run_id);
+    expect(task?.state).toBe('completed');
+    expect(task?.state_payload).not.toHaveProperty('resume_event');
+
+    const evidenceList = backing.listEvidence(TENANT, waiting.run_id);
+    expect(evidenceList).toHaveLength(1);
+    const evidencePayload = JSON.parse(evidenceList[0]!.raw_payload) as {
+      action: ActionDraft;
+      receipt: unknown;
+      replayed: boolean;
+    };
+    expect(evidencePayload.receipt).toEqual(providerReceipt);
+    expect(evidencePayload.replayed).toBe(true);
+    expect(evidencePayload.action.action_id).toBe(initialAction.action_id);
+    expect(evidencePayload.action.effect_key).toBe(key);
+    expect(evidencePayload.action.payload).toEqual(initialAction.payload);
+  });
+
+  it('settles FAILED, reopens same effect key and permits exactly one re-dispatch on provider-confirmed absence', async () => {
+    const effectGuard = new MemoryEffectGuard();
+    const backing = new MemoryEvidenceLogger('test-hmac-secret');
+    let dispatchCount = 0;
+    const secondDispatchReceipt: ExecutionReceipt = {
+      execution_id: 'redispatch-exec-2',
+      adapter_status: 'SUCCESS',
+      provider_reference: 'prov-tx-second-try',
+      response_payload: { status: 'created' },
+      latency_ms: 15,
+      token_usage: { prompt: 2, completion: 4, total_cost_usd: 0.0002 },
+    };
+
+    const { orchestrator, workflow, dispatch, reconcile } = harness({
+      effectGuard,
+      evidenceLogger: backing,
+      dispatch: async () => {
+        dispatchCount += 1;
+        if (dispatchCount === 1) {
+          throw new OrchestratorError('DISPATCH_TIMEOUT', 'initial dispatch timed out');
+        }
+        return secondDispatchReceipt;
+      },
+      reconcile: async () => ({
+        outcome: 'FAILED',
+      }),
+    });
+
+    const waiting = await orchestrator.processSignal(signal());
+    const key = computeEffectKey({
+      tenant_id: TENANT,
+      skill_id: 'skill.test.dispatch',
+      step_index: 1,
+      action_revision: 0,
+      request_id: SIGNAL_ID,
+    });
+
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    const initialAction = getDispatchedAction(dispatch, 0);
+    expect(initialAction.effect_key).toBe(key);
+    const resumeEvent = {
+      tenant_id: TENANT,
+      event_type: 'human.reconcile' as const,
+      operator_id: 'operator-1',
+      reconciliation_resolution: 'PROVIDER_CONFIRMED_SUCCEEDED' as const,
+      reconciliation_receipt: { receipt_id: 'bogus-operator-receipt' },
+      reason: 'verifying provider absence triggers reopen and redispatch',
+    };
+    const taskBefore = await workflow.getTask(TENANT, waiting.run_id);
+    await workflow.transitionTask(
+      TENANT,
+      waiting.run_id,
+      'waiting',
+      'queue reconciliation resume event',
+      {
+        ...(taskBefore?.state_payload as Record<string, unknown>),
+        resume_event: resumeEvent,
+      },
+    );
+
+    const result = await orchestrator.resumeTask(waiting.run_id, resumeEvent);
+
+    expect(result.lifecycle_state).toBe('completed');
+    expect(reconcile).toHaveBeenCalledWith({
+      tenant_id: TENANT,
+      effect_key: key,
+      action_id: initialAction.action_id,
+      adapter_target: 'web',
+      skill_id: 'skill.test.dispatch',
+    });
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    const secondAction = getDispatchedAction(dispatch, 1);
+    expect(secondAction.action_id).toBe(initialAction.action_id);
+    expect(secondAction.effect_key).toBe(key);
+    expect(secondAction.payload).toEqual(initialAction.payload);
+    const settled = effectGuard.peek(TENANT, key);
+    expect(settled?.status).toBe('SUCCEEDED');
+    expect(settled?.receipt).toEqual(secondDispatchReceipt);
+
+    const task = await workflow.getTask(TENANT, waiting.run_id);
+    expect(task?.state).toBe('completed');
+    expect(task?.state_payload).not.toHaveProperty('resume_event');
+
+    const evidenceList = backing.listEvidence(TENANT, waiting.run_id);
+    expect(evidenceList).toHaveLength(1);
+    const evidencePayload = JSON.parse(evidenceList[0]!.raw_payload) as {
+      action: ActionDraft;
+      receipt: unknown;
+      replayed: boolean;
+    };
+    expect(evidencePayload.receipt).toEqual(secondDispatchReceipt);
+    expect(evidencePayload.replayed).toBe(false);
+    expect(evidencePayload.action.action_id).toBe(initialAction.action_id);
+    expect(evidencePayload.action.effect_key).toBe(key);
+    expect(evidencePayload.action.payload).toEqual(initialAction.payload);
+  });
+
+  it('enforces task-version and lease fencing during provider-proof reconciliation', async () => {
+    const plannedStep = step({ step_index: 1, mutating: true });
+    const pendingAction: ActionDraft = {
+      action_id: 'action-fenced-1',
+      run_id: 'run-fenced-1',
+      tenant_id: TENANT,
+      agent_id: plannedStep.agent_id,
+      skill_id: plannedStep.skill_id,
+      adapter_target: plannedStep.adapter_target,
+      step_index: 1,
+      mutating: true,
+      price_bearing: plannedStep.price_bearing,
+      request_id: SIGNAL_ID,
+      action_revision: 0,
+      effect_key: computeEffectKey({
+        tenant_id: TENANT,
+        skill_id: plannedStep.skill_id,
+        step_index: 1,
+        action_revision: 0,
+        request_id: SIGNAL_ID,
+      }),
+      payload: plannedStep.input_parameters,
+      required_authority: plannedStep.required_authority,
+    };
+    const resumeEvent = {
+      tenant_id: TENANT,
+      event_type: 'human.reconcile' as const,
+      operator_id: 'operator-1',
+      reconciliation_resolution: 'PROVIDER_CONFIRMED_SUCCEEDED' as const,
+    };
+    const checkpoint = {
+      signal: signal(),
+      plan: plan([plannedStep]),
+      context: context(),
+      current_step: 1,
+      pending_action: pendingAction,
+      previous_evidence_hash: GENESIS_HASH,
+      request_id: SIGNAL_ID,
+      resume_event: resumeEvent,
+    };
+    let currentVersion = 10;
+    const taskRecord = {
+      task_version: currentVersion,
+      state: 'waiting' as const,
+      correlation_id: 'corr-1',
+      state_payload: checkpoint,
+      lease_owner: 'worker-test',
+      lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+    };
+    const transitions: Array<{ state: string; guard?: DurableTaskGuard }> = [];
+    const workflow = {
+      getTask: vi.fn(async () => ({ ...taskRecord, task_version: currentVersion })),
+      updateTaskProgress: vi.fn(async () => undefined),
+      transitionTask: vi.fn(async (_t, _r, state, _reason, cp, guard) => {
+        transitions.push({ state, guard });
+        currentVersion += 1;
+        taskRecord.task_version = currentVersion;
+        if (cp !== undefined) {
+          taskRecord.state_payload = cp as typeof checkpoint;
+        }
+      }),
+      recordFailure: vi.fn(async () => ({ requeued: true })),
+    } as unknown as IStatefulWorkflowEngine;
+    const leaseManager: DurableLeaseManager = {
+      acquireLease: vi.fn(async () => true),
+      releaseLease: vi.fn(async () => undefined),
+    };
+    const effectGuard = new MemoryEffectGuard();
+    await effectGuard.reserve({
+      tenant_id: TENANT,
+      run_id: 'run-fenced-1',
+      request_id: SIGNAL_ID,
+      effect_key: pendingAction.effect_key,
+      request_fingerprint: effectGuard.computeRequestFingerprint(pendingAction.payload),
+      skill_id: plannedStep.skill_id,
+      step_index: 1,
+      action_revision: 0,
+    });
+    const { orchestrator } = harness({
+      workflowEngine: workflow,
+      leaseManager,
+      effectGuard,
+      steps: [plannedStep],
+      reconcile: async () => ({
+        outcome: 'SUCCEEDED',
+        receipt: receipt(),
+      }),
+    });
+
+    const result = await orchestrator.resumeTask('run-fenced-1', resumeEvent);
+    expect(result.lifecycle_state).toBe('completed');
+    expect(transitions[0]).toEqual({
+      state: 'waiting',
+      guard: { expected_task_version: 10, lease_owner: 'worker-test' },
+    });
+    expect(transitions[1]).toEqual({
+      state: 'running',
+      guard: { expected_task_version: 11, lease_owner: 'worker-test' },
+    });
+    const finalTransition = transitions[2];
+    expect(finalTransition).toBeDefined();
+    if (!finalTransition) {
+      throw new Error('Expected final transition');
+    }
+    expect(finalTransition.state).toBe('completed');
   });
 });

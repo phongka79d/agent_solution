@@ -25,6 +25,7 @@ import {
 } from './principal.js';
 import type {
   ApprovalPort,
+  CareHandoffPort,
   ConversationPort,
   EventPort,
   GatewayAuditPort,
@@ -37,7 +38,6 @@ import type {
   TakeoverLeasePort,
   WebhookVerificationPort,
 } from './ports.js';
-
 const TENANT_A = '11111111-1111-4111-8111-111111111111';
 const TENANT_B = '22222222-2222-4222-8222-222222222222';
 
@@ -117,6 +117,7 @@ function createTestRuntime(): TestRuntime {
   return {
     runtime: {
       conversations: recordingPort<ConversationPort>('conversations'),
+      handoffs: recordingPort<CareHandoffPort>('handoffs'),
       takeover: recordingPort<TakeoverLeasePort>('takeover'),
       runs: recordingPort<RunPort>('runs'),
       approvals: recordingPort<ApprovalPort>('approvals'),

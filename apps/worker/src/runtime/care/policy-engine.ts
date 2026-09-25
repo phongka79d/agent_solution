@@ -24,9 +24,10 @@ import {
   type ApprovalQueuePort,
   type PendingApprovalRequest,
   type PolicyActionProposal,
+  type PolicyEnforcementOptions,
   type PolicyRegistryAgent,
-  type PolicyRegistryPort,
   type PolicyRegistrySkill,
+  type PolicyRegistryPort,
   type PolicySecurityContext,
 } from '@agentos/core-engine';
 
@@ -215,6 +216,7 @@ export interface CarePolicyEngineOptions {
   readonly resolveGrant?: ((tenant_id: string, agent_id: string) => Promise<AssignableAuthority | null>) | undefined;
   readonly approvals?: ApprovalQueuePort | undefined;
   readonly auditSecret?: string | undefined;
+  readonly audit?: PolicyEnforcementOptions['audit'] | undefined;
   readonly now?: (() => Date) | undefined;
 }
 
@@ -260,6 +262,7 @@ export class CarePolicyEngine implements IPolicyEngine {
       this.pep = new PolicyEnforcementPoint({
         registry: registryPort,
         approvals: defaultApprovals,
+        ...(options.audit ? { audit: options.audit } : {}),
         ...(options.auditSecret ? { auditSecret: options.auditSecret } : {}),
         ...(options.now ? { now: options.now } : {}),
       });
@@ -359,6 +362,7 @@ export class CarePolicyEngine implements IPolicyEngine {
       payload: action.payload,
       required_authority: action.required_authority,
       ...(action.action_revision > 0 ? { retry_attempt: action.action_revision } : {}),
+      ...(action.approval_id === undefined ? {} : { approval_id: action.approval_id }),
     };
 
     const decision = await this.pep.enforce(secContext, proposal);
@@ -367,7 +371,7 @@ export class CarePolicyEngine implements IPolicyEngine {
       return {
         verdict: 'AUTO_APPROVED',
         reason: decision.reason,
-        ...(decision.approvalTicketId ? { approval_id: decision.approvalTicketId } : {}),
+        ...(action.approval_id === undefined ? {} : { approval_id: action.approval_id }),
       };
     }
 

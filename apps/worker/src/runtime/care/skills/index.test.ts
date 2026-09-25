@@ -5,8 +5,15 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ActionDraft } from '@agentos/core-engine/contracts';
-import { computeEffectKey } from '@agentos/core-engine';
+import { computeEffectKey, computeRequestFingerprint } from '@agentos/core-engine';
 import { SkillError, type ExecutionContext } from '@agentos/skills';
+import type {
+  CareHandoffExecutionReceipt,
+  CareHandoffOutput,
+  EnqueueCareHandoffInput,
+  ManageServiceCaseInput,
+  ManagedServiceCase,
+} from '@agentos/database';
 
 import { createCareSkillServices, CareSkillToolError } from './index.js';
 import type { ErpReadPort } from '../../connectors.js';
@@ -15,6 +22,41 @@ const TENANT_ID = '11111111-1111-1111-1111-111111111111';
 const CUSTOMER_ID = 'aaaaaaaa-0000-4000-8000-00000000000a';
 const FOREIGN_CUSTOMER_ID = 'bbbbbbbb-0000-4000-8000-00000000000b';
 const VERIFICATION_REF = 'ver-ref-1';
+const HANDOFF_CONVERSATION_ID = 'cccccccc-0000-4000-8000-00000000000c';
+const HANDOFF_ID = 'dddddddd-0000-4000-8000-00000000000d';
+const HANDOFF_EFFECT_KEY = 'f'.repeat(64);
+const HANDOFF_OUTPUT: CareHandoffOutput = {
+  handoff_id: HANDOFF_ID,
+  queue_position: 1,
+  status: 'ENQUEUED',
+  escalated_at: '2026-04-15T12:00:00.000Z',
+};
+const HANDOFF_RECEIPT: CareHandoffExecutionReceipt = {
+  execution_id: HANDOFF_ID,
+  adapter_status: 'SUCCESS',
+  provider_reference: HANDOFF_ID,
+  response_payload: HANDOFF_OUTPUT,
+  latency_ms: 0,
+  token_usage: { prompt: 0, completion: 0, total_cost_usd: 0 },
+};
+const HANDOFF_INPUT = {
+  tenant_id: TENANT_ID,
+  session_id: 'thread-a',
+  conversation_id: HANDOFF_CONVERSATION_ID,
+  customer_id: CUSTOMER_ID,
+  escalation_reason: 'billing dispute',
+  summary_context: 'Customer requests a human operator.',
+};
+
+function handoffContext(overrides: Partial<ExecutionContext> = {}): ExecutionContext {
+  return {
+    ...DUMMY_CONTEXT,
+    run_id: 'run-handoff-1',
+    effect_key: HANDOFF_EFFECT_KEY,
+    granted_authority: 'AUTH-3',
+    ...overrides,
+  };
+}
 
 function createMockOptions(overrides: Partial<Parameters<typeof createCareSkillServices>[0]> = {}) {
   const erp_read: ErpReadPort = {
@@ -75,6 +117,130 @@ const DUMMY_CONTEXT: ExecutionContext = {
 };
 
 describe('CareSkillServices', () => {
+  describe('Orchestrator.HandoffBus', () => {
+    it('binds one enqueue to trusted tenant, run and effect identity', async () => {
+      const enqueue = vi.fn(async (_input: EnqueueCareHandoffInput) => ({
+        disposition: 'CREATED' as const,
+        output: HANDOFF_OUTPUT,
+        receipt: HANDOFF_RECEIPT,
+      }));
+      const reconcile = vi.fn(async () => ({ state: 'NOT_COMMITTED' as const }));
+      const services = createCareSkillServices(createMockOptions({
+        handoff_repository: { enqueue, reconcile },
+      }));
+
+      const output = await services.tool_port.invoke({
+        skill_id: 'skill.care.escalate_to_human',
+        tool_binding: 'Orchestrator.HandoffBus',
+        input: HANDOFF_INPUT,
+        context: handoffContext(),
+      });
+
+      expect(output).toEqual(HANDOFF_OUTPUT);
+      expect(enqueue).toHaveBeenCalledWith({
+        tenant_id: TENANT_ID,
+        effect_key: HANDOFF_EFFECT_KEY,
+        request_fingerprint: computeRequestFingerprint(HANDOFF_INPUT),
+        run_id: 'run-handoff-1',
+        session_id: 'thread-a',
+        conversation_id: HANDOFF_CONVERSATION_ID,
+        customer_id: CUSTOMER_ID,
+        escalation_reason: 'billing dispute',
+        summary_context: 'Customer requests a human operator.',
+      });
+      expect(reconcile).not.toHaveBeenCalled();
+    });
+
+    it('reconciles a timed-out INTERNAL effect by key and never enqueues it twice', async () => {
+      const enqueue = vi.fn(async (_input: EnqueueCareHandoffInput) => {
+        throw new Error('HANDOFF_QUEUE_TIMEOUT: transaction exceeded its 1000ms deadline.');
+      });
+      const reconcile = vi.fn(async () => ({
+        state: 'COMMITTED' as const,
+        output: HANDOFF_OUTPUT,
+        receipt: HANDOFF_RECEIPT,
+      }));
+      const services = createCareSkillServices(createMockOptions({
+        handoff_repository: { enqueue, reconcile },
+      }));
+
+      await expect(services.tool_port.invoke({
+        skill_id: 'skill.care.escalate_to_human',
+        tool_binding: 'Orchestrator.HandoffBus',
+        input: HANDOFF_INPUT,
+        context: handoffContext(),
+      })).resolves.toEqual(HANDOFF_OUTPUT);
+
+      expect(enqueue).toHaveBeenCalledTimes(1);
+      expect(reconcile).toHaveBeenCalledWith({
+        tenant_id: TENANT_ID,
+        effect_key: HANDOFF_EFFECT_KEY,
+        request_fingerprint: computeRequestFingerprint(HANDOFF_INPUT),
+      });
+    });
+
+    it('fails closed when a timed-out handoff has no committed receipt', async () => {
+      const enqueue = vi.fn(async (_input: EnqueueCareHandoffInput) => {
+        throw new Error('connection reset');
+      });
+      const reconcile = vi.fn(async () => ({ state: 'NOT_COMMITTED' as const }));
+      const services = createCareSkillServices(createMockOptions({
+        handoff_repository: { enqueue, reconcile },
+      }));
+
+      await expect(services.tool_port.invoke({
+        skill_id: 'skill.care.escalate_to_human',
+        tool_binding: 'Orchestrator.HandoffBus',
+        input: HANDOFF_INPUT,
+        context: handoffContext(),
+      })).rejects.toMatchObject({ code: 'QUEUE_DOWN' });
+      expect(enqueue).toHaveBeenCalledTimes(1);
+      expect(reconcile).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects a payload tenant mismatch before queue access', async () => {
+      const enqueue = vi.fn(async (_input: EnqueueCareHandoffInput) => ({
+        disposition: 'CREATED' as const, output: HANDOFF_OUTPUT, receipt: HANDOFF_RECEIPT,
+      }));
+      const reconcile = vi.fn(async () => ({ state: 'NOT_COMMITTED' as const }));
+      const services = createCareSkillServices(createMockOptions({
+        handoff_repository: { enqueue, reconcile },
+      }));
+
+      await expect(services.tool_port.invoke({
+        skill_id: 'skill.care.escalate_to_human',
+        tool_binding: 'Orchestrator.HandoffBus',
+        input: { ...HANDOFF_INPUT, tenant_id: '22222222-2222-4222-8222-222222222222' },
+        context: handoffContext(),
+      })).rejects.toMatchObject({ code: 'TENANT_SCOPE_MISMATCH' });
+      expect(enqueue).not.toHaveBeenCalled();
+      expect(reconcile).not.toHaveBeenCalled();
+    });
+
+    it('reads the receipt after a pre-aborted invocation without starting a new enqueue', async () => {
+      const controller = new AbortController();
+      controller.abort();
+      const enqueue = vi.fn(async (_input: EnqueueCareHandoffInput) => ({
+        disposition: 'CREATED' as const, output: HANDOFF_OUTPUT, receipt: HANDOFF_RECEIPT,
+      }));
+      const reconcile = vi.fn(async () => ({
+        state: 'COMMITTED' as const, output: HANDOFF_OUTPUT, receipt: HANDOFF_RECEIPT,
+      }));
+      const services = createCareSkillServices(createMockOptions({
+        handoff_repository: { enqueue, reconcile },
+      }));
+
+      await expect(services.tool_port.invoke({
+        skill_id: 'skill.care.escalate_to_human',
+        tool_binding: 'Orchestrator.HandoffBus',
+        input: HANDOFF_INPUT,
+        context: handoffContext({ signal: controller.signal }),
+      })).resolves.toEqual(HANDOFF_OUTPUT);
+      expect(enqueue).not.toHaveBeenCalled();
+      expect(reconcile).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('SecondBrain.FAQEngine', () => {
     it('draft/unapproved corpus ⇒ CORPUS_UNAVAILABLE on repo default corpus', async () => {
       // Default knowledge root has all documents as status: draft
@@ -369,8 +535,8 @@ describe('CareSkillServices', () => {
       const unboundOptions = createMockOptions({ erp_read: null });
       const services = createCareSkillServices(unboundOptions);
 
-      expect(services.unbound).toHaveLength(1);
-      expect(services.unbound[0]).toMatch(/API-001/);
+      expect(services.unbound.some((capability) => capability.startsWith('API-001.'))).toBe(true);
+      expect(services.unbound.some((capability) => capability.startsWith('PostgreSQL.CaseManagementStore:'))).toBe(false);
 
       await expect(
         services.tool_port.invoke({
@@ -389,6 +555,196 @@ describe('CareSkillServices', () => {
     });
   });
 
+  describe('PostgreSQL.CaseManagementStore', () => {
+    const timedOutCaseInput = {
+      tenant_id: TENANT_ID,
+      customer_id: CUSTOMER_ID,
+      intent: 'billing',
+      priority: 'P2' as const,
+      conversation_id: 'cccccccc-0000-4000-8000-00000000000c',
+      action_type: 'TRANSITION_STATE' as const,
+      case_id: 'ffffffff-0000-4000-8000-00000000000f',
+      expected_case_version: 5,
+      target_status: 'WAITING_CUSTOMER' as const,
+    };
+
+    it('rejects a payload tenant mismatch before resolving policy or touching the repository', async () => {
+      const manage = vi.fn(async () => { throw new Error('unexpected case repository call'); });
+      const reconcile = vi.fn(async () => ({
+        state: 'NOT_COMMITTED' as const,
+        case_id: null,
+        current_case_version: null,
+        current_status: null,
+      }));
+      const resolveSla = vi.fn(async () => 4);
+      const services = createCareSkillServices(createMockOptions({
+        case_repository: { manage, reconcile },
+        case_sla_target_hours: resolveSla,
+      }));
+
+      await expect(services.tool_port.invoke({
+        skill_id: 'skill.care.manage_case',
+        tool_binding: 'PostgreSQL.CaseManagementStore',
+        input: {
+          tenant_id: '22222222-2222-4222-8222-222222222222',
+          customer_id: CUSTOMER_ID,
+          intent: 'billing',
+          priority: 'P2',
+          conversation_id: 'cccccccc-0000-4000-8000-00000000000c',
+          action_type: 'CREATE',
+        },
+        context: { ...DUMMY_CONTEXT, granted_authority: 'AUTH-3' },
+      })).rejects.toMatchObject({ code: 'TENANT_SCOPE_MISMATCH' });
+
+      expect(resolveSla).not.toHaveBeenCalled();
+      expect(manage).not.toHaveBeenCalled();
+      expect(reconcile).not.toHaveBeenCalled();
+    });
+
+    it('refuses case creation when no tenant SLA target is configured', async () => {
+      const manage = vi.fn(async () => { throw new Error('unexpected case repository call'); });
+      const reconcile = vi.fn(async () => ({
+        state: 'NOT_COMMITTED' as const,
+        case_id: null,
+        current_case_version: null,
+        current_status: null,
+      }));
+      const services = createCareSkillServices(createMockOptions({ case_repository: { manage, reconcile } }));
+
+      await expect(services.tool_port.invoke({
+        skill_id: 'skill.care.manage_case',
+        tool_binding: 'PostgreSQL.CaseManagementStore',
+        input: {
+          tenant_id: TENANT_ID,
+          customer_id: CUSTOMER_ID,
+          intent: 'billing',
+          priority: 'P2',
+          conversation_id: 'cccccccc-0000-4000-8000-00000000000c',
+          action_type: 'CREATE',
+        },
+        context: { ...DUMMY_CONTEXT, granted_authority: 'AUTH-3' },
+      })).rejects.toMatchObject({ code: 'CASE_SLA_POLICY_UNAVAILABLE' });
+
+      expect(manage).not.toHaveBeenCalled();
+      expect(reconcile).not.toHaveBeenCalled();
+    });
+
+    it('reports the missing SLA dependency only when manage_case is explicitly enabled', () => {
+      const services = createCareSkillServices(createMockOptions({
+        skill_enablement: { enabled_skill_ids: ['skill.care.manage_case'] },
+      }));
+
+      expect(services.unbound.some((capability) => capability.startsWith('PostgreSQL.CaseManagementStore:'))).toBe(true);
+    });
+
+    it('returns the immutable receipt after a timed-out management call', async () => {
+      const receipt: ManagedServiceCase = {
+        case_id: timedOutCaseInput.case_id,
+        customer_id: CUSTOMER_ID,
+        intent: 'billing',
+        priority: 'P2',
+        status: 'WAITING_CUSTOMER',
+        conversation_id: timedOutCaseInput.conversation_id,
+        related_order_id: null,
+        evidence_refs: [],
+        assigned_owner: 'CS-01',
+        sla_target_hours: 4,
+        updated_at: '2026-04-15T12:00:00.000Z',
+        case_version: 6,
+      };
+      let markStarted!: () => void;
+      const started = new Promise<void>((resolve) => { markStarted = resolve; });
+      let finishManage!: (output: ManagedServiceCase) => void;
+      const pendingManage = new Promise<ManagedServiceCase>((resolve) => { finishManage = resolve; });
+      const manage = vi.fn((_mutation: ManageServiceCaseInput) => {
+        markStarted();
+        return pendingManage;
+      });
+      const reconcile = vi.fn(async () => ({ state: 'COMMITTED' as const, output: receipt }));
+      const services = createCareSkillServices(createMockOptions({
+        case_repository: { manage, reconcile },
+        case_sla_target_hours: vi.fn(async () => 4),
+        skill_enablement: { enabled_skill_ids: ['skill.care.manage_case'] },
+      }));
+      const controller = new AbortController();
+      const invocation = services.tool_port.invoke({
+        skill_id: 'skill.care.manage_case',
+        tool_binding: 'PostgreSQL.CaseManagementStore',
+        input: timedOutCaseInput,
+        context: { ...DUMMY_CONTEXT, granted_authority: 'AUTH-3', signal: controller.signal },
+      });
+
+      await started;
+      controller.abort();
+      await expect(invocation).resolves.toEqual(receipt);
+
+      expect(manage).toHaveBeenCalledTimes(1);
+      expect(reconcile).toHaveBeenCalledTimes(1);
+      expect(reconcile).toHaveBeenCalledWith(expect.objectContaining({
+        tenant_id: TENANT_ID,
+        case_id: timedOutCaseInput.case_id,
+        expected_case_version: 5,
+        effect_key: DUMMY_CONTEXT.effect_key,
+        actor_id: 'CS-01',
+      }));
+      finishManage(receipt);
+    });
+
+    it('re-reads the current case and never retries when a timed-out effect has no receipt', async () => {
+      let markStarted!: () => void;
+      const started = new Promise<void>((resolve) => { markStarted = resolve; });
+      let finishManage!: (output: ManagedServiceCase) => void;
+      const pendingManage = new Promise<ManagedServiceCase>((resolve) => { finishManage = resolve; });
+      const manage = vi.fn((_mutation: ManageServiceCaseInput) => {
+        markStarted();
+        return pendingManage;
+      });
+      const reconcile = vi.fn(async () => ({
+        state: 'NOT_COMMITTED' as const,
+        case_id: timedOutCaseInput.case_id,
+        current_case_version: 5,
+        current_status: 'IN_PROGRESS' as const,
+      }));
+      const services = createCareSkillServices(createMockOptions({
+        case_repository: { manage, reconcile },
+        case_sla_target_hours: vi.fn(async () => 4),
+        skill_enablement: { enabled_skill_ids: ['skill.care.manage_case'] },
+      }));
+      const controller = new AbortController();
+      const invocation = services.tool_port.invoke({
+        skill_id: 'skill.care.manage_case',
+        tool_binding: 'PostgreSQL.CaseManagementStore',
+        input: timedOutCaseInput,
+        context: { ...DUMMY_CONTEXT, granted_authority: 'AUTH-3', signal: controller.signal },
+      });
+
+      await started;
+      controller.abort();
+      await expect(invocation).rejects.toMatchObject({ code: 'CASE_EFFECT_NOT_COMMITTED' });
+
+      expect(manage).toHaveBeenCalledTimes(1);
+      expect(reconcile).toHaveBeenCalledTimes(1);
+      expect(reconcile).toHaveBeenCalledWith(expect.objectContaining({
+        tenant_id: TENANT_ID,
+        case_id: timedOutCaseInput.case_id,
+        expected_case_version: 5,
+      }));
+      finishManage({
+        case_id: timedOutCaseInput.case_id,
+        customer_id: CUSTOMER_ID,
+        intent: 'billing',
+        priority: 'P2',
+        status: 'WAITING_CUSTOMER',
+        conversation_id: timedOutCaseInput.conversation_id,
+        related_order_id: null,
+        evidence_refs: [],
+        assigned_owner: 'CS-01',
+        sla_target_hours: 4,
+        updated_at: '2026-04-15T12:00:00.000Z',
+        case_version: 6,
+      });
+    });
+  });
   describe('Dispatcher and ExecutionReceipt', () => {
     it('the receipt carries no invented provider_reference and maps validated output', async () => {
       const options = createMockOptions();

@@ -27,8 +27,7 @@ import type {
 } from '../../gateway/contracts.js';
 import { IDEMPOTENCY_KEY_MAX_LENGTH, MESSAGE_MAX_LENGTH } from '../../gateway/contracts.js';
 import { correlationIdOf, fail, mapError, replyFailure } from '../../gateway/http.js';
-import type { IdempotencyOutcome } from '../../gateway/idempotency.js';
-import { claimIdempotentEffect, settleIdempotentEffect } from '../../gateway/idempotency.js';
+import { admitCareTurn } from './care-turn.js';
 import type { CredentialStore } from '../../gateway/principal.js';
 import { authenticate, requirePrincipal } from '../../gateway/principal.js';
 import type { ConversationRecord, GatewayRuntime } from '../../gateway/ports.js';
@@ -40,8 +39,6 @@ const EVENT_OPERATION = 'POST /api/v1/storefront/events';
 /** The widget channel: a storefront turn and a storefront event are both Web Chat traffic. */
 const WIDGET_CHANNEL = 'WEB_CHAT';
 
-/** The wire channel of `ChannelId` written for a storefront turn. */
-const WIDGET_SOURCE_CHANNEL = 'WEB_CHAT';
 
 /** The four `AgentModule` values of `06` §1; any other value is not the declared body shape. */
 const AGENT_MODULES: readonly AgentModule[] = Object.freeze(['marketing', 'sales', 'support', 'auto']);
@@ -50,12 +47,6 @@ const AGENT_MODULES: readonly AgentModule[] = Object.freeze(['marketing', 'sales
 const WAIT_ATTEMPTS = 10;
 const WAIT_INTERVAL_MS = 250;
 
-/**
- * The effect-key scope of one storefront turn. It is deliberately namespaced as gateway-owned: a
- * skill id from the registry would put the turn's reservation in the same key space as a skill
- * step, and this route never dispatches a skill.
- */
-const TURN_EFFECT_SCOPE = 'gateway.storefront.turn';
 
 /** The canonical-event derivation owned by the connector layer; the gateway only consumes it. */
 export interface StorefrontEventNormalizer {
@@ -164,7 +155,7 @@ async function refuseOperation(input: {
 interface StorefrontTurn {
   readonly message: string;
   readonly idempotency_key: string;
-  readonly module?: AgentModule;
+  readonly module: 'support';
   readonly attachments?: readonly string[];
   /** The binding of the turn: the body's `session_id`, else the one the widget token carries. */
   readonly session_id: string;
@@ -178,6 +169,18 @@ interface StorefrontEvent {
   readonly payload: Record<string, unknown>;
   /** The body's `session_id` when present, else the token's, else the event id (R12 binding). */
   readonly session_id: string;
+}
+
+/** Uses the authenticated widget session as the only session identity. */
+function boundWidgetSessionId(principal: GatewayPrincipal, requested: string | null): string {
+  const session_id = principal.session_id;
+  if (session_id === undefined || session_id.length === 0) {
+    fail('AUTHENTICATION_FAILED', 'the widget credential has no bound session identity');
+  }
+  if (requested !== null && requested !== session_id) {
+    fail('AUTHENTICATION_FAILED', 'the widget session does not own the requested session identity');
+  }
+  return session_id;
 }
 
 /** Reads `attachments`: an array of strings, or absent. Anything else is not the declared shape. */
@@ -210,22 +213,23 @@ function readTurn(request: FastifyRequest, principal: GatewayPrincipal): Storefr
     );
   }
 
-  const module = stringField(body, 'module');
-  if (module !== null && !AGENT_MODULES.some((member) => member === module)) {
+  const requestedModule = stringField(body, 'module');
+  if (requestedModule !== null && !AGENT_MODULES.some((member) => member === requestedModule)) {
     fail('VALIDATION_FAILED', 'module must be one of the declared agent modules (06 §1)');
   }
-
-  const session_id = stringField(body, 'session_id') ?? principal.session_id ?? null;
-  if (session_id === null) {
-    fail('VALIDATION_FAILED', 'session_id is required to bind this turn to a conversation');
+  const module = requestedModule === null || requestedModule === 'auto' ? 'support' : requestedModule;
+  if (module !== 'support') {
+    fail('CAPABILITY_NOT_ENABLED', 'only Customer Care support turns are enabled');
   }
+
+  const session_id = boundWidgetSessionId(principal, stringField(body, 'session_id'));
 
   const attachments = attachmentsOf(body);
 
   return {
     message,
     idempotency_key,
-    ...(module !== null ? { module: module as AgentModule } : {}),
+    module,
     ...(attachments !== undefined ? { attachments } : {}),
     session_id,
   };
@@ -263,7 +267,7 @@ function readEvent(request: FastifyRequest, principal: GatewayPrincipal): Storef
     event_type,
     occurred_at,
     payload: recordField(body, 'payload') ?? {},
-    session_id: stringField(body, 'session_id') ?? principal.session_id ?? event_id,
+    session_id: boundWidgetSessionId(principal, stringField(body, 'session_id')),
   };
 }
 
@@ -293,52 +297,11 @@ function delay(ms: number): Promise<void> {
   });
 }
 
-/** The claim outcomes a storefront turn acts on; `IN_FLIGHT` is waited out, never returned. */
-type SettledClaim =
-  | { readonly kind: 'PROCEED'; readonly effect_key: string; readonly request_fingerprint: string }
-  | { readonly kind: 'REPLAY'; readonly receipt: Record<string, unknown> }
-  | { readonly kind: 'RECONCILE_REQUIRED' };
 
 /**
- * Claims the turn's single dispatch slot, waiting out a competing in-flight delivery.
- *
- * `IN_FLIGHT` means another delivery of this same turn holds the slot and will settle it; the
- * canonical outcome is to wait for that settlement and answer from the cached receipt, never to
- * re-dispatch (`04` §3.2.3). The wait is bounded, and the bound is reported as `RUN_LEASE_HELD`
- * rather than as a second turn.
- */
-async function claimTurn(input: {
-  readonly runtime: GatewayRuntime;
-  readonly tenant_id: string;
-  readonly run_scope: string;
-  readonly request_id: string;
-  readonly payload: Record<string, unknown>;
-}): Promise<SettledClaim> {
-  for (let attempt = 0; attempt < WAIT_ATTEMPTS; attempt += 1) {
-    if (attempt > 0) await delay(WAIT_INTERVAL_MS);
-    const outcome: IdempotencyOutcome = await claimIdempotentEffect({
-      runtime: input.runtime,
-      tenant_id: input.tenant_id,
-      run_id: input.run_scope,
-      request_id: input.request_id,
-      skill_id: TURN_EFFECT_SCOPE,
-      step_index: 0,
-      action_revision: 0,
-      payload: input.payload,
-    });
-    if (outcome.kind !== 'IN_FLIGHT') return outcome;
-  }
-
-  fail(
-    'RUN_LEASE_HELD',
-    'another delivery of this turn still holds the dispatch slot; the turn is not dispatched a second time',
-  );
-}
-
-/**
- * R11. Binds the conversation, claims the turn's idempotency slot, starts the durable run, then
- * streams the reply as chunked text: the accepted (or cached) receipt first, then the run's answer
- * once it reaches a terminal state, or a truthful pending marker when it has not.
+ * R11. Binds the conversation through the shared Care admission path, then streams the reply as
+ * chunked text: the accepted (or cached) receipt first, then the run's answer once it reaches a
+ * terminal state, or a truthful pending marker when it has not.
  *
  * The reply is hijacked because the receipt has to reach the widget before the run finishes; a
  * single `send()` could not emit the first chunk early. Every refusal therefore leaves `fail()`
@@ -380,68 +343,19 @@ async function handleStream(
     });
     conversation_id = conversation.conversation_id;
 
-    // The claim precedes `runs.start`: the reservation is what makes a repeated turn return the
-    // cached receipt instead of starting a second run and a second outbound message. The durable
-    // run does not exist yet, so the reservation's scope is the conversation the turn belongs to —
-    // the effect key itself is anchored to `request_id` and is unaffected by that scope.
-    const claim = await claimTurn({
+    const admission = await admitCareTurn({
       runtime,
-      tenant_id: principal.tenant_id,
-      run_scope: conversation_id,
+      principal,
+      conversation,
+      correlation_id,
       request_id: turn.idempotency_key,
-      payload: {
-        message: turn.message,
-        module: turn.module ?? null,
-        attachments: turn.attachments ?? null,
-        conversation_id,
-      },
+      message: turn.message,
+      module: turn.module,
+      ...(turn.attachments === undefined ? {} : { attachments: turn.attachments }),
+      operation: STREAM_OPERATION,
     });
-
-    if (claim.kind === 'RECONCILE_REQUIRED') {
-      // An indeterminate outcome is never re-dispatched: it reconciles by `effect_key` (R18).
-      fail(
-        'PROVIDER_TIMEOUT',
-        'this turn has an indeterminate outcome and is reconciled by its effect_key; it is not dispatched again',
-      );
-    }
-
-    if (claim.kind === 'REPLAY') {
-      // The cached receipt, returned to a repeated `idempotency_key` instead of a second turn.
-      replayed = true;
-      receipt = claim.receipt;
-    } else {
-      const started = await runtime.runs.start({
-        tenant_id: principal.tenant_id,
-        correlation_id,
-        request_id: turn.idempotency_key,
-        source_channel: WIDGET_SOURCE_CHANNEL,
-        event_type: 'customer.message',
-        session_id: turn.session_id,
-        channel_type: WIDGET_CHANNEL,
-        payload: {
-          message: turn.message,
-          ...(turn.module !== undefined ? { module: turn.module } : {}),
-          ...(turn.attachments !== undefined ? { attachments: turn.attachments } : {}),
-        },
-      });
-
-      receipt = {
-        task_id: started.run_id,
-        conversation_id,
-        status: wireStatusOf(started.lifecycle_state),
-        task_version: started.task_version,
-        correlation_id,
-      };
-
-      // Only a run the orchestrator actually started is settled: an indeterminate start is left
-      // RESERVED for reconciliation by `effect_key`, never resolved as a success (BR-006).
-      await settleIdempotentEffect({
-        runtime,
-        tenant_id: principal.tenant_id,
-        effect_key: claim.effect_key,
-        receipt,
-      });
-    }
+    receipt = admission.receipt;
+    replayed = admission.replayed;
   } catch (error) {
     await refuseOperation({ request, reply, runtime, operation: STREAM_OPERATION, error });
     return;

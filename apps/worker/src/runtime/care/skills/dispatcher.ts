@@ -29,6 +29,16 @@ export interface CareSkillDispatcherOptions {
   readonly engine: SkillRuntimeEngine;
   readonly resolve_correlation_id: (tenant_id: string, run_id: string) => Promise<string>;
   readonly resolve_grant: (tenant_id: string, agent_id: string) => Promise<AssignableAuthority | null>;
+  readonly erp_reconcile?: (input: {
+    readonly tenant_id: string;
+    readonly effect_key: string;
+    readonly action_id?: string;
+    readonly adapter_target?: string;
+    readonly skill_id?: string;
+  }) => Promise<{
+    readonly outcome: 'SUCCEEDED' | 'FAILED' | 'INDETERMINATE';
+    readonly receipt?: ExecutionReceipt;
+  }>;
 }
 
 /**
@@ -64,8 +74,9 @@ export function createCareSkillDispatcher(options: CareSkillDispatcherOptions): 
         action_revision: action.action_revision,
         effect_key: action.effect_key,
         ...(action.approval_id ? { approval_id: action.approval_id } : {}),
-        input: action.payload,
+        ...(action.approval_payload_digest ? { approval_payload_digest: action.approval_payload_digest } : {}),
         ...(dispatchOptions?.timeout_ms ? { signal: AbortSignal.timeout(dispatchOptions.timeout_ms) } : {}),
+        input: action.payload,
       };
 
       // Dispatches through the SkillRuntimeEngine. A SkillError refusal surfaces as the canonical failure,
@@ -82,6 +93,21 @@ export function createCareSkillDispatcher(options: CareSkillDispatcherOptions): 
           ? outputRecord._provider_reference
           : null);
 
+      if (action.skill_id === 'skill.care.escalate_to_human') {
+        const handoffId = outputRecord['handoff_id'];
+        if (typeof handoffId !== 'string' || handoffId.length === 0) {
+          throw new Error('HANDOFF_RECEIPT_INVALID: handoff output lacks its durable identity.');
+        }
+        return {
+          execution_id: handoffId,
+          adapter_status: 'SUCCESS',
+          provider_reference: handoffId,
+          response_payload: outputRecord,
+          latency_ms: 0,
+          token_usage: { prompt: 0, completion: 0, total_cost_usd: 0 },
+        };
+      }
+
       return {
         execution_id: randomUUID(),
         adapter_status: 'SUCCESS',
@@ -90,6 +116,21 @@ export function createCareSkillDispatcher(options: CareSkillDispatcherOptions): 
         latency_ms: result.latency_ms,
         token_usage: { prompt: 0, completion: 0, total_cost_usd: 0 },
       };
+    },
+    async reconcile(input: {
+      readonly tenant_id: string;
+      readonly effect_key: string;
+      readonly action_id?: string;
+      readonly adapter_target?: string;
+      readonly skill_id?: string;
+    }): Promise<{
+      readonly outcome: 'SUCCEEDED' | 'FAILED' | 'INDETERMINATE';
+      readonly receipt?: ExecutionReceipt;
+    }> {
+      if (options.erp_reconcile) {
+        return await options.erp_reconcile(input);
+      }
+      return { outcome: 'INDETERMINATE' };
     },
   };
 }

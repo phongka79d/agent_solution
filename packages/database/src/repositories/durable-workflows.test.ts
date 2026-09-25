@@ -11,6 +11,7 @@ import type {
   DurableTaskState,
   RecordTaskFailureInput,
   RequeueFailedTaskInput,
+  QueueReconciliationInput,
 } from './durable-workflows.js';
 
 /**
@@ -91,7 +92,8 @@ type StatementKind =
   | 'state_progress'
   | 'requeue'
   | 'operator_requeue'
-  | 'fail';
+  | 'fail'
+  | 'reconcile';
 
 function classify(sql: string): StatementKind {
   if (sql.startsWith('INSERT INTO agentos.platform_durable_tasks')) {
@@ -110,6 +112,10 @@ function classify(sql: string): StatementKind {
 
   if (sql.startsWith('SELECT')) {
     return 'read';
+  }
+
+  if (sql.includes("SET state = 'waiting'") && sql.includes('state_payload = state_payload || $3::jsonb')) {
+    return 'reconcile';
   }
 
   if (sql.includes('retry_count = retry_count + 1')) {
@@ -317,6 +323,18 @@ function statementOf(client: ScriptedClient, kind: StatementKind): IssuedStateme
   }
 
   return statement;
+}
+
+function reconciliationInput(overrides: Partial<QueueReconciliationInput> = {}): QueueReconciliationInput {
+  const input: QueueReconciliationInput = {
+    tenant_id: TENANT,
+    run_id: RUN_ID,
+    resolution: 'ESCALATE_MANUALLY',
+    operator_id: 'operator-1',
+    reason: 'provider outcome requires manual follow-up',
+  };
+
+  return Object.assign(input, overrides);
 }
 
 /** The parameters bound to the single statement of `kind`; fails the test when it was never issued. */
@@ -1190,5 +1208,90 @@ describe('DurableWorkflowRepository.requeueFailed', () => {
 
     expect(boundTenants).toEqual([]);
     expect(client.statements).toEqual([]);
+  });
+});
+describe('DurableWorkflowRepository.queueReconciliation', () => {
+  const event = {
+    tenant_id: TENANT,
+    event_type: 'human.reconcile',
+    operator_id: 'operator-1',
+    reconciliation_resolution: 'ESCALATE_MANUALLY',
+    reason: 'provider outcome requires manual follow-up',
+  };
+
+  it('records one parked reconciliation event and clears the prior lease', async () => {
+    const queuedPayload = { ...completeCheckpoint(), resume_event: event };
+    const { repository, client, boundTenants } = harnessFor({
+      lock: {
+        rows: [taskRow({
+          state: 'waiting',
+          task_version: 4,
+          state_payload: completeCheckpoint(),
+          lease_owner: 'worker-1',
+          lease_expires_at: LEASE_EXPIRES_AT,
+        })],
+      },
+      reconcile: {
+        rows: [taskRow({
+          state: 'waiting',
+          task_version: 5,
+          state_payload: queuedPayload,
+        })],
+      },
+    });
+
+    const result = await repository.queueReconciliation(reconciliationInput());
+
+    expect(boundTenants).toEqual([TENANT]);
+    expect(client.statements.map((statement) => statement.kind)).toEqual(['lock', 'reconcile']);
+    expect(result.state).toBe('waiting');
+    expect(result.task_version).toBe(5);
+    expect(result.state_payload).toEqual(queuedPayload);
+    expect(bindingsOf(client, 'reconcile')).toEqual([
+      TENANT,
+      RUN_ID,
+      JSON.stringify(queuedPayload),
+      4,
+    ]);
+  });
+  it('refuses reconciliation when the waiting checkpoint is incomplete', async () => {
+    const { repository, client } = harnessFor({
+      lock: {
+        rows: [taskRow({ state: 'waiting', state_payload: {} })],
+      },
+    });
+
+    await expect(repository.queueReconciliation(reconciliationInput())).rejects.toThrow('CHECKPOINT_INCOMPLETE');
+    expect(client.statements.map((statement) => statement.kind)).toEqual(['lock']);
+  });
+
+  it('replays an identical reconciliation event without rewriting the task', async () => {
+    const existing = taskRow({
+      state: 'waiting',
+      task_version: 5,
+      state_payload: { ...completeCheckpoint(), resume_event: event },
+    });
+    const { repository, client } = harnessFor({ lock: { rows: [existing] } });
+
+    const result = await repository.queueReconciliation(reconciliationInput());
+
+    expect(result.task_version).toBe(5);
+    expect(client.statements.map((statement) => statement.kind)).toEqual(['lock']);
+  });
+
+  it('rejects a different reconciliation event already queued for the run', async () => {
+    const existing = taskRow({
+      state: 'waiting',
+      task_version: 5,
+      state_payload: { ...completeCheckpoint(), resume_event: event },
+    });
+    const { repository, client } = harnessFor({ lock: { rows: [existing] } });
+
+    await expect(
+      repository.queueReconciliation(reconciliationInput({
+        resolution: 'PROVIDER_CONFIRMED_ABSENT',
+      })),
+    ).rejects.toThrow('RECONCILIATION_EVENT_CONFLICT');
+    expect(client.statements.map((statement) => statement.kind)).toEqual(['lock']);
   });
 });

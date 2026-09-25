@@ -188,7 +188,7 @@ async function applyMigration(client, filename) {
 /**
  * Extracts the table and view names a schema file declares.
  *
- * @param schemaSql - Contents of `0000_agentos_schema.sql`.
+ * @param schemaSql - Contents of every discovered migration SQL file.
  * @returns Declared `tables` and `views`.
  */
 function declaredObjects(schemaSql) {
@@ -204,7 +204,7 @@ function declaredObjects(schemaSql) {
  * Fails unless the applied schema is what the DDL declares and RLS binds every table.
  *
  * @param client - Connected client.
- * @param schemaSql - Contents of `0000_agentos_schema.sql`.
+ * @param schemaSql - Contents of every discovered migration SQL file.
  * @throws Error `MIGRATION_VERIFICATION_FAILED` listing each unmet expectation.
  */
 async function assertAppliedSchema(client, schemaSql) {
@@ -249,7 +249,9 @@ async function main() {
   const connectionString = loadConnectionString();
   const files = readMigrations();
   const plan = migrationPlan(files);
-  const schemaSql = readFileSync(join(migrationsDirectory, SCHEMA_FILE), 'utf8');
+  const schemaSql = [SCHEMA_FILE, ...files.filter((filename) => filename !== SCHEMA_FILE)]
+    .map((filename) => readFileSync(join(migrationsDirectory, filename), 'utf8'))
+    .join('\n');
   const Client = await loadDriver();
   const client = new Client({ connectionString });
 

@@ -71,6 +71,14 @@ interface StepLoopOutcome {
   readonly message?: string;
 }
 
+/** One provider proof consumed by the exact parked effect before the step loop resumes. */
+interface ReconciledEffect {
+  readonly effect_key: string;
+  readonly action_id: string;
+  readonly kind: 'REPLAY' | 'DISPATCH';
+  readonly receipt?: unknown;
+}
+
 /**
  * Copies the optional outcome fields that are actually present.
  *
@@ -90,6 +98,42 @@ function outcomeFields(fields: {
     present.message = fields.message;
   }
   return present;
+}
+function isPlainJsonObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function readCompleteResumeCheckpoint(
+  value: unknown,
+  run_id: string,
+): DurableTaskCheckpoint {
+  if (!isPlainJsonObject(value)) {
+    throw new OrchestratorError(
+      'CHECKPOINT_INCOMPLETE',
+      'Task ' + run_id + ' has no complete resume checkpoint; a human operator must resolve it in SCR-003.',
+    );
+  }
+  const { plan, current_step, pending_action, context, previous_evidence_hash, request_id } = value;
+  if (
+    !isPlainJsonObject(plan) ||
+    !Number.isInteger(current_step) ||
+    (current_step as number) < 1 ||
+    !Object.prototype.hasOwnProperty.call(value, 'pending_action') ||
+    (pending_action !== null && !isPlainJsonObject(pending_action)) ||
+    !isPlainJsonObject(context) ||
+    typeof previous_evidence_hash !== 'string' ||
+    !/^[0-9a-f]{64}$/.test(previous_evidence_hash) ||
+    typeof request_id !== 'string' ||
+    request_id.trim().length === 0
+  ) {
+    throw new OrchestratorError(
+      'CHECKPOINT_INCOMPLETE',
+      'Task ' + run_id + ' has no complete resume checkpoint; a human operator must resolve it in SCR-003.',
+    );
+  }
+  return value as unknown as DurableTaskCheckpoint;
 }
 
 export class RevenueOrchestrator {
@@ -331,14 +375,6 @@ export class RevenueOrchestrator {
           await this.dependencies.agentRuntime.resolveRouting(signal, context, hypothesis),
         );
 
-        if (routing.target_agent === 'HUMAN_HANDOFF') {
-          await this.dependencies.workflowEngine.transitionTask(signal.tenant_id, run_id, 'awaiting_human', 'Routed to human agent queue');
-          return {
-            run_id,
-            lifecycle_state: 'awaiting_human',
-            ...outcomeFields({ message: 'Escalated to human operator' }),
-          };
-        }
 
         // STEP 5: PLAN FORMULATION. The Single Clarification Rule produces a one-step plan, so a
         // clarification message passes the SAME authority, reservation and evidence guards as any
@@ -489,9 +525,13 @@ export class RevenueOrchestrator {
       decision: 'APPROVED' | 'MODIFIED' | null;
       operator_id: string | null;
     } | null;
+    reconciled_action?: ActionDraft | null;
+    reconciled_effect?: ReconciledEffect | null;
   }): Promise<StepLoopOutcome> {
     const { tenant_id, run_id, correlation_id, request_id, plan, context, chain } = params;
     const sessionId = context.working_memory.session_id;
+    let reconciledEffect = params.reconciled_effect ?? null;
+    let reconciledAction = params.reconciled_action ?? null;
     // A first pass carries the inbound event; a resume carries the decision that released it.
     const trigger = params.signal ? params.signal.event_type : 'task.resume';
     let latestEvidence: ImmutableEvidenceRecord | undefined;
@@ -536,9 +576,21 @@ export class RevenueOrchestrator {
       this.journal.enter('ACTION');
       const released = params.approved_action !== null
         && params.approved_action.step_index === step.step_index;
+      const reconciled = reconciledAction !== null
+        && reconciledAction.step_index === step.step_index;
+
+      if (reconciledEffect !== null && !reconciled) {
+        throw new OrchestratorError(
+          'RECONCILIATION_BINDING_REQUIRED',
+          'Provider reconciliation proof requires the persisted pending action for the resumed step.',
+        );
+      }
+
       const action: ActionDraft = released
         ? (params.approved_action as ActionDraft)
-        : await this.draftAction(step, context, run_id, tenant_id, request_id, 0);
+        : reconciled
+          ? (reconciledAction as ActionDraft)
+          : await this.draftAction(step, context, run_id, tenant_id, request_id, 0);
       this.verifyFloorPrice(action);
       // Save the exact draft before dispatch. A restarted effect-bearing run cannot re-draft and
       // re-send until the reservation and provider outcome have been reconciled by this key.
@@ -563,6 +615,30 @@ export class RevenueOrchestrator {
           throw new OrchestratorError(
             'APPROVAL_BINDING_REQUIRED',
             'A released action must carry the claimed AUTH-4 approval bound to its exact effect key.'
+          );
+        }
+      }
+      if (reconciled) {
+        if (
+          reconciledAction === null
+          || action.action_id !== reconciledAction.action_id
+          || action.effect_key !== reconciledAction.effect_key
+        ) {
+          throw new OrchestratorError(
+            'RECONCILIATION_BINDING_REQUIRED',
+            'A reconciled step must preserve the persisted pending action identity.',
+          );
+        }
+        if (
+          reconciledEffect !== null
+          && (
+            reconciledEffect.effect_key !== action.effect_key
+            || reconciledEffect.action_id !== action.action_id
+          )
+        ) {
+          throw new OrchestratorError(
+            'RECONCILIATION_BINDING_REQUIRED',
+            'Provider reconciliation proof is bound to a different action or effect key than the resumed action.',
           );
         }
       }
@@ -645,7 +721,13 @@ export class RevenueOrchestrator {
       // STEP 8: RESERVATION THEN DISPATCH. `acquireEffectSlot()` reserves the deterministic
       // `effect_key` durably before every mutating dispatch; a read-only action is dispatched
       // unreserved because it has no external effect to deduplicate.
-      const slot = await this.acquireEffectSlot(action, run_id);
+      const slot = await this.acquireEffectSlot(action, run_id, reconciledEffect);
+      if (reconciledEffect !== null) {
+        reconciledEffect = null;
+      }
+      if (reconciledAction !== null) {
+        reconciledAction = null;
+      }
       if (slot.kind === 'WAIT') {
         await this.parkTask({
           tenant_id, run_id, reason: slot.reason, plan, current_step: step.step_index,
@@ -757,6 +839,16 @@ export class RevenueOrchestrator {
           );
         }
 
+        if (action.skill_id === 'skill.care.escalate_to_human') {
+          // The HandoffBus commits the queue row, parked task, takeover state and receipt together.
+          // Do not settle that reservation or advance the checkpoint a second time here.
+          this.journal.enter('EXECUTION');
+          return {
+            lifecycle_state: 'awaiting_human',
+            ...outcomeFields({ message: 'Escalated to human operator' }),
+          };
+        }
+
         if (step.mutating) {
           await this.dependencies.effectGuard.resolve({
             tenant_id: action.tenant_id,
@@ -847,8 +939,8 @@ export class RevenueOrchestrator {
   }
 
   /**
-   * Resumes a paused task after a human decision (SCR-003) or a schedule/reconciliation event.
-   * The approval row is claimed and the task re-activated in ONE transaction, so an approval can
+   * Resumes a paused task after a human decision or a schedule/reconciliation event.
+   * The approval row is claimed and the task re-activated in one transaction, so an approval can
    * never be consumed twice and can never resume a task it was not bound to.
    */
   public async resumeTask(
@@ -857,7 +949,7 @@ export class RevenueOrchestrator {
       tenant_id: string;
       event_type: 'human.approval' | 'human.modify' | 'human.reject' | 'human.pause' | 'human.cancel' | 'human.reconcile' | 'timer.expired' | 'reconcile.completed';
       approval_id?: string;
-      expected_payload_sha256?: string; // required for every approval decision; digest of reviewed payload
+      expected_payload_sha256?: string;
       operator_id?: string;
       reconciliation_resolution?: 'PROVIDER_CONFIRMED_SUCCEEDED' | 'PROVIDER_CONFIRMED_ABSENT' | 'ESCALATE_MANUALLY';
       reconciliation_receipt?: unknown;
@@ -866,28 +958,15 @@ export class RevenueOrchestrator {
     }
   ): Promise<OrchestratorRunResult> {
     this.journal = new StageJournal();
-    const task = await this.dependencies.workflowEngine.getTask(resumeEvent.tenant_id, run_id);
+    let task = await this.dependencies.workflowEngine.getTask(resumeEvent.tenant_id, run_id);
     if (!task) {
-      throw new OrchestratorError('TASK_NOT_FOUND', `Task ${run_id} does not exist`);
+      throw new OrchestratorError('TASK_NOT_FOUND', 'Task ' + run_id + ' does not exist');
     }
     if (task.state !== 'awaiting_human' && task.state !== 'waiting') {
-      throw new OrchestratorError('INVALID_TASK_STATE', `Cannot resume task currently in '${task.state}'`);
+      throw new OrchestratorError('INVALID_TASK_STATE', 'Cannot resume task currently in ' + task.state);
     }
 
-    const checkpoint = task.state_payload as DurableTaskCheckpoint | null;
-    if (!checkpoint?.plan || !checkpoint.context || !checkpoint.request_id) {
-      // Re-entering a plan requires the checkpoint that carries the immutable `request_id`, the
-      // context and the evidence cursor. Re-drafting from scratch would re-decide the plan and
-      // re-derive keys from a different identity, so an incomplete checkpoint fails closed and is
-      // escalated to SCR-003 instead of guessed at.
-      throw new OrchestratorError(
-        'CHECKPOINT_INCOMPLETE',
-        `Task ${run_id} has no complete resume checkpoint; a human operator must resolve it in SCR-003.`
-      );
-    }
-    this.replayCommittedStages(checkpoint);
-
-    const pendingAction: ActionDraft | null = checkpoint.pending_action ?? null;
+    let checkpoint = readCompleteResumeCheckpoint(task.state_payload, run_id);
     const isReconciliationResolution = resumeEvent.event_type === 'human.reconcile';
     const isHumanApprovalDecision = resumeEvent.event_type === 'human.approval'
       || resumeEvent.event_type === 'human.modify'
@@ -902,45 +981,120 @@ export class RevenueOrchestrator {
       throw new OrchestratorError('INVALID_TASK_STATE', 'Resume event does not match the durable waiting state.');
     }
 
-    // The lease is taken BEFORE the approval is claimed: an approval authorizes exactly one
+    // The lease is taken BEFORE an approval is claimed: an approval authorizes exactly one
     // execution, so it must never be consumed by a worker that cannot actually run the task.
+    const hasDurableFence = Object.prototype.hasOwnProperty.call(task, 'lease_owner')
+      || Object.prototype.hasOwnProperty.call(task, 'lease_expires_at');
+    const clearResumeEvent = async (reason: string): Promise<void> => {
+      const resumeCheckpoint: DurableTaskCheckpoint = {
+        plan: checkpoint.plan,
+        current_step: checkpoint.current_step,
+        pending_action: checkpoint.pending_action,
+        context: checkpoint.context,
+        previous_evidence_hash: checkpoint.previous_evidence_hash,
+        request_id: checkpoint.request_id,
+      };
+      const guard = hasDurableFence
+        ? { expected_task_version: task!.task_version, lease_owner: this.workerId }
+        : undefined;
+      await this.dependencies.workflowEngine.transitionTask(
+        resumeEvent.tenant_id,
+        run_id,
+        'waiting',
+        reason,
+        resumeCheckpoint,
+        guard,
+      );
+    };
     const leaseAcquired = await this.dependencies.leaseManager.acquireLease(resumeEvent.tenant_id, run_id, this.workerId);
     if (!leaseAcquired) {
-      throw new OrchestratorError('CONCURRENT_TASK_LOCK', `Unable to acquire lease to resume ${run_id}`);
+      throw new OrchestratorError('CONCURRENT_TASK_LOCK', 'Unable to acquire lease to resume ' + run_id);
     }
 
     let executionResumed = false;
     try {
+      const fencedTask = await this.dependencies.workflowEngine.getTask(resumeEvent.tenant_id, run_id);
+      if (!fencedTask) {
+        throw new OrchestratorError('TASK_NOT_FOUND', 'Task ' + run_id + ' disappeared while acquiring its lease');
+      }
+      if ((isHumanApprovalDecision && fencedTask.state !== 'awaiting_human')
+        || (isReconciliationResolution && fencedTask.state !== 'waiting')
+        || (isAutomaticResume && fencedTask.state !== 'waiting')) {
+        throw new OrchestratorError('CONCURRENT_TASK_LOCK', 'The waiting task changed while its resume lease was acquired.');
+      }
+      if (hasDurableFence) {
+        if (
+          fencedTask.lease_owner !== this.workerId
+          || fencedTask.lease_expires_at === null
+          || fencedTask.lease_expires_at === undefined
+          || Date.parse(fencedTask.lease_expires_at) <= Date.now()
+        ) {
+          throw new OrchestratorError('CONCURRENT_TASK_LOCK', 'The resume worker does not hold a live durable lease.');
+        }
+        const fencedPayload = isPlainJsonObject(fencedTask.state_payload) ? fencedTask.state_payload : null;
+        const storedResumeEvent = fencedPayload?.['resume_event'];
+        if (
+          !isPlainJsonObject(storedResumeEvent)
+          || canonicalizeJson(storedResumeEvent) !== canonicalizeJson(resumeEvent)
+        ) {
+          throw new OrchestratorError(
+            'RESUME_EVENT_CONFLICT',
+            'The resume event changed after the worker acquired the durable lease.',
+          );
+        }
+      }
+      task = fencedTask;
+      checkpoint = readCompleteResumeCheckpoint(task.state_payload, run_id);
+      this.replayCommittedStages(checkpoint);
+      const pendingAction: ActionDraft | null = checkpoint.pending_action ?? null;
+
       let releasedAction: ActionDraft | null = null;
       let approvalRef: {
         approval_id: string | null;
         decision: 'APPROVED' | 'MODIFIED' | null;
         operator_id: string | null;
       } | null = null;
+      let reconciledEffect: ReconciledEffect | null = null;
+      let reconciledAction: ActionDraft | null = null;
 
       if (isReconciliationResolution) {
-        if (!resumeEvent.operator_id || !resumeEvent.reconciliation_resolution || !pendingAction) {
-          throw new OrchestratorError('RECONCILIATION_BINDING_REQUIRED', 'Manual reconciliation requires an authenticated operator, resolution and pending action.');
+        if (!resumeEvent.operator_id || !pendingAction || !pendingAction.mutating) {
+          throw new OrchestratorError(
+            'RECONCILIATION_BINDING_REQUIRED',
+            'Manual reconciliation requires an authenticated operator and a pending mutating action.',
+          );
         }
         if (resumeEvent.reconciliation_resolution === 'ESCALATE_MANUALLY') {
+          await clearResumeEvent('Manual reconciliation escalation recorded; no dispatch was authorized.');
           return {
             run_id,
             lifecycle_state: 'waiting',
             ...outcomeFields({ message: 'Provider outcome remains unresolved; no dispatch was authorized.' }),
           };
         }
-        if (resumeEvent.reconciliation_resolution === 'PROVIDER_CONFIRMED_SUCCEEDED') {
-          throw new OrchestratorError(
-            'RECONCILIATION_PROVIDER_PROOF_REQUIRED',
-            'An operator-supplied receipt cannot prove provider settlement; the provider must be queried by effect key.'
-          );
+        reconciledEffect = await this.reconcileProviderEffect(pendingAction);
+        reconciledAction = pendingAction;
+        // The operator event requests a provider check; it is not proof and its receipt is never
+        // persisted. Consume it only after the provider returned a decisive result.
+        await clearResumeEvent('Provider reconciliation proof consumed for the parked effect.');
+        const refreshed = await this.dependencies.workflowEngine.getTask(resumeEvent.tenant_id, run_id);
+        if (!refreshed) {
+          throw new OrchestratorError('TASK_NOT_FOUND', 'The task disappeared after provider reconciliation proof.');
         }
-        if (resumeEvent.reconciliation_resolution === 'PROVIDER_CONFIRMED_ABSENT') {
-          throw new OrchestratorError(
-            'RECONCILIATION_PROVIDER_PROOF_REQUIRED',
-            'An operator assertion of absence cannot authorize re-dispatch without provider-side confirmation.'
-          );
-        }
+        task = refreshed;
+        checkpoint = readCompleteResumeCheckpoint(task.state_payload, run_id);
+        reconciledAction = checkpoint.pending_action ?? pendingAction;
+        await this.dependencies.workflowEngine.transitionTask(
+          resumeEvent.tenant_id,
+          run_id,
+          'running',
+          'Provider reconciliation proof authorized guarded resume',
+          undefined,
+          hasDurableFence
+            ? { expected_task_version: task.task_version, lease_owner: this.workerId }
+            : undefined,
+        );
+        executionResumed = true;
       }
 
       if (isHumanApprovalDecision) {
@@ -968,31 +1122,27 @@ export class RevenueOrchestrator {
           if (eligibility.verdict === 'DENIED') {
             throw new OrchestratorError('AUTHORITY_DENIED', eligibility.reason);
           }
-          // SCR-005, re-read on resume (implement/08 §1.2): a release is the one decision that
-          // opens a dispatch, so the live takeover state is read BEFORE the single-use claim. The
-          // claim is irreversible and an approval authorizes exactly one execution, so consuming
-          // the row for an action no operator may dispatch would destroy the run's only resume
-          // authority and let a stale approval outlive the takeover it was decided under. The
-          // refusal therefore precedes the claim and leaves the row PENDING.
-          //
-          // Only the dispatch-opening path is guarded. REJECTED, CANCELLED and PAUSE open no
-          // dispatch and keep their existing behaviour: a phase-out decision must stay available
-          // while an operator holds the lock, otherwise the lock would freeze the queue it exists
-          // to protect.
           if (
             await this.dependencies.sessionControl.isTakenOver(
               resumeEvent.tenant_id,
-              checkpoint.context.working_memory.session_id
+              checkpoint.context.working_memory.session_id,
             )
           ) {
             throw new OrchestratorError(
               'HUMAN_TAKEOVER',
-              'An operator holds the SCR-005 session lock; the approval stays PENDING and no dispatch may follow.'
+              'An operator holds the SCR-005 session lock; the approval stays PENDING and no dispatch may follow.',
             );
           }
         }
-        // Lock current task/action/approval; check the reviewed digest and operator; atomically
-        // save the authorized revision. The store's full transaction contract is §4.2(4).
+        const taskPayload = isPlainJsonObject(task.state_payload) ? task.state_payload : null;
+        const expectedResumeEvent = taskPayload?.['resume_event'];
+        const claimFence = hasDurableFence && isPlainJsonObject(expectedResumeEvent)
+          ? {
+              expected_task_version: task.task_version,
+              lease_owner: this.workerId,
+              expected_resume_event: expectedResumeEvent,
+            }
+          : {};
         const claimed = await this.dependencies.workflowEngine.claimApprovalAndResume({
           tenant_id: resumeEvent.tenant_id,
           run_id,
@@ -1003,6 +1153,7 @@ export class RevenueOrchestrator {
           decision,
           operator_id: operatorId,
           review_comment: resumeEvent.reason ?? null,
+          ...claimFence,
         });
         if (!claimed.claimed) {
           throw new OrchestratorError('APPROVAL_NOT_CLAIMABLE', 'Approval is stale, decided, or bound to a different action.');
@@ -1018,21 +1169,39 @@ export class RevenueOrchestrator {
           return {
             run_id,
             lifecycle_state: 'stopped',
-            ...outcomeFields({ message: `Task ${decision.toLowerCase()} by human operator` }),
+            ...outcomeFields({ message: 'Task ' + decision.toLowerCase() + ' by human operator' }),
           };
         }
         executionResumed = true;
-        releasedAction = { ...candidate, approval_id: approvalId };
+        releasedAction = {
+          ...candidate,
+          approval_id: approvalId,
+          approval_payload_digest: expectedPayloadSha256,
+        };
         approvalRef = { approval_id: approvalId, decision, operator_id: operatorId };
       }
 
       if (isAutomaticResume && !executionResumed) {
-        await this.dependencies.workflowEngine.transitionTask(resumeEvent.tenant_id, run_id, 'running', `Resumed by ${resumeEvent.event_type}`);
+        await clearResumeEvent('Consumed automatic reconciliation resume event.');
+        const refreshed = await this.dependencies.workflowEngine.getTask(resumeEvent.tenant_id, run_id);
+        if (!refreshed) {
+          throw new OrchestratorError('TASK_NOT_FOUND', 'The task disappeared before automatic reconciliation resume.');
+        }
+        task = refreshed;
+        checkpoint = readCompleteResumeCheckpoint(task.state_payload, run_id);
+        await this.dependencies.workflowEngine.transitionTask(
+          resumeEvent.tenant_id,
+          run_id,
+          'running',
+          'Resumed by ' + resumeEvent.event_type,
+          undefined,
+          hasDurableFence
+            ? { expected_task_version: task.task_version, lease_owner: this.workerId }
+            : undefined,
+        );
         executionResumed = true;
       }
 
-      // The human path already committed its transition. All resumed steps recheck safety;
-      // the claimed decision satisfies only AUTH-4 and cannot outlive a policy revocation.
       const outcome = await this.executeSteps({
         signal: null,
         tenant_id: resumeEvent.tenant_id,
@@ -1041,10 +1210,12 @@ export class RevenueOrchestrator {
         request_id: checkpoint.request_id,
         plan: checkpoint.plan,
         context: checkpoint.context,
-        chain: { previous: checkpoint.previous_evidence_hash ?? GENESIS_HASH },
+        chain: { previous: checkpoint.previous_evidence_hash },
         from_step: checkpoint.current_step,
         approved_action: releasedAction,
         approval_ref: approvalRef,
+        reconciled_action: reconciledAction,
+        reconciled_effect: reconciledEffect,
       });
       if (outcome.lifecycle_state !== 'completed') {
         return {
@@ -1054,9 +1225,6 @@ export class RevenueOrchestrator {
         };
       }
 
-      // The resumed loop finished the plan, so the run reaches OUTCOME. LEARNING is entered only
-      // where the learning projection is scheduled — the first pass — and a resume must not record
-      // a stage whose write it never requested.
       if (outcome.evidence !== undefined) {
         this.journal.enter('OUTCOME');
       }
@@ -1067,12 +1235,11 @@ export class RevenueOrchestrator {
         ...outcomeFields(outcome),
       };
     } catch (error) {
-      // A refused human decision must not fail or re-queue the still-pending task.
-      if (!executionResumed) throw error;
-      // Identical durable-recovery contract to the first pass (§4.4). An indeterminate external
-      // outcome never reaches this block: the guarded step engine parks it as `waiting` with its
-      // checkpoint and with the reservation still RESERVED, so only RETRYABLE and FATAL failures
-      // are classified and handed to the durable scheduler here.
+      if (!executionResumed) {
+        // A provider proof failure leaves the resume event queued so a later worker can retry the
+        // authoritative GET; only an explicit manual escalation consumes the event.
+        throw error;
+      }
       const failure_class = this.classifyFailure(error);
       if (failure_class === 'UNKNOWN') {
         await this.parkTask({
@@ -1081,9 +1248,9 @@ export class RevenueOrchestrator {
           reason: 'EFFECT_UNKNOWN: provider outcome indeterminate; reconciliation scheduled (§4.4)',
           plan: checkpoint.plan,
           current_step: checkpoint.current_step,
-          pending_action: checkpoint.pending_action ?? null,
+          pending_action: checkpoint.pending_action,
           context: checkpoint.context,
-          previous_evidence_hash: checkpoint.previous_evidence_hash ?? GENESIS_HASH,
+          previous_evidence_hash: checkpoint.previous_evidence_hash,
           request_id: checkpoint.request_id,
         });
         return {
@@ -1151,10 +1318,32 @@ export class RevenueOrchestrator {
    */
   private async acquireEffectSlot(
     action: ActionDraft,
-    run_id: string
+    run_id: string,
+    reconciledEffect: ReconciledEffect | null = null,
   ): Promise<{ kind: 'DISPATCH' } | { kind: 'REPLAY'; receipt: unknown | null } | { kind: 'WAIT'; reason: string }> {
     if (!action.mutating) {
+      if (reconciledEffect !== null) {
+        throw new OrchestratorError(
+          'RECONCILIATION_BINDING_REQUIRED',
+          'Provider reconciliation proof is bound to a mutating pending action, not a read-only step.',
+        );
+      }
       return { kind: 'DISPATCH' };
+    }
+
+    if (reconciledEffect !== null) {
+      if (
+        reconciledEffect.effect_key !== action.effect_key
+        || reconciledEffect.action_id !== action.action_id
+      ) {
+        throw new OrchestratorError(
+          'RECONCILIATION_BINDING_REQUIRED',
+          'Provider reconciliation proof is bound to a different action or effect key than the resumed action.',
+        );
+      }
+      return reconciledEffect.kind === 'REPLAY'
+        ? { kind: 'REPLAY', receipt: reconciledEffect.receipt ?? null }
+        : { kind: 'DISPATCH' };
     }
 
     const outcome = await this.dependencies.effectGuard.reserve({
@@ -1183,25 +1372,117 @@ export class RevenueOrchestrator {
           `effect_key ${action.effect_key} was already used with a different payload (BR-005).`
         );
       case 'RECONCILE_REQUIRED': {
-        // Expired RESERVED row or a prior FAILED attempt: ask the provider what actually happened,
-        // by key, before anything is re-dispatched (BR-006).
-        const reconciled = await this.dependencies.effectGuard.reconcile({
+        // The guard only reads durable reservation state. It cannot prove what the provider did,
+        // especially after an EXPIRED row, so no dispatch is admitted from that local read.
+        const providerReconcile = this.dependencies.adapterDispatcher.reconcile;
+        if (providerReconcile === undefined) {
+          return { kind: 'WAIT', reason: 'EFFECT_UNKNOWN: provider reconciliation is not bound' };
+        }
+        const reconciled = await providerReconcile({
           tenant_id: action.tenant_id,
           effect_key: action.effect_key,
+          action_id: action.action_id,
+          adapter_target: action.adapter_target,
           skill_id: action.skill_id,
         });
         if (reconciled.outcome === 'SUCCEEDED') {
-          // The effect is confirmed applied: replay the stored receipt, never re-dispatch.
+          // Provider proof becomes durable truth before the replay is exposed to the run.
+          await this.dependencies.effectGuard.resolve({
+            tenant_id: action.tenant_id,
+            effect_key: action.effect_key,
+            status: 'SUCCEEDED',
+            ...(reconciled.receipt === undefined ? {} : { receipt: reconciled.receipt }),
+          });
           return { kind: 'REPLAY', receipt: reconciled.receipt ?? null };
         }
         if (reconciled.outcome === 'FAILED') {
-          // Provider-confirmed absence is the only condition that clears the way for a re-dispatch
-          // under the same key (BR-006).
+          // Provider-confirmed absence is not itself a dispatch slot. Settle the proof, then reopen
+          // the same deterministic key; only the RESERVED row created by reopen admits dispatch.
+          await this.dependencies.effectGuard.resolve({
+            tenant_id: action.tenant_id,
+            effect_key: action.effect_key,
+            status: 'FAILED',
+          });
+          const reopened = await this.dependencies.effectGuard.reopenForRetry?.({
+            tenant_id: action.tenant_id,
+            effect_key: action.effect_key,
+          });
+          if (reopened !== true) {
+            return { kind: 'WAIT', reason: 'EFFECT_UNKNOWN: reservation could not be reopened for retry' };
+          }
           return { kind: 'DISPATCH' };
         }
-        return { kind: 'WAIT', reason: 'EFFECT_UNKNOWN: reconciliation pending (§4.4)' };
+        return { kind: 'WAIT', reason: 'EFFECT_UNKNOWN: provider reconciliation is indeterminate' };
       }
     }
+  }
+
+  /**
+   * Queries the bound provider for the exact parked action, then makes that proof durable before the
+   * guarded loop can replay or re-dispatch it. Operator receipts and resolution labels never settle
+   * a reservation; they only select this provider-proof path.
+   */
+  private async reconcileProviderEffect(action: ActionDraft): Promise<ReconciledEffect> {
+    if (!action.mutating) {
+      throw new OrchestratorError(
+        'RECONCILIATION_BINDING_REQUIRED',
+        'Provider reconciliation proof is bound to a mutating pending action, not a read-only step.',
+      );
+    }
+    const providerReconcile = this.dependencies.adapterDispatcher.reconcile;
+    if (providerReconcile === undefined) {
+      throw new OrchestratorError(
+        'RECONCILIATION_PROVIDER_UNAVAILABLE',
+        'No provider reconciliation boundary is bound for the parked mutating effect.',
+      );
+    }
+
+    const reconciled = await providerReconcile({
+      tenant_id: action.tenant_id,
+      effect_key: action.effect_key,
+      action_id: action.action_id,
+      adapter_target: action.adapter_target,
+      skill_id: action.skill_id,
+    });
+
+    if (reconciled.outcome === 'SUCCEEDED') {
+      await this.dependencies.effectGuard.resolve({
+        tenant_id: action.tenant_id,
+        effect_key: action.effect_key,
+        status: 'SUCCEEDED',
+        ...(reconciled.receipt === undefined ? {} : { receipt: reconciled.receipt }),
+      });
+      return {
+        effect_key: action.effect_key,
+        action_id: action.action_id,
+        kind: 'REPLAY',
+        receipt: reconciled.receipt ?? null,
+      };
+    }
+
+    if (reconciled.outcome === 'FAILED') {
+      await this.dependencies.effectGuard.resolve({
+        tenant_id: action.tenant_id,
+        effect_key: action.effect_key,
+        status: 'FAILED',
+      });
+      const reopened = await this.dependencies.effectGuard.reopenForRetry?.({
+        tenant_id: action.tenant_id,
+        effect_key: action.effect_key,
+      });
+      if (reopened !== true) {
+        throw new OrchestratorError(
+          'RECONCILIATION_REOPEN_FAILED',
+          'Provider absence was proven, but the same effect reservation could not be reopened for retry.',
+        );
+      }
+      return { effect_key: action.effect_key, action_id: action.action_id, kind: 'DISPATCH' };
+    }
+
+    throw new OrchestratorError(
+      'RECONCILIATION_PROVIDER_PROOF_REQUIRED',
+      'The provider did not return proof of success or absence; no reservation settlement or re-dispatch is authorized.',
+    );
   }
 
   /**

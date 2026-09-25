@@ -293,6 +293,23 @@ export class EffectGuard implements IEffectGuard {
   }
 
   /**
+   * Returns a FAILED reservation to RESERVED with a fresh window (implement/04 §4.4 step 3).
+   * A provider-confirmed absence is the only condition that clears the way for one more dispatch
+   * under the SAME effect key.
+   */
+  async reopenForRetry(input: {
+    tenant_id: string;
+    effect_key: string;
+  }): Promise<boolean> {
+    const expiresAt = new Date(this.now().getTime() + this.reservationTtlMs).toISOString();
+    return await this.repository.reopenReservation({
+      tenant_id: input.tenant_id,
+      effect_key: input.effect_key,
+      expires_at: expiresAt,
+    });
+  }
+
+  /**
    * Applies the §3.2.3 decision table to the durable row.
    *
    * @param requestFingerprint - Fingerprint of the payload about to be dispatched.

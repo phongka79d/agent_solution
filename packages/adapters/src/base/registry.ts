@@ -52,6 +52,16 @@ export interface RegisteredConnector {
     readonly resource: string;
     readonly key?: string;
   }) => Promise<ConnectorReadResult>;
+  readonly reconcile?: (input: {
+    readonly tenant_id: string;
+    readonly effect_key: string;
+    readonly action_id?: string;
+    readonly adapter_target?: string;
+    readonly skill_id?: string;
+  }) => Promise<{
+    readonly outcome: 'SUCCEEDED' | 'FAILED' | 'INDETERMINATE';
+    readonly receipt?: ExecutionReceipt;
+  }>;
 }
 
 /**

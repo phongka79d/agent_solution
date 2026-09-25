@@ -55,6 +55,14 @@ export interface CareAdaptersOptions {
   readonly auditSecret: string;
   readonly now?: () => Date;
 }
+function hasResumeEvent(state_payload: unknown): boolean {
+  if (typeof state_payload !== 'object' || state_payload === null || Array.isArray(state_payload)) {
+    return false;
+  }
+  const payload = state_payload as Record<string, unknown>;
+  const event = payload['resume_event'];
+  return typeof event === 'object' && event !== null && !Array.isArray(event);
+}
 
 export interface CareAdapters {
   readonly workflowEngine: IStatefulWorkflowEngine;
@@ -310,6 +318,9 @@ export function createCareAdapters(options: {
       decision: 'APPROVED' | 'MODIFIED' | 'REJECTED' | 'PAUSE' | 'CANCELLED';
       operator_id: string;
       review_comment: string | null;
+      expected_task_version?: number;
+      lease_owner?: string;
+      expected_resume_event?: Record<string, unknown>;
     }): Promise<{ claimed: boolean }> {
       const result = await options.approvalRepository.claimApprovalAndResume({
         tenant_id: params.tenant_id,
@@ -321,6 +332,9 @@ export function createCareAdapters(options: {
         decision: params.decision as ApprovalDecision,
         operator_id: params.operator_id,
         review_comment: params.review_comment,
+        ...(params.expected_task_version === undefined ? {} : { expected_task_version: params.expected_task_version }),
+        ...(params.lease_owner === undefined ? {} : { lease_owner: params.lease_owner }),
+        ...(params.expected_resume_event === undefined ? {} : { expected_resume_event: params.expected_resume_event }),
       });
       return { claimed: result.claimed };
     },
@@ -475,7 +489,9 @@ export function createCareAdapters(options: {
       if (task.lease_owner !== worker_id) {
         return false;
       }
-      if (task.state !== 'running') {
+      const eventBearingWaiting =
+        (task.state === 'waiting' || task.state === 'awaiting_human') && hasResumeEvent(task.state_payload);
+      if (task.state !== 'running' && !eventBearingWaiting) {
         return false;
       }
       if (task.lease_expires_at === null || Date.parse(task.lease_expires_at) <= now.getTime()) {
@@ -518,14 +534,16 @@ export function createCareAdapters(options: {
           `TASK_LEASE_NOT_HELD: worker '${worker_id}' does not hold active lease for task '${run_id}' (held by: '${task.lease_owner}')`,
         );
       }
-      // A terminal run holds no schedulable lease: the orchestrator releases in a `finally` that
-      // runs after it transitioned the task to `completed` (or `stopped`/`failed`), and the durable
-      // release transition only accepts `queued`/`waiting`. Handing a terminal task back to the
-      // queue here would re-schedule a finished run, so the release ends with the run.
+      // Terminal runs hold no schedulable lease. Event-bearing waiting rows retain their state and
+      // event so the next worker can consume the durable resume exactly once.
       if (task.state === 'completed' || task.state === 'stopped' || task.state === 'failed') {
         return;
       }
-      const targetState = task.state === 'waiting' ? 'waiting' : 'queued';
+      const targetState = task.state === 'awaiting_human' && hasResumeEvent(task.state_payload)
+        ? 'awaiting_human'
+        : task.state === 'waiting'
+          ? 'waiting'
+          : 'queued';
       await options.workflowRepository.releaseTaskLease({
         tenant_id,
         run_id,

@@ -33,6 +33,7 @@ describe('CareAgentRuntime', () => {
     customer: verifiedCustomer,
     working_memory: {
       session_id: 'sess-1',
+      conversation_id: '33333333-3333-4333-8333-333333333333',
       last_touch_channel: 'web',
       turn_count: 1,
       takeover_active: false,
@@ -64,6 +65,15 @@ describe('CareAgentRuntime', () => {
           guarded_dependency: 'SecondBrain.FAQEngine',
           required_authority: 'AUTH-0',
           timeout_ms: 1500,
+        };
+      }
+      if (skill_id === 'skill.care.escalate_to_human') {
+        return {
+          skill_id: 'skill.care.escalate_to_human',
+          effect_class: 'INTERNAL',
+          guarded_dependency: 'Orchestrator.HandoffBus',
+          required_authority: 'AUTH-3',
+          timeout_ms: 1000,
         };
       }
       return null;
@@ -275,6 +285,60 @@ describe('CareAgentRuntime', () => {
     expect(plan.fallback_strategy).toBe('FAIL_CLOSED');
   });
 
+
+  it.each([
+    ['product info', 'Is this bag waterproof?', 'product_info', 'skill.care.search_faq'],
+    ['price', 'How much is the listed price?', 'price', 'skill.care.search_faq'],
+    ['stock', 'Is this item in stock?', 'stock', 'skill.care.search_faq'],
+    ['order status', 'Where is my order ORD-12345?', 'order_lookup', 'skill.care.lookup_order'],
+    ['shipping', 'Can you check shipping for tracking AB-12345?', 'shipping', 'skill.care.search_faq'],
+    ['return policy', 'What is your return and refund policy?', 'faq_search', 'skill.care.search_faq'],
+    ['return execution', 'I want to return this item and get my money back.', 'return_refund', 'skill.care.search_faq'],
+    ['payment issue', 'I was charged twice for the same order.', 'payment', 'skill.care.search_faq'],
+    ['complaint', 'My parcel arrived damaged and this is unacceptable.', 'complaint', 'HUMAN_HANDOFF'],
+    ['usage support', 'How do I activate the warranty?', 'usage', 'skill.care.search_faq'],
+    ['human request', 'I want to talk to a human agent.', 'human_escalation', 'HUMAN_HANDOFF']
+  ])('classifies %s and uses only its permitted route', async (_name, message, expectedIntent, expectedTarget) => {
+    const signal: SignalEnvelope = {
+      signal_id: `sig-${String(expectedIntent)}`,
+      tenant_id,
+      correlation_id: 'corr-1',
+      source_channel: 'WEB_CHAT',
+      event_type: 'message.received',
+      timestamp: '2026-09-01T00:00:00Z',
+      subject: { session_id: 'sess-1', channel_type: 'web' },
+      payload: { message },
+    };
+    const hypothesis = await runtime.deriveHypothesis(signal, verifiedContext);
+    expect(hypothesis.classification).toBe('HYPOTHESIS');
+    expect(hypothesis.intent).toBe(expectedIntent);
+
+    const routing = await runtime.resolveRouting(signal, verifiedContext, hypothesis);
+    expect(routing.target_agent).toBe(expectedTarget === 'HUMAN_HANDOFF' ? 'HUMAN_HANDOFF' : 'CS-01');
+    if (expectedTarget === 'HUMAN_HANDOFF') {
+      expect(routing.requires_clarification).toBe(false);
+      const plan = await runtime.formulatePlan(routing, verifiedContext, hypothesis);
+      expect(plan.steps.map((step) => step.skill_id)).toEqual(['skill.care.escalate_to_human']);
+      expect(plan.steps[0]?.input_parameters).toMatchObject({
+        tenant_id,
+        session_id: 'sess-1',
+        conversation_id: '33333333-3333-4333-8333-333333333333',
+      });
+
+      const unboundMemory = { ...verifiedContext.working_memory };
+      delete unboundMemory.conversation_id;
+      const unboundPlan = await runtime.formulatePlan(routing, {
+        ...verifiedContext,
+        working_memory: unboundMemory,
+      }, hypothesis);
+      expect(unboundPlan.steps).toEqual([]);
+      expect(unboundPlan.fallback_strategy).toBe('FAIL_CLOSED');
+    } else {
+      expect(routing.requires_clarification).toBe(false);
+      const plan = await runtime.formulatePlan(routing, verifiedContext, hypothesis);
+      expect(plan.steps.map((step) => step.skill_id)).toEqual([expectedTarget]);
+    }
+  });
   it('refuses plan generation with empty steps when registry row is missing', async () => {
     const emptyRuntime = new CareAgentRuntime({
       registry: { get: () => null },

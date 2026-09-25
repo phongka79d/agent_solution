@@ -1971,6 +1971,7 @@ export interface OutputCareTrackShipping {
   "properties": {
     "tenant_id": { "type": "string" },
     "case_id": { "type": "string" },
+    "expected_case_version": { "type": "integer", "minimum": 1 },
     "customer_id": { "type": "string" },
     "intent": { "type": "string" },
     "priority": { "type": "string", "enum": ["P1", "P2", "P3", "P4"] },
@@ -1982,9 +1983,15 @@ export interface OutputCareTrackShipping {
     "assigned_owner": { "type": ["string", "null"] },
     "notes": { "type": "string" }
   },
+  "oneOf": [
+    { "properties": { "action_type": { "const": "CREATE" } } },
+    {
+      "properties": { "action_type": { "enum": ["TRANSITION_STATE", "ASSIGN", "RESOLVE", "REOPEN", "CLOSE"] } },
+      "required": ["case_id", "expected_case_version"]
+    }
+  ],
   "additionalProperties": false
 }
-```
 - **4. Output Schema**:
 ```json
 {
@@ -2001,6 +2008,7 @@ export interface OutputCareTrackShipping {
     "evidence_refs",
     "assigned_owner",
     "sla_target_hours",
+    "case_version",
     "updated_at"
   ],
   "properties": {
@@ -2017,6 +2025,7 @@ export interface OutputCareTrackShipping {
     "evidence_refs": { "type": "array", "items": { "type": "string" } },
     "assigned_owner": { "type": ["string", "null"] },
     "sla_target_hours": { "type": "integer" },
+    "case_version": { "type": "integer", "minimum": 1 },
     "updated_at": { "type": "string", "format": "date-time" }
   }
 }
@@ -2024,8 +2033,8 @@ export interface OutputCareTrackShipping {
 - **5. Allowed Agents**: `["CS-01"]`
 - **6. Required Authority**: `AUTH-3`
 - **7. Tool Binding**: `PostgreSQL.CaseManagementStore`
-- **8. Validation Rules**: `["if action_type is TRANSITION_STATE/ASSIGN/RESOLVE, case_id is mandatory", "status transitions must strictly follow the SRS §8 7-state FSM matrix; an illegal transition is INVALID_FSM_TRANSITION and leaves the case untouched", "REOPEN is an action, not a state: it transitions RESOLVED | CLOSED -> IN_PROGRESS while preserving case_number, SLA history, and evidence; no REOPENED state exists (§03 Entity 18)", "priority must be one of P1..P4 (P1 urgent ... P4 low), the single vocabulary shared by DB, skill, and UI", "a timeout is never retried blind: this skill declares retry_on_timeout: false, so an unconfirmed outcome is reconciled by re-reading the case for (tenant_id, case_id) before any retry"]`
-- **9. Retry Policy**: `{"max_retries": 3, "initial_interval_ms": 300, "backoff_multiplier": 1.5, "retry_on_timeout": false, "non_retryable_errors": ["CASE_NOT_FOUND", "INVALID_FSM_TRANSITION"]}`
+- **8. Validation Rules**: ["every non-CREATE action requires case_id and expected_case_version; a stale version fails with CASE_VERSION_CONFLICT without mutation", "status transitions must strictly follow the SRS §8 7-state FSM matrix; an illegal transition is INVALID_FSM_TRANSITION and leaves the case untouched", "REOPEN is an action, not a state: it transitions RESOLVED | CLOSED -> IN_PROGRESS while preserving case_number, SLA history, and evidence; no REOPENED state exists (§03 Entity 18)", "priority must be one of P1..P4 (P1 urgent ... P4 low), the single vocabulary shared by DB, skill, and UI", "case creation and priority changes require an authoritative tenant-specific SLA target; missing ASM-002 policy refuses instead of inventing a default", "case mutation and immutable event receipt commit in one transaction; matching effect-key replay returns the exact receipt and a different fingerprint is rejected", "after timeout, lookup (tenant_id,effect_key); if no receipt and case_id is supplied, re-read tenant-scoped (tenant_id,case_id) before any retry; a timed-out CREATE without a receipt has no case to read and fails closed with CASE_EFFECT_NOT_COMMITTED; retry_on_timeout remains false and no automatic retry occurs"]
+- **9. Retry Policy**: {"max_retries": 3, "initial_interval_ms": 300, "backoff_multiplier": 1.5, "retry_on_timeout": false, "non_retryable_errors": ["CASE_NOT_FOUND", "INVALID_FSM_TRANSITION", "CASE_VERSION_CONFLICT", "CASE_BINDING_MISMATCH", "CASE_SLA_POLICY_UNAVAILABLE", "CASE_EFFECT_NOT_COMMITTED", "CASE_RECONCILIATION_FAILED"]}
 - **10. Timeout**: `2000ms`
 - **11. Audit Spec (SRS §11 field 10)**: `{"log_level": "INFO", "mask_pii_fields": ["customer_id"], "evidence_card": "EV_SUPPORT_CASE", "record_latency": true}`
 - **12. Test Cases & Acceptance Criteria (SRS §11 field 11)**: `test_cases` = `TC-SKILL-01`..`TC-SKILL-05` (§5, baseline) instantiated for this skill, plus:
@@ -2036,6 +2045,7 @@ export interface OutputCareTrackShipping {
 export interface InputCareManageCase {
   tenant_id: string;
   case_id?: string;
+  expected_case_version?: number;
   customer_id: string;
   intent: string;
   priority: 'P1' | 'P2' | 'P3' | 'P4';
@@ -2059,6 +2069,7 @@ export interface OutputCareManageCase {
   evidence_refs: string[];
   assigned_owner: string | null;
   sla_target_hours: number;
+  case_version: number;
   updated_at: string;
 }
 ```
@@ -2366,7 +2377,7 @@ Every skill carries the five baseline cases below, instantiated with its own inp
 | `TC-SKILL-01` | Happy Path | Valid input payload and authorized agent. | Execution completes inside the declared `timeout_ms`; the output validates against the row's `output_schema`; an effect-bearing skill produces exactly one provider effect and a read-only skill produces none; exactly one evidence record exists with `correlation_id`, latency, and output digest. |
 | `TC-SKILL-02` | Authority Violation | Agent lacks required clearance (e.g. `AUTH-1` agent calls an `AUTH-3` skill), an `AUTH-4` skill is invoked without a bound approval, or any run presents `AUTH-5`. | `INSUFFICIENT_AUTHORITY` for a rank shortfall among `AUTH-0`..`AUTH-3`; `APPROVAL_REQUIRED` for an unapproved `AUTH-4` action (never rank-compared); `PROHIBITED_ACTION` for `AUTH-5` with no `approvals` row created; zero side effects in every case. |
 | `TC-SKILL-03` | Schema Invalidation | Input missing mandatory fields or containing illegal extra properties. | Throws `SCHEMA_VALIDATION_ERROR` prior to tool dispatch, with zero adapter calls recorded at the connector test sink. |
-| `TC-SKILL-04` | Timeout Escalation | Downstream adapter hangs past `timeout_ms`. | AbortController aborts. A read-only skill (`retry_on_timeout: true`) classifies `TIMEOUT` and may retry in-loop only within its declared budget; an effect-bearing skill (`retry_on_timeout: false`) classifies `EFFECT_UNKNOWN`, is never retried blind, and reconciles by `effect_key` before any re-dispatch; the circuit records one failure. |
+| `TC-SKILL-04` | Timeout Escalation | Downstream adapter hangs past `timeout_ms`. | AbortController aborts. A read-only skill (`retry_on_timeout: true`) may retry in-loop only within its declared budget; an effect-bearing skill (`retry_on_timeout: false`) is never retried blind, and an unreconciled provider effect remains `EFFECT_UNKNOWN`. Reconciliation checks the durable receipt by `effect_key` before settlement. For `skill.care.manage_case`, no receipt triggers a tenant-scoped case reread when `case_id` is supplied, then non-retryable `CASE_EFFECT_NOT_COMMITTED`; a timed-out CREATE with no receipt has no case to read and fails closed with the same error. Reconciliation failure returns `CASE_RECONCILIATION_FAILED`; no automatic retry occurs; the circuit records one failure. |
 | `TC-SKILL-05` | Idempotency Verification| Submitting request twice with identical `effect_key`. | The second request receives the stored result; for an effect-bearing skill exactly one provider record exists for the key, and for a read-only skill the repeat produces no external effect and no divergent payload. |
 
 **Case hygiene.** A case earns a place only if a plausible defect would fail it. Positivity-only assertions — "a candidate exists", "the response is non-empty", "no exception was thrown", "the low-confidence product was returned anyway" — are not acceptance cases and are not evidence; every expectation above names an observable error code, an effect count, or a persisted record. This document registers no positivity-only case.

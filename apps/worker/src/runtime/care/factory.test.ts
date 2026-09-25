@@ -136,6 +136,15 @@ describe('createCareOrchestratorFactory', () => {
     const unbound = getUnboundCapabilities(options);
     expect(unbound).toContain('API-001 (ERP read port is not bound)');
     expect(unbound).toContain('leaseManager');
+    expect(unbound.some((capability) => capability.startsWith('PostgreSQL.CaseManagementStore:'))).toBe(false);
+  });
+
+  it('reports missing case SLA only when manage_case is explicitly enabled', () => {
+    const unbound = getUnboundCapabilities({
+      skill_enablement: { enabled_skill_ids: ['skill.care.manage_case'] },
+    });
+
+    expect(unbound.some((capability) => capability.startsWith('PostgreSQL.CaseManagementStore:'))).toBe(true);
   });
 
   it('fails closed when required workflow adapters are missing', async () => {

@@ -24,7 +24,7 @@ export {
 } from './effect-reservations.js';
 export { EffectReservationRepository } from './effect-reservations.js';
 export type { TenantTransactionRunner } from './effect-reservations.js';
-export { DurableWorkflowRepository } from './durable-workflows.js';
+export { DurableWorkflowRepository, assertCompleteCheckpoint } from './durable-workflows.js';
 export { insertDurableTask } from './durable-workflows.js';
 export type {
   CreateDurableTaskInput,
@@ -37,12 +37,13 @@ export type {
   FailureClass,
   PersistedErrorClass,
   RecordTaskFailureInput,
+  QueueReconciliationInput,
   ReleaseTaskLeaseInput,
   RenewTaskLeaseInput,
-  TaskFailureOutcome,
 } from './durable-workflows.js';
 export { ApprovalRepository } from './approvals.js';
 export type {
+  ApprovalActionDraft,
   ApprovalDecision,
   ApprovalRecord,
   ClaimApprovalAndResumeInput,
@@ -99,3 +100,16 @@ export type {
   CustomerEventTimelineItem,
   CustomerEventTimelineQuery,
 } from './customer-events.js';
+export { CareHandoffRepository } from './care-handoffs.js';
+export type {
+  CareHandoffClaimOutcome,
+  CareHandoffCompletionOutcome,
+  CareHandoffEnqueueResult,
+  CareHandoffExecutionReceipt,
+  CareHandoffOutput,
+  CareHandoffReconciliation,
+  ClaimCareHandoffInput,
+  CompleteCareHandoffInput,
+  EnqueueCareHandoffInput,
+  ReconcileCareHandoffInput,
+} from '../contracts/care-handoffs.js';

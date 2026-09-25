@@ -80,6 +80,10 @@ export interface IEffectGuard {
     effect_key: string;
     skill_id: string;
   }): Promise<{ outcome: 'SUCCEEDED' | 'FAILED' | 'INDETERMINATE'; receipt?: unknown }>;
+  reopenForRetry?(input: {
+    tenant_id: string;
+    effect_key: string;
+  }): Promise<boolean>;
 }
 
 export type ReservationOutcome =
@@ -143,6 +147,19 @@ export interface IAdapterDispatcher {
    * thrown non-canonical error is normalized to an unproven effect instead of a terminal failure.
    */
   dispatch(action: ActionDraft, options?: { timeout_ms?: number }): Promise<ExecutionReceipt>;
+  /**
+   * Queries the provider by effect_key / action_id to reconcile an unproven effect outcome (§4.4).
+   */
+  reconcile?(input: {
+    readonly tenant_id: string;
+    readonly effect_key: string;
+    readonly action_id?: string;
+    readonly adapter_target?: string;
+    readonly skill_id?: string;
+  }): Promise<{
+    readonly outcome: 'SUCCEEDED' | 'FAILED' | 'INDETERMINATE';
+    readonly receipt?: ExecutionReceipt | unknown;
+  }>;
 }
 
 /**

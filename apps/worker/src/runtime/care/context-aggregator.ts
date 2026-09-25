@@ -168,37 +168,44 @@ export class CareContextAggregator implements IContextAggregator {
 
     let turn_count = 1;
     let takeover_active = false;
+    let conversation_id: string | undefined;
 
-    if (subject.session_id) {
+    if (subject.conversation_id && subject.channel_identifier) {
       try {
-        const conv = await this.getConversationFn(tenant_id, subject.session_id);
-        if (conv) {
-          if (conv.state === 'paused_takeover') {
-            takeover_active = true;
-          }
+        const conversation = await this.getConversationFn(tenant_id, subject.conversation_id);
+        if (
+          conversation !== null &&
+          conversation.tenant_id === tenant_id &&
+          conversation.conversation_id === subject.conversation_id &&
+          conversation.channel === subject.channel_type &&
+          conversation.external_thread_id === subject.channel_identifier
+        ) {
+          conversation_id = conversation.conversation_id;
+          takeover_active = conversation.state === 'paused_takeover';
         }
       } catch {
-        takeover_active = false;
+        // Without a verified persisted binding, no conversation history or handoff identity is exposed.
       }
+    }
 
-      if (this.listMessagesFn) {
-        try {
-          const messages = await this.listMessagesFn({
-            tenant_id,
-            conversation_id: subject.session_id,
-            limit: 100,
-          });
-          if (Array.isArray(messages) && messages.length > 0) {
-            turn_count = messages.length;
-          }
-        } catch {
-          turn_count = 1;
+    if (conversation_id !== undefined && this.listMessagesFn) {
+      try {
+        const messages = await this.listMessagesFn({
+          tenant_id,
+          conversation_id,
+          limit: 100,
+        });
+        if (Array.isArray(messages) && messages.length > 0) {
+          turn_count = messages.length;
         }
+      } catch {
+        turn_count = 1;
       }
     }
 
     const working_memory: WorkingMemoryContext = {
       session_id: subject.session_id,
+      ...(conversation_id === undefined ? {} : { conversation_id }),
       last_touch_channel: subject.channel_type,
       turn_count,
       takeover_active,
