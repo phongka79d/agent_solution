@@ -135,7 +135,7 @@ These stay fail-closed and are listed by the runtime rather than stubbed:
 - Second Brain customer-care/faq.md, support-policy.md, and escalation.md remain status: draft; no owner approval exists in the repository, so approved-only retrieval remains fail-closed.
 - PILOT-03 has DB-backed local/mock evidence but no approved staging/production-like API-001 SoR credentials or real provider receipt.
 - PILOT-04 has the offline harness and local durable handoff coverage, but no approved production-like Redis/operator boundary run.
-- GitHub Actions runs #36161321541 and #36161315366 for b81f78f passed all five jobs, including static analysis, unit/contract, PostgreSQL/RLS rehearsal, security, Docker image boot/health, and the feature-branch pilot task.
+- GitHub Actions runs #36162634081 and #36162626251 for e3eae1a1 passed all five jobs, including static analysis, unit/contract, PostgreSQL/RLS rehearsal, security, Docker image boot/health, and the feature-branch pilot task.
 
 These are truthful Gate P1 blockers; no draft knowledge was self-approved and no mock receipt is claimed as real SoR evidence.
 
