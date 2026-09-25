@@ -36,6 +36,7 @@ const RESUME_EVENT_TYPES = new Set([
   'human.reconcile',
   'timer.expired',
   'reconcile.completed',
+  'human.handoff.evidence',
 ]);
 
 function asRecord(value: unknown): Record<string, unknown> | null {

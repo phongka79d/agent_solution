@@ -671,6 +671,24 @@ export interface IStatefulWorkflowEngine {
     expected_task_version?: number;
     guard?: DurableTaskGuard;
   }): Promise<{ requeued: boolean }>;
+  /** Durable repair for failed handoff evidence: queues event_type 'human.handoff.evidence' on awaiting_human task. */
+  queueHandoffEvidence(params: {
+    tenant_id: string;
+    run_id: string;
+    expected_task_version?: number;
+    evidence_payload: Record<string, unknown>;
+    step_index?: number;
+    effect_key?: string;
+    reason?: string;
+  }): Promise<{ queued: boolean; task_version?: number }>;
+  /** Clears only the handoff evidence repair event after a fenced successful repair; task stays awaiting_human. */
+  clearHandoffEvidence(params: {
+    tenant_id: string;
+    run_id: string;
+    expected_task_version: number;
+    lease_owner: string;
+    expected_resume_event: Record<string, unknown>;
+  }): Promise<{ cleared: boolean; task_version?: number }>;
 }
 
 /**
@@ -688,6 +706,7 @@ export interface IEvidenceLogger {
     previous_evidence_hash: string;
     payload: Record<string, unknown>;
   }): Promise<ImmutableEvidenceRecord>;
+  findImmutableRecord?(params: { tenant_id: string; run_id: string; effect_key: string; step_index: number }): Promise<ImmutableEvidenceRecord | null>;
   initializeOutcomeWatch(params: { tenant_id: string; run_id: string; effect_key: string; skill_id: string }): Promise<void>;
   logAgentRun(runLog: AgentRunLogRecord): Promise<void>;
 }

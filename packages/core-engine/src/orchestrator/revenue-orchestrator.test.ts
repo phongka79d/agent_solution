@@ -1117,4 +1117,275 @@ describe('RevenueOrchestrator', () => {
     expect(evidencePayload.replayed).toBe(true);
     expect(evidencePayload.receipt).toEqual(providerReceipt);
   });
+  it('handles post-enqueue evidence failure for skill.care.escalate_to_human without parking or second-settle, and replays safely with one EV_HUMAN_HANDOFF record', async () => {
+    const effectGuard = new MemoryEffectGuard();
+    const backing = new MemoryEvidenceLogger('test-hmac-secret');
+    let evidenceStoreDown = true;
+    const evidenceLogger: IEvidenceLogger = {
+      findImmutableRecord: vi.fn(async (params) => backing.findImmutableRecord(params)),
+      createImmutableRecord: vi.fn(async (params) => {
+        if (evidenceStoreDown) {
+          evidenceStoreDown = false;
+          throw new Error('evidence store unavailable');
+        }
+        return backing.createImmutableRecord(params);
+      }),
+      initializeOutcomeWatch: vi.fn(async (params) => backing.initializeOutcomeWatch(params)),
+      logAgentRun: vi.fn(async (runLog) => backing.logAgentRun(runLog)),
+    };
+
+    const handoffOutput = {
+      handoff_id: 'handoff-uuid-1',
+      queue_position: 1,
+      status: 'ENQUEUED',
+      escalated_at: '2026-09-22T00:00:00.000Z',
+    };
+    const handoffReceipt: ExecutionReceipt = {
+      execution_id: 'handoff-uuid-1',
+      adapter_status: 'SUCCESS',
+      provider_reference: 'handoff-uuid-1',
+      response_payload: handoffOutput,
+      latency_ms: 10,
+      token_usage: { prompt: 0, completion: 0, total_cost_usd: 0 },
+    };
+
+    const careStep: PlannedStep = {
+      step_index: 1,
+      agent_id: 'CS-01',
+      skill_id: 'skill.care.escalate_to_human',
+      adapter_target: 'Orchestrator.HandoffBus',
+      input_parameters: {
+        tenant_id: TENANT,
+        session_id: 'thread-care-1',
+        conversation_id: 'conv-care-1',
+        customer_id: 'cust-care-1',
+        escalation_reason: 'billing dispute',
+        summary_context: 'Customer requests human operator',
+      },
+      required_authority: 'AUTH-3',
+      mutating: true,
+      price_bearing: false,
+      idempotent: true,
+      timeout_ms: 1000,
+    };
+
+    const memoryWorkflow = new MemoryWorkflowEngine();
+    const dispatch = vi.fn(async (actionDraft?: ActionDraft) => {
+      // Simulate CareHandoffRepository.enqueue:
+      // atomically parks task in awaiting_human with state_payload.resume_event='human.handoff.evidence',
+      // clears lease, and settles reservation in the atomic transaction
+      const task = await memoryWorkflow.getTask(TENANT, actionDraft!.run_id);
+      if (task) {
+        await memoryWorkflow.transitionTask(
+          TENANT,
+          actionDraft!.run_id,
+          'awaiting_human',
+          'Enqueued in CareHandoffRepository',
+        );
+        await memoryWorkflow.queueHandoffEvidence({
+          tenant_id: TENANT,
+          run_id: actionDraft!.run_id,
+          step_index: careStep.step_index,
+          effect_key: actionDraft!.effect_key,
+          evidence_payload: {
+            evidence_card: 'EV_HUMAN_HANDOFF',
+            tenant_id: TENANT,
+            run_id: actionDraft!.run_id,
+            customer_id: 'cust-care-1',
+            session_id: 'thread-care-1',
+            conversation_id: 'conv-care-1',
+            effect_key: actionDraft!.effect_key,
+            receipt: handoffReceipt,
+            handoff_receipt: handoffReceipt,
+            action: actionDraft,
+            replayed: false,
+          },
+        });
+      }
+      await effectGuard.resolve({
+        tenant_id: TENANT,
+        effect_key: actionDraft!.effect_key,
+        status: 'SUCCEEDED',
+        receipt: handoffReceipt,
+      });
+      return handoffReceipt;
+    });
+
+    const { orchestrator, workflow } = harness({
+      steps: [careStep],
+      agents: ['CS-01'],
+      effectGuard,
+      evidenceLogger,
+      workflowEngine: memoryWorkflow,
+      dispatch,
+    });
+
+    const transitionSpy = vi.spyOn(memoryWorkflow, 'transitionTask');
+    let postEnqueueProgressCalls = 0;
+    const originalUpdateProgress = memoryWorkflow.updateTaskProgress.bind(memoryWorkflow);
+    const updateProgressSpy = vi.spyOn(memoryWorkflow, 'updateTaskProgress').mockImplementation(
+      async (tenantId, runId, stepIndex, statePayload) => {
+        if (dispatch.mock.calls.some((call) => call[0]?.run_id === runId)) {
+          postEnqueueProgressCalls += 1;
+        }
+        return originalUpdateProgress(tenantId, runId, stepIndex, statePayload);
+      }
+    );
+    const resolveSpy = vi.spyOn(effectGuard, 'resolve');
+
+    const key = computeEffectKey({
+      tenant_id: TENANT,
+      skill_id: 'skill.care.escalate_to_human',
+      step_index: 1,
+      action_revision: 0,
+      request_id: SIGNAL_ID,
+    });
+
+    // 1. Initial processSignal: CareHandoff enqueue atomically leaves awaiting_human with resume_event='human.handoff.evidence'
+    const result = await orchestrator.processSignal(signal({
+      subject: { session_id: 'thread-care-1', channel_type: 'web' },
+    }));
+
+    // Must return awaiting_human, NOT waiting, and must not dispatch evidence or advance progress
+    expect(result.lifecycle_state).toBe('awaiting_human');
+    expect(result.evidence).toBeUndefined();
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(evidenceLogger.createImmutableRecord).not.toHaveBeenCalled();
+    expect(evidenceLogger.logAgentRun).not.toHaveBeenCalled();
+
+    // The task must remain in awaiting_human with persisted human.handoff.evidence repair event
+    const taskState = await workflow.getTask(TENANT, result.run_id);
+    expect(taskState?.state).toBe('awaiting_human');
+    const persistedResumeEvent = (taskState?.state_payload as Record<string, unknown> | undefined)?.['resume_event'] as {
+      tenant_id: string;
+      run_id: string;
+      event_type: 'human.handoff.evidence';
+      evidence_payload: Record<string, unknown>;
+      step_index: number;
+      effect_key: string;
+    } | undefined;
+    expect(persistedResumeEvent).toBeDefined();
+    expect(persistedResumeEvent?.event_type).toBe('human.handoff.evidence');
+    expect(persistedResumeEvent?.tenant_id).toBe(TENANT);
+    expect(persistedResumeEvent?.run_id).toBe(result.run_id);
+    expect(persistedResumeEvent?.effect_key).toBe(key);
+    expect(persistedResumeEvent?.step_index).toBe(careStep.step_index);
+    const waitingTransitions = transitionSpy.mock.calls.filter((call) => call[2] === 'waiting');
+    expect(waitingTransitions).toHaveLength(0);
+
+    // Pre-dispatch checkpoint writes legitimately record task progress before dispatch
+    const preDispatchCalls = updateProgressSpy.mock.calls.filter((call) => call[1] === result.run_id);
+    expect(preDispatchCalls.length).toBeGreaterThan(0);
+    for (const call of preDispatchCalls) {
+      expect(call[2]).toBe(careStep.step_index);
+    }
+    const checkpointWritesWithAction = preDispatchCalls.filter(
+      (call) => (call[3] as Record<string, unknown> | undefined)?.['pending_action'] !== undefined
+    );
+    expect(checkpointWritesWithAction.length).toBeGreaterThan(0);
+
+    // Normal progress update (post-enqueue), second-settlement, and outcome watch must NOT have been called
+    expect(postEnqueueProgressCalls).toBe(0);
+    const advancingStepCalls = updateProgressSpy.mock.calls.filter((call) => call[2] > careStep.step_index);
+    expect(advancingStepCalls).toHaveLength(0);
+    // effectGuard.resolve was called once inside dispatch (simulating atomic enqueue), never second-settled by orchestrator
+    expect(resolveSpy).toHaveBeenCalledTimes(1);
+    expect(evidenceLogger.initializeOutcomeWatch).not.toHaveBeenCalled();
+    expect(backing.listEvidence(TENANT, result.run_id)).toHaveLength(0);
+
+    // 2. First resumeTask with the persisted repair event fails while evidence store is down and leaves the event queued
+    await expect(orchestrator.resumeTask(result.run_id, persistedResumeEvent!)).rejects.toThrow(
+      'evidence store unavailable',
+    );
+    expect(evidenceLogger.findImmutableRecord).toHaveBeenCalledWith({
+      tenant_id: TENANT,
+      run_id: result.run_id,
+      effect_key: key,
+      step_index: careStep.step_index,
+    });
+    expect(evidenceLogger.createImmutableRecord).toHaveBeenCalledTimes(1);
+
+    const taskAfterFailedRepair = await workflow.getTask(TENANT, result.run_id);
+    expect(taskAfterFailedRepair?.state).toBe('awaiting_human');
+    expect(
+      (taskAfterFailedRepair?.state_payload as Record<string, unknown> | undefined)?.['resume_event'],
+    ).toEqual(persistedResumeEvent);
+    expect(backing.listEvidence(TENANT, result.run_id)).toHaveLength(0);
+    expect(backing.listAgentRuns(TENANT, result.run_id)).toHaveLength(0);
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(resolveSpy).toHaveBeenCalledTimes(1);
+
+    // 3. Second resumeTask with the same event uses evidence read/replay, appends one EV_HUMAN_HANDOFF and audit/run log,
+    // clears only the repair event while keeping awaiting_human, and never second-settles/resends
+    const replayResult = await orchestrator.resumeTask(result.run_id, persistedResumeEvent!);
+
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(replayResult.lifecycle_state).toBe('awaiting_human');
+    expect(replayResult.evidence).toBeDefined();
+    expect(evidenceLogger.findImmutableRecord).toHaveBeenCalledTimes(2);
+
+    // Exactly one immutable evidence record and one agent run log are appended
+    const evidenceList = backing.listEvidence(TENANT, replayResult.run_id);
+    expect(evidenceList).toHaveLength(1);
+    const ev = evidenceList[0]!;
+    expect(ev.tenant_id).toBe(TENANT);
+    expect(ev.run_id).toBe(replayResult.run_id);
+    expect(ev.effect_key).toBe(key);
+
+    const payload = JSON.parse(ev.raw_payload);
+    expect(payload).toMatchObject({
+      evidence_card: 'EV_HUMAN_HANDOFF',
+      customer_id: 'cust-care-1',
+      session_id: 'thread-care-1',
+      conversation_id: 'conv-care-1',
+      effect_key: key,
+      tenant_id: TENANT,
+      run_id: replayResult.run_id,
+      receipt: handoffReceipt,
+      handoff_receipt: handoffReceipt,
+    });
+
+    const runLogs = backing.listAgentRuns(TENANT, replayResult.run_id);
+    expect(runLogs).toHaveLength(1);
+    expect(runLogs[0]?.execution_status).toBe('success');
+    expect(runLogs[0]?.skill).toBe('skill.care.escalate_to_human');
+
+    const taskAfterRepair = await workflow.getTask(TENANT, result.run_id);
+    expect(taskAfterRepair?.state).toBe('awaiting_human');
+    expect(
+      (taskAfterRepair?.state_payload as Record<string, unknown> | undefined)?.['resume_event'],
+    ).toBeUndefined();
+    expect(
+      (taskAfterRepair?.state_payload as Record<string, unknown> | undefined)?.['pending_action'],
+    ).toBeDefined();
+
+    const settled = effectGuard.peek(TENANT, key);
+    expect(settled?.status).toBe('SUCCEEDED');
+    expect(settled?.receipt).toEqual(handoffReceipt);
+
+    // Post-enqueue progress, park, second-settle and outcome watch remain absent across repair
+    expect(postEnqueueProgressCalls).toBe(0);
+    expect(updateProgressSpy.mock.calls.filter((call) => call[2] > careStep.step_index)).toHaveLength(0);
+    expect(resolveSpy).toHaveBeenCalledTimes(1);
+    expect(evidenceLogger.initializeOutcomeWatch).not.toHaveBeenCalled();
+    // 4. Re-queue the same persisted repair after evidence exists; a duplicate log is accepted only by its canonical code.
+    const taskForDuplicateRepair = await workflow.getTask(TENANT, result.run_id);
+    await workflow.queueHandoffEvidence({
+      tenant_id: TENANT,
+      run_id: result.run_id,
+      expected_task_version: taskForDuplicateRepair!.task_version,
+      evidence_payload: persistedResumeEvent!.evidence_payload!,
+      step_index: careStep.step_index,
+      effect_key: key,
+    });
+    const queuedDuplicate = await workflow.getTask(TENANT, result.run_id);
+    const duplicateEvent = (queuedDuplicate?.state_payload as Record<string, unknown>)?.['resume_event'] as typeof persistedResumeEvent;
+    evidenceLogger.logAgentRun = vi.fn(async () => {
+      throw new Error('AGENT_RUN_LOG_APPENDED: step already has its agent_run_logs row');
+    });
+    const duplicateRepair = await orchestrator.resumeTask(result.run_id, duplicateEvent!);
+    expect(duplicateRepair.lifecycle_state).toBe('awaiting_human');
+    expect((await workflow.getTask(TENANT, result.run_id))?.state_payload).not.toHaveProperty('resume_event');
+    expect(backing.listEvidence(TENANT, result.run_id)).toHaveLength(1);
+  });
 });

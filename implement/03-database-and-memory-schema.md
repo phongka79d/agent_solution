@@ -5,14 +5,14 @@
 > Every SQL, JSON, TypeScript, and shell block is a **target snippet**, not a file that currently exists.
 
 
-## 1. PostgreSQL DDL Schema (28 Canonical Entities + 1 Child Entity + 3 Audit Tables + 4 Runtime Tables + 2 Views)
+## 1. PostgreSQL DDL Schema (28 Canonical Entities + 2 Child Entities + 3 Audit Tables + 4 Runtime Tables + 2 Views)
 
 The data layer implements the 28 canonical entities defined in Section 14 of the SRS across 4 functional domains, plus the child, runtime, and projection objects consumed by the Core Engine:
 
 | Object Class | Count | Where |
 |---|---|---|
 | Canonical entities (SRS §14, Entities 1 - 28) | 28 | §1 DDL — DOMAIN 1 - DOMAIN 4 |
-| Child entity (`conversation_messages`, Entity 11.1) | 1 | §1 DDL — DOMAIN 3 |
+| Child entities (`conversation_messages`, Entity 11.1; `service_case_events`, Entity 18.1) | 2 | §1 DDL — DOMAIN 3 |
 | Audit tables (`audit_records`, `evidence_records`, `agent_run_logs`) | 3 | §1 DDL — DOMAIN 5 |
 | Runtime tables (platform_durable_tasks, pending_outcome_attributions, effect_reservations, care_handoffs) | 4 | §1 DDL — DOMAIN 5 |
 | SCR-003 queue view (`approval_queue`, over the single canonical `approvals` table) | 1 view | §1 DDL — DOMAIN 5 |
@@ -914,7 +914,7 @@ CREATE TABLE care_handoffs (
     tenant_id UUID NOT NULL,
     run_id VARCHAR(64) NOT NULL,
     step_index INT NOT NULL CHECK (step_index > 0),
-    effect_key CHAR(64) NOT NULL,
+    effect_key VARCHAR(128) NOT NULL CHECK (effect_key ~ '^[0-9a-f]{64}$'),
     request_fingerprint CHAR(64) NOT NULL,
     session_id VARCHAR(128) NOT NULL,
     conversation_id UUID NOT NULL,
@@ -1112,7 +1112,7 @@ The DDL in §1 declares the entity graph with single-column `REFERENCES` for rea
 
 ## 2. Row-Level Security (RLS) Policy Implementation
 
-To satisfy NFR-006 (Zero Data Bleeding), Row-Level Security is strictly enabled and forced across every table in the agentos schema — the 28 canonical tables, the child table conversation_messages, and the DOMAIN 5 audit/runtime tables (audit_records, evidence_records, agent_run_logs, platform_durable_tasks, pending_outcome_attributions, care_handoffs). The two views (customer_360_profiles, approval_queue) are not tables and therefore carry no policy of their own; both are declared WITH (security_invoker = true) so the policies of their base tables are evaluated against the calling role. Queries that omit a valid tenant context return 0 rows (default deny) or throw an error.
+To satisfy NFR-006 (Zero Data Bleeding), Row-Level Security is strictly enabled and forced across every table in the agentos schema — the 28 canonical tables, the child tables (`conversation_messages`, `service_case_events`), and the DOMAIN 5 audit/runtime tables (`audit_records`, `evidence_records`, `agent_run_logs`, `platform_durable_tasks`, `pending_outcome_attributions`, `effect_reservations`, `care_handoffs`). The two views (`customer_360_profiles`, `approval_queue`) are not tables and therefore carry no policy of their own; both are declared WITH (security_invoker = true) so the policies of their base tables are evaluated against the calling role. Queries that omit a valid tenant context return 0 rows (default deny) or throw an error.
 
 **Predicate contract.** The tenant context is a comma-separated list of UUIDs stored in `app.current_tenant_id`, parsed with `string_to_array(current_setting('app.current_tenant_id', true), ',')::uuid[]`. The explicit `::uuid[]` cast is what keeps the predicate type-correct: `tenant_id` is `UUID`, the parsed value is `UUID[]`, so PostgreSQL resolves `uuid = ANY(uuid[])` and never has to resolve `uuid = text` (which has no operator and would raise `operator does not exist: uuid = text`). An unset setting yields `NULL`, and an empty setting yields the empty array — both make `= ANY(...)` evaluate to NULL/FALSE, so the failure mode is deny, never allow.
 
@@ -1471,6 +1471,7 @@ The DDL above is the target persistence contract. The canonical ordinal is the S
 | Offer | `offers` | `(tenant_id,id)` | policy-bound, floor-provenance-bearing, quota audited | DECISION / `03` |
 | Recommendation | `recommendations` | `(tenant_id,id)` | reason/evidence required; no inference promoted to FACT | HYPOTHESIS / `03` |
 | Service Case | `service_cases` | `(tenant_id,id)` | seven stored states plus `REOPEN` action | DECISION / `03` |
+| Service Case Event | `service_case_events` | `(tenant_id,id)` | append-only case lifecycle receipts; `(tenant_id,effect_key)` deduplication | DECISION / `03` |
 | Agent | `agents` | `(tenant_id,id)` | only AUTH-0..AUTH-3 assigned grants | DECISION / `03` |
 | Skill | `skills` | `(tenant_id,id)` | exactly 23 platform registry rows; required AUTH-4 routes approval | DECISION / `03` + `05` |
 | Workflow | `workflows` | `(tenant_id,id)` | durable versioned definition and state | DECISION / `03` + `04` |
@@ -1548,7 +1549,7 @@ Migration order is extension/schema → tables/keys → indexes → RLS enable/f
 
 ### 9.1 Canonical persistence objects and projections `[BLUEPRINT][SRS §14, §17]`
 
-The 28 canonical SRS entities remain `customers` through `learnings` in §1. DOMAIN 5 objects are additional runtime/audit projections, not replacement entities. Entity 26 is `evidences` (grounding taxonomy); `evidence_records` is the separate immutable per-run cryptographic payload chain keyed by `evidence_id`. Entity 27 is `outcomes`; `pending_outcome_attributions` is its observation watcher. Entity 28 is `learnings`; there is no `learning_records` table or alias.
+The 28 canonical SRS entities remain `customers` through `learnings` in §1. DOMAIN 3 child entities include `conversation_messages` (Entity 11.1) and `service_case_events` (Entity 18.1, append-only durable case mutation receipts). DOMAIN 5 objects are additional runtime/audit projections, not replacement entities. Entity 26 is `evidences` (grounding taxonomy); `evidence_records` is the separate immutable per-run cryptographic payload chain keyed by `evidence_id`. Entity 27 is `outcomes`; `pending_outcome_attributions` is its observation watcher. Entity 28 is `learnings`; there is no `learning_records` table or alias.
 
 The same rule applies to `agent_run_logs` versus `audit_records`: the former is the per-step six-status operational run log; the latter is the canonical 18-field compliance chain. A route, UI, skill, or test MUST identify which object it reads or writes; no alias may create a second writer or bypass tenant/RLS/append-only rules.
 
@@ -1560,3 +1561,5 @@ Wire projections are explicit: stored conversation `open`/`paused_takeover`/`clo
 ## 10. Verification Scenarios `[BLUEPRINT][SRS §14, §19 / NFR-003, NFR-006]`
 
 Future verification MUST cover cross-tenant composite-FK rejection; RLS context reset; memory-layer separation and expiry; ten-stage timeline reconstruction with late/replayed events; refusal to promote HYPOTHESIS to FACT; every legal/illegal Service Case transition including REOPEN; migration ordering and partial recovery; and uniqueness of tenant/effect/idempotency keys. These scenarios are `[NOT-RUNTIME-EVIDENCE]` until executed against the future runtime.
+
+Gate P1 remains open until live PostgreSQL/RLS migrations, DB-backed Care pilots, Docker services, approved knowledge corpus, and real System-of-Record (SoR) evidence exist. Offline test harnesses verify local code paths only and do not close the gate.

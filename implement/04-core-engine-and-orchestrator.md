@@ -1652,6 +1652,7 @@ The Task Engine manages durable tasks that survive process restarts, power loss,
 | `waiting` | `event.received` | `running` | Correlation and tenant binding are verified; an event-bearing row is claimed with an optimistic version and worker lease, then the checkpoint is re-read before resume. |
 | `waiting` | `human.reconcile` | `waiting` / `running` | R18 queues one durable event. `ESCALATE_MANUALLY` consumes it and remains `waiting`; a provider-confirmed resolution may resume only after authoritative provider proof. |
 | `waiting` | `timer.expired` | `running` | Scheduled delay reached; the worker rechecks the complete checkpoint and lease fence before execution. |
+| `waiting` | `reconcile.completed` | `running` | Automated or background provider reconciliation verified conclusive outcome (confirmed succeeded or absent); worker rechecks complete checkpoint and lease fence before resuming running plan execution. |
 | `awaiting_human` | `human.approval` / `human.modify` | `running` | The API queues the event. The worker rechecks the reviewed digest, policy, takeover and floor, then claims approval and task transactionally; the old digest authorizes nothing further. |
 | `awaiting_human` | `human.pause` | `awaiting_human` | Reviewed digest and operator checked; set `is_paused=TRUE`, retain PENDING and its action binding; audit without dispatch. Repeated PAUSE conflicts; a later explicit terminal decision may resolve it. |
 | `awaiting_human`| `human.reject` / `human.cancel` | `stopped` | Terminal. The approval row is decided in the same transaction; the reason is written to the audit trail. |
@@ -1828,13 +1829,22 @@ NFR-004 requires durable workflows with finite exponential backoff, timeouts and
                    continue with the next step (never re-dispatch this effect).
      • FAILED    → re-dispatch once under the SAME effect_key. If the action is AUTH-4, reuse the
                    existing approvals row bound to that key; never insert a second approval.
+     • TRANSITION → the resumption transitions `waiting` -> `reconcile.completed` -> `running`
+                   under the worker lease fence, rechecks the complete checkpoint, and re-enters the execution loop.
 4. ESCALATE  when an indeterminate reservation reaches `expires_at` (default 72 h, = the
              idempotency window): mark the reservation EXPIRED, park the task in
              `awaiting_human`, and raise an SCR-003 exception item so a human resolves the
              provider state. The run is never silently abandoned.
-5. RETRY  a task in `queued`/`running` whose lease expired is reclaimed by the stale-lease
-          requeue (§4.2 statement 5); `retry_count` is incremented only on a `RETRYABLE` failure,
-          and the task fails terminally at `max_retries`.
+5. CRASH RECOVERY & LEASE RECLAIM: A task in `queued`/`running` whose worker process crashed or whose
+   lease expired is reclaimed by the stale-lease query (§4.2 statement 5). The reclaiming worker
+   inspects the durable task state:
+     • If a `resume_event` is present, it is consumed first under the lease fence (`resumeTask`).
+     • If an unconfirmed mutating step was in flight (`pending_action.mutating === true`), the worker
+       transitions the task to `waiting` with `EFFECT_UNKNOWN: reclaimed mutating action requires provider reconciliation`,
+       preserving the complete checkpoint payload for provider reconciliation (§4.4) rather than blindly re-dispatching.
+     • If no unconfirmed mutating action was in flight, the task runs inside the durable recovery envelope:
+       failures book `RETRYABLE`/`FATAL` and spend retry budget, stage replay resumes from `CONTEXT`
+       (avoiding duplicate `SIGNAL` entry), and exhausted retries fail terminally.
 ```
 
 **Backoff.** Delay is `initial_interval_ms × backoff_multiplier^(retry_count - 1)` with full jitter, capped by the step's `timeout_ms` budget for the whole attempt sequence. The schedule lives in the durable task row, so a crashed worker resumes the wait instead of restarting it.
@@ -2287,3 +2297,5 @@ Recovery decisions are explicit: a succeeded reservation advances the cursor wit
 Trace propagation carries `tenant_id`, `run_id`, `correlation_id`, and `effect_key` through all stages. Evidence stores canonical JSON digest, predecessor hash, provider receipt or truthful failure, and source references. Audit and evidence are separate: audit records the governance decision; evidence records the immutable payload/result. Outcome attribution requires a source event/SoR reference and never fabricates revenue, delivery, or learning. Learning writes are versioned and restricted to validated outcome classes.
 
 Future scenarios MUST cover: a complete eleven-stage run; missing context; unknown identity; missing consent; AUTH-4 pause/resume; AUTH-5 deny; provider timeout with reconciliation; duplicate retry; takeover suppression; absent floor provenance; and HYPOTHESIS separation. No scenario is runtime evidence until executed and attached to a gate bundle.
+
+Gate P1 remains open until live PostgreSQL/RLS, DB-backed Care pilots, Docker services, approved knowledge corpus, and real System-of-Record (SoR) evidence exist. Offline test harnesses verify local code paths only and do not close the gate.

@@ -294,6 +294,491 @@ describe('ServiceCaseRepository', () => {
     expect(update?.params[13]).toBe(true);
   });
 
+  it('reopens a CLOSED case to IN_PROGRESS, resetting SLA window and incrementing reopen count', async () => {
+    const closedCase = caseRow({
+      status: 'CLOSED',
+      case_version: 12,
+      evidence_refs: [EVIDENCE_ID],
+      sla_target_hours: 4,
+    });
+    const reopenedCase = caseRow({
+      status: 'IN_PROGRESS',
+      case_version: 13,
+      evidence_refs: [EVIDENCE_ID],
+      sla_target_hours: 4,
+    });
+    const harness = harnessFor({
+      LOCK_EFFECT: { rows: emptyEventRows },
+      SELECT_EVENT: { rows: emptyEventRows },
+      SELECT_CONVERSATION: { rows: boundConversation },
+      SELECT_CASE: { rows: [closedCase] },
+      UPDATE_CASE: { rows: [reopenedCase] },
+      INSERT_EVENT: { rows: emptyEventRows },
+    });
+
+    const result = await harness.repository.manage(input({
+      action_type: 'REOPEN',
+      case_id: CASE_ID,
+      expected_case_version: 12,
+      notes: 'Customer reported defect recurred after case closure.',
+    }));
+
+    expect(result).toMatchObject({
+      case_id: CASE_ID,
+      status: 'IN_PROGRESS',
+      case_version: 13,
+      evidence_refs: [EVIDENCE_ID],
+    });
+
+    const update = harness.client.statements.find(({ kind }) => kind === 'UPDATE_CASE');
+    expect(update?.params[3]).toBe('IN_PROGRESS');
+    expect(update?.params[8]).toBe(JSON.stringify([EVIDENCE_ID]));
+    expect(update?.params[10]).toBe(4);
+    expect(update?.params[11]).toBe(true);
+    expect(update?.params[12]).toBe('reopened');
+    expect(update?.params[13]).toBe(true);
+
+    const event = harness.client.statements.find(({ kind }) => kind === 'INSERT_EVENT');
+    expect(event?.params[4]).toBe('REOPEN');
+    expect(event?.params[6]).toBe(13);
+    expect(event?.params[7]).toBe('CLOSED');
+    expect(event?.params[8]).toBe('IN_PROGRESS');
+    expect(event?.params[9]).toBe(JSON.stringify({ notes: 'Customer reported defect recurred after case closure.' }));
+  });
+
+  it('replays stored receipt on identical REOPEN effect key without re-evaluating or writing', async () => {
+    const receipt: ManagedServiceCase = {
+      case_id: CASE_ID,
+      customer_id: CUSTOMER_ID,
+      intent: 'billing',
+      priority: 'P2',
+      status: 'IN_PROGRESS',
+      conversation_id: CONVERSATION_ID,
+      related_order_id: null,
+      evidence_refs: [EVIDENCE_ID],
+      assigned_owner: 'CS-01',
+      sla_target_hours: 4,
+      updated_at: NOW.toISOString(),
+      case_version: 13,
+    };
+    const harness = harnessFor({
+      LOCK_EFFECT: { rows: emptyEventRows },
+      SELECT_EVENT: { rows: [{ request_fingerprint: FINGERPRINT, result_payload: receipt }] },
+    });
+
+    const result = await harness.repository.manage(input({
+      action_type: 'REOPEN',
+      case_id: CASE_ID,
+      expected_case_version: 12,
+      notes: 'Customer reported defect recurred after case closure.',
+    }));
+
+    expect(result).toEqual(receipt);
+    expect(harness.client.statements.map(({ kind }) => kind)).toEqual(['LOCK_EFFECT', 'SELECT_EVENT']);
+  });
+  it('rejects REOPEN from CLOSED when expected_case_version conflicts with stored version', async () => {
+    const harness = harnessFor({
+      LOCK_EFFECT: { rows: emptyEventRows },
+      SELECT_EVENT: { rows: emptyEventRows },
+      SELECT_CONVERSATION: { rows: boundConversation },
+      SELECT_CASE: { rows: [caseRow({ status: 'CLOSED', case_version: 12 })] },
+    });
+
+    await expect(harness.repository.manage(input({
+      action_type: 'REOPEN',
+      case_id: CASE_ID,
+      expected_case_version: 11,
+      notes: 'Customer reported defect recurred after case closure.',
+    }))).rejects.toThrow(/CASE_VERSION_CONFLICT/);
+
+    expect(harness.client.statements.map(({ kind }) => kind)).not.toContain('UPDATE_CASE');
+    expect(harness.client.statements.map(({ kind }) => kind)).not.toContain('INSERT_EVENT');
+  });
+
+  it('rejects REOPEN without reason notes', async () => {
+    const harness = harnessFor({
+      LOCK_EFFECT: { rows: emptyEventRows },
+      SELECT_EVENT: { rows: emptyEventRows },
+      SELECT_CONVERSATION: { rows: boundConversation },
+      SELECT_CASE: { rows: [caseRow({ status: 'CLOSED', case_version: 12 })] },
+    });
+
+    await expect(harness.repository.manage(input({
+      action_type: 'REOPEN',
+      case_id: CASE_ID,
+      expected_case_version: 12,
+      notes: '',
+    }))).rejects.toThrow(/CASE_REOPEN_REASON_REQUIRED/);
+
+    expect(harness.client.statements.map(({ kind }) => kind)).not.toContain('UPDATE_CASE');
+    expect(harness.client.statements.map(({ kind }) => kind)).not.toContain('INSERT_EVENT');
+  });
+
+  it('rejects REOPEN from states other than RESOLVED or CLOSED', async () => {
+    const harness = harnessFor({
+      LOCK_EFFECT: { rows: emptyEventRows },
+      SELECT_EVENT: { rows: emptyEventRows },
+      SELECT_CONVERSATION: { rows: boundConversation },
+      SELECT_CASE: { rows: [caseRow({ status: 'IN_PROGRESS', case_version: 5 })] },
+    });
+
+    await expect(harness.repository.manage(input({
+      action_type: 'REOPEN',
+      case_id: CASE_ID,
+      expected_case_version: 5,
+      notes: 'Attempting invalid reopen.',
+    }))).rejects.toThrow(/INVALID_FSM_TRANSITION: REOPEN is not allowed from IN_PROGRESS/);
+
+    expect(harness.client.statements.map(({ kind }) => kind)).not.toContain('UPDATE_CASE');
+    expect(harness.client.statements.map(({ kind }) => kind)).not.toContain('INSERT_EVENT');
+  });
+
+  it('assigns an agent owner and transitions CLASSIFIED to ASSIGNED under version fencing', async () => {
+    const classifiedCase = caseRow({ status: 'CLASSIFIED', case_version: 2, assigned_agent: 'CS-01' });
+    const assignedCase = caseRow({
+      status: 'ASSIGNED',
+      case_version: 3,
+      assigned_agent: 'CS-02',
+      assigned_human_id: null,
+    });
+    const harness = harnessFor({
+      LOCK_EFFECT: { rows: emptyEventRows },
+      SELECT_EVENT: { rows: emptyEventRows },
+      SELECT_CONVERSATION: { rows: boundConversation },
+      SELECT_CASE: { rows: [classifiedCase] },
+      UPDATE_CASE: { rows: [assignedCase] },
+      INSERT_EVENT: { rows: emptyEventRows },
+    });
+
+    const result = await harness.repository.manage(input({
+      action_type: 'ASSIGN',
+      case_id: CASE_ID,
+      expected_case_version: 2,
+      assigned_owner: 'CS-02',
+    }));
+
+    expect(result).toMatchObject({
+      case_id: CASE_ID,
+      status: 'ASSIGNED',
+      case_version: 3,
+      assigned_owner: 'CS-02',
+    });
+
+    const update = harness.client.statements.find(({ kind }) => kind === 'UPDATE_CASE');
+    expect(update?.params[3]).toBe('ASSIGNED');
+    expect(update?.params[5]).toBe('CS-02');
+    expect(update?.params[6]).toBeNull();
+
+    const event = harness.client.statements.find(({ kind }) => kind === 'INSERT_EVENT');
+    expect(event?.params[4]).toBe('ASSIGN');
+    expect(event?.params[6]).toBe(3);
+    expect(event?.params[7]).toBe('CLASSIFIED');
+    expect(event?.params[8]).toBe('ASSIGNED');
+  });
+
+  it('assigns a human operator to an IN_PROGRESS case without altering case state', async () => {
+    const inProgressCase = caseRow({ status: 'IN_PROGRESS', case_version: 4, assigned_agent: 'CS-01' });
+    const assignedCase = caseRow({
+      status: 'IN_PROGRESS',
+      case_version: 5,
+      assigned_agent: 'CS-01',
+      assigned_human_id: 'operator-42',
+    });
+    const harness = harnessFor({
+      LOCK_EFFECT: { rows: emptyEventRows },
+      SELECT_EVENT: { rows: emptyEventRows },
+      SELECT_CONVERSATION: { rows: boundConversation },
+      SELECT_CASE: { rows: [inProgressCase] },
+      UPDATE_CASE: { rows: [assignedCase] },
+      INSERT_EVENT: { rows: emptyEventRows },
+    });
+
+    const result = await harness.repository.manage(input({
+      action_type: 'ASSIGN',
+      case_id: CASE_ID,
+      expected_case_version: 4,
+      assigned_owner: 'operator-42',
+    }));
+
+    expect(result).toMatchObject({
+      case_id: CASE_ID,
+      status: 'IN_PROGRESS',
+      case_version: 5,
+      assigned_owner: 'operator-42',
+    });
+
+    const update = harness.client.statements.find(({ kind }) => kind === 'UPDATE_CASE');
+    expect(update?.params[3]).toBe('IN_PROGRESS');
+    expect(update?.params[5]).toBe('CS-01');
+    expect(update?.params[6]).toBe('operator-42');
+  });
+
+  it('rejects ASSIGN when expected_case_version conflicts with stored version', async () => {
+    const harness = harnessFor({
+      LOCK_EFFECT: { rows: emptyEventRows },
+      SELECT_EVENT: { rows: emptyEventRows },
+      SELECT_CONVERSATION: { rows: boundConversation },
+      SELECT_CASE: { rows: [caseRow({ status: 'CLASSIFIED', case_version: 3 })] },
+    });
+
+    await expect(harness.repository.manage(input({
+      action_type: 'ASSIGN',
+      case_id: CASE_ID,
+      expected_case_version: 2,
+      assigned_owner: 'CS-02',
+    }))).rejects.toThrow(/CASE_VERSION_CONFLICT/);
+
+    expect(harness.client.statements.map(({ kind }) => kind)).not.toContain('UPDATE_CASE');
+  });
+
+  it('rejects ASSIGN when assigned_owner is omitted', async () => {
+    const harness = harnessFor({
+      LOCK_EFFECT: { rows: emptyEventRows },
+      SELECT_EVENT: { rows: emptyEventRows },
+      SELECT_CONVERSATION: { rows: boundConversation },
+      SELECT_CASE: { rows: [caseRow({ status: 'CLASSIFIED', case_version: 2 })] },
+    });
+
+    await expect(harness.repository.manage(input({
+      action_type: 'ASSIGN',
+      case_id: CASE_ID,
+      expected_case_version: 2,
+    }))).rejects.toThrow(/CASE_OWNER_REQUIRED/);
+
+    expect(harness.client.statements.map(({ kind }) => kind)).not.toContain('UPDATE_CASE');
+  });
+
+  it('rejects ASSIGN when case is in an invalid state such as NEW or CLOSED', async () => {
+    const harness = harnessFor({
+      LOCK_EFFECT: { rows: emptyEventRows },
+      SELECT_EVENT: { rows: emptyEventRows },
+      SELECT_CONVERSATION: { rows: boundConversation },
+      SELECT_CASE: { rows: [caseRow({ status: 'NEW', case_version: 1 })] },
+    });
+
+    await expect(harness.repository.manage(input({
+      action_type: 'ASSIGN',
+      case_id: CASE_ID,
+      expected_case_version: 1,
+      assigned_owner: 'CS-02',
+    }))).rejects.toThrow(/INVALID_FSM_TRANSITION: ASSIGN is not allowed from NEW/);
+
+    expect(harness.client.statements.map(({ kind }) => kind)).not.toContain('UPDATE_CASE');
+  });
+
+  it('assigns an agent owner and preserves existing evidence refs', async () => {
+    const EVIDENCE_2 = '22222222-0000-4000-8000-000000000002';
+    const classifiedCase = caseRow({
+      status: 'CLASSIFIED',
+      case_version: 2,
+      assigned_agent: 'CS-01',
+      evidence_refs: [EVIDENCE_ID],
+    });
+    const assignedCase = caseRow({
+      status: 'ASSIGNED',
+      case_version: 3,
+      assigned_agent: 'CS-02',
+      assigned_human_id: null,
+      evidence_refs: [EVIDENCE_ID, EVIDENCE_2],
+    });
+    const harness = harnessFor({
+      LOCK_EFFECT: { rows: emptyEventRows },
+      SELECT_EVENT: { rows: emptyEventRows },
+      SELECT_CONVERSATION: { rows: boundConversation },
+      SELECT_EVIDENCE: { rows: [{ id: EVIDENCE_2 }] },
+      SELECT_CASE: { rows: [classifiedCase] },
+      UPDATE_CASE: { rows: [assignedCase] },
+      INSERT_EVENT: { rows: emptyEventRows },
+    });
+
+    const result = await harness.repository.manage(input({
+      action_type: 'ASSIGN',
+      case_id: CASE_ID,
+      expected_case_version: 2,
+      assigned_owner: 'CS-02',
+      evidence_refs: [EVIDENCE_2],
+    }));
+
+    expect(result).toMatchObject({
+      case_id: CASE_ID,
+      status: 'ASSIGNED',
+      case_version: 3,
+      assigned_owner: 'CS-02',
+      evidence_refs: [EVIDENCE_ID, EVIDENCE_2],
+    });
+
+    const update = harness.client.statements.find(({ kind }) => kind === 'UPDATE_CASE');
+    expect(update?.params[8]).toBe(JSON.stringify([EVIDENCE_ID, EVIDENCE_2]));
+  });
+
+  it('replays stored receipt on identical ASSIGN effect key without re-evaluating or writing', async () => {
+    const receipt: ManagedServiceCase = {
+      case_id: CASE_ID,
+      customer_id: CUSTOMER_ID,
+      intent: 'billing',
+      priority: 'P2',
+      status: 'ASSIGNED',
+      conversation_id: CONVERSATION_ID,
+      related_order_id: null,
+      evidence_refs: [EVIDENCE_ID],
+      assigned_owner: 'CS-02',
+      sla_target_hours: 4,
+      updated_at: NOW.toISOString(),
+      case_version: 3,
+    };
+    const harness = harnessFor({
+      LOCK_EFFECT: { rows: emptyEventRows },
+      SELECT_EVENT: { rows: [{ request_fingerprint: FINGERPRINT, result_payload: receipt }] },
+    });
+
+    const result = await harness.repository.manage(input({
+      action_type: 'ASSIGN',
+      case_id: CASE_ID,
+      expected_case_version: 2,
+      assigned_owner: 'CS-02',
+    }));
+
+    expect(result).toEqual(receipt);
+    expect(harness.client.statements.map(({ kind }) => kind)).toEqual(['LOCK_EFFECT', 'SELECT_EVENT']);
+  });
+
+  it('closes a RESOLVED case with linked evidence under expected case version', async () => {
+    const resolvedCase = caseRow({
+      status: 'RESOLVED',
+      case_version: 5,
+      evidence_refs: [EVIDENCE_ID],
+      resolution: 'Replacement delivered.',
+    });
+    const closedCase = caseRow({
+      status: 'CLOSED',
+      case_version: 6,
+      evidence_refs: [EVIDENCE_ID],
+      resolution: 'Replacement delivered.',
+    });
+    const harness = harnessFor({
+      LOCK_EFFECT: { rows: emptyEventRows },
+      SELECT_EVENT: { rows: emptyEventRows },
+      SELECT_CONVERSATION: { rows: boundConversation },
+      SELECT_CASE: { rows: [resolvedCase] },
+      UPDATE_CASE: { rows: [closedCase] },
+      INSERT_EVENT: { rows: emptyEventRows },
+    });
+
+    const result = await harness.repository.manage(input({
+      action_type: 'CLOSE',
+      case_id: CASE_ID,
+      expected_case_version: 5,
+    }));
+
+    expect(result).toMatchObject({
+      case_id: CASE_ID,
+      status: 'CLOSED',
+      case_version: 6,
+      evidence_refs: [EVIDENCE_ID],
+    });
+
+    const update = harness.client.statements.find(({ kind }) => kind === 'UPDATE_CASE');
+    expect(update?.params[3]).toBe('CLOSED');
+    expect(update?.params[8]).toBe(JSON.stringify([EVIDENCE_ID]));
+    expect(update?.params[9]).toBe('Replacement delivered.');
+
+    const event = harness.client.statements.find(({ kind }) => kind === 'INSERT_EVENT');
+    expect(event?.params[4]).toBe('CLOSE');
+    expect(event?.params[6]).toBe(6);
+    expect(event?.params[7]).toBe('RESOLVED');
+    expect(event?.params[8]).toBe('CLOSED');
+  });
+
+  it('requires linked evidence before closure and leaves case untouched when none exists', async () => {
+    const resolvedWithoutEvidence = caseRow({
+      status: 'RESOLVED',
+      case_version: 5,
+      evidence_refs: [],
+      evidence_id: null,
+    });
+    const harness = harnessFor({
+      LOCK_EFFECT: { rows: emptyEventRows },
+      SELECT_EVENT: { rows: emptyEventRows },
+      SELECT_CONVERSATION: { rows: boundConversation },
+      SELECT_CASE: { rows: [resolvedWithoutEvidence] },
+    });
+
+    await expect(harness.repository.manage(input({
+      action_type: 'CLOSE',
+      case_id: CASE_ID,
+      expected_case_version: 5,
+    }))).rejects.toThrow(/CASE_EVIDENCE_REQUIRED: resolution or closure requires linked evidence/);
+
+    expect(harness.client.statements.map(({ kind }) => kind)).not.toContain('UPDATE_CASE');
+    expect(harness.client.statements.map(({ kind }) => kind)).not.toContain('INSERT_EVENT');
+  });
+
+  it('rejects CLOSE when expected_case_version is stale', async () => {
+    const harness = harnessFor({
+      LOCK_EFFECT: { rows: emptyEventRows },
+      SELECT_EVENT: { rows: emptyEventRows },
+      SELECT_CONVERSATION: { rows: boundConversation },
+      SELECT_CASE: { rows: [caseRow({ status: 'RESOLVED', case_version: 5, evidence_refs: [EVIDENCE_ID] })] },
+    });
+
+    await expect(harness.repository.manage(input({
+      action_type: 'CLOSE',
+      case_id: CASE_ID,
+      expected_case_version: 4,
+    }))).rejects.toThrow(/CASE_VERSION_CONFLICT/);
+
+    expect(harness.client.statements.map(({ kind }) => kind)).not.toContain('UPDATE_CASE');
+    expect(harness.client.statements.map(({ kind }) => kind)).not.toContain('INSERT_EVENT');
+  });
+
+  it('rejects CLOSE from non-RESOLVED state without updating the case', async () => {
+    const harness = harnessFor({
+      LOCK_EFFECT: { rows: emptyEventRows },
+      SELECT_EVENT: { rows: emptyEventRows },
+      SELECT_CONVERSATION: { rows: boundConversation },
+      SELECT_CASE: { rows: [caseRow({ status: 'IN_PROGRESS', case_version: 4, evidence_refs: [EVIDENCE_ID] })] },
+    });
+
+    await expect(harness.repository.manage(input({
+      action_type: 'CLOSE',
+      case_id: CASE_ID,
+      expected_case_version: 4,
+    }))).rejects.toThrow(/INVALID_FSM_TRANSITION: IN_PROGRESS cannot transition to CLOSED/);
+
+    expect(harness.client.statements.map(({ kind }) => kind)).not.toContain('UPDATE_CASE');
+    expect(harness.client.statements.map(({ kind }) => kind)).not.toContain('INSERT_EVENT');
+  });
+
+  it('replays stored receipt on identical CLOSE effect key without re-evaluating or writing', async () => {
+    const receipt: ManagedServiceCase = {
+      case_id: CASE_ID,
+      customer_id: CUSTOMER_ID,
+      intent: 'billing',
+      priority: 'P2',
+      status: 'CLOSED',
+      conversation_id: CONVERSATION_ID,
+      related_order_id: null,
+      evidence_refs: [EVIDENCE_ID],
+      assigned_owner: 'CS-01',
+      sla_target_hours: 4,
+      updated_at: NOW.toISOString(),
+      case_version: 6,
+    };
+    const harness = harnessFor({
+      LOCK_EFFECT: { rows: emptyEventRows },
+      SELECT_EVENT: { rows: [{ request_fingerprint: FINGERPRINT, result_payload: receipt }] },
+    });
+
+    const result = await harness.repository.manage(input({
+      action_type: 'CLOSE',
+      case_id: CASE_ID,
+      expected_case_version: 5,
+    }));
+
+    expect(result).toEqual(receipt);
+    expect(harness.client.statements.map(({ kind }) => kind)).toEqual(['LOCK_EFFECT', 'SELECT_EVENT']);
+  });
+
   it('requires configured SLA hours for case creation instead of inventing a target', async () => {
     const harness = harnessFor({
       LOCK_EFFECT: { rows: emptyEventRows },
@@ -388,5 +873,62 @@ describe('ServiceCaseRepository', () => {
     expect(harness.client.statements.map(({ kind }) => kind)).toEqual([
       'SET_TIMEOUT', 'LOCK_EFFECT', 'SELECT_EVENT',
     ]);
+  });
+
+  it('reconciles an uncommitted effect when no case_id is supplied without performing a case read', async () => {
+    const harness = harnessFor({
+      SET_TIMEOUT: { rows: emptyEventRows },
+      LOCK_EFFECT: { rows: emptyEventRows },
+      SELECT_EVENT: { rows: emptyEventRows },
+    });
+
+    const createInput = input({ action_type: 'CREATE' });
+    const result = await harness.repository.reconcile(createInput);
+
+    expect(result).toEqual({
+      state: 'NOT_COMMITTED',
+      case_id: null,
+      current_case_version: null,
+      current_status: null,
+    });
+    expect(harness.boundTenants).toEqual([TENANT_ID]);
+    expect(harness.client.statements.map(({ kind }) => kind)).toEqual([
+      'SET_TIMEOUT', 'LOCK_EFFECT', 'SELECT_EVENT',
+    ]);
+    expect(harness.client.statements.map(({ kind }) => kind)).not.toContain('SELECT_CASE');
+    expect(harness.client.statements.map(({ kind }) => kind)).not.toContain('UPDATE_CASE');
+    expect(harness.client.statements.map(({ kind }) => kind)).not.toContain('INSERT_EVENT');
+  });
+
+  it('reconciles a committed CREATE effect by receipt even when case_id was not in the input', async () => {
+    const receipt: ManagedServiceCase = {
+      case_id: CASE_ID,
+      customer_id: CUSTOMER_ID,
+      intent: 'billing',
+      priority: 'P2',
+      status: 'NEW',
+      conversation_id: CONVERSATION_ID,
+      related_order_id: null,
+      evidence_refs: [],
+      assigned_owner: 'CS-01',
+      sla_target_hours: 4,
+      updated_at: NOW.toISOString(),
+      case_version: 1,
+    };
+    const harness = harnessFor({
+      SET_TIMEOUT: { rows: emptyEventRows },
+      LOCK_EFFECT: { rows: emptyEventRows },
+      SELECT_EVENT: { rows: [{ request_fingerprint: FINGERPRINT, result_payload: receipt }] },
+    });
+
+    const createInput = input({ action_type: 'CREATE' });
+    await expect(harness.repository.reconcile(createInput)).resolves.toEqual({
+      state: 'COMMITTED',
+      output: receipt,
+    });
+    expect(harness.client.statements.map(({ kind }) => kind)).toEqual([
+      'SET_TIMEOUT', 'LOCK_EFFECT', 'SELECT_EVENT',
+    ]);
+    expect(harness.client.statements.map(({ kind }) => kind)).not.toContain('SELECT_CASE');
   });
 });

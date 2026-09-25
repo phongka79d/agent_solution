@@ -134,6 +134,7 @@ export interface IEvidenceLogger {
     previous_evidence_hash: string;
     payload: Record<string, unknown>;
   }): Promise<ImmutableEvidenceRecord>;
+  findImmutableRecord?(params: { tenant_id: string; run_id: string; effect_key: string; step_index: number }): Promise<ImmutableEvidenceRecord | null>;
   initializeOutcomeWatch(params: { tenant_id: string; run_id: string; effect_key: string; skill_id: string }): Promise<void>;
   logAgentRun(runLog: AgentRunLogRecord): Promise<void>;
 }

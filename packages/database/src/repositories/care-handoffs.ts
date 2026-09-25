@@ -41,6 +41,9 @@ interface HandoffRow extends QueryResultRow {
   run_id: string;
   step_index: number;
   skill_id: string;
+  session_id?: string;
+  conversation_id?: string;
+  customer_id?: string | null;
   result_payload: unknown;
   execution_receipt: unknown;
 }
@@ -82,6 +85,9 @@ const SELECT_HANDOFF_BY_EFFECT = `SELECT
     run_id,
     step_index,
     'skill.care.escalate_to_human'::text AS skill_id,
+    session_id,
+    conversation_id::text AS conversation_id,
+    customer_id::text AS customer_id,
     result_payload,
     execution_receipt
   FROM agentos.care_handoffs
@@ -210,12 +216,30 @@ function validateEnqueueInput(input: EnqueueCareHandoffInput): void {
   requireFingerprint(input.request_fingerprint, 'request_fingerprint');
 }
 
-function readExisting(row: HandoffRow, input: { readonly request_fingerprint: string; readonly run_id?: string }): CareHandoffEnqueueResult {
+function readExisting(
+  row: HandoffRow,
+  input: {
+    readonly request_fingerprint: string;
+    readonly run_id?: string | undefined;
+    readonly conversation_id?: string | undefined;
+    readonly session_id?: string | undefined;
+    readonly customer_id?: string | null | undefined;
+  },
+): CareHandoffEnqueueResult {
   if (row.request_fingerprint.trim() !== input.request_fingerprint) {
     throw new Error('IDEMPOTENCY_CONFLICT: this handoff effect key was reused for different input.');
   }
   if (input.run_id !== undefined && row.run_id !== input.run_id) {
     throw new Error('HANDOFF_EFFECT_BINDING_MISMATCH: effect key is bound to a different durable run.');
+  }
+  if (row.conversation_id !== undefined && input.conversation_id !== undefined && row.conversation_id !== input.conversation_id) {
+    throw new Error('HANDOFF_SESSION_BINDING_INVALID: conversation_id does not match the stored handoff.');
+  }
+  if (row.session_id !== undefined && input.session_id !== undefined && row.session_id !== input.session_id) {
+    throw new Error('HANDOFF_SESSION_BINDING_INVALID: session_id does not match the stored handoff.');
+  }
+  if (row.customer_id !== undefined && row.customer_id !== null && input.customer_id !== undefined && row.customer_id !== input.customer_id) {
+    throw new Error('HANDOFF_CUSTOMER_BINDING_INVALID: customer_id does not match the stored handoff.');
   }
   const output = parseOutput(row.result_payload);
   const receipt = parseReceipt(row.execution_receipt, output);
@@ -250,7 +274,13 @@ export class CareHandoffRepository {
       );
       const existing = existingResult.rows[0];
       if (existing) {
-        const replay = readExisting(existing, { request_fingerprint: fingerprint, run_id: input.run_id });
+        const replay = readExisting(existing, {
+          request_fingerprint: fingerprint,
+          run_id: input.run_id,
+          conversation_id: input.conversation_id,
+          session_id: input.session_id,
+          customer_id: input.customer_id,
+        });
         const reservationResult = await query<ReservationRow>(
           `SELECT request_id, rtrim(request_fingerprint) AS request_fingerprint, run_id, step_index,
                   skill_id, status, response_receipt
@@ -381,6 +411,27 @@ export class CareHandoffRepository {
         latency_ms: 0,
         token_usage: { prompt: 0, completion: 0, total_cost_usd: 0 },
       };
+      const evidence_payload = {
+        evidence_card: 'EV_HUMAN_HANDOFF',
+        tenant_id: input.tenant_id,
+        run_id: input.run_id,
+        customer_id: conversation.customer_id,
+        session_id: input.session_id,
+        conversation_id: input.conversation_id,
+        effect_key: input.effect_key,
+        receipt,
+        handoff_receipt: receipt,
+        action: checkpoint['pending_action'],
+        replayed: false,
+      };
+      const handoff_resume_event = {
+        tenant_id: input.tenant_id,
+        run_id: input.run_id,
+        event_type: 'human.handoff.evidence' as const,
+        evidence_payload,
+        step_index: stepIndex,
+        effect_key: input.effect_key,
+      };
 
       await query(
         `INSERT INTO agentos.care_handoffs (
@@ -412,13 +463,14 @@ export class CareHandoffRepository {
 
       const parked = await query(
         `UPDATE agentos.platform_durable_tasks
-            SET state = 'awaiting_human', task_version = task_version + 1,
+            SET state = 'awaiting_human', state_payload = state_payload || $5::jsonb,
+                task_version = task_version + 1,
                 lease_owner = NULL, lease_expires_at = NULL, updated_at = CURRENT_TIMESTAMP
           WHERE tenant_id = $1 AND run_id = $2 AND state = 'running'
             AND task_version = $3 AND current_step = $4
             AND lease_owner IS NOT NULL AND lease_expires_at > CURRENT_TIMESTAMP
           RETURNING run_id`,
-        [input.tenant_id, input.run_id, task.task_version, stepIndex],
+        [input.tenant_id, input.run_id, task.task_version, stepIndex, JSON.stringify({ resume_event: handoff_resume_event })],
       );
       if (parked.rows.length !== 1) throw new Error('HANDOFF_TASK_STATE_CONFLICT: task changed before handoff commit.');
 
@@ -567,16 +619,17 @@ export class CareHandoffRepository {
         throw new Error('HANDOFF_STATE_CONFLICT: assigned handoff and conversation owner disagree.');
       }
 
-      const taskResult = await query<{ state: string } & QueryResultRow>(
-        `SELECT state FROM agentos.platform_durable_tasks
-          WHERE tenant_id = $1 AND run_id = $2
-          FOR UPDATE`,
+      const taskResult = await query<{ state: string; state_payload: unknown } & QueryResultRow>(
+        'SELECT state, state_payload FROM agentos.platform_durable_tasks WHERE tenant_id = $1 AND run_id = $2 FOR UPDATE',
         [input.tenant_id, handoff.run_id],
       );
-      if (taskResult.rows[0]?.state !== 'awaiting_human') {
+      const taskRow = taskResult.rows[0];
+      if (taskRow?.state !== 'awaiting_human') {
         throw new Error('HANDOFF_TASK_STATE_CONFLICT: assigned handoff has no awaiting-human task.');
       }
-
+      if (taskRow.state_payload !== null && typeof taskRow.state_payload === 'object' && !Array.isArray(taskRow.state_payload) && Object.prototype.hasOwnProperty.call(taskRow.state_payload, 'resume_event')) {
+        throw new Error('HANDOFF_EVIDENCE_PENDING: durable handoff evidence repair must be consumed before completion.');
+      }
       const completed = await query(
         `UPDATE agentos.care_handoffs
             SET status = 'COMPLETED', completed_at = CURRENT_TIMESTAMP,

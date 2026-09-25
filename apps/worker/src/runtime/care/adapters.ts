@@ -379,6 +379,26 @@ export function createCareAdapters(options: {
       const outcome = await options.workflowRepository.recordFailure(failureInput);
       return { requeued: outcome.requeued };
     },
+    async queueHandoffEvidence(params: {
+      tenant_id: string;
+      run_id: string;
+      expected_task_version?: number;
+      evidence_payload: Record<string, unknown>;
+      step_index?: number;
+      effect_key?: string;
+      reason?: string;
+    }): Promise<{ queued: boolean; task_version?: number }> {
+      return await options.workflowRepository.queueHandoffEvidence(params);
+    },
+    async clearHandoffEvidence(params: {
+      tenant_id: string;
+      run_id: string;
+      expected_task_version: number;
+      lease_owner: string;
+      expected_resume_event: Record<string, unknown>;
+    }): Promise<{ cleared: boolean; task_version?: number }> {
+      return await options.workflowRepository.clearHandoffEvidence(params);
+    },
   };
 
   const evidenceLogger: IEvidenceLogger = {
@@ -403,6 +423,9 @@ export function createCareAdapters(options: {
         ...(options.now ? { created_at: options.now().toISOString() } : {}),
       };
       return await options.evidenceRepository.appendEvidence(input);
+    },
+    async findImmutableRecord(params: { tenant_id: string; run_id: string; effect_key: string; step_index: number }): Promise<ImmutableEvidenceRecord | null> {
+      return await options.evidenceRepository.findEvidence(params);
     },
 
     async logAgentRun(runLog: AgentRunLogRecord): Promise<void> {

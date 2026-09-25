@@ -947,13 +947,16 @@ export class RevenueOrchestrator {
     run_id: string,
     resumeEvent: {
       tenant_id: string;
-      event_type: 'human.approval' | 'human.modify' | 'human.reject' | 'human.pause' | 'human.cancel' | 'human.reconcile' | 'timer.expired' | 'reconcile.completed';
+      event_type: 'human.approval' | 'human.modify' | 'human.reject' | 'human.pause' | 'human.cancel' | 'human.reconcile' | 'timer.expired' | 'reconcile.completed' | 'human.handoff.evidence';
       approval_id?: string;
       expected_payload_sha256?: string;
       operator_id?: string;
       reconciliation_resolution?: 'PROVIDER_CONFIRMED_SUCCEEDED' | 'PROVIDER_CONFIRMED_ABSENT' | 'ESCALATE_MANUALLY';
       reconciliation_receipt?: unknown;
       modifications?: Record<string, unknown>;
+      evidence_payload?: Record<string, unknown>;
+      step_index?: number;
+      effect_key?: string;
       reason?: string;
     }
   ): Promise<OrchestratorRunResult> {
@@ -975,7 +978,9 @@ export class RevenueOrchestrator {
       || resumeEvent.event_type === 'human.cancel';
     const isAutomaticResume = resumeEvent.event_type === 'timer.expired'
       || resumeEvent.event_type === 'reconcile.completed';
+    const isHandoffEvidence = resumeEvent.event_type === 'human.handoff.evidence';
     if ((isHumanApprovalDecision && task.state !== 'awaiting_human')
+      || (isHandoffEvidence && task.state !== 'awaiting_human')
       || (isReconciliationResolution && task.state !== 'waiting')
       || (isAutomaticResume && task.state !== 'waiting')) {
       throw new OrchestratorError('INVALID_TASK_STATE', 'Resume event does not match the durable waiting state.');
@@ -1018,6 +1023,7 @@ export class RevenueOrchestrator {
         throw new OrchestratorError('TASK_NOT_FOUND', 'Task ' + run_id + ' disappeared while acquiring its lease');
       }
       if ((isHumanApprovalDecision && fencedTask.state !== 'awaiting_human')
+        || (isHandoffEvidence && fencedTask.state !== 'awaiting_human')
         || (isReconciliationResolution && fencedTask.state !== 'waiting')
         || (isAutomaticResume && fencedTask.state !== 'waiting')) {
         throw new OrchestratorError('CONCURRENT_TASK_LOCK', 'The waiting task changed while its resume lease was acquired.');
@@ -1057,6 +1063,91 @@ export class RevenueOrchestrator {
       let reconciledEffect: ReconciledEffect | null = null;
       let reconciledAction: ActionDraft | null = null;
 
+      if (isHandoffEvidence) {
+        const evidencePayload = isPlainJsonObject(resumeEvent.evidence_payload)
+          ? resumeEvent.evidence_payload
+          : null;
+        const action = evidencePayload && isPlainJsonObject(evidencePayload['action'])
+          ? evidencePayload['action'] as unknown as ActionDraft
+          : pendingAction;
+        const rawEffectKey = evidencePayload?.['effect_key'] ?? resumeEvent.effect_key;
+        const effectKey = typeof rawEffectKey === 'string' ? rawEffectKey : action?.effect_key;
+        const stepIndex = typeof resumeEvent.step_index === 'number' ? resumeEvent.step_index : checkpoint.current_step;
+        const step = checkpoint.plan.steps.find((candidate) => candidate.step_index === stepIndex)
+          ?? checkpoint.plan.steps[checkpoint.current_step - 1];
+        if (!evidencePayload || !action || !step || !effectKey) {
+          throw new OrchestratorError('HANDOFF_EVIDENCE_REPAIR_INVALID', 'Handoff evidence repair lacks its persisted action, step or effect identity.');
+        }
+
+        const findEvidence = this.dependencies.evidenceLogger.findImmutableRecord;
+        if (!findEvidence) {
+          throw new OrchestratorError('HANDOFF_EVIDENCE_REPAIR_UNBOUND', 'Durable handoff evidence repair requires a read-by-effect evidence binding.');
+        }
+        const existingEvidence = await findEvidence({
+          tenant_id: resumeEvent.tenant_id,
+          run_id,
+          effect_key: effectKey,
+          step_index: stepIndex,
+        });
+        const stepEvidence = existingEvidence ?? await this.dependencies.evidenceLogger.createImmutableRecord({
+          run_id,
+          tenant_id: resumeEvent.tenant_id,
+          correlation_id: task.correlation_id,
+          step_index: stepIndex,
+          effect_key: effectKey,
+          previous_evidence_hash: checkpoint.previous_evidence_hash,
+          payload: evidencePayload,
+        });
+        try {
+          const receiptRecord = isPlainJsonObject(evidencePayload['receipt']) ? evidencePayload['receipt'] : null;
+          const tokenUsage = isPlainJsonObject(receiptRecord?.['token_usage'])
+            ? receiptRecord['token_usage'] as unknown as ExecutionReceipt['token_usage']
+            : undefined;
+          await this.logRun({
+            tenant_id: resumeEvent.tenant_id,
+            run_id,
+            correlation_id: task.correlation_id,
+            trigger: 'signal',
+            step,
+            context: checkpoint.context,
+            startedAt: new Date().toISOString(),
+            startTime: Date.now(),
+            execution_status: 'success',
+            authority: action.required_authority,
+            approval: null,
+            action,
+            evidence: stepEvidence,
+            error: null,
+            cost: tokenUsage,
+            disposition: 'terminal',
+          });
+        } catch (logError) {
+          const message = logError instanceof Error ? logError.message : String(logError);
+          const code = logError instanceof OrchestratorError ? logError.code : undefined;
+          const duplicate = code === 'EVIDENCE_APPEND_ONLY_VIOLATION'
+            || code === 'AGENT_RUN_LOG_APPENDED'
+            || code === 'AUDIT_RECORD_APPENDED'
+            || message.startsWith('AGENT_RUN_LOG_APPENDED:')
+            || message.startsWith('AUDIT_RECORD_APPENDED:')
+            || message.includes('already exists')
+            || message.includes('duplicate key')
+            || message.includes('UNIQUE constraint');
+          if (!duplicate) throw logError;
+        }
+
+        await this.dependencies.workflowEngine.clearHandoffEvidence({
+          tenant_id: resumeEvent.tenant_id,
+          run_id,
+          expected_task_version: task.task_version,
+          lease_owner: this.workerId,
+          expected_resume_event: resumeEvent as unknown as Record<string, unknown>,
+        });
+        return {
+          run_id,
+          lifecycle_state: 'awaiting_human',
+          ...outcomeFields({ message: 'Handoff evidence recorded; task remains awaiting_human', evidence: stepEvidence }),
+        };
+      }
       if (isReconciliationResolution) {
         if (!resumeEvent.operator_id || !pendingAction || !pendingAction.mutating) {
           throw new OrchestratorError(

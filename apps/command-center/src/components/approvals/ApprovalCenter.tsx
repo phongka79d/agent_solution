@@ -83,14 +83,16 @@ export function ApprovalCenter({
       status = 'MODIFIED';
     } else if (raw.status === 'CANCELLED') {
       status = 'CANCELLED';
+    } else if (raw.status === 'QUEUED') {
+      status = 'QUEUED';
     }
 
     const createdAt = raw.created_at ? String(raw.created_at) : raw.createdAt ? String(raw.createdAt) : '';
     const expiresAt = raw.expires_at ? String(raw.expires_at) : raw.expiresAt ? String(raw.expiresAt) : undefined;
+    const queuedAt = raw.queued_at ? String(raw.queued_at) : raw.queuedAt ? String(raw.queuedAt) : undefined;
     const decidedAt = raw.decided_at ? String(raw.decided_at) : undefined;
     const decidedBy = raw.decided_by ? String(raw.decided_by) : undefined;
     const decisionNotes = raw.decision_notes ? String(raw.decision_notes) : undefined;
-
     const customerId =
       typeof rawPayload.customer_id === 'string'
         ? rawPayload.customer_id
@@ -113,6 +115,7 @@ export function ApprovalCenter({
       isPaused,
       createdAt,
       expiresAt,
+      queuedAt,
       decidedAt,
       decidedBy,
       decisionNotes,
@@ -281,22 +284,22 @@ export function ApprovalCenter({
 
       const responseReceipt = (await res.json()) as ApprovalDecisionResponse;
 
-      // Update local item status based on server receipt
+      // Update local item status based on server receipt.
+      // R05 queue-first contract returns status 'QUEUED' and queued_at.
+      // Do NOT claim decided_at or decided_by: the decision is enqueued for durable
+      // worker handoff and must not render a fake final decision.
       setItems((prev) => {
         const existing = prev[id];
         if (!existing) return prev;
 
         const nextStatus: ApprovalStatus = responseReceipt.status;
-        const nextIsPaused = responseReceipt.status === 'PAUSED';
 
         return {
           ...prev,
           [id]: {
             ...existing,
             status: nextStatus,
-            isPaused: nextIsPaused,
-            decidedAt: responseReceipt.decided_at,
-            decidedBy: operatorId,
+            queuedAt: responseReceipt.queued_at,
             payload: decision === 'MODIFY' && modifiedPayload ? modifiedPayload : existing.payload,
           },
         };
@@ -312,7 +315,7 @@ export function ApprovalCenter({
 
   const awaitingHumanCount = itemList.filter((i) => i.status === 'AWAITING_HUMAN' && !i.isPaused).length;
   const pausedCount = itemList.filter((i) => i.isPaused || i.status === 'PAUSED').length;
-
+  const queuedCount = itemList.filter((i) => i.status === 'QUEUED').length;
   if (!operatorId || !operatorId.trim()) {
     return (
       <div
@@ -352,6 +355,11 @@ export function ApprovalCenter({
             <span className="px-2.5 py-1 bg-sky-950/70 border border-sky-700/80 rounded-full text-xs font-mono text-sky-300">
               Paused: <strong>{pausedCount}</strong>
             </span>
+            {queuedCount > 0 && (
+              <span className="px-2.5 py-1 bg-purple-950/70 border border-purple-700/80 rounded-full text-xs font-mono text-purple-300">
+                Queued: <strong>{queuedCount}</strong>
+              </span>
+            )}
           </div>
 
           <div className="flex items-center gap-1.5 text-xs font-mono bg-slate-950 px-2.5 py-1 rounded-lg border border-slate-800">

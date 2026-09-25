@@ -239,6 +239,58 @@ describe('CareSkillServices', () => {
       expect(enqueue).not.toHaveBeenCalled();
       expect(reconcile).toHaveBeenCalledTimes(1);
     });
+
+    it('replays a committed handoff without enqueuing twice, preserving customer and session bindings', async () => {
+      const enqueue = vi.fn(async (_input: EnqueueCareHandoffInput) => ({
+        disposition: 'REPLAY' as const,
+        output: HANDOFF_OUTPUT,
+        receipt: HANDOFF_RECEIPT,
+      }));
+      const reconcile = vi.fn(async () => ({ state: 'NOT_COMMITTED' as const }));
+      const services = createCareSkillServices(createMockOptions({
+        handoff_repository: { enqueue, reconcile },
+      }));
+
+      const output = await services.tool_port.invoke({
+        skill_id: 'skill.care.escalate_to_human',
+        tool_binding: 'Orchestrator.HandoffBus',
+        input: HANDOFF_INPUT,
+        context: handoffContext(),
+      });
+
+      expect(output).toEqual(HANDOFF_OUTPUT);
+      expect(enqueue).toHaveBeenCalledWith({
+        tenant_id: TENANT_ID,
+        effect_key: HANDOFF_EFFECT_KEY,
+        request_fingerprint: computeRequestFingerprint(HANDOFF_INPUT),
+        run_id: 'run-handoff-1',
+        session_id: 'thread-a',
+        conversation_id: HANDOFF_CONVERSATION_ID,
+        customer_id: CUSTOMER_ID,
+        escalation_reason: 'billing dispute',
+        summary_context: 'Customer requests a human operator.',
+      });
+      expect(reconcile).not.toHaveBeenCalled();
+    });
+
+    it('propagates customer binding mismatch as CareSkillToolError', async () => {
+      const enqueue = vi.fn(async (_input: EnqueueCareHandoffInput) => {
+        throw new Error('HANDOFF_CUSTOMER_BINDING_INVALID: customer_id does not match the conversation.');
+      });
+      const services = createCareSkillServices(createMockOptions({
+        handoff_repository: { enqueue, reconcile: vi.fn() },
+      }));
+
+      await expect(services.tool_port.invoke({
+        skill_id: 'skill.care.escalate_to_human',
+        tool_binding: 'Orchestrator.HandoffBus',
+        input: HANDOFF_INPUT,
+        context: handoffContext(),
+      })).rejects.toMatchObject({
+        name: 'CareSkillToolError',
+        code: 'HANDOFF_CUSTOMER_BINDING_INVALID',
+      });
+    });
   });
 
   describe('SecondBrain.FAQEngine', () => {

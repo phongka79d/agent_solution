@@ -10,6 +10,7 @@ The provider-proof resume path consumes decisive events with one fenced running 
 an already-settled matching reservation on replay, so an interruption cannot leave an unclaimable waiting row or trigger a duplicate settlement failure. Care reconciliation is target-bound: HandoffBus
 actions never query API-001. Optional adapters, live external ERP, PostgreSQL/RLS and Docker remain
 environment-gated; the offline E2E-OFF-ESC/PILOT-04 harness is executable and currently passes.
+Gate P1 remains open until live DB/RLS, DB-backed pilots, Docker, approved knowledge, and real SoR evidence exist; offline evidence proves local wiring only and does not close the gate.
 
 | Path | State |
 |---|---|
@@ -78,7 +79,13 @@ The worker consumes the event under the same task-version and lease fence. Opera
 - Provider-confirmed `ABSENT` / `FAILED`: durably settles the reservation as FAILED, reopens the SAME effect key in `effect_reservations`, and permits exactly one re-dispatch under that key.
 - Provider indeterminate or unavailable: fails closed without consuming or deleting the resume event, leaving the task parked in `waiting` until decisive proof is available.
 
-**Remaining P1 blocker:** none in the locally exercised Care handoff, policy, approval, takeover, reconciliation, or offline PILOT-04 paths. Live PostgreSQL/RLS, migration rehearsal, Docker smoke, and live external ERP evidence remain environment-gated.
+**Gate P1 Status:** Gate P1 remains **OPEN**. While local Care execution, handoff, policy, approval, takeover, reconciliation, and offline PILOT-04 pass, Gate P1 requires:
+- Live PostgreSQL/RLS verification (migrations 0000..0004 without auth/connection failures, tenant-isolation enforcement in a live database),
+- Database-backed Care integration pilots (live DB-backed PILOT-03 / PILOT-04 execution),
+- Docker container verification (daemon/compose startup without container naming/network conflicts),
+- Approved knowledge corpus (`/customer-care/faq.md` and RAG citations approved by knowledge owner),
+- Real System-of-Record (SoR) evidence (authoritative ERP/WMS connector proof, not mock/offline substitutes).
+Offline harness evidence proves local wiring and regression contracts only; requirements must not be rewritten to claim offline evidence closes the gate.
 ## Intentionally unavailable capabilities
 
 These stay fail-closed and are listed by the runtime rather than stubbed:
@@ -101,23 +108,37 @@ These stay fail-closed and are listed by the runtime rather than stubbed:
 - Telemetry stream and command-center projections without a configured source: explicit
   empty/`NO_DATA` frames, never fabricated values.
 
-Current verification evidence for the P1B runtime slice:
+## Current verification evidence for the P1B runtime slice
 
-- Root `pnpm typecheck`: 14/14 tasks passed.
-- Root `pnpm lint`: 9/9 tasks passed.
-- Root `pnpm test:unit`: 14/14 tasks passed; database 233, core 201, worker 142 and API 62 tests passed.
-- Root `pnpm test:contracts`, `pnpm test:adversarial`, `pnpm test:security` and `pnpm build`: 7/7, 7/7, 7/7 and 9/9 tasks passed.
-- Root `pnpm test:pilots`: 6/6 tasks passed; E2E-OFF-ESC/PILOT-04 ran 7 tests successfully.
-- Focused assertions cover provider-proof crash replay, target-bound reconciliation, durable queue claim, HTTP takeover silence, approvals.decide queueing, API-001 proof mapping, Vietnamese complaint/human-request routing, policy audit/effect binding, and the complete offline pilot.
+- python testcases/_generate.py --check: passed; 419 generated files match sources byte for byte.
+- Root pnpm typecheck: 14/14 tasks passed.
+- Root pnpm lint: 9/9 tasks passed.
+- Root pnpm test:unit: 14/14 tasks passed; database 252, core 202, worker 265 and API 62 tests passed.
+- Root pnpm test:contracts: 7/7 tasks passed.
+- Root pnpm test:adversarial: 7/7 tasks passed.
+- Root pnpm test:security: 7/7 tasks passed.
+- Root pnpm test:pilots: 6/6 tasks passed; E2E-OFF-ESC/PILOT-04 ran 7 tests successfully.
+- NODE_ENV=production pnpm build: 9/9 tasks passed. The default host NODE_ENV was non-standard; the canonical production-mode build is green.
+- git diff --check: passed.
+- Focused coverage includes atomic handoff evidence repair/replay, target-bound reconciliation, durable queue claim, approval queueing, API-001 proof mapping, Vietnamese escalation, and service-case FSM guards.
 
-Environment-gated results:
-- PostgreSQL migration rehearsal and RLS: blocked by password authentication failure for `agentos_app` (SQLSTATE `28P01`).
-- P1 database-backed integration smoke: timed out with all database-backed Care cases failing.
-- Docker smoke: images built and inspected, but service startup hit an existing `/agentos-postgres` container-name conflict; no container was removed.
-- Live external ERP/PILOT-04 evidence remains unavailable; the local API-001/mock and offline harness are the exercised substitutes.
+## Environment-gated results
 
-These environment results are not code-gate failures; they require the corresponding external services and credentials.
+- Clean isolated PostgreSQL bootstrap succeeded on the agentos-p1b-db Compose project with agentos_app as NOBYPASSRLS.
+- Migration rehearsal passed from clean state: 5 migrations applied and schema/RLS declarations verified; repeat rehearsal skipped all 5 matching checksums.
+- Live RLS policy suite passed: 6 tests. RLS rehearsal isolation suite passed: 17 tests, including cross-tenant/cross-customer negative cases.
+- DB-backed P1 integration smoke passed all 7 Care cases normally against the isolated PostgreSQL database and in-process API-001 mock.
+- Isolated Docker smoke passed on Compose project agentos-p1b-gate-smoke4 with a unique prefix and host ports: API, worker, and Command Center images built, loaded, inspected, started, and reported healthy. No unrelated containers were stopped or removed. The smoke verifies boot/health only; P1 behavior is covered by the DB-backed smoke.
+
+## Gate P1 blockers
+
+- Second Brain customer-care/faq.md, support-policy.md, and escalation.md remain status: draft; no owner approval exists in the repository, so approved-only retrieval remains fail-closed.
+- PILOT-03 has DB-backed local/mock evidence but no approved staging/production-like API-001 SoR credentials or real provider receipt.
+- PILOT-04 has the offline harness and local durable handoff coverage, but no approved production-like Redis/operator boundary run.
+- Repository GitHub CI has not run against this rebased follow-on work because the changes are not yet pushed to a remote commit.
+
+These are truthful Gate P1 blockers; no draft knowledge was self-approved and no mock receipt is claimed as real SoR evidence.
 
 ## Decision
 
-Local P1B behavior is bound and exercised, including the offline pilot. Merge readiness remains blocked only by the remaining environment-gated checks; do not claim live PostgreSQL/RLS, Docker, migration or external ERP evidence.
+Local P1B behavior, isolated PostgreSQL/RLS, DB-backed Care smoke, offline PILOT-04, and isolated Docker health are green. Gate P1 remains open until approved knowledge, real API-001 SoR evidence, production-like PILOT-03/PILOT-04 evidence, and remote CI evidence exist.

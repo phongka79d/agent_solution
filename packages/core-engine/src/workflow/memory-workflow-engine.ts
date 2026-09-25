@@ -530,6 +530,73 @@ export class MemoryWorkflowEngine implements IStatefulWorkflowEngine {
     return { requeued: false };
   }
 
+  public async queueHandoffEvidence(params: {
+    tenant_id: string;
+    run_id: string;
+    expected_task_version?: number;
+    evidence_payload: Record<string, unknown>;
+    step_index?: number;
+    effect_key?: string;
+    reason?: string;
+  }): Promise<{ queued: boolean; task_version?: number }> {
+    const row = this.requireTask(params.tenant_id, params.run_id);
+    if (params.expected_task_version !== undefined && row.task_version !== params.expected_task_version) {
+      throw new OrchestratorError('CONCURRENT_TASK_LOCK', `Stale task version for '${params.run_id}'.`);
+    }
+    if (row.state !== 'awaiting_human') {
+      throw new OrchestratorError('INVALID_TASK_STATE', `Task '${params.run_id}' is in '${row.state}', expected 'awaiting_human'.`);
+    }
+    const resume_event = {
+      tenant_id: params.tenant_id,
+      run_id: params.run_id,
+      event_type: 'human.handoff.evidence' as const,
+      evidence_payload: params.evidence_payload,
+      ...(params.step_index !== undefined ? { step_index: params.step_index } : {}),
+      ...(params.effect_key !== undefined ? { effect_key: params.effect_key } : {}),
+      ...(params.reason !== undefined ? { reason: params.reason } : {}),
+    };
+    const currentPayload: Record<string, unknown> = isPlainRecord(row.state_payload) ? row.state_payload : {};
+    const existing = currentPayload['resume_event'];
+    if (existing !== undefined) {
+      if (canonicalizeJson(existing) !== canonicalizeJson(resume_event)) {
+        throw new OrchestratorError('RESUME_EVENT_CONFLICT', `Conflicting resume event for '${params.run_id}'.`);
+      }
+      return { queued: true, task_version: row.task_version };
+    }
+    row.state_payload = {
+      ...currentPayload,
+      resume_event,
+    } as unknown as DurableTaskCheckpoint;
+    row.task_version += 1;
+    row.updated_at = new Date(this.now()).toISOString();
+    return { queued: true, task_version: row.task_version };
+  }
+
+
+  public async clearHandoffEvidence(params: {
+    tenant_id: string;
+    run_id: string;
+    expected_task_version: number;
+    lease_owner: string;
+    expected_resume_event: Record<string, unknown>;
+  }): Promise<{ cleared: boolean; task_version?: number }> {
+    const row = this.requireTask(params.tenant_id, params.run_id);
+    if (row.state !== 'awaiting_human' || row.task_version !== params.expected_task_version) {
+      throw new OrchestratorError('CONCURRENT_TASK_LOCK', 'Repair fence changed for ' + params.run_id + '.');
+    }
+    const currentPayload: Record<string, unknown> = isPlainRecord(row.state_payload) ? row.state_payload : {};
+    const existing = currentPayload['resume_event'];
+    if (existing === undefined || canonicalizeJson(existing) !== canonicalizeJson(params.expected_resume_event)) {
+      throw new OrchestratorError('HANDOFF_EVIDENCE_EVENT_CONFLICT', 'Repair event changed for ' + params.run_id + '.');
+    }
+    const next = { ...currentPayload };
+    delete next['resume_event'];
+    row.state_payload = next as unknown as DurableTaskCheckpoint;
+    row.task_version += 1;
+    row.updated_at = new Date(this.now()).toISOString();
+    return { cleared: true, task_version: row.task_version };
+  }
+
   /** Read-only view of this run's approvals, oldest first (inspection/test surface). */
   public listApprovals(tenant_id: string, run_id: string): readonly PersistedApproval[] {
     return this.listApprovalRows(tenant_id, run_id).map((approval) => ({ ...approval }));

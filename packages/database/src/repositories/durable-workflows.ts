@@ -221,6 +221,17 @@ export interface QueueReconciliationInput {
   readonly receipt?: Record<string, unknown>;
 }
 
+/** Input of `queueHandoffEvidence()`: tenant, run, evidence payload and optional fences. */
+export interface QueueHandoffEvidenceInput {
+  readonly tenant_id: string;
+  readonly run_id: string;
+  readonly evidence_payload: Record<string, unknown>;
+  readonly step_index?: number;
+  readonly effect_key?: string;
+  readonly reason?: string;
+  readonly expected_task_version?: number;
+}
+
 /**
  * `agentos` is not on the connection `search_path`, so every statement is schema-qualified.
  *
@@ -498,6 +509,26 @@ const UPDATE_RECONCILE_TASK = `UPDATE ${PLATFORM_DURABLE_TASKS}
   WHERE tenant_id = $1 AND run_id = $2 AND task_version = $4
   RETURNING${TASK_PROJECTION}`;
 
+/** Handoff evidence repair transition: attaches a resume_event to an awaiting_human task while retaining its complete checkpoint. */
+const UPDATE_HANDOFF_EVIDENCE_TASK = `UPDATE ${PLATFORM_DURABLE_TASKS}
+  SET state = 'awaiting_human',
+      state_payload = state_payload || $3::jsonb,
+      lease_owner = NULL,
+      lease_expires_at = NULL,
+      task_version = task_version + 1,
+      updated_at = CURRENT_TIMESTAMP
+  WHERE tenant_id = $1 AND run_id = $2 AND task_version = $4
+  RETURNING${TASK_PROJECTION}`;
+
+const UPDATE_CLEAR_HANDOFF_EVIDENCE_TASK = `UPDATE ${PLATFORM_DURABLE_TASKS}
+  SET state_payload = $3::jsonb,
+      lease_owner = NULL,
+      lease_expires_at = NULL,
+      task_version = task_version + 1,
+      updated_at = CURRENT_TIMESTAMP
+  WHERE tenant_id = $1 AND run_id = $2 AND state = 'awaiting_human'
+    AND task_version = $4 AND lease_owner = $5
+  RETURNING${TASK_PROJECTION}`;
 /**
  * `FATAL` failure, or `RETRYABLE` with the budget spent (§4.4): terminate fail-closed.
  * `retry_count` records the attempts that were made and is left as it is.
@@ -1132,8 +1163,8 @@ export class DurableWorkflowRepository {
         throw new Error('TASK_LEASE_RELEASE_STATE_INVALID');
       }
       if (
-        target === 'awaiting_human' &&
-        !(isPlainObject(row.state_payload) && Object.prototype.hasOwnProperty.call(row.state_payload, 'resume_event'))
+        target === 'awaiting_human'
+        && !(isPlainObject(row.state_payload) && Object.prototype.hasOwnProperty.call(row.state_payload, 'resume_event'))
       ) {
         throw new Error('TASK_LEASE_RELEASE_STATE_INVALID');
       }
@@ -1341,14 +1372,6 @@ export class DurableWorkflowRepository {
       );
     }
 
-    if (state === 'awaiting_human') {
-      throw new Error(
-        'TASK_PAUSE_REQUIRES_APPROVAL: awaiting_human is reachable only through ' +
-          'ApprovalRepository.pauseForApproval, which inserts the PENDING AUTH-4 approval row, the ' +
-          `actions row it binds and the task pause in ONE transaction; a bare transition ('${reason}') ` +
-          'would park the run with no row that can resume it (implement/04 §4.2 statement 3).',
-      );
-    }
 
     // `waiting` parks on a COMPLETE checkpoint, so the blob is validated (and serialized) before the
     // transaction opens and REPLACES state_payload; every other transition merges a progress blob.
@@ -1364,6 +1387,11 @@ export class DurableWorkflowRepository {
       );
     }
 
+    if (state === 'awaiting_human') {
+      throw new Error(
+        'TASK_PAUSE_REQUIRES_APPROVAL: awaiting_human is reachable only through ApprovalRepository.pauseForApproval.',
+      );
+    }
     const payload =
       checkpointPayload === undefined
         ? undefined
@@ -1608,6 +1636,129 @@ export class DurableWorkflowRepository {
       );
     });
   }
+
+  /**
+   * Attaches a durable handoff evidence repair event ('human.handoff.evidence') to an awaiting_human task
+   * while retaining its complete checkpoint.
+   */
+  async queueHandoffEvidence(input: QueueHandoffEvidenceInput): Promise<{ queued: boolean; task_version?: number }> {
+    assertIdentifier(input.tenant_id, 'tenant_id', 36, 'TASK_TENANT_ID_REQUIRED');
+    assertIdentifier(input.run_id, 'run_id', 64, 'TASK_RUN_ID_REQUIRED');
+    if (!isPlainObject(input.evidence_payload)) {
+      throw new Error('HANDOFF_EVIDENCE_PAYLOAD_INVALID: evidence_payload must be a valid JSON object');
+    }
+
+    const resume_event = {
+      tenant_id: input.tenant_id,
+      run_id: input.run_id,
+      event_type: 'human.handoff.evidence' as const,
+      evidence_payload: input.evidence_payload,
+      ...(input.step_index !== undefined ? { step_index: input.step_index } : {}),
+      ...(input.effect_key !== undefined ? { effect_key: input.effect_key } : {}),
+      ...(input.reason !== undefined ? { reason: input.reason } : {}),
+    };
+    const resumeEventCanonical = canonicalizeEvent(resume_event);
+
+    return this.runInTenantTransaction(input.tenant_id, async (client) => {
+      const locked = await this.lockWithin(client, input.tenant_id, input.run_id);
+      if (locked === null) {
+        throw new Error(
+          'DURABLE_TASK_NOT_FOUND: this tenant holds no durable task for the run (implement/04 §4.2).',
+        );
+      }
+
+      if (TERMINAL_STATES.includes(locked.state)) {
+        throw new Error(
+          `TASK_ALREADY_TERMINAL: run ${locked.run_id} is ${locked.state}, and a closed task is never revived.`,
+        );
+      }
+
+      if (locked.state !== 'awaiting_human') {
+        throw new Error(
+          `TASK_NOT_AWAITING_HUMAN: run ${locked.run_id} is in state '${locked.state}', not 'awaiting_human'.`,
+        );
+      }
+
+      if (input.expected_task_version !== undefined && locked.task_version !== input.expected_task_version) {
+        throw new Error(
+          `TASK_VERSION_CONFLICT: task ${locked.run_id} version ${locked.task_version} does not match expected ${input.expected_task_version}.`,
+        );
+      }
+
+      assertCompleteCheckpoint(locked.state_payload);
+      const existingPayload = isPlainObject(locked.state_payload) ? locked.state_payload : {};
+      const existingEvent = existingPayload['resume_event'];
+      if (existingEvent !== undefined) {
+        if (canonicalizeEvent(existingEvent) !== resumeEventCanonical) {
+          throw new Error(
+            'HANDOFF_EVIDENCE_EVENT_CONFLICT: a different resume event is already queued for this run.',
+          );
+        }
+        return { queued: true, task_version: locked.task_version };
+      }
+
+      const newPayload = serializeJsonb(
+        { ...existingPayload, resume_event },
+        'TASK_PAYLOAD_UNSERIALIZABLE',
+      );
+
+      const repaired = assertSingleRow(
+        await client.query<DurableTaskRow>(UPDATE_HANDOFF_EVIDENCE_TASK, [
+          input.tenant_id,
+          input.run_id,
+          newPayload,
+          locked.task_version,
+        ]),
+        input.run_id,
+      );
+      return { queued: true, task_version: repaired.task_version };
+    });
+  }
+  /** Clears only a consumed handoff evidence repair event while retaining awaiting_human and the worker lease. */
+  async clearHandoffEvidence(input: {
+    tenant_id: string;
+    run_id: string;
+    expected_task_version: number;
+    lease_owner: string;
+    expected_resume_event: Record<string, unknown>;
+  }): Promise<{ cleared: boolean; task_version?: number }> {
+    assertIdentifier(input.tenant_id, 'tenant_id', 36, 'TASK_TENANT_ID_REQUIRED');
+    assertIdentifier(input.run_id, 'run_id', 64, 'TASK_RUN_ID_REQUIRED');
+    assertIdentifier(input.lease_owner, 'lease_owner', 128, 'TASK_LEASE_OWNER_REQUIRED');
+    const expectedEventCanonical = canonicalizeEvent(input.expected_resume_event);
+
+    return this.runInTenantTransaction(input.tenant_id, async (client) => {
+      const locked = await this.lockWithin(client, input.tenant_id, input.run_id);
+      if (locked === null) throw new Error('DURABLE_TASK_NOT_FOUND');
+      if (locked.state !== 'awaiting_human') {
+        throw new Error(`TASK_NOT_AWAITING_HUMAN: run ${locked.run_id} is ${locked.state}.`);
+      }
+      assertLeaseHeld(locked, input.lease_owner);
+      if (locked.task_version !== input.expected_task_version) {
+        throw new Error('TASK_VERSION_CONFLICT');
+      }
+      const payload = isPlainObject(locked.state_payload) ? locked.state_payload : {};
+      const existingEvent = payload['resume_event'];
+      if (!isPlainObject(existingEvent) || canonicalizeEvent(existingEvent) !== expectedEventCanonical) {
+        throw new Error('HANDOFF_EVIDENCE_EVENT_CONFLICT: the repair event changed before clear.');
+      }
+      const nextPayload = { ...payload };
+      delete nextPayload['resume_event'];
+      const serialized = serializeJsonb(nextPayload, 'TASK_PAYLOAD_UNSERIALIZABLE');
+      const cleared = assertSingleRow(
+        await client.query<DurableTaskRow>(UPDATE_CLEAR_HANDOFF_EVIDENCE_TASK, [
+          input.tenant_id,
+          input.run_id,
+          serialized,
+          input.expected_task_version,
+          input.lease_owner,
+        ]),
+        input.run_id,
+      );
+      return { cleared: true, task_version: cleared.task_version };
+    });
+  }
+
 
   /**
    * Locks the run's task inside the caller's transaction — the locking read of `lockDurableTask`.

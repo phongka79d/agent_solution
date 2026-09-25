@@ -72,6 +72,7 @@ describe('createCareAdapters', () => {
       }),
       renewTaskLease: vi.fn().mockResolvedValue(createFakeTaskRecord()),
       releaseTaskLease: vi.fn().mockResolvedValue(createFakeTaskRecord()),
+      queueHandoffEvidence: vi.fn().mockResolvedValue({ queued: true, task_version: 1 }),
     } as unknown as DurableWorkflowRepository;
 
     const approvalRepository = {
@@ -291,6 +292,25 @@ describe('createCareAdapters', () => {
         now: fixedNow,
       });
       expect(result).toEqual({ requeued: true });
+    });
+    it('queueHandoffEvidence delegates to workflowRepository and maps { queued, task_version }', async () => {
+      const { adapters, workflowRepository } = setupFakeRepos();
+      vi.mocked(workflowRepository.queueHandoffEvidence).mockResolvedValueOnce({ queued: true, task_version: 7 });
+
+      const params = {
+        tenant_id: 'tenant-1',
+        run_id: 'run-1',
+        expected_task_version: 6,
+        evidence_payload: { evidence_card: 'EV_HUMAN_HANDOFF' },
+        step_index: 1,
+        effect_key: 'ek-1',
+        reason: 'repair test',
+      };
+
+      const result = await adapters.workflowEngine.queueHandoffEvidence(params);
+
+      expect(workflowRepository.queueHandoffEvidence).toHaveBeenCalledWith(params);
+      expect(result).toEqual({ queued: true, task_version: 7 });
     });
   });
 
