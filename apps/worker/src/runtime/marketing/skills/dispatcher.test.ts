@@ -1,13 +1,10 @@
 import { computeEffectKey, computeRequestFingerprint } from '@agentos/core-engine';
 import type { ActionDraft, AssignableAuthority } from '@agentos/core-engine/contracts';
-import { SkillError } from '@agentos/skills';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-  DEFAULT_MARKETING_SKILL_ENABLEMENT,
   MARKETING_DISPATCH_INTEGRATION,
   MARKETING_DISPATCH_INTEGRATION_STATUS,
-  MarketingSkillToolError,
   createMarketingSkillServices,
   type InputMktAnalyzeSignal,
   type InputMktAuditBrand,

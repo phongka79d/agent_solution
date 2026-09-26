@@ -56,7 +56,7 @@ function createMockTransport(
   customReconcileReceipt?: ExecutionReceipt,
 ): Api003OutboundTransport {
   return {
-    dispatch: vi.fn(async (_input: Api003OutboundDispatchInput) => {
+    dispatch: vi.fn(async () => {
       if (dispatchResult) {
         return dispatchResult;
       }
@@ -67,7 +67,7 @@ function createMockTransport(
     }),
     ...(reconcileOutcome
       ? {
-          reconcile: vi.fn(async (_input: Api003ReconcileInput) => {
+          reconcile: vi.fn(async () => {
             if (reconcileOutcome === 'SUCCEEDED') {
               return {
                 outcome: 'SUCCEEDED' as const,
