@@ -18,6 +18,8 @@
  *   5. Lifecycle: the second hop advances the durable journey, and a repeated lifecycle version is
  *      refused by the ledger's `(tenant_id, customer_id, lifecycle_version)` constraint;
  *   6. Isolation: a hop addressed to another tenant's customer is refused;
+ *   5b. Journey: marketing -> sales -> care for one customer is admitted leg by leg, on ONE
+ *      lifecycle and one timeline, and a hop past the last leg is refused.
  *   7. Timeline: the handoff's Customer 360 row is committed BY the admission (same transaction),
  *      cites the ledger's own handoff id, reads back with its server marker, and a replayed
  *      admission appends no second row.
@@ -417,6 +419,92 @@ describe('P4 cross-domain handoff ledger (real PostgreSQL)', () => {
       }),
       0,
       'a refused cross-tenant hop must leave nothing in the other tenant either',
+    );
+  });
+
+  it('5b. drives the whole journey: three legs, three runs, ONE lifecycle and one timeline', async () => {
+    const customer_id = await freshCustomer();
+
+    // TC-E2E-001's data half, executed against real PostgreSQL: marketing -> sales -> care for one
+    // verified customer, each leg admitted once, all of it on one tenant/customer timeline.
+    const legs = [
+      handoffInput({ customer_id }),
+      handoffInput({
+        customer_id,
+        source_domain: 'sales',
+        source_agent: 'SAL-02',
+        target_domain: 'care',
+        target_agent: 'CS-01',
+        target_module: 'support',
+        reason: 'Sales leg completed; Care onboarding is the next leg',
+        lifecycle_version: 2,
+        hop_count: 2,
+        visited_domains: ['marketing', 'sales'],
+      }),
+      handoffInput({
+        customer_id,
+        source_domain: 'care',
+        source_agent: 'CS-01',
+        target_domain: 'retention',
+        target_agent: 'CS-02',
+        target_module: 'support',
+        reason: 'Care onboarding leg completed; retention is the next leg',
+        lifecycle_version: 3,
+        hop_count: 3,
+        visited_domains: ['marketing', 'sales', 'care'],
+      }),
+    ];
+
+    for (const leg of legs) {
+      const admission = await context.db.admitCrossDomainHandoff(leg);
+      assert.equal(admission.kind, 'ADMITTED', `leg ${leg.source_domain} must be admitted once`);
+      // Every leg admits the run it was addressed to, on the SAME durable journey: the version the
+      // leg carries is the one the ledger stores, which the readback below proves end to end.
+      assert.equal(admission.run_id, leg.run_id);
+      assert.equal(leg.customer_id, customer_id);
+    }
+
+    const lifecycle = await context.db.readCrossDomainLifecycle(context.tenant_id, customer_id);
+    assert.equal(Number(lifecycle.version), 3, 'the journey advances once per leg');
+    assert.equal(Number(lifecycle.hop_count), 3);
+    assert.deepEqual(lifecycle.domains, ['marketing', 'sales', 'care']);
+
+    // Three durable runs, one per leg, and all three on the one timeline this customer owns.
+    for (const leg of legs) {
+      assert.equal(
+        await countRows(
+          'SELECT COUNT(*)::int AS count FROM agentos.platform_durable_tasks WHERE tenant_id = $1 AND run_id = $2',
+          [context.tenant_id, leg.run_id],
+        ),
+        1,
+        'each leg owns exactly one target run',
+      );
+    }
+
+    const timeline = await context.events.listTimeline({
+      tenant_id: context.tenant_id,
+      customer_id,
+      limit: 200,
+    });
+    const entries = timeline.items.filter((item) => item.event_name === 'ext.lifecycle.handoff');
+    assert.equal(entries.length, 3, 'one timeline row per leg, on one timeline');
+    assert.deepEqual(
+      entries.map((entry) => entry.payload.target_domain),
+      ['sales', 'care', 'retention'],
+      'the rows are ordered by the leg they opened',
+    );
+
+    // The ledger stores what it is told and deduplicates by identity: re-admitting the final leg
+    // changes nothing. The HOP CAP and the terminal-domain rule are the guard's job, not this
+    // table's, and are asserted in the core contract suite.
+    const replayedLastLeg = await context.db.admitCrossDomainHandoff(legs[2]);
+    assert.notEqual(replayedLastLeg.kind, 'ADMITTED', 'a replayed final leg must not admit again');
+    assert.equal(
+      (
+        await context.events.listTimeline({ tenant_id: context.tenant_id, customer_id, limit: 200 })
+      ).items.filter((item) => item.event_name === 'ext.lifecycle.handoff').length,
+      3,
+      'a replayed leg must not add a fourth timeline row',
     );
   });
 
