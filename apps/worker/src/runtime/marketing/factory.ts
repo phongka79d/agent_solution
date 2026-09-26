@@ -225,6 +225,32 @@ class MarketingAgentRuntime implements IAgentRuntime {
   }
 }
 
+/**
+ * Epistemic classification per row, mirroring the Care/Sales convention: a read or a real external
+ * write produces `FACT` into a derived (`HYPOTHESIS`) projection, while a mutating dispatch is a
+ * `FACT` write to `FACT`. A non-`FACT` source targeting `FACT` is rejected by the shared
+ * promotion guard before AUTH-4, so the two columns must agree with that contract.
+ */
+const MARKETING_EPISTEMIC_CLASS: Readonly<Record<string, PolicyRegistrySkill['epistemic_class']>> = Object.freeze({
+  'skill.mkt.analyze_market_signal': 'FACT',
+  'skill.mkt.segment_audience': 'HYPOTHESIS',
+  'skill.mkt.check_consent': 'FACT',
+  'skill.mkt.generate_content': 'HYPOTHESIS',
+  'skill.mkt.audit_brand_compliance': 'DECISION',
+  'skill.mkt.dispatch_campaign': 'FACT',
+  'skill.mkt.evaluate_attribution': 'FACT',
+});
+
+const MARKETING_WRITE_TARGET: Readonly<Record<string, PolicyRegistrySkill['write_target']>> = Object.freeze({
+  'skill.mkt.analyze_market_signal': 'HYPOTHESIS',
+  'skill.mkt.segment_audience': 'HYPOTHESIS',
+  'skill.mkt.check_consent': 'HYPOTHESIS',
+  'skill.mkt.generate_content': 'HYPOTHESIS',
+  'skill.mkt.audit_brand_compliance': 'HYPOTHESIS',
+  'skill.mkt.dispatch_campaign': 'FACT',
+  'skill.mkt.evaluate_attribution': 'HYPOTHESIS',
+});
+
 function policySkills(): Readonly<Record<string, PolicyRegistrySkill>> {
   const result: Record<string, PolicyRegistrySkill> = {};
   for (const skill_id of Object.keys(MARKETING_AGENT_BY_SKILL)) {
@@ -236,8 +262,8 @@ function policySkills(): Readonly<Record<string, PolicyRegistrySkill>> {
       // Price-bearing is an action-level property; a dispatch row may carry no price at all.
       price_bearing: false,
       idempotent: skill_id !== 'skill.mkt.dispatch_campaign',
-      epistemic_class: skill_id === 'skill.mkt.dispatch_campaign' ? 'ACTION' : 'HYPOTHESIS',
-      write_target: skill_id === 'skill.mkt.dispatch_campaign' ? 'FACT' : 'HYPOTHESIS',
+      epistemic_class: MARKETING_EPISTEMIC_CLASS[skill_id]!,
+      write_target: MARKETING_WRITE_TARGET[skill_id]!,
       // Consent is rechecked by the canonical Marketing communication tool immediately before provider dispatch.
       requires_consent: false,
       requires_verified_identity: false,
