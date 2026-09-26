@@ -299,14 +299,14 @@ Requirement classification:
 | MKT-02 segmentation and consent | PARTIAL | Tenant-bound segmentation/consent foundation retained; lifecycle and dispatch-time suppression recheck added. Live Customer360/consent binding remains environment-dependent. |
 | MKT-03 content drafting | ALREADY COMPLETE | Deterministic DRAFT generation, approved-knowledge provenance, and injection screening retained. |
 | MKT-04 brand compliance | PARTIAL | Blocking brand review retained; dispatch requires blocking-free review and authoritative price/promotion validation, but no live authoritative provider is configured. |
-| MKT-05 lifecycle/dispatch | PARTIAL | Local eight-stage seam and worker admission now use the shared P2 DomainRuntimeRegistry/RevenueOrchestrator path; external provider capabilities remain fail-closed. |
+| MKT-05 lifecycle/dispatch | PARTIAL | Bound to the shared P2 `DomainRuntimeRegistry` (`module: marketing`) for both fresh and resumed tasks through the shared `RevenueOrchestrator`; API admission accepts `campaign.requested`. External provider dispatch remains fail-closed without API-003 credentials. |
 | MKT-06 attribution | PARTIAL | Matching campaign/effect/correlation/order evidence is required; incomplete evidence returns UNAVAILABLE without fabricated revenue/KPIs. Live order evidence is absent. |
 | API-003 outbound | EXTERNAL BLOCKED | Marketing binding is fail-closed and requires explicit tenant/provider/credential/transport configuration; no provider credentials or audited provider contract are available. |
 | PILOT-01 | PARTIAL / OFFLINE ONLY | Staged harness and named negative cases are present; provider dispatch/order attribution remain explicitly unavailable offline. |
 
-Verification evidence: `git diff --check` passed. `python testcases/_generate.py --check` passes with 419 generated files matching sources byte for byte. Marketing tests, worker typecheck/build, repository lint/typecheck/unit/contracts/adversarial/security/pilot/build commands were attempted but blocked by absent `node_modules`; dependency installation is not authorized. LSP diagnostics are unavailable because no language server is registered.
+Verification evidence (post-rebase): full GitHub Actions run 36236215115 on commit a71e265 passed all five jobs — static analysis/typecheck/build, unit and contract tests, PostgreSQL/RLS rehearsal, adversarial/security, and named-image Docker build/load/inspect/boot; run 36235684408 passed the same five jobs on b2e6326. `python testcases/_generate.py --check` reports 419 generated files matching sources byte for byte, and `git diff --check` is clean. Local dependency-backed commands (`pnpm lint`, `pnpm typecheck`, `pnpm test:*`, `pnpm build`) remain blocked because this checkout has no `node_modules`; the dependency-installed CI run is the authoritative evidence. LSP diagnostics are unavailable because no language server is registered.
 
-Remaining blockers: P2 shared worker/domain routing must merge before production Marketing registration; API-003 credentials/provider and authoritative order evidence are absent; ASM/owner inputs such as audience limits, budgets, send/frequency limits, and attribution windows remain unresolved and fail closed. Formal Gate P3 remains blocked until Gate P2 closure and post-merge rebase/integration validation.
+Remaining blockers: API-003 provider credentials and an audited provider contract are absent, so Marketing dispatch stays fail-closed; authoritative downstream order/payment evidence is absent, so MKT-06 attribution remains UNAVAILABLE; ASM/owner inputs such as audience limits, budgets, send/frequency limits, and attribution windows remain unresolved and fail closed. Shared-routing integration is complete on this branch; formal Gate P3 additionally depends on Gate P2 closure.
 
 
 ## P3 Marketing CI follow-up — 36210697375
@@ -315,7 +315,7 @@ Remaining blockers: P2 shared worker/domain routing must merge before production
 - The user confirms CI dependencies installed successfully; local verification commands in this workspace still report missing turbo/node_modules and therefore do not replace CI evidence.
 - This correction removes the fake approval_signature contract, requires canonical P1B workflow claim/release with real approval_id/operator_id, keeps AUTH-4 out of caller grants, and requires authoritative price/promotion provenance without mapping floor_price to proposed_price or defaulting floor_source.
 - testcases/sources/business.py was updated and generated outputs were regenerated from source. ~python testcases/_generate.py --check~ now passes with 419 files byte-for-byte current; ~git diff --check~ passes.
-- SHARED_P2_RUNTIME is now wired through worker.ts and the shared DomainRuntimeRegistry; no duplicate worker/router/approval/effect subsystem was added.
+- Shared routing is now wired through `worker.ts` and the shared `DomainRuntimeRegistry`; no duplicate worker/router/approval/effect subsystem was added (final post-rebase status below).
 
 
 ## P3 Marketing correction verification
@@ -323,7 +323,7 @@ Remaining blockers: P2 shared worker/domain routing must merge before production
 - Run 36210697375 remains the authoritative pre-fix CI evidence: static-analysis/typecheck failed and jobs 2–5 were skipped; GitHub job logs were unavailable through the repository tool.
 - Local reruns after the correction remain environment-blocked because this checkout has no node_modules/turbo. No dependency installation was performed.
 - ~python testcases/_generate.py --check~ passes: 419 generated files match source. ~git diff --check~ passes with only Git line-ending warnings.
-- The correction is superseded by the post-P2 shared-runtime integration; full post-rebase validation is required.
+- The correction is superseded by the post-P2 shared-runtime integration; full post-rebase validation completed green (see the post-rebase section below).
 
 
 ## P3 Marketing CI follow-up — 36219425499
@@ -343,3 +343,16 @@ Remaining blockers: P2 shared worker/domain routing must merge before production
 - Temporary CI diagnostic steps were removed before this final green run.
 - PILOT-01 remains PARTIAL / OFFLINE ONLY; provider dispatch and authoritative order attribution are unavailable offline.
 - SHARED_P2_RUNTIME is integrated; formal Gate P3 remains blocked by external/provider/owner evidence and post-integration validation.
+
+
+## P3 Marketing shared-runtime integration — post-rebase
+
+- Baseline: P2 merged into `init/agent-solution` (`e5f3150`); this branch was rebased onto it (37 commits replayed, no conflicts) and force-pushed with `--force-with-lease`.
+- Shared routing: `module: 'marketing'` is now bound in `DomainRuntimeRegistry` through `apps/worker/src/runtime/marketing/factory.ts` (`createMarketingOrchestratorFactory`), which assembles the shared `RevenueOrchestrator`, durable adapters (`createDurableAdapters`), `EffectGuard`, and the canonical Marketing skill dispatcher. No second worker, router, approval queue, or effect subsystem was added.
+- Fresh tasks resolve `marketing` through `processClaimedTask` -> registry binding -> `processQueuedSignal`; resumed tasks resolve the same binding through `resumeTask`. Worker-level regression tests cover both paths plus the disabled-module refusal (`CAPABILITY_NOT_ENABLED`).
+- API admission accepts `module: 'marketing'` with `event_type: campaign.requested` (`MARKETING_SIGNAL_SOURCE_CHANNELS` / `MARKETING_SIGNAL_EVENT_TYPES` overridable), and R02/R11 pass the module through to the durable run.
+- Preserved P3 rules: AUTH-4 uses only a real durable `approval_id` with an authenticated `operator_id` (no synthesized ids, no provider call before release); the invented `segment_id` fallback is gone (`SEGMENT_REQUIRED` fails closed); consent/suppression is rechecked immediately before dispatch; provider UNKNOWN parks for reconciliation instead of blind retry; price and promotion claims require authoritative provenance plus floor data; MKT-06 counts revenue only from authoritative downstream order/payment evidence.
+- PILOT-01 remains an offline fixture with `OFFLINE_FIXTURE` / `NOT_RUNTIME_EVIDENCE` markers, now additionally exercising the shared worker/registry path and the missing-segment refusal. Provider dispatch and external order attribution stay explicitly UNAVAILABLE offline.
+- CI evidence: runs 36235684408 and 36236215115 both passed all five jobs; 36236215115 is the green run for commit a71e265.
+- These are engineering results only. No mock or offline evidence closes Gate P3: API-003 provider credentials, real downstream order evidence, and owner-supplied ASM/limit configuration are still absent.
+- PENDING_P2_SHARED_ROUTING is resolved: the shared P2 runtime is used for Marketing on this branch.

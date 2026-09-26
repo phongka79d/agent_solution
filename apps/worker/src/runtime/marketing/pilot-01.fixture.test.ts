@@ -28,7 +28,9 @@
  */
 
 import { computeRequestFingerprint } from '@agentos/core-engine';
-import { describe, expect, it } from 'vitest';
+import { type DurableTaskRecord, type DurableWorkflowRepository } from '@agentos/database';
+import { describe, expect, it, vi } from 'vitest';
+import { processClaimedTask, startWorker } from '../../worker.js';
 import {
   assertAttributionEvidenceAvailable,
   createPilot01Harness,
@@ -41,6 +43,7 @@ import {
   PILOT_01_NEGATIVE_ATTRIBUTION_FIXTURE,
   PILOT_01_OFFLINE_FIXTURE,
   PILOT_01_RUNTIME_EVIDENCE_STATUS,
+  PILOT_01_RUN_ID,
   PILOT_01_TENANT_ID,
   validateApprovalDigest,
   validateAuthority,
@@ -60,9 +63,12 @@ import {
 import {
   type MarketingBrandAuditOutput,
   type MarketingConsentDecision,
+  type MarketingInvocationContext,
   type MarketingKnowledgeDocument,
+  type MarketingRuntimePorts,
   MarketingRuntimeError,
 } from './contracts.js';
+import { createCampaignLifecycle } from './lifecycle.js';
 
 describe('PILOT-01 Offline Fixture & Harness Interface', () => {
   const harness = createPilot01Harness();
@@ -909,5 +915,256 @@ describe('PILOT-01 Offline Fixture & Harness Interface', () => {
         expect(result.offline_summary.external_order_evidence_available).toBe(false);
       });
     });
+  });
+});
+
+describe('Shared P2 Worker Path (PILOT-01)', () => {
+  const SHARED_TENANT_ID = '11111111-1111-4111-8111-111111111111';
+
+  it('routes a fresh PILOT-01 marketing signal through the shared domain registry and orchestrator factory', async () => {
+    const signal = {
+      signal_id: 'sig-pilot01-shared-1',
+      tenant_id: SHARED_TENANT_ID,
+      correlation_id: 'corr-pilot01-shared-1',
+      source_channel: 'MARKETING_CAMPAIGN',
+      event_type: 'campaign.requested',
+      payload: {
+        module: 'marketing',
+        skill_id: 'skill.mkt.dispatch_campaign',
+        input: {
+          tenant_id: SHARED_TENANT_ID,
+          campaign_id: PILOT_01_CAMPAIGN_ID,
+          segment_id: 'seg-champions-pilot01',
+          channel: 'SMS',
+          approved_content_id: 'draft-pilot01-tw-01',
+        },
+      },
+    };
+    const processQueuedSignal = vi.fn().mockResolvedValue(undefined);
+    const marketingOrchestratorFactory = vi.fn().mockResolvedValue({ processQueuedSignal });
+    const worker = startWorker(
+      { ENABLED_AGENT_MODULES: 'marketing' },
+      {
+        hmac: () => '',
+        tenantIds: [SHARED_TENANT_ID],
+        autoStartPolling: false,
+        marketingOrchestratorFactory,
+      },
+    );
+    const taskRecord = {
+      tenant_id: SHARED_TENANT_ID,
+      run_id: 'run-pilot01-shared-1',
+      correlation_id: 'corr-pilot01-shared-1',
+      task_version: 1,
+      state: 'queued',
+      lease_owner: 'worker-1',
+      state_payload: { signal },
+    } as DurableTaskRecord;
+
+    await processClaimedTask({
+      taskRecord,
+      tenant_id: SHARED_TENANT_ID,
+      worker_id: 'worker-1',
+      workflowRepository: {
+        getTask: vi.fn().mockResolvedValue(taskRecord),
+        releaseTaskLease: vi.fn().mockResolvedValue(true),
+        recordFailure: vi.fn(),
+        transitionTask: vi.fn(),
+      } as unknown as DurableWorkflowRepository,
+      registry: worker.registry,
+    });
+
+    expect(worker.registry?.resolve('marketing')).not.toBeNull();
+    expect(marketingOrchestratorFactory).toHaveBeenCalledWith(SHARED_TENANT_ID);
+    expect(processQueuedSignal).toHaveBeenCalledWith('run-pilot01-shared-1', signal, { worker_id: 'worker-1' });
+    await worker.close();
+  });
+
+  it('routes a resumed PILOT-01 marketing task through the shared registry resume path', async () => {
+    const resumeEvent = {
+      tenant_id: SHARED_TENANT_ID,
+      run_id: 'run-pilot01-shared-2',
+      event_type: 'human.approval',
+      approval_id: 'appr-pilot01-shared-1',
+      expected_payload_sha256: 'a'.repeat(64),
+      operator_id: 'op-pilot01-1',
+    };
+    const signal = {
+      signal_id: 'sig-pilot01-shared-2',
+      tenant_id: SHARED_TENANT_ID,
+      correlation_id: 'corr-pilot01-shared-2',
+      source_channel: 'MARKETING_CAMPAIGN',
+      event_type: 'campaign.requested',
+      payload: {
+        module: 'marketing',
+        skill_id: 'skill.mkt.dispatch_campaign',
+        input: {
+          tenant_id: SHARED_TENANT_ID,
+          campaign_id: PILOT_01_CAMPAIGN_ID,
+          segment_id: 'seg-champions-pilot01',
+          channel: 'SMS',
+          approved_content_id: 'draft-pilot01-tw-01',
+        },
+      },
+    };
+    const taskRecord = {
+      tenant_id: SHARED_TENANT_ID,
+      run_id: 'run-pilot01-shared-2',
+      correlation_id: 'corr-pilot01-shared-2',
+      task_version: 2,
+      state: 'awaiting_human',
+      lease_owner: 'worker-1',
+      state_payload: {
+        signal,
+        resume_event: resumeEvent,
+        plan: { plan_id: 'plan-pilot01-shared-1', steps: [], fallback_strategy: 'FAIL_CLOSED' },
+        current_step: 1,
+        pending_action: { action_id: '00000000-0000-4000-8000-000000000098', effect_key: PILOT_01_STAGED_EFFECT_KEY },
+        context: { tenant_id: SHARED_TENANT_ID, correlation_id: 'corr-pilot01-shared-2' },
+        previous_evidence_hash: '0'.repeat(64),
+        request_id: 'sig-pilot01-shared-2',
+      },
+    } as DurableTaskRecord;
+    const resumeTask = vi.fn().mockResolvedValue(undefined);
+    const marketingOrchestratorFactory = vi.fn().mockResolvedValue({ resumeTask });
+    const worker = startWorker(
+      { ENABLED_AGENT_MODULES: 'marketing' },
+      {
+        hmac: () => '',
+        tenantIds: [SHARED_TENANT_ID],
+        autoStartPolling: false,
+        marketingOrchestratorFactory,
+      },
+    );
+
+    await processClaimedTask({
+      taskRecord,
+      tenant_id: SHARED_TENANT_ID,
+      worker_id: 'worker-1',
+      workflowRepository: {
+        getTask: vi.fn().mockResolvedValue(taskRecord),
+        releaseTaskLease: vi.fn().mockResolvedValue(true),
+        recordFailure: vi.fn(),
+        transitionTask: vi.fn(),
+      } as unknown as DurableWorkflowRepository,
+      registry: worker.registry,
+    });
+
+    expect(marketingOrchestratorFactory).toHaveBeenCalledWith(SHARED_TENANT_ID);
+    expect(resumeTask).toHaveBeenCalledWith('run-pilot01-shared-2', resumeEvent);
+    await worker.close();
+  });
+
+  it('fails closed with CAPABILITY_NOT_ENABLED when Marketing is not enabled', async () => {
+    const marketingOrchestratorFactory = vi.fn();
+    const worker = startWorker(
+      { ENABLED_AGENT_MODULES: 'support' },
+      {
+        hmac: () => '',
+        tenantIds: [SHARED_TENANT_ID],
+        autoStartPolling: false,
+        marketingOrchestratorFactory,
+      },
+    );
+
+    expect(worker.registry?.resolve('marketing')).toBeNull();
+
+    const signal = {
+      signal_id: 'sig-pilot01-shared-1',
+      tenant_id: SHARED_TENANT_ID,
+      correlation_id: 'corr-pilot01-shared-1',
+      source_channel: 'MARKETING_CAMPAIGN',
+      event_type: 'campaign.requested',
+      payload: {
+        module: 'marketing',
+        skill_id: 'skill.mkt.dispatch_campaign',
+        input: {
+          tenant_id: SHARED_TENANT_ID,
+          campaign_id: PILOT_01_CAMPAIGN_ID,
+          segment_id: 'seg-champions-pilot01',
+          channel: 'SMS',
+          approved_content_id: 'draft-pilot01-tw-01',
+        },
+      },
+    };
+    const taskRecord = {
+      tenant_id: SHARED_TENANT_ID,
+      run_id: 'run-pilot01-shared-1',
+      correlation_id: 'corr-pilot01-shared-1',
+      task_version: 1,
+      state: 'queued',
+      lease_owner: 'worker-1',
+      state_payload: { signal },
+    } as DurableTaskRecord;
+
+    const recordFailure = vi.fn();
+
+    await processClaimedTask({
+      taskRecord,
+      tenant_id: SHARED_TENANT_ID,
+      worker_id: 'worker-1',
+      workflowRepository: {
+        getTask: vi.fn().mockResolvedValue(taskRecord),
+        releaseTaskLease: vi.fn().mockResolvedValue(true),
+        recordFailure,
+        transitionTask: vi.fn(),
+      } as unknown as DurableWorkflowRepository,
+      registry: worker.registry,
+    });
+
+    expect(recordFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error_details: expect.objectContaining({
+          code: 'CAPABILITY_NOT_ENABLED',
+          module: 'marketing',
+        }),
+      }),
+    );
+    expect(marketingOrchestratorFactory).not.toHaveBeenCalled();
+    await worker.close();
+  });
+
+  it('fails closed with SEGMENT_REQUIRED when a PILOT-01 approval omits segment_id', async () => {
+    // Deliberately minimal test double for runtime ports.
+    const ports = {
+      audit: { append: async () => undefined },
+      evidence: { append: async () => 'ev-pilot01' },
+      workflowEngine: { pauseForApproval: async () => ({ approval_id: 'appr-pilot01-segment' }) },
+    } as unknown as MarketingRuntimePorts;
+
+    const lifecycle = createCampaignLifecycle(
+      {
+        tenant_id: PILOT_01_TENANT_ID,
+        campaign_id: PILOT_01_CAMPAIGN_ID,
+        run_id: PILOT_01_RUN_ID,
+        correlation_id: PILOT_01_CORRELATION_ID,
+        expected_task_version: 1,
+      },
+      ports,
+    );
+    lifecycle.setStageForTesting('APPROVAL');
+    (lifecycle.state as Record<string, unknown>).content = {
+      draft_id: 'draft-pilot01-tw-01',
+      channel_payload: { channel_type: 'LINE_FLEX' },
+    };
+
+    const context: MarketingInvocationContext = {
+      tenant_id: PILOT_01_TENANT_ID,
+      run_id: PILOT_01_RUN_ID,
+      correlation_id: PILOT_01_CORRELATION_ID,
+      request_id: 'req-pilot01-segment',
+      step_index: 1,
+      action_revision: 1,
+      caller_agent: 'MKT-05',
+      granted_authority: 'AUTH-3',
+    };
+
+    await expect(lifecycle.stepApproval({}, context)).rejects.toMatchObject({ code: 'SEGMENT_REQUIRED' });
+    await expect(
+      lifecycle.stepApproval(
+        { approval_id: 'appr-pilot01-segment', decision: 'APPROVED', operator_id: 'op-pilot01-1' },
+        context,
+      ),
+    ).rejects.toMatchObject({ code: 'SEGMENT_REQUIRED' });
   });
 });
