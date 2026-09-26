@@ -397,6 +397,14 @@ export class CampaignLifecycle {
     if (!this._state.content) {
       throw new MarketingRuntimeError('CONTENT_ABSENT', 'Draft content required for approval');
     }
+    if (!this._ports.workflowEngine) {
+      throw new MarketingRuntimeError(
+        'P1B_APPROVAL_PORT_UNAVAILABLE',
+        params.decision
+          ? 'Workflow engine port is unavailable for approval claim and resume (fail closed)'
+          : 'Workflow engine port is unavailable for approval pause (fail closed)',
+      );
+    }
 
     const action_id = params.action_id ?? `act-${context.request_id}`;
     const effect_key = this._ports.effectGuard?.computeEffectKey({

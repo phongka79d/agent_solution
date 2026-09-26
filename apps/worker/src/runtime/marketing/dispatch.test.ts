@@ -2576,7 +2576,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       (lifecycle.state as Record<string, unknown>).content = { draft_id: 'draft-camp-01', channel_payload: { channel_type: 'SMS' } };
 
       await expect(
-        lifecycle.stepApproval({ decision: 'APPROVED', operator_id: 'op-compliance-leader-01' }, CONTEXT),
+        lifecycle.stepApproval({ segment_id: 'SEG-loyal', decision: 'APPROVED', operator_id: 'op-compliance-leader-01' }, CONTEXT),
       ).rejects.toMatchObject({
         code: 'APPROVAL_ID_REQUIRED',
       });
@@ -2592,7 +2592,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       (lifecycle.state as Record<string, unknown>).content = { draft_id: 'draft-camp-01', channel_payload: { channel_type: 'SMS' } };
 
       await expect(
-        lifecycle.stepApproval({ approval_id: 'appr-auto-1', decision: 'APPROVED', operator_id: '  ' }, CONTEXT),
+        lifecycle.stepApproval({ segment_id: 'SEG-loyal', approval_id: 'appr-auto-1', decision: 'APPROVED', operator_id: '  ' }, CONTEXT),
       ).rejects.toMatchObject({
         code: 'OPERATOR_REQUIRED',
       });
@@ -2610,7 +2610,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       (lifecycle.state as Record<string, unknown>).content = { draft_id: 'draft-camp-01', channel_payload: { channel_type: 'SMS' } };
 
       await expect(
-        lifecycle.stepApproval({ approval_id: 'appr-auto-1', decision: 'APPROVED', operator_id: 'op-compliance-leader-01' }, CONTEXT),
+        lifecycle.stepApproval({ segment_id: 'SEG-loyal', approval_id: 'appr-auto-1', decision: 'APPROVED', operator_id: 'op-compliance-leader-01' }, CONTEXT),
       ).rejects.toMatchObject({
         code: 'APPROVAL_NOT_RELEASED',
       });
