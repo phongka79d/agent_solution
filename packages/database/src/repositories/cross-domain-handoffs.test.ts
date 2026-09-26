@@ -11,6 +11,7 @@ const TENANT = '11111111-1111-4111-1111-111111111111';
 const CUSTOMER = '22222222-2222-4222-8222-222222222222';
 const CORRELATION = 'correlation-1';
 const KEY = 'a'.repeat(64);
+const HANDOFF_ID = '01920000-0000-7000-8000-0000000000f1';
 const FINGERPRINT = 'b'.repeat(64);
 const OTHER_FINGERPRINT = 'c'.repeat(64);
 const SOURCE_RUN = 'source-run-1';
@@ -145,6 +146,7 @@ function input(overrides: Partial<AdmitCrossDomainHandoffInput> = {}): AdmitCros
   const classification = overrides.classification ?? 'SIGNAL';
 
   return {
+    handoff_id: HANDOFF_ID,
     tenant_id: TENANT,
     customer_id: CUSTOMER,
     correlation_id: CORRELATION,

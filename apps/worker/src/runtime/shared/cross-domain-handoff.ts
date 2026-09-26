@@ -209,6 +209,9 @@ export function createCrossDomainHandoffBroker(
 
       const session_id = draft.source_run_id;
       const input: AdmitCrossDomainHandoffInput = {
+        // The package already minted this hop's identity; the ledger stores it rather than minting
+        // a second one, so the target run's signal and the ledger row agree.
+        handoff_id: pkg.handoff_id,
         tenant_id: draft.tenant_id,
         customer_id: draft.customer_id,
         correlation_id: draft.correlation_id,

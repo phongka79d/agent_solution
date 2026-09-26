@@ -152,6 +152,14 @@ describe('createCrossDomainHandoffBroker', () => {
     expect(admission.lifecycle).toEqual({ version: 1, state: 'HANDED_OFF' });
     expect(admitted).toHaveLength(1);
 
+    // One hop carries ONE identity: the ledger stores the id the package minted, and the target
+    // run's signal cites the same one, so the ledger row and the admitted run cannot disagree.
+    const admissionInput = admitted[0]!;
+    const signalled = admissionInput['signal'] as {
+      readonly payload: { readonly handoff: { readonly handoff_id: string } };
+    };
+    expect(admissionInput['handoff_id']).toBe(signalled.payload.handoff.handoff_id);
+
     // The row is part of the admission: the repository commits it in the same transaction, keyed by
     // the handoff identity, so the ledger and the timeline can never disagree.
     const event = admitted[0]!['timeline_event'] as Record<string, unknown>;

@@ -152,8 +152,11 @@ function handoffInput(overrides = {}) {
     reason: base.reason,
   });
 
+  const handoff_id = randomUUID();
+
   return {
     ...base,
+    handoff_id,
     idempotency_key,
     // The Customer 360 row is part of the admission, so the smoke submits it with the hop exactly
     // as the broker does; the store commits it in the same transaction.
@@ -259,6 +262,9 @@ describe('P4 cross-domain handoff ledger (real PostgreSQL)', () => {
 
     const ledger = await context.db.readCrossDomainHandoff(context.tenant_id, input.idempotency_key);
     assert.ok(ledger, 'the ledger row must be readable by its idempotency key');
+    // One hop carries ONE identity: the ledger stores the id the caller minted, and the target
+    // run's signal cites the same one.
+    assert.equal(ledger.handoff_id, input.handoff_id);
     assert.equal(ledger.target_run_id, input.run_id);
     assert.equal(ledger.classification, 'DECISION');
     assert.deepEqual(ledger.visited_domains, ['marketing']);
@@ -442,6 +448,7 @@ describe('P4 cross-domain handoff ledger (real PostgreSQL)', () => {
     assert.equal(handoffEntries[0].payload.target_domain, 'sales');
     // The row cites the handoff the LEDGER committed, not an id minted before the write.
     assert.equal(handoffEntries[0].payload.evidence_reference, admission.handoff_id);
+    assert.equal(admission.handoff_id, input.handoff_id, 'the admission reports the caller-minted id');
 
     // A replayed admission must not append a second row.
     const replay = await context.db.admitCrossDomainHandoff(input);

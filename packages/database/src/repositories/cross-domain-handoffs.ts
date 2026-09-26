@@ -94,6 +94,7 @@ const VERIFY_FACT = `SELECT 1 AS verified
   LIMIT 1`;
 
 const INSERT_HANDOFF = `INSERT INTO ${HANDOFFS} (
+    id,
     tenant_id,
     customer_id,
     correlation_id,
@@ -116,8 +117,8 @@ const INSERT_HANDOFF = `INSERT INTO ${HANDOFFS} (
     occurred_at
   )
   VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-    $11, $12, $13, $14, $15::jsonb, $16, $17, $18, $19::text[], $20::timestamptz
+    $1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+    $11, $12, $13, $14, $15, $16::jsonb, $17, $18, $19, $20::text[], $21::timestamptz
   )
   ON CONFLICT (tenant_id, customer_id, lifecycle_version) DO NOTHING
   RETURNING${HANDOFF_PROJECTION}`;
@@ -219,6 +220,8 @@ function handoffInsertValues(
   target_run_id: string,
 ): unknown[] {
   return [
+    // The caller's handoff identity IS the ledger's primary key: one hop, one id, everywhere.
+    input.handoff_id,
     input.tenant_id,
     input.customer_id,
     input.correlation_id,

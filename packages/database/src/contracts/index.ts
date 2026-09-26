@@ -598,6 +598,12 @@ export interface CrossDomainHandoffTimelineEvent {
 }
 
 export interface AdmitCrossDomainHandoffInput {
+  /**
+   * The handoff's durable identity, minted once by the orchestrator and stored as the ledger's
+   * primary key. The target run's signal cites this same id, so one hop never carries two
+   * identities.
+   */
+  handoff_id: string;
   tenant_id: string;
   customer_id: string;
   correlation_id: string;
