@@ -92,6 +92,38 @@ describe('CareAgentRuntime', () => {
     verificationResolver,
   });
 
+  it('refuses a handoff-admitted onboarding leg instead of completing with no steps', async () => {
+    const signal: SignalEnvelope = {
+      signal_id: 'sig-handoff-care-1',
+      tenant_id,
+      correlation_id: 'corr-1',
+      source_channel: 'ORCHESTRATOR_HANDOFF',
+      event_type: 'handoff.sales_to_care',
+      timestamp: '2026-09-01T00:00:00Z',
+      subject: {
+        session_id: 'sess-handoff-1',
+        channel_type: 'orchestrator',
+        verified_customer_id: 'cust-verified-1',
+      },
+      payload: {
+        module: 'support',
+        handoff: { target_domain: 'care', reason: 'Sales leg completed' },
+      },
+    };
+
+    // The leg is classified by the journey, not by message text: there is no customer message.
+    const hypothesis = await runtime.deriveHypothesis(signal, verifiedContext);
+    expect(hypothesis.intent).toBe('care:care');
+
+    const routing = await runtime.resolveRouting(signal, verifiedContext, hypothesis);
+
+    // An empty plan would complete with zero steps and report the leg as done, so the run refuses
+    // with its own code until an itinerary is bound (blocked.md records that as open work).
+    await expect(runtime.formulatePlan(routing, verifiedContext, hypothesis)).rejects.toThrow(
+      'CARE_ONBOARDING_ITINERARY_UNBOUND',
+    );
+  });
+
   it('yields lookup_order plan with server-resolved identity fields for verified order request', async () => {
     const signal: SignalEnvelope = {
       signal_id: 'sig-order-1',

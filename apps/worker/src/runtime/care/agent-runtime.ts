@@ -8,6 +8,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { OrchestratorError } from '@agentos/core-engine/contracts';
 import type {
   AuthorityLevel,
   ExecutionPlan,
@@ -490,6 +491,19 @@ export class CareAgentRuntime implements IAgentRuntime {
     hypothesis: HypothesisRecord,
   ): Promise<ExecutionPlan> {
     const plan_id = `plan_${randomUUID().slice(0, 8)}`;
+
+    // A run admitted for the Care ONBOARDING leg has no message to classify: its itinerary is a
+    // prerequisite this deployment does not bind yet (see `blocked.md`). It refuses with a named
+    // code instead of returning the empty plan below, because an empty plan completes with zero
+    // steps and would report a journey leg as done that never did anything.
+    if (hypothesis.intent === 'care:care') {
+      throw new OrchestratorError(
+        'CARE_ONBOARDING_ITINERARY_UNBOUND',
+        'The Customer Care onboarding leg of the customer journey has no bound itinerary: no '
+          + 'canonical CS-01 action is configured for a handoff-admitted onboarding run, so the '
+          + 'leg refuses rather than completing with nothing (implement/09 §1.1 Gate P4).',
+      );
+    }
 
     // The retention leg is planned from its own canonical CS-02 row. Its authoritative ports
     // (`Customer360.AnalyticsLayer` for the churn hypothesis) are not bound by every deployment, in
