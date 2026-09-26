@@ -107,8 +107,9 @@ describe('PILOT-01 through the shared P2 runtime', () => {
       initializeOutcomeWatch: vi.fn(async () => undefined),
       logAgentRun: vi.fn(async () => undefined),
     };
+    const auditAppend = vi.fn(async () => undefined);
     const auditTrail: IAuditTrail = {
-      append: vi.fn(async () => undefined),
+      append: auditAppend,
     };
     const sessionControl: ISessionControl = {
       isTakenOver: vi.fn(async () => false),
@@ -233,7 +234,7 @@ describe('PILOT-01 through the shared P2 runtime', () => {
       pauseForApproval,
       recordFailure,
       dispatchCampaign,
-      auditTrail,
+      auditAppend,
       transitionTask,
       getStatePayload: () => state_payload,
     };
@@ -255,7 +256,7 @@ describe('PILOT-01 through the shared P2 runtime', () => {
       throw new Error('DIAG ' + JSON.stringify({
         transitions: scenario.transitionTask.mock.calls.map((call) => [call[2], call[3]]),
         failures: scenario.recordFailure.mock.calls.map((call) => call[0].error_details),
-        decisions: scenario.auditTrail.append.mock.calls.map((call) => call[0].decision),
+        decisions: scenario.auditAppend.mock.calls.map((call) => call[0].decision),
       }));
     }
     expect(scenario.pauseForApproval).toHaveBeenCalledTimes(1);
