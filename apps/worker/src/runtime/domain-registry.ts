@@ -88,6 +88,14 @@ export function createDomainRuntimeRegistry(
       if (!binding.contract.source_channels.includes(sourceChannel)) return null;
       if (!binding.contract.event_types.includes(eventType)) return null;
 
+      // A channel and an event type are declared independently, so the pair is constrained here: a
+      // brokered handoff travels ONLY on the internal channel, and that channel carries ONLY
+      // handoff events. Without this, a delivery naming `handoff.<leg>` on a customer-facing channel
+      // would resolve to a domain binding and be treated as an orchestrator-brokered leg.
+      const isHandoffEvent = eventType.startsWith('handoff.');
+      const isHandoffChannel = sourceChannel === 'ORCHESTRATOR_HANDOFF';
+      if (isHandoffEvent !== isHandoffChannel) return null;
+
       return binding;
     },
 
