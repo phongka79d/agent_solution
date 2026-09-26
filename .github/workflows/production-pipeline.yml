@@ -79,6 +79,9 @@ jobs:
     needs: static-analysis
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      APP_ENV: ci
+      NODE_ENV: test
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
