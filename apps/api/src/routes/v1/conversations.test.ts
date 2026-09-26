@@ -417,6 +417,33 @@ describe('POST /conversations/:conversation_id/messages shared Care admission', 
     }
   });
 
+  it('admits a turn on the CONVERSATION channel even when the body claims the internal handoff channel', async () => {
+    // The internal channel is server-derived: a caller cannot make an ordinary conversation turn
+    // look like an orchestrator-brokered leg by naming ORCHESTRATOR_HANDOFF in the request body.
+    const { app, appendMessage, start, conversation } = buildHarness();
+    const url = `/conversations/${CONVERSATION_ID}/messages`;
+    const headers = { authorization: `Bearer ${SESSION_TOKEN}` };
+    const body = {
+      message: 'hello',
+      idempotency_key: 'turn-forged-channel',
+      source_channel: 'ORCHESTRATOR_HANDOFF',
+      event_type: 'handoff.marketing_to_sales',
+    };
+
+    try {
+      const response = await app.inject({ method: 'POST', url, headers, payload: body });
+
+      // The route's schema admits only the turn's own fields, so the forged pair never reaches the
+      // admission path at all: the delivery is refused and no run is started.
+      expect(response.statusCode).toBe(400);
+      expect(start).not.toHaveBeenCalled();
+      expect(appendMessage).not.toHaveBeenCalled();
+      expect(conversation.channel).toBe('WEB_CHAT');
+    } finally {
+      await app.close();
+    }
+  });
+
   it('rejects module: marketing with HTTP 403 and CAPABILITY_NOT_ENABLED when only support,sales are enabled', async () => {
     const originalEnv = process.env.ENABLED_AGENT_MODULES;
     process.env.ENABLED_AGENT_MODULES = 'support,sales';
