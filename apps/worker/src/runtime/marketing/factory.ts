@@ -233,7 +233,8 @@ function policySkills(): Readonly<Record<string, PolicyRegistrySkill>> {
       allowed_agents: Object.freeze([MARKETING_AGENT_BY_SKILL[skill_id]!]),
       required_authority: MARKETING_AUTHORITY_BY_SKILL[skill_id]!,
       mutating: MARKETING_MUTATING[skill_id] === true,
-      price_bearing: skill_id === 'skill.mkt.dispatch_campaign',
+      // Price-bearing is an action-level property; a dispatch row may carry no price at all.
+      price_bearing: false,
       idempotent: skill_id !== 'skill.mkt.dispatch_campaign',
       epistemic_class: skill_id === 'skill.mkt.dispatch_campaign' ? 'ACTION' : 'HYPOTHESIS',
       write_target: skill_id === 'skill.mkt.dispatch_campaign' ? 'FACT' : 'HYPOTHESIS',
@@ -246,10 +247,16 @@ function policySkills(): Readonly<Record<string, PolicyRegistrySkill>> {
   return Object.freeze(result);
 }
 
+export interface MarketingAuthoritativeValidationResult {
+  readonly computed_price_floor?: number;
+  readonly floor_source?: string;
+  readonly proposed_price?: number;
+}
+
 export type MarketingAuthoritativeValidation = (
   payload: Readonly<Record<string, unknown>>,
   context: HydratedContext,
-) => void | Promise<void>;
+) => void | MarketingAuthoritativeValidationResult | Promise<void | MarketingAuthoritativeValidationResult>;
 
 class SharedMarketingPolicyEngine implements IPolicyEngine {
   constructor(
@@ -289,7 +296,25 @@ class SharedMarketingPolicyEngine implements IPolicyEngine {
       );
     }
     if ((proposedPrice !== undefined || hasPromotionClaim) && this.validateAuthoritative) {
-      await this.validateAuthoritative(payload, context);
+      const authoritative = await this.validateAuthoritative(payload, context);
+      if (proposedPrice !== undefined) {
+        if (authoritative === undefined || typeof authoritative !== 'object') {
+          throw new OrchestratorError('PRICE_PROVENANCE_REQUIRED', 'authoritative floor/source data is required for price-bearing Marketing dispatch');
+        }
+        if (authoritative.proposed_price !== proposedPrice) {
+          throw new OrchestratorError('PRICE_MISMATCH', 'proposed_price does not match the authoritative price');
+        }
+        if (typeof authoritative.computed_price_floor !== 'number' || !Number.isFinite(authoritative.computed_price_floor)
+          || typeof authoritative.floor_source !== 'string' || authoritative.floor_source.trim().length === 0) {
+          throw new OrchestratorError('PRICE_PROVENANCE_REQUIRED', 'authoritative floor and floor_source are required for price-bearing Marketing dispatch');
+        }
+        return {
+          ...validated,
+          computed_price_floor: authoritative.computed_price_floor,
+          floor_source: authoritative.floor_source.trim(),
+          proposed_price: authoritative.proposed_price,
+        };
+      }
     }
     return validated;
   }
