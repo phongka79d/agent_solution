@@ -234,7 +234,7 @@ export interface MarketingAudienceResolverInput {
  */
 export interface MarketingVerifiedAudienceResult {
   readonly recipients: readonly string[];
-  readonly consent_verified: true;
+  readonly consent_verified: boolean;
 }
 
 /**

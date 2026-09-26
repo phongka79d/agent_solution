@@ -8,7 +8,6 @@ import type {
   InputMktEvaluateAttribution,
   InputMktGenerateContent,
   InputMktSegmentAudience,
-  MarketingAudienceResolver,
   MarketingSkillToolPortOptions,
 } from './types.js';
 
@@ -167,14 +166,16 @@ export function createMarketingSkillToolPort(
 
         if (Array.isArray(resolved)) {
           resolvedRecipients = resolved;
-        } else if (
-          typeof resolved === 'object' &&
-          resolved !== null &&
-          'recipients' in resolved &&
-          Array.isArray(resolved.recipients)
-        ) {
-          resolvedRecipients = resolved.recipients;
-          if ('consent_verified' in resolved && resolved.consent_verified === true) {
+        } else if (typeof resolved === 'object' && resolved !== null) {
+          const verifiedAudience = resolved as { recipients?: unknown; consent_verified?: unknown };
+          if (!Array.isArray(verifiedAudience.recipients)) {
+            throw new MarketingSkillToolError(
+              'AUDIENCE_REQUIRED',
+              `Audience resolver returned no eligible recipients for segment '${typedInput.segment_id}'; campaign dispatch refused (fail closed)`,
+            );
+          }
+          resolvedRecipients = verifiedAudience.recipients as readonly string[];
+          if (verifiedAudience.consent_verified === true) {
             consentAlreadyVerified = true;
           }
         } else {
