@@ -300,6 +300,8 @@ describe('PILOT-01 through the shared P2 runtime', () => {
     expect(scenario.recordFailure.mock.calls[0]![0].error_details.code).toBe('PROMOTION_PROVENANCE_REQUIRED');
     expect(scenario.dispatchCampaign).not.toHaveBeenCalled();
 
+    await scenario.worker.close();
+  });
 
   it('refuses a segment-less campaign before the AUTH-4 gate', async () => {
     const scenario = createScenario({}, { omit_segment: true });
@@ -355,8 +357,6 @@ describe('PILOT-01 through the shared P2 runtime', () => {
     expect(scenario.pauseForApproval).not.toHaveBeenCalled();
     expect(scenario.dispatchCampaign).not.toHaveBeenCalled();
 
-    await scenario.worker.close();
-  });
     await scenario.worker.close();
   });
 });
