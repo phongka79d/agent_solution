@@ -14,6 +14,8 @@ const KEY = 'a'.repeat(64);
 const HANDOFF_ID = '01920000-0000-7000-8000-0000000000f1';
 const FINGERPRINT = 'b'.repeat(64);
 const OTHER_FINGERPRINT = 'c'.repeat(64);
+/** A key that is deliberately NOT this hop's identity, so the unkeyed refusal is unambiguous. */
+const FOREIGN_KEY = 'd'.repeat(64);
 const SOURCE_RUN = 'source-run-1';
 const TARGET_RUN = 'target-run-1';
 const STORED_TARGET_RUN = 'target-run-stored';
@@ -299,7 +301,7 @@ describe('admitCrossDomainHandoff', () => {
     await expect(admitCrossDomainHandoff(without_row)).rejects.toThrow('HANDOFF_TIMELINE_EVENT_REQUIRED');
 
     await expect(
-      admitCrossDomainHandoff(input({ timeline_event: { ...input().timeline_event, source_event_id: 'c'.repeat(64) } })),
+      admitCrossDomainHandoff(input({ timeline_event: { ...input().timeline_event, source_event_id: FOREIGN_KEY } })),
     ).rejects.toThrow('HANDOFF_TIMELINE_EVENT_UNKEYED');
 
     await expect(
