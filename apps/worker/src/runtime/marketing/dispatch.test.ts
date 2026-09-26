@@ -37,6 +37,7 @@ import {
   computeCampaignPayloadSha256,
   computeReviewedDigest,
   dispatchCampaign,
+  claimCanonicalApproval,
   isConfirmedExecutionReceipt,
   reconcileCampaignDispatch,
   validateAuthoritativeInputs,
@@ -78,10 +79,29 @@ function createMockPorts(overrides: Partial<MarketingRuntimePorts> = {}) {
     source_version: 'v1',
   }));
 
+  let claimedAction: ActionDraft | null = null;
   const pauseForApproval = vi.fn(async () => ({ approval_id: 'appr-auto-1' }));
-  const claimApprovalAndResume = vi.fn(async () => ({ claimed: true }));
-  const getTask = vi.fn(async () => null);
-
+  const claimApprovalAndResume = vi.fn(async (
+    params: Parameters<IStatefulWorkflowEngine['claimApprovalAndResume']>[0],
+  ) => {
+    claimedAction = params.authorized_action;
+    return {
+      claimed: true as const,
+      approval_id: params.approval_id,
+      operator_id: params.operator_id,
+      decision: (params.decision === 'MODIFIED' ? 'MODIFIED' : 'APPROVED') as 'APPROVED' | 'MODIFIED',
+    };
+  });
+  const getTask = vi.fn(async () =>
+    claimedAction === null
+      ? null
+      : {
+          task_version: 2,
+          state: 'running' as const,
+          correlation_id: CORRELATION_ID,
+          state_payload: { pending_action: claimedAction },
+        },
+  );
   const workflowEngine: IStatefulWorkflowEngine = {
     createTask: vi.fn(async () => undefined),
     updateTaskProgress: vi.fn(async () => undefined),
@@ -161,7 +181,6 @@ function makeValidInput(overrides: Partial<CampaignDispatchInput> = {}): Campaig
     segment_id: 'SEG-atrisk-0115',
     channel: 'SMS',
     approved_content_id: 'draft-content-01',
-    approval_signature: 'sig-valid-operator-1',
     recipients: ['cust-1', 'cust-2'],
     ...overrides,
   };
@@ -176,11 +195,26 @@ function makeValidBrandReview(overrides: Partial<MarketingBrandAuditOutput> = {}
   };
 }
 
-function makeApprovedBinding(
+const TEST_CLAIM = Object.freeze({
+  approval_id: 'appr-SCR003-01',
+  operator_id: 'op-compliance-leader-01',
+});
+
+interface ClaimApprovalOptions {
+  readonly approval_id: string;
+  readonly operator_id: string;
+  readonly decision?: 'APPROVED' | 'MODIFIED';
+  readonly effect_key?: string;
+}
+
+async function claimApprovedBinding(
+  workflowEngine: IStatefulWorkflowEngine,
   input: CampaignDispatchInput,
+  claimParams: ClaimApprovalOptions = TEST_CLAIM,
   context: MarketingInvocationContext = CONTEXT,
-  effect_key = 'ek-camp-0115-01',
-): CampaignApprovalBinding {
+): Promise<CampaignApprovalBinding> {
+  const effect_key = claimParams.effect_key ?? 'ek-camp-0115-01';
+  const decision = claimParams.decision ?? 'APPROVED';
   const payload: Record<string, unknown> = {
     ...(input.payload ?? {}),
     tenant_id: input.tenant_id,
@@ -193,6 +227,9 @@ function makeApprovedBinding(
     ...(input.discount_amount !== undefined ? { discount_amount: input.discount_amount } : {}),
     ...(input.discount_percent !== undefined ? { discount_percent: input.discount_percent } : {}),
     ...(input.proposed_price !== undefined ? { proposed_price: input.proposed_price } : {}),
+    ...(input.price_source !== undefined ? { price_source: input.price_source } : {}),
+    ...(input.floor_source !== undefined ? { floor_source: input.floor_source } : {}),
+    ...(input.promotion_provenance !== undefined ? { promotion_provenance: input.promotion_provenance } : {}),
   };
   const payload_sha256 = computeCampaignPayloadSha256(payload);
   const reviewed_digest = computeReviewedDigest({
@@ -201,17 +238,36 @@ function makeApprovedBinding(
     effect_key,
     payload_sha256,
   });
-  return {
-    approval_id: 'appr-SCR003-01',
+  const action: ActionDraft = {
+    action_id: 'action-' + claimParams.approval_id,
+    run_id: context.run_id,
+    tenant_id: context.tenant_id,
+    agent_id: 'MKT-05',
+    skill_id: 'skill.mkt.dispatch_campaign',
+    adapter_target: 'API-003.CommunicationConnector',
+    step_index: context.step_index,
+    mutating: true,
+    price_bearing: typeof payload.proposed_price === 'number',
+    request_id: context.request_id,
+    action_revision: context.action_revision,
+    effect_key,
+    required_authority: 'AUTH-4',
+    payload,
+    approval_payload_digest: payload_sha256,
+    approval_id: claimParams.approval_id,
+  };
+  return claimCanonicalApproval({
+    workflow: workflowEngine,
     tenant_id: context.tenant_id,
     run_id: context.run_id,
+    approval_id: claimParams.approval_id,
     effect_key,
     payload_sha256,
     reviewed_digest,
-    decision: 'APPROVED',
-    operator_id: 'operator-alice',
-    claimed: true,
-  };
+    decision,
+    operator_id: claimParams.operator_id,
+    authorized_action: action,
+  });
 }
 
 describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
@@ -238,15 +294,31 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       expect(dispatch).not.toHaveBeenCalled();
     });
 
+    it('fails closed with P1B_APPROVAL_PORT_UNAVAILABLE when workflowEngine is missing on approval pause', async () => {
+      const { ports, dispatch } = createMockPorts();
+      const input = makeValidInput();
+
+      await expect(
+        dispatchCampaign(input, CONTEXT, { ...ports, workflowEngine: undefined }, {
+          brandReview: makeValidBrandReview(),
+          expected_task_version: 1,
+        }),
+      ).rejects.toMatchObject({
+        code: 'P1B_APPROVAL_PORT_UNAVAILABLE',
+      });
+
+      expect(dispatch).not.toHaveBeenCalled();
+    });
+
     it('refuses provider call if approval decision is REJECTED or not claimed', async () => {
       const { ports, dispatch } = createMockPorts();
       const input = makeValidInput();
-      const binding = makeApprovedBinding(input);
+      const binding = await claimApprovedBinding(ports.workflowEngine!, input);
 
       const rejectedBinding: CampaignApprovalBinding = {
         ...binding,
-        decision: 'REJECTED',
-        claimed: false,
+        decision: 'REJECTED' as unknown as 'APPROVED',
+        claimed: false as unknown as true,
       };
 
       await expect(
@@ -258,10 +330,89 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       expect(dispatch).not.toHaveBeenCalled();
     });
 
+    it('fails closed with APPROVAL_NOT_RELEASED on caller-only APPROVED when claimApprovalAndResume returns false', async () => {
+      const { ports, dispatch, claimApprovalAndResume } = createMockPorts();
+      claimApprovalAndResume.mockResolvedValueOnce({ claimed: false as unknown as true });
+
+      const input = makeValidInput();
+      // Caller-only fabricated binding without workflow claim release
+      const unconfirmedBinding = {
+        approval_id: 'appr-caller-only',
+        tenant_id: CONTEXT.tenant_id,
+        run_id: CONTEXT.run_id,
+        effect_key: 'ek-camp-0115-01',
+        payload_sha256: computeCampaignPayloadSha256(input),
+        reviewed_digest: computeReviewedDigest({
+          tenant_id: CONTEXT.tenant_id,
+          run_id: CONTEXT.run_id,
+          effect_key: 'ek-camp-0115-01',
+          payload_sha256: computeCampaignPayloadSha256(input),
+        }),
+        decision: 'APPROVED' as const,
+        operator_id: 'op-caller-only',
+        claimed: false as unknown as true,
+      };
+
+      await expect(
+        dispatchCampaign(input, CONTEXT, ports, {
+          brandReview: makeValidBrandReview(),
+          approvalBinding: unconfirmedBinding,
+        }),
+      ).rejects.toMatchObject({
+        code: 'APPROVAL_NOT_RELEASED',
+      });
+
+      expect(dispatch).not.toHaveBeenCalled();
+    });
+
+    it('fails closed with APPROVAL_NOT_RELEASED when approval binding lacks valid approval_id', async () => {
+      const { ports, dispatch } = createMockPorts();
+      const input = makeValidInput();
+      const binding = await claimApprovedBinding(ports.workflowEngine!, input);
+
+      const invalidBinding = {
+        ...binding,
+        approval_id: '',
+      } as unknown as CampaignApprovalBinding;
+
+      await expect(
+        dispatchCampaign(input, CONTEXT, ports, {
+          brandReview: makeValidBrandReview(),
+          approvalBinding: invalidBinding,
+        }),
+      ).rejects.toMatchObject({
+        code: 'APPROVAL_NOT_RELEASED',
+      });
+
+      expect(dispatch).not.toHaveBeenCalled();
+    });
+
+    it('fails closed with APPROVAL_NOT_RELEASED when approval binding lacks valid operator_id', async () => {
+      const { ports, dispatch } = createMockPorts();
+      const input = makeValidInput();
+      const binding = await claimApprovedBinding(ports.workflowEngine!, input);
+
+      const invalidBinding = {
+        ...binding,
+        operator_id: '',
+      } as unknown as CampaignApprovalBinding;
+
+      await expect(
+        dispatchCampaign(input, CONTEXT, ports, {
+          brandReview: makeValidBrandReview(),
+          approvalBinding: invalidBinding,
+        }),
+      ).rejects.toMatchObject({
+        code: 'APPROVAL_NOT_RELEASED',
+      });
+
+      expect(dispatch).not.toHaveBeenCalled();
+    });
+
     it('proceeds with provider call when approval is claimed and APPROVED', async () => {
       const { ports, dispatch, resolve } = createMockPorts();
       const input = makeValidInput();
-      const binding = makeApprovedBinding(input);
+      const binding = await claimApprovedBinding(ports.workflowEngine!, input);
 
       const result = await dispatchCampaign(input, CONTEXT, ports, {
         brandReview: makeValidBrandReview(),
@@ -284,8 +435,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
     it('rejects with APPROVAL_DIGEST_MISMATCH when payload content is modified after review', async () => {
       const { ports, dispatch } = createMockPorts();
       const input = makeValidInput({ discount_percent: 10 });
-      const binding = makeApprovedBinding(input);
-
+      const binding = await claimApprovedBinding(ports.workflowEngine!, input);
       // Malicious or accidental modification: discount changed to 20 after approval!
       const alteredInput = makeValidInput({ discount_percent: 20 });
 
@@ -297,10 +447,10 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       expect(dispatch).not.toHaveBeenCalled();
     });
 
-    it('rejects with APPROVAL_DIGEST_MISMATCH on tenant, run_id, or effect_key binding mismatch', () => {
+    it('rejects with APPROVAL_DIGEST_MISMATCH on tenant, run_id, or effect_key binding mismatch', async () => {
+      const { ports } = createMockPorts();
       const input = makeValidInput();
-      const binding = makeApprovedBinding(input);
-
+      const binding = await claimApprovedBinding(ports.workflowEngine!, input);
       const payload_sha256 = binding.payload_sha256;
 
       expect(() =>
@@ -354,8 +504,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
     it('invalidates digest if channel, content, or audience changes after approval', async () => {
       const { ports } = createMockPorts();
       const input = makeValidInput();
-      const binding = makeApprovedBinding(input);
-
+      const binding = await claimApprovedBinding(ports.workflowEngine!, input);
       // Changed channel
       await expect(
         dispatchCampaign(
@@ -433,8 +582,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       const input = makeValidInput({
         recipients: ['cust-opted-in', 'cust-opted-out', 'cust-missing'],
       });
-      const staleBinding = makeApprovedBinding(input);
-
+      const staleBinding = await claimApprovedBinding(ports.workflowEngine!, input);
       // (1) Attempting dispatch with the stale unsuppressed approval fails closed
       await expect(
         dispatchCampaign(input, CONTEXT, ports, {
@@ -451,8 +599,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       const filteredInput = makeValidInput({
         recipients: ['cust-opted-in'],
       });
-      const reapprovedBinding = makeApprovedBinding(filteredInput);
-
+      const reapprovedBinding = await claimApprovedBinding(ports.workflowEngine!, filteredInput);
       const result = await dispatchCampaign(input, CONTEXT, ports, {
         brandReview: makeValidBrandReview(),
         approvalBinding: reapprovedBinding,
@@ -475,7 +622,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       ]);
       expect(dispatchedDraft.payload.recipients).not.toContain('cust-opted-out');
       expect(dispatchedDraft.payload.recipients).not.toContain('cust-missing');
-      expect(dispatchedDraft.approval_payload_digest).toBe(reapprovedBinding.reviewed_digest);
+      expect(dispatchedDraft.approval_payload_digest).toBe(reapprovedBinding.payload_sha256);
     });
 
     it('rejects with CONSENT_SUPPRESSION_ALL_DENIED when all recipients lack verified consent', async () => {
@@ -490,9 +637,8 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
         source_uri: 'urn:agentos:consents',
         source_version: 'v1',
       });
-
       const input = makeValidInput({ recipients: ['cust-1', 'cust-2'] });
-      const binding = makeApprovedBinding(input);
+      const binding = await claimApprovedBinding(ports.workflowEngine!, input);
 
       await expect(
         dispatchCampaign(input, CONTEXT, ports, { brandReview: makeValidBrandReview(), approvalBinding: binding }),
@@ -552,8 +698,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
           recipients: ['cust-payload-opted-in', 'cust-payload-opted-out', 'cust-payload-missing'],
         },
       });
-      const staleBinding = makeApprovedBinding(input);
-
+      const staleBinding = await claimApprovedBinding(ports.workflowEngine!, input);
       // (1) Attempting dispatch with stale approval fails closed
       await expect(
         dispatchCampaign(input, CONTEXT, ports, {
@@ -573,8 +718,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
           recipients: ['cust-payload-opted-in'],
         },
       });
-      const reapprovedBinding = makeApprovedBinding(filteredInput);
-
+      const reapprovedBinding = await claimApprovedBinding(ports.workflowEngine!, filteredInput);
       const result = await dispatchCampaign(input, CONTEXT, ports, {
         brandReview: makeValidBrandReview(),
         approvalBinding: reapprovedBinding,
@@ -612,7 +756,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       expect(dispatchedDraft.payload.recipients).not.toContain('cust-payload-missing');
 
       // Approval digest matches the filtered reapproval binding exactly
-      expect(dispatchedDraft.approval_payload_digest).toBe(reapprovedBinding.reviewed_digest);
+      expect(dispatchedDraft.approval_payload_digest).toBe(reapprovedBinding.payload_sha256);
     });
 
     it('rejects with CONSENT_SUPPRESSION_ALL_DENIED when all payload-only recipients lack consent', async () => {
@@ -635,8 +779,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
           recipients: ['cust-denied-only'],
         },
       });
-      const binding = makeApprovedBinding(input);
-
+      const binding = await claimApprovedBinding(ports.workflowEngine!, input);
       await expect(
         dispatchCampaign(input, CONTEXT, ports, {
           brandReview: makeValidBrandReview(),
@@ -678,8 +821,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       const input = makeValidInput({
         recipients: ['cust-allowed', 'cust-suppressed'],
       });
-      const staleBinding = makeApprovedBinding(input);
-
+      const staleBinding = await claimApprovedBinding(ports.workflowEngine!, input);
       let caughtError: unknown;
       try {
         await dispatchCampaign(input, CONTEXT, ports, {
@@ -770,7 +912,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
     it('fails closed with AUDIENCE_REQUIRED when input.recipients is empty array, never invoking provider dispatcher', async () => {
       const { ports, dispatch } = createMockPorts();
       const input = makeValidInput({ recipients: [] });
-      const binding = makeApprovedBinding(input);
+      const binding = await claimApprovedBinding(ports.workflowEngine!, input);
 
       await expect(
         dispatchCampaign(input, CONTEXT, ports, { brandReview: makeValidBrandReview(), approvalBinding: binding }),
@@ -783,7 +925,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
     it('fails closed with AUDIENCE_REQUIRED when input has segment_id but no recipients and no payload recipients, never treating segment_id alone as consented audience', async () => {
       const { ports, dispatch } = createMockPorts();
       const input = makeValidInput({ recipients: undefined, payload: undefined });
-      const binding = makeApprovedBinding(input);
+      const binding = await claimApprovedBinding(ports.workflowEngine!, input);
 
       await expect(
         dispatchCampaign(input, CONTEXT, ports, { brandReview: makeValidBrandReview(), approvalBinding: binding }),
@@ -796,7 +938,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
     it('fails closed with AUDIENCE_REQUIRED when input.payload carries empty recipients array, never invoking dispatcher', async () => {
       const { ports, dispatch } = createMockPorts();
       const input = makeValidInput({ recipients: undefined, payload: { recipients: [] } });
-      const binding = makeApprovedBinding(input);
+      const binding = await claimApprovedBinding(ports.workflowEngine!, input);
 
       await expect(
         dispatchCampaign(input, CONTEXT, ports, { brandReview: makeValidBrandReview(), approvalBinding: binding }),
@@ -896,7 +1038,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       });
 
       const input = makeValidInput();
-      const binding = makeApprovedBinding(input);
+      const binding = await claimApprovedBinding(ports.workflowEngine!, input);
 
       const result = await dispatchCampaign(input, CONTEXT, ports, {
         brandReview: makeValidBrandReview(),
@@ -914,7 +1056,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       reserve.mockResolvedValueOnce({ kind: 'CONFLICT' });
 
       const input = makeValidInput();
-      const binding = makeApprovedBinding(input);
+      const binding = await claimApprovedBinding(ports.workflowEngine!, input);
 
       await expect(
         dispatchCampaign(input, CONTEXT, ports, { brandReview: makeValidBrandReview(), approvalBinding: binding }),
@@ -939,7 +1081,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       });
 
       const input = makeValidInput();
-      const binding = makeApprovedBinding(input);
+      const binding = await claimApprovedBinding(ports.workflowEngine!, input);
 
       await expect(
         dispatchCampaign(input, CONTEXT, ports, { brandReview: makeValidBrandReview(), approvalBinding: binding }),
@@ -1131,7 +1273,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       };
 
       const input = makeValidInput();
-      const binding = makeApprovedBinding(input);
+      const binding = await claimApprovedBinding(customPorts.workflowEngine!, input);
 
       const result = await dispatchCampaign(input, CONTEXT, customPorts, {
         brandReview: makeValidBrandReview(),
@@ -1161,7 +1303,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       };
 
       const input = makeValidInput();
-      const binding = makeApprovedBinding(input);
+      const binding = await claimApprovedBinding(customPorts.workflowEngine!, input);
 
       await expect(
         dispatchCampaign(input, CONTEXT, customPorts, {
@@ -1190,7 +1332,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       };
 
       const input = makeValidInput();
-      const binding = makeApprovedBinding(input);
+      const binding = await claimApprovedBinding(customPorts.workflowEngine!, input);
 
       await expect(
         dispatchCampaign(input, CONTEXT, customPorts, {
@@ -1234,7 +1376,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       };
 
       const input = makeValidInput();
-      const binding = makeApprovedBinding(input);
+      const binding = await claimApprovedBinding(customPorts.workflowEngine!, input);
 
       const result = await dispatchCampaign(input, CONTEXT, customPorts, {
         brandReview: makeValidBrandReview(),
@@ -1266,7 +1408,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       };
 
       const input = makeValidInput();
-      const binding = makeApprovedBinding(input);
+      const binding = await claimApprovedBinding(customPorts.workflowEngine!, input);
 
       await expect(
         dispatchCampaign(input, CONTEXT, customPorts, {
@@ -1296,7 +1438,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       };
 
       const input = makeValidInput();
-      const binding = makeApprovedBinding(input);
+      const binding = await claimApprovedBinding(customPorts.workflowEngine!, input);
 
       await expect(
         dispatchCampaign(input, CONTEXT, customPorts, {
@@ -1335,7 +1477,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       };
 
       const input = makeValidInput();
-      const binding = makeApprovedBinding(input);
+      const binding = await claimApprovedBinding(customPorts.workflowEngine!, input);
 
       await expect(
         dispatchCampaign(input, CONTEXT, customPorts, {
@@ -1365,7 +1507,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       });
 
       const input = makeValidInput();
-      const binding = makeApprovedBinding(input);
+      const binding = await claimApprovedBinding(ports.workflowEngine!, input);
 
       await expect(
         dispatchCampaign(input, CONTEXT, ports, { brandReview: makeValidBrandReview(), approvalBinding: binding }),
@@ -1399,7 +1541,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       });
 
       const input = makeValidInput();
-      const binding = makeApprovedBinding(input);
+      const binding = await claimApprovedBinding(ports.workflowEngine!, input);
 
       await expect(
         dispatchCampaign(input, CONTEXT, ports, { brandReview: makeValidBrandReview(), approvalBinding: binding }),
@@ -1429,7 +1571,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       });
 
       const input = makeValidInput();
-      const binding = makeApprovedBinding(input);
+      const binding = await claimApprovedBinding(ports.workflowEngine!, input);
 
       await expect(
         dispatchCampaign(input, CONTEXT, ports, { brandReview: makeValidBrandReview(), approvalBinding: binding }),
@@ -1459,7 +1601,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       });
 
       const input = makeValidInput();
-      const binding = makeApprovedBinding(input);
+      const binding = await claimApprovedBinding(ports.workflowEngine!, input);
 
       const result = await dispatchCampaign(input, CONTEXT, ports, {
         brandReview: makeValidBrandReview(),
@@ -1496,7 +1638,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       });
 
       const input = makeValidInput();
-      const binding = makeApprovedBinding(input);
+      const binding = await claimApprovedBinding(ports.workflowEngine!, input);
 
       const result = await dispatchCampaign(input, CONTEXT, ports, {
         brandReview: makeValidBrandReview(),
@@ -1527,7 +1669,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       });
 
       const input = makeValidInput();
-      const binding = makeApprovedBinding(input);
+      const binding = await claimApprovedBinding(ports.workflowEngine!, input);
 
       await expect(
         dispatchCampaign(input, CONTEXT, ports, { brandReview: makeValidBrandReview(), approvalBinding: binding }),
@@ -1605,7 +1747,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
     it('scopes all port calls and effect reservations strictly to the verified tenant', async () => {
       const { ports, reserve, dispatch, consentCheck } = createMockPorts();
       const input = makeValidInput();
-      const binding = makeApprovedBinding(input);
+      const binding = await claimApprovedBinding(ports.workflowEngine!, input);
 
       await dispatchCampaign(input, CONTEXT, ports, { brandReview: makeValidBrandReview(), approvalBinding: binding });
 
@@ -1626,7 +1768,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
     it('rejects dispatch if brand review is not compliant', async () => {
       const { ports, dispatch } = createMockPorts();
       const input = makeValidInput();
-      const binding = makeApprovedBinding(input);
+      const binding = await claimApprovedBinding(ports.workflowEngine!, input);
 
       const nonCompliantReview: MarketingBrandAuditOutput = {
         compliant: false,
@@ -1656,7 +1798,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
     it('rejects dispatch if brand review contains BLOCKING violation', async () => {
       const { ports, dispatch } = createMockPorts();
       const input = makeValidInput();
-      const binding = makeApprovedBinding(input);
+      const binding = await claimApprovedBinding(ports.workflowEngine!, input);
 
       const blockingReview: MarketingBrandAuditOutput = {
         compliant: true, // even if marked compliant by mistake
@@ -1686,7 +1828,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
     it('fails closed with BRAND_REVIEW_REQUIRED when brand review is missing', async () => {
       const { ports, dispatch } = createMockPorts();
       const input = makeValidInput();
-      const binding = makeApprovedBinding(input);
+      const binding = await claimApprovedBinding(ports.workflowEngine!, input);
 
       await expect(
         dispatchCampaign(input, CONTEXT, ports, {
@@ -1862,6 +2004,9 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       const payloadOnlyInput = makeValidInput({
         payload: {
           proposed_price: 150,
+          price_source: 'ERP_PRICING_CATALOG',
+          floor_source: 'ERP_PRICING_CATALOG',
+          promotion_source: 'PROMO_REGISTRY_2026',
           discount_percent: 15,
           discount_amount: 50,
           offer_id: 'approved-offer',
@@ -1869,6 +2014,10 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       });
       const authValidation: MarketingAuthoritativeValidation = {
         floor_price: 100,
+        floor_source: 'ERP_PRICING_CATALOG',
+        authoritative_price: 150,
+        price_source: 'ERP_PRICING_CATALOG',
+        promotion_source: 'PROMO_REGISTRY_2026',
         approved_claims: ['approved-offer'],
         max_discount_percent: 20,
         max_discount_amount: 100,
@@ -1903,7 +2052,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       await expect(
         dispatchCampaign(input, CONTEXT, ports, {
           brandReview: makeValidBrandReview(),
-          authoritativeValidation: { floor_price: 100 },
+          authoritativeValidation: { floor_price: 100, floor_source: 'ERP_PRICING_CATALOG' },
         }),
       ).rejects.toMatchObject({
         code: 'ERR_FLOOR_PRICE_VIOLATION',
@@ -1973,6 +2122,9 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       const input = makeValidInput({
         payload: {
           proposed_price: 150,
+          price_source: 'ERP_PRICING_CATALOG',
+          floor_source: 'ERP_PRICING_CATALOG',
+          promotion_source: 'PROMO_REGISTRY_2026',
           offer_id: 'promo-special-2026',
           discount_percent: 15,
           discount_amount: 50,
@@ -1981,12 +2133,15 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       });
       const authValidation: MarketingAuthoritativeValidation = {
         floor_price: 100,
-        floor_source: 'ERP_CATALOG',
+        floor_source: 'ERP_PRICING_CATALOG',
+        authoritative_price: 150,
+        price_source: 'ERP_PRICING_CATALOG',
+        promotion_source: 'PROMO_REGISTRY_2026',
         approved_claims: ['promo-special-2026'],
         max_discount_percent: 20,
         max_discount_amount: 100,
       };
-      const approvalBinding = makeApprovedBinding(input);
+      const approvalBinding = await claimApprovedBinding(ports.workflowEngine!, input);
 
       const result = await dispatchCampaign(input, CONTEXT, ports, {
         brandReview: makeValidBrandReview(),
@@ -1999,6 +2154,8 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       const dispatchedDraft = dispatch.mock.calls[0]![0];
       expect(dispatchedDraft.price_bearing).toBe(true);
       expect(dispatchedDraft.proposed_price).toBe(150);
+      expect(dispatchedDraft.computed_price_floor).toBe(100);
+      expect(dispatchedDraft.floor_source).toBe('ERP_PRICING_CATALOG');
       expect(dispatchedDraft.payload).toMatchObject({
         proposed_price: 150,
         offer_id: 'promo-special-2026',
@@ -2006,7 +2163,61 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
         discount_amount: 50,
         custom_tracking: 'mkt-campaign-tag',
       });
-      expect(dispatchedDraft.approval_payload_digest).toBe(approvalBinding.reviewed_digest);
+      expect(dispatchedDraft.approval_payload_digest).toBe(approvalBinding.payload_sha256);
+    });
+
+    it('fails closed with FLOOR_SOURCE_REQUIRED when floor_price is supplied with empty floor_source', () => {
+      const input = makeValidInput({ proposed_price: 100 });
+      expect(() =>
+        validateAuthoritativeInputs(input, { floor_price: 50, floor_source: '  ' }),
+      ).toThrow(/FLOOR_SOURCE_REQUIRED/);
+    });
+
+    it('fails closed with PRICE_PROVENANCE_REQUIRED when authoritative_price is present without price_source', () => {
+      const input = makeValidInput({ proposed_price: 100 });
+      expect(() =>
+        validateAuthoritativeInputs(input, {
+          floor_price: 50,
+          floor_source: 'ERP_PRICING_CATALOG',
+          authoritative_price: 100,
+          price_source: '  ',
+        }),
+      ).toThrow(/PRICE_PROVENANCE_REQUIRED/);
+    });
+
+    it('fails closed with PRICE_PROVENANCE_MISMATCH when price_source conflicts with authoritative price_source', () => {
+      const input = makeValidInput({
+        proposed_price: 100,
+        price_source: 'LOCAL_SCRATCHPAD',
+      });
+      expect(() =>
+        validateAuthoritativeInputs(input, {
+          floor_price: 50,
+          floor_source: 'ERP_PRICING_CATALOG',
+          authoritative_price: 100,
+          price_source: 'ERP_PRICING_CATALOG',
+        }),
+      ).toThrow(/PRICE_PROVENANCE_MISMATCH/);
+    });
+
+    it('fails closed with FLOOR_PROVENANCE_MISMATCH when floor_source conflicts with authoritative floor_source', () => {
+      const input = makeValidInput({ floor_source: 'LOCAL_SCRATCHPAD' });
+      expect(() =>
+        validateAuthoritativeInputs(input, { floor_source: 'ERP_PRICING_CATALOG' }),
+      ).toThrow(/FLOOR_PROVENANCE_MISMATCH/);
+    });
+
+    it('fails closed with PROMOTION_PROVENANCE_MISMATCH when promotion_provenance conflicts with authoritative promotion source', () => {
+      const input = makeValidInput({ promotion_provenance: 'LOCAL_SCRATCHPAD' });
+      expect(() =>
+        validateAuthoritativeInputs(input, { promotion_source: 'PROMO_REGISTRY_2026' }),
+      ).toThrow(/PROMOTION_PROVENANCE_MISMATCH/);
+    });
+
+    it('fails closed with PROMOTION_PROVENANCE_REQUIRED when authoritative promotion_source is empty', () => {
+      expect(() =>
+        validateAuthoritativeInputs({}, { promotion_source: '  ' }),
+      ).toThrow(/PROMOTION_PROVENANCE_REQUIRED/);
     });
   });
 
@@ -2122,18 +2333,32 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       // Stage 5: APPROVAL (AUTH-4 Pause -> Claim)
       const pauseRes = await lifecycle.stepApproval({}, CONTEXT);
       expect(pauseRes.paused).toBe(true);
-      expect(pauseRes.approval_id).toBeDefined();
+      expect(pauseRes.approval_id).toBe('appr-auto-1');
+      const realApprovalId = pauseRes.approval_id!;
 
-      // Human operator approves at SCR-003
+      // Human operator approves at SCR-003 through the canonical workflow claim
       const claimRes = await lifecycle.stepApproval(
         {
+          approval_id: realApprovalId,
           decision: 'APPROVED',
-          operator_id: 'operator-alice',
+          operator_id: 'op-compliance-leader-01',
         },
         CONTEXT,
       );
       expect(claimRes.paused).toBe(false);
+      expect(claimRes.approval_id).toBe(realApprovalId);
       expect(claimRes.binding?.claimed).toBe(true);
+      expect(claimRes.binding?.approval_id).toBe(realApprovalId);
+      expect(claimRes.binding?.operator_id).toBe('op-compliance-leader-01');
+      expect(claimApprovalAndResume).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenant_id: TENANT,
+          run_id: RUN_ID,
+          approval_id: realApprovalId,
+          decision: 'APPROVED',
+          operator_id: 'op-compliance-leader-01',
+        }),
+      );
       expect(lifecycle.state.current_stage).toBe('PUBLISH');
 
       // Stage 6: PUBLISH
@@ -2142,7 +2367,6 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
           segment_id: 'SEG-loyal',
           channel: 'SMS',
           approved_content_id: 'draft-camp-01',
-          approval_signature: 'sig-alice',
         },
         CONTEXT,
       );
@@ -2236,6 +2460,69 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
         }),
       ).rejects.toThrow(/TASK_VERSION_CONFLICT/);
     });
+    it('stepApproval fails closed with P1B_APPROVAL_PORT_UNAVAILABLE when workflowEngine is missing on pause', async () => {
+      const { ports } = createMockPorts();
+      const lifecycle = createCampaignLifecycle(
+        { tenant_id: TENANT, campaign_id: CAMPAIGN_ID, run_id: RUN_ID, correlation_id: CORRELATION_ID, expected_task_version: 1 },
+        { ...ports, workflowEngine: undefined },
+      );
+      lifecycle.setStageForTesting('APPROVAL');
+      (lifecycle.state as Record<string, unknown>).content = { draft_id: 'draft-camp-01', channel_payload: { channel_type: 'SMS' } };
+
+      await expect(lifecycle.stepApproval({}, CONTEXT)).rejects.toMatchObject({
+        code: 'P1B_APPROVAL_PORT_UNAVAILABLE',
+      });
+    });
+
+    it('stepApproval fails closed with APPROVAL_ID_REQUIRED when resuming without approval_id and unpaused', async () => {
+      const { ports } = createMockPorts();
+      const lifecycle = createCampaignLifecycle(
+        { tenant_id: TENANT, campaign_id: CAMPAIGN_ID, run_id: RUN_ID, correlation_id: CORRELATION_ID, expected_task_version: 1 },
+        ports,
+      );
+      lifecycle.setStageForTesting('APPROVAL');
+      (lifecycle.state as Record<string, unknown>).content = { draft_id: 'draft-camp-01', channel_payload: { channel_type: 'SMS' } };
+
+      await expect(
+        lifecycle.stepApproval({ decision: 'APPROVED', operator_id: 'op-compliance-leader-01' }, CONTEXT),
+      ).rejects.toMatchObject({
+        code: 'APPROVAL_ID_REQUIRED',
+      });
+    });
+
+    it('stepApproval fails closed with OPERATOR_REQUIRED when operator_id is empty on resume', async () => {
+      const { ports } = createMockPorts();
+      const lifecycle = createCampaignLifecycle(
+        { tenant_id: TENANT, campaign_id: CAMPAIGN_ID, run_id: RUN_ID, correlation_id: CORRELATION_ID, expected_task_version: 1 },
+        ports,
+      );
+      lifecycle.setStageForTesting('APPROVAL');
+      (lifecycle.state as Record<string, unknown>).content = { draft_id: 'draft-camp-01', channel_payload: { channel_type: 'SMS' } };
+
+      await expect(
+        lifecycle.stepApproval({ approval_id: 'appr-auto-1', decision: 'APPROVED', operator_id: '  ' }, CONTEXT),
+      ).rejects.toMatchObject({
+        code: 'OPERATOR_REQUIRED',
+      });
+    });
+
+    it('stepApproval fails closed with APPROVAL_NOT_RELEASED when workflow mock claimApprovalAndResume returns claimed: false', async () => {
+      const { ports, claimApprovalAndResume } = createMockPorts();
+      claimApprovalAndResume.mockResolvedValueOnce({ claimed: false as unknown as true, approval_id: 'appr-auto-1', operator_id: 'op-compliance-leader-01', decision: 'APPROVED' });
+
+      const lifecycle = createCampaignLifecycle(
+        { tenant_id: TENANT, campaign_id: CAMPAIGN_ID, run_id: RUN_ID, correlation_id: CORRELATION_ID, expected_task_version: 1 },
+        ports,
+      );
+      lifecycle.setStageForTesting('APPROVAL');
+      (lifecycle.state as Record<string, unknown>).content = { draft_id: 'draft-camp-01', channel_payload: { channel_type: 'SMS' } };
+
+      await expect(
+        lifecycle.stepApproval({ approval_id: 'appr-auto-1', decision: 'APPROVED', operator_id: 'op-compliance-leader-01' }, CONTEXT),
+      ).rejects.toMatchObject({
+        code: 'APPROVAL_NOT_RELEASED',
+      });
+    });
   });
 
   describe('11. Integration with MarketingRuntime execute() and capabilities', () => {
@@ -2244,7 +2531,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       const runtime = createMarketingRuntime({ ports, enableDispatch: true });
 
       const input = makeValidInput();
-      const binding = makeApprovedBinding(input);
+      const binding = await claimApprovedBinding(ports.workflowEngine!, input);
 
       // Use dispatchCampaign directly or via execute with options
       const res = await runtime.dispatchCampaign!(input, CONTEXT, { brandReview: makeValidBrandReview(), approvalBinding: binding });

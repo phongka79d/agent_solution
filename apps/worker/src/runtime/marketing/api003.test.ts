@@ -129,7 +129,6 @@ function createActionDraft(overrides?: Partial<ActionDraft>): ActionDraft {
       campaign_id: 'camp-2026-m01',
       segment_id: 'seg-vip-001',
       approved_content_id: 'doc-approved-001',
-      approval_signature: 'sig-human-scr003',
       nested_metadata: { priority: 'HIGH', tags: ['q3', 'promo'] },
     },
     ...overrides,
@@ -280,7 +279,6 @@ describe('Marketing API-003 Outbound Connector Binding', () => {
         campaign_id: 'camp-2026-m01',
         segment_id: 'seg-vip-001',
         approved_content_id: 'doc-approved-001',
-        approval_signature: 'sig-human-scr003',
         nested_metadata: { priority: 'HIGH', tags: ['q3', 'promo'] },
       });
     });

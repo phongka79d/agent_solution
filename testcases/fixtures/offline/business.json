@@ -360,18 +360,18 @@
         "segment_id": "SEG-atrisk-0115",
         "channel": "EMAIL",
         "approved_content_id": "DRAFT-0115-07",
-        "approval_signature": "APR-0115-01:sig:7f3c",
+        "approval_id": "APR-0115-01",
         "effect_key": "EK-CAMP-0115-01-EMAIL",
         "caller_agent": "MKT-05",
         "granted_authority": "AUTH-3"
       },
       "happy_expected_result": "dispatch_id=DSP-0115-01, recipient_count=2 (cust-b excluded: email opt-out), status='ENQUEUED' -> 'COMPLETED' after the connector's delivery receipt, dispatched_at=2026-01-15T10:00:00Z",
-      "boundary_probe": "approval_signature bound to a different effect_key -> APPROVAL_REQUIRED, exactly one PENDING approval row exists for the run and 0 recipients contacted; a second dispatch of the same (campaign_id, segment_id) -> CAMPAIGN_ALREADY_SENT (max_retries 0) with unchanged recipient_count",
+      "boundary_probe": "approval_id bound to a different effect_key or mismatched approval_payload_digest -> APPROVAL_REQUIRED, exactly one PENDING approval row exists for the run and 0 recipients contacted; a second dispatch of the same (campaign_id, segment_id) -> CAMPAIGN_ALREADY_SENT (max_retries 0) with unchanged recipient_count",
       "denial_probe": {
         "denied_agent": "MKT-04 (reviewer is not the dispatcher)",
         "insufficient_authority": "AUTH-3",
         "expected_error": "UNAUTHORIZED_AGENT",
-        "second_probe": "MKT-05 invoking with no bound approval_id -> APPROVAL_REQUIRED: the action is prepared, not executed; no rank comparison happens and AUTH-4 never acts as a clearance (BR-007, AUTH-4/AUTH-5 separation)"
+        "second_probe": "MKT-05 invoking with no bound approval_id or mismatched approval_payload_digest -> APPROVAL_REQUIRED: the action is prepared, not executed; no rank comparison happens and AUTH-4 never acts as a clearance (BR-007, AUTH-4/AUTH-5 separation)"
       },
       "timeout_expectation": "connector accepts the batch then stops responding past 5000ms -> execution_status='failed' with error.code='DISPATCH_TIMEOUT', error.outcome='UNKNOWN'; effect_reservations for EK-CAMP-0115-01-EMAIL stays RESERVED and reconciliation by effect_key decides the outcome; max_retries=0 so nothing is re-dispatched"
     },

@@ -16,6 +16,7 @@ import {
   computeEffectKey,
   isAssignableAuthority,
 } from '@agentos/core-engine';
+import type { ActionDraft } from '@agentos/core-engine/contracts';
 import {
   auditMarketingBrand,
 } from './content.js';
@@ -43,7 +44,9 @@ import {
   computeCampaignPayloadSha256,
   computeReviewedDigest,
   dispatchCampaign,
+  claimCanonicalApproval,
   type DispatchCampaignOptions,
+  validateAuthoritativeInputs,
 } from './dispatch.js';
 import {
   MARKETING_APPROVED_DOCUMENT_ALLOWLIST,
@@ -94,6 +97,7 @@ export class CampaignLifecycle {
   private readonly _identity: CampaignLifecycleContext;
   private readonly _ports: MarketingRuntimePorts;
   private _state: CampaignLifecycleState;
+  private _paused_approval_id?: string;
 
   constructor(identity: CampaignLifecycleContext, ports: MarketingRuntimePorts) {
     if (!identity.tenant_id || !identity.campaign_id || !identity.run_id || !identity.correlation_id) {
@@ -371,6 +375,11 @@ export class CampaignLifecycle {
       readonly review_comment?: string | null;
       readonly modified_payload?: Record<string, unknown>;
       readonly expected_task_version?: number;
+      readonly approval_id?: string;
+      readonly proposed_price?: number;
+      readonly offer_id?: string;
+      readonly discount_amount?: number;
+      readonly discount_percent?: number;
     },
     context: MarketingInvocationContext,
   ): Promise<{ paused: boolean; approval_id?: string; binding?: CampaignApprovalBinding }> {
@@ -409,10 +418,17 @@ export class CampaignLifecycle {
       channel: this._state.content.channel_payload.channel_type,
       approved_content_id: this._state.content.draft_id,
       recipients: (this._state.audience ?? []).map((c) => c.customer_id),
-      ...(params.authoritativeValidation?.floor_price !== undefined
-        ? { proposed_price: params.authoritativeValidation.floor_price }
-        : {}),
+      ...(params.proposed_price !== undefined
+        ? { proposed_price: params.proposed_price }
+        : params.authoritativeValidation?.authoritative_price !== undefined
+          ? { proposed_price: params.authoritativeValidation.authoritative_price }
+          : {}),
+      ...(params.offer_id !== undefined ? { offer_id: params.offer_id } : {}),
+      ...(params.discount_amount !== undefined ? { discount_amount: params.discount_amount } : {}),
+      ...(params.discount_percent !== undefined ? { discount_percent: params.discount_percent } : {}),
     };
+
+    validateAuthoritativeInputs(payload, params.authoritativeValidation);
 
     const payload_sha256 = computeCampaignPayloadSha256(payload);
     const reviewed_digest = computeReviewedDigest({
@@ -430,81 +446,117 @@ export class CampaignLifecycle {
       (context as Record<string, unknown>).task_version;
 
     if (!params.decision) {
-      let approval_id = `appr-${context.request_id}`;
-      if (this._ports.workflowEngine) {
-        if (
-          expectedTaskVersion === undefined ||
-          typeof expectedTaskVersion !== 'number' ||
-          !Number.isInteger(expectedTaskVersion) ||
-          expectedTaskVersion < 1
-        ) {
-          throw new MarketingRuntimeError(
-            'TASK_VERSION_REQUIRED',
-            'Server-supplied expected_task_version is required for workflow engine pause checkpoint (fail closed)',
-          );
-        }
-
-        const pauseRes = await this._ports.workflowEngine.pauseForApproval({
-          tenant_id: this._identity.tenant_id,
-          run_id: this._identity.run_id,
-          expected_task_version: expectedTaskVersion,
-          checkpoint: {
-            stage: 'APPROVAL',
-            effect_key,
-            payload_sha256,
-            reviewed_digest,
-          },
-          approval: {
-            action_id,
-            effect_key,
-            payload,
-            reason: 'Campaign dispatch requires human approval (AUTH-4) at SCR-003',
-          },
-        });
-        approval_id = pauseRes.approval_id;
+      if (!this._ports.workflowEngine) {
+        throw new MarketingRuntimeError(
+          'P1B_APPROVAL_PORT_UNAVAILABLE',
+          'Workflow engine port is unavailable for approval pause (fail closed)',
+        );
       }
-      return { paused: true, approval_id };
+
+      if (
+        expectedTaskVersion === undefined ||
+        typeof expectedTaskVersion !== 'number' ||
+        !Number.isInteger(expectedTaskVersion) ||
+        expectedTaskVersion < 1
+      ) {
+        throw new MarketingRuntimeError(
+          'TASK_VERSION_REQUIRED',
+          'Server-supplied expected_task_version is required for workflow engine pause checkpoint (fail closed)',
+        );
+      }
+
+      const pauseRes = await this._ports.workflowEngine.pauseForApproval({
+        tenant_id: this._identity.tenant_id,
+        run_id: this._identity.run_id,
+        expected_task_version: expectedTaskVersion,
+        checkpoint: {
+          stage: 'APPROVAL',
+          effect_key,
+          payload_sha256,
+          reviewed_digest,
+        },
+        approval: {
+          action_id,
+          effect_key,
+          payload,
+          reason: 'Campaign dispatch requires human approval (AUTH-4) at SCR-003',
+        },
+      });
+
+      this._paused_approval_id = pauseRes.approval_id;
+      this._state.paused_approval_id = pauseRes.approval_id;
+      return { paused: true, approval_id: pauseRes.approval_id };
     }
 
     // Process human operator decision
-    const approval_id = `appr-${context.request_id}`;
-    let claimed = true;
-
-    if (this._ports.workflowEngine) {
-      const claimRes = await this._ports.workflowEngine.claimApprovalAndResume({
-        tenant_id: this._identity.tenant_id,
-        run_id: this._identity.run_id,
-        approval_id,
-        effect_key,
-        expected_payload_sha256: payload_sha256,
-        authorized_action: null,
-        decision: params.decision,
-        operator_id: params.operator_id ?? 'operator-1',
-        review_comment: params.review_comment ?? null,
-        ...(expectedTaskVersion !== undefined ? { expected_task_version: expectedTaskVersion } : {}),
-      });
-      claimed = claimRes.claimed;
-    }
-
-    if (!claimed || params.decision !== 'APPROVED') {
+    if (!this._ports.workflowEngine) {
       throw new MarketingRuntimeError(
-        'APPROVAL_NOT_RELEASED',
-        `Approval decision is '${params.decision}' (claimed=${claimed}); campaign dispatch refused`,
+        'P1B_APPROVAL_PORT_UNAVAILABLE',
+        'Workflow engine port is unavailable for approval claim and resume (fail closed)',
       );
     }
 
-    const binding: CampaignApprovalBinding = {
+    const approval_id =
+      params.approval_id ??
+      this._paused_approval_id ??
+      this._state.paused_approval_id;
+
+    if (!approval_id || typeof approval_id !== 'string' || approval_id.trim() === '') {
+      throw new MarketingRuntimeError(
+        'APPROVAL_ID_REQUIRED',
+        'Real durable approval_id (from paused state or explicit server event) is required for approval resume (fail closed)',
+      );
+    }
+
+    const operator_id = params.operator_id?.trim();
+    if (!operator_id) {
+      throw new MarketingRuntimeError(
+        'OPERATOR_REQUIRED',
+        'Non-empty authenticated operator_id is required for approval resume (fail closed)',
+      );
+    }
+
+    if (params.decision !== 'APPROVED' && params.decision !== 'MODIFIED') {
+      throw new MarketingRuntimeError(
+        'APPROVAL_NOT_RELEASED',
+        `Approval decision is '${params.decision}'; campaign dispatch refused`,
+      );
+    }
+
+    const authorizedAction: ActionDraft = {
+      action_id,
+      run_id: this._identity.run_id,
+      tenant_id: this._identity.tenant_id,
+      agent_id: 'MKT-05',
+      skill_id: 'skill.mkt.dispatch_campaign',
+      adapter_target: 'API-003.CommunicationConnector',
+      step_index: context.step_index,
+      mutating: true,
+      price_bearing: typeof payload.proposed_price === 'number',
+      request_id: context.request_id,
+      action_revision: context.action_revision,
+      effect_key,
+      required_authority: 'AUTH-4',
+      payload,
+      approval_payload_digest: payload_sha256,
       approval_id,
+    };
+    const binding = await claimCanonicalApproval({
+      workflow: this._ports.workflowEngine,
       tenant_id: this._identity.tenant_id,
       run_id: this._identity.run_id,
+      approval_id,
       effect_key,
       payload_sha256,
       reviewed_digest,
       decision: params.decision,
-      operator_id: params.operator_id ?? 'operator-1',
+      operator_id,
       review_comment: params.review_comment ?? null,
-      claimed: true,
-    };
+      authorized_action: authorizedAction,
+      ...(typeof expectedTaskVersion === 'number' && Number.isInteger(expectedTaskVersion) && expectedTaskVersion >= 1
+        ? { expected_task_version: expectedTaskVersion }
+        : {}),
+    });
 
     this._state.approval_binding = binding;
     this.transitionTo('PUBLISH');

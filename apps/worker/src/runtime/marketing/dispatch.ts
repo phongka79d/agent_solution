@@ -180,6 +180,55 @@ export function validateAuthoritativeInputs(
   }
   const rawOfferId = topOfferId !== undefined ? topOfferId : payloadOfferId;
 
+  // Sourcing & Provenance conflict detection
+  const topPriceSource = record.price_source as string | undefined;
+  const payloadPriceSource = payload?.price_source as string | undefined;
+  if (topPriceSource !== undefined && payloadPriceSource !== undefined && topPriceSource !== payloadPriceSource) {
+    throw new MarketingRuntimeError(
+      'APPROVAL_PAYLOAD_MISMATCH',
+      `Payload price_source '${String(payloadPriceSource)}' conflicts with input price_source '${String(topPriceSource)}'`,
+    );
+  }
+  const rawPriceSource = topPriceSource !== undefined ? topPriceSource : payloadPriceSource;
+
+  const topFloorSource = record.floor_source as string | undefined;
+  const payloadFloorSource = payload?.floor_source as string | undefined;
+  if (topFloorSource !== undefined && payloadFloorSource !== undefined && topFloorSource !== payloadFloorSource) {
+    throw new MarketingRuntimeError(
+      'APPROVAL_PAYLOAD_MISMATCH',
+      `Payload floor_source '${String(payloadFloorSource)}' conflicts with input floor_source '${String(topFloorSource)}'`,
+    );
+  }
+  const rawFloorSource = topFloorSource !== undefined ? topFloorSource : payloadFloorSource;
+
+  const topPromoProvenance = (record.promotion_provenance ?? record.promotion_source) as string | undefined;
+  const payloadPromoProvenance = (payload?.promotion_provenance ?? payload?.promotion_source) as string | undefined;
+  if (topPromoProvenance !== undefined && payloadPromoProvenance !== undefined && topPromoProvenance !== payloadPromoProvenance) {
+    throw new MarketingRuntimeError(
+      'APPROVAL_PAYLOAD_MISMATCH',
+      `Payload promotion provenance '${String(payloadPromoProvenance)}' conflicts with input promotion provenance '${String(topPromoProvenance)}'`,
+    );
+  }
+  const rawPromoProvenance = topPromoProvenance !== undefined ? topPromoProvenance : payloadPromoProvenance;
+
+  const promotionClaimPresent =
+    rawDiscountPercent !== undefined || rawDiscountAmount !== undefined || rawOfferId !== undefined;
+  if (promotionClaimPresent) {
+    const authPromo = authoritativeValidation?.promotion_provenance ?? authoritativeValidation?.promotion_source;
+    if (!authPromo || typeof authPromo !== 'string' || authPromo.trim() === '') {
+      throw new MarketingRuntimeError(
+        'PROMOTION_PROVENANCE_REQUIRED',
+        'Promotion/offer claims require authoritative promotion provenance; missing provenance fails closed',
+      );
+    }
+    if (!rawPromoProvenance || rawPromoProvenance !== authPromo) {
+      throw new MarketingRuntimeError(
+        'PROMOTION_PROVENANCE_MISMATCH',
+        'Promotion/offer provenance does not match the authoritative source',
+      );
+    }
+  }
+
   // Price-bearing verification
   if (rawPrice !== undefined) {
     if (typeof rawPrice !== 'number' || !Number.isFinite(rawPrice)) {
@@ -198,6 +247,129 @@ export function validateAuthoritativeInputs(
       throw new MarketingRuntimeError(
         'ERR_FLOOR_PRICE_VIOLATION',
         `Proposed price ${rawPrice} is below authoritative floor ${authoritativeValidation.floor_price}`,
+      );
+    }
+    if (
+      authoritativeValidation.floor_source !== undefined &&
+      (typeof authoritativeValidation.floor_source !== 'string' ||
+        authoritativeValidation.floor_source.trim() === '')
+    ) {
+      throw new MarketingRuntimeError(
+        'FLOOR_SOURCE_REQUIRED',
+        'Supplied floor_price requires non-empty floor_source; never default floor_source to ERP',
+      );
+    }
+    if (authoritativeValidation.authoritative_price === undefined) {
+      throw new MarketingRuntimeError(
+        'PRICE_PROVENANCE_REQUIRED',
+        'Price-bearing dispatch requires an authoritative price and real price_source; floor_price is only an internal guard',
+      );
+    }
+    if (rawPrice !== authoritativeValidation.authoritative_price) {
+      throw new MarketingRuntimeError(
+        'PRICE_MISMATCH',
+        `Proposed price ${rawPrice} does not match authoritative price ${authoritativeValidation.authoritative_price}`,
+      );
+    }
+    const effectivePriceSource = authoritativeValidation.price_source ?? rawPriceSource;
+    if (!effectivePriceSource || typeof effectivePriceSource !== 'string' || effectivePriceSource.trim() === '') {
+      throw new MarketingRuntimeError(
+        'PRICE_PROVENANCE_REQUIRED',
+        'Authoritative price requires non-empty real price_source',
+      );
+    }
+  }
+
+  if (rawPriceSource !== undefined) {
+    if (typeof rawPriceSource !== 'string' || rawPriceSource.trim() === '') {
+      throw new MarketingRuntimeError(
+        'SCHEMA_VALIDATION_ERROR',
+        'price_source must be a non-empty string',
+      );
+    }
+    if (
+      authoritativeValidation?.price_source !== undefined &&
+      rawPriceSource !== authoritativeValidation.price_source
+    ) {
+      throw new MarketingRuntimeError(
+        'PRICE_PROVENANCE_MISMATCH',
+        `price_source '${rawPriceSource}' does not match authoritative price_source '${authoritativeValidation.price_source}'`,
+      );
+    }
+  }
+
+  if (rawFloorSource !== undefined) {
+    if (typeof rawFloorSource !== 'string' || rawFloorSource.trim() === '') {
+      throw new MarketingRuntimeError(
+        'SCHEMA_VALIDATION_ERROR',
+        'floor_source must be a non-empty string',
+      );
+    }
+    if (
+      authoritativeValidation?.floor_source !== undefined &&
+      rawFloorSource !== authoritativeValidation.floor_source
+    ) {
+      throw new MarketingRuntimeError(
+        'FLOOR_PROVENANCE_MISMATCH',
+        `floor_source '${rawFloorSource}' does not match authoritative floor_source '${authoritativeValidation.floor_source}'`,
+      );
+    }
+  }
+
+  if (rawPromoProvenance !== undefined) {
+    if (typeof rawPromoProvenance !== 'string' || rawPromoProvenance.trim() === '') {
+      throw new MarketingRuntimeError(
+        'SCHEMA_VALIDATION_ERROR',
+        'promotion_provenance must be a non-empty string',
+      );
+    }
+    const authPromo = authoritativeValidation?.promotion_provenance ?? authoritativeValidation?.promotion_source;
+    if (authPromo !== undefined && rawPromoProvenance !== authPromo) {
+      throw new MarketingRuntimeError(
+        'PROMOTION_PROVENANCE_MISMATCH',
+        `promotion_provenance '${rawPromoProvenance}' does not match authoritative promotion provenance '${authPromo}'`,
+      );
+    }
+  }
+
+  if (authoritativeValidation?.floor_price !== undefined &&
+      (typeof authoritativeValidation.floor_source !== 'string' || authoritativeValidation.floor_source.trim() === '')) {
+    throw new MarketingRuntimeError(
+      'FLOOR_SOURCE_REQUIRED',
+      'A supplied floor_price requires non-empty floor_source; never default floor_source to ERP',
+    );
+  }
+  if (authoritativeValidation?.floor_source !== undefined &&
+      (typeof authoritativeValidation.floor_source !== 'string' || authoritativeValidation.floor_source.trim() === '')) {
+    throw new MarketingRuntimeError(
+      'FLOOR_SOURCE_REQUIRED',
+      'floor_source must be a non-empty string',
+    );
+  }
+
+  if (authoritativeValidation?.price_source !== undefined) {
+    if (typeof authoritativeValidation.price_source !== 'string' || authoritativeValidation.price_source.trim() === '') {
+      throw new MarketingRuntimeError(
+        'PRICE_PROVENANCE_REQUIRED',
+        'price_source must be a non-empty string',
+      );
+    }
+  }
+
+  if (authoritativeValidation?.promotion_provenance !== undefined) {
+    if (typeof authoritativeValidation.promotion_provenance !== 'string' || authoritativeValidation.promotion_provenance.trim() === '') {
+      throw new MarketingRuntimeError(
+        'PROMOTION_PROVENANCE_REQUIRED',
+        'promotion_provenance must be a non-empty string',
+      );
+    }
+  }
+
+  if (authoritativeValidation?.promotion_source !== undefined) {
+    if (typeof authoritativeValidation.promotion_source !== 'string' || authoritativeValidation.promotion_source.trim() === '') {
+      throw new MarketingRuntimeError(
+        'PROMOTION_PROVENANCE_REQUIRED',
+        'promotion_source must be a non-empty string',
       );
     }
   }
@@ -356,6 +528,119 @@ export interface DispatchCampaignOptions {
     readonly expected_task_version: number;
     readonly checkpoint?: unknown;
   };
+}
+const CANONICAL_APPROVAL_BINDINGS = new WeakSet<object>();
+
+export async function claimCanonicalApproval(params: {
+  readonly workflow: NonNullable<MarketingRuntimePorts['workflowEngine']>;
+  readonly tenant_id: string;
+  readonly run_id: string;
+  readonly approval_id: string;
+  readonly effect_key: string;
+  readonly payload_sha256: string;
+  readonly reviewed_digest: string;
+  readonly decision: 'APPROVED' | 'MODIFIED';
+  readonly operator_id: string;
+  readonly review_comment?: string | null;
+  readonly authorized_action: ActionDraft;
+  readonly expected_task_version?: number;
+}): Promise<CampaignApprovalBinding> {
+  if (params.approval_id.trim().length === 0) {
+    throw new MarketingRuntimeError('APPROVAL_ID_REQUIRED', 'Canonical approval_id is required for AUTH-4 claim');
+  }
+  if (params.operator_id.trim().length === 0) {
+    throw new MarketingRuntimeError('OPERATOR_REQUIRED', 'Authenticated operator_id is required for AUTH-4 claim');
+  }
+  const result = await params.workflow.claimApprovalAndResume({
+    tenant_id: params.tenant_id,
+    run_id: params.run_id,
+    approval_id: params.approval_id,
+    effect_key: params.effect_key,
+    expected_payload_sha256: params.payload_sha256,
+    authorized_action: params.authorized_action,
+    decision: params.decision,
+    operator_id: params.operator_id,
+    review_comment: params.review_comment ?? null,
+    ...(params.expected_task_version === undefined ? {} : { expected_task_version: params.expected_task_version }),
+  });
+  if (!result || result.claimed !== true) {
+    throw new MarketingRuntimeError('APPROVAL_NOT_RELEASED', 'Canonical P1B approval claim was not accepted');
+  }
+  const binding: CampaignApprovalBinding = {
+    approval_id: params.approval_id,
+    tenant_id: params.tenant_id,
+    run_id: params.run_id,
+    effect_key: params.effect_key,
+    payload_sha256: params.payload_sha256,
+    reviewed_digest: params.reviewed_digest,
+    decision: params.decision,
+    operator_id: params.operator_id,
+    review_comment: params.review_comment ?? null,
+    claimed: true,
+  };
+  CANONICAL_APPROVAL_BINDINGS.add(binding);
+  return binding;
+}
+
+async function assertDurableApprovalClaim(params: {
+  readonly ports: MarketingRuntimePorts;
+  readonly context: MarketingInvocationContext;
+  readonly binding: CampaignApprovalBinding;
+  readonly payload_sha256: string;
+}): Promise<void> {
+  const workflow = params.ports.workflowEngine;
+  if (!workflow) {
+    throw new MarketingRuntimeError(
+      'P1B_APPROVAL_PORT_UNAVAILABLE',
+      'Canonical workflow/approval port is unavailable; AUTH-4 dispatch is blocked',
+    );
+  }
+  const task = await workflow.getTask(params.context.tenant_id, params.context.run_id);
+  if (!task || task.state !== 'running') {
+    throw new MarketingRuntimeError(
+      'APPROVAL_NOT_RELEASED',
+      'Canonical P1B approval claim did not resume the durable task; provider dispatch is blocked',
+    );
+  }
+  const statePayload = task.state_payload;
+  if (statePayload === null || typeof statePayload !== 'object' || Array.isArray(statePayload)) {
+    throw new MarketingRuntimeError(
+      'APPROVAL_NOT_RELEASED',
+      'Canonical P1B durable task has no post-claim checkpoint; provider dispatch is blocked',
+    );
+  }
+  const pendingAction = (statePayload as Record<string, unknown>).pending_action;
+  if (pendingAction === null || typeof pendingAction !== 'object' || Array.isArray(pendingAction)) {
+    throw new MarketingRuntimeError(
+      'APPROVAL_NOT_RELEASED',
+      'Canonical P1B durable task has no claimed pending action; provider dispatch is blocked',
+    );
+  }
+  const action = pendingAction as Record<string, unknown>;
+  const actionPayload = action.payload;
+  if (actionPayload === null || typeof actionPayload !== 'object' || Array.isArray(actionPayload)) {
+    throw new MarketingRuntimeError(
+      'APPROVAL_NOT_RELEASED',
+      'Canonical P1B claimed action has no payload; provider dispatch is blocked',
+    );
+  }
+  const actionPayloadSha256 = computeCampaignPayloadSha256(actionPayload as Record<string, unknown>);
+  if (
+    action.effect_key !== params.binding.effect_key ||
+    action.approval_payload_digest !== params.payload_sha256 ||
+    actionPayloadSha256 !== params.payload_sha256
+  ) {
+    throw new MarketingRuntimeError(
+      'APPROVAL_PAYLOAD_MISMATCH',
+      'Canonical P1B claimed action does not match the reviewed Marketing payload; provider dispatch is blocked',
+    );
+  }
+  if (!CANONICAL_APPROVAL_BINDINGS.has(params.binding)) {
+    throw new MarketingRuntimeError(
+      'APPROVAL_NOT_RELEASED',
+      'CampaignApprovalBinding lacks local provenance from a successful canonical P1B claim; provider dispatch is blocked',
+    );
+  }
 }
 
 /**
@@ -526,6 +811,24 @@ export async function dispatchCampaign(
         `Payload proposed_price '${String(p.proposed_price)}' conflicts with input proposed_price '${input.proposed_price}'`,
       );
     }
+    if (p.price_source !== undefined && input.price_source !== undefined && p.price_source !== input.price_source) {
+      throw new MarketingRuntimeError(
+        'APPROVAL_PAYLOAD_MISMATCH',
+        `Payload price_source '${String(p.price_source)}' conflicts with input price_source '${input.price_source}'`,
+      );
+    }
+    if (p.floor_source !== undefined && input.floor_source !== undefined && p.floor_source !== input.floor_source) {
+      throw new MarketingRuntimeError(
+        'APPROVAL_PAYLOAD_MISMATCH',
+        `Payload floor_source '${String(p.floor_source)}' conflicts with input floor_source '${input.floor_source}'`,
+      );
+    }
+    if (p.promotion_provenance !== undefined && input.promotion_provenance !== undefined && p.promotion_provenance !== input.promotion_provenance) {
+      throw new MarketingRuntimeError(
+        'APPROVAL_PAYLOAD_MISMATCH',
+        `Payload promotion_provenance '${String(p.promotion_provenance)}' conflicts with input promotion_provenance '${input.promotion_provenance}'`,
+      );
+    }
   }
   if (input.recipients !== undefined && !Array.isArray(input.recipients)) {
     throw new MarketingRuntimeError(
@@ -534,10 +837,11 @@ export async function dispatchCampaign(
     );
   }
 
-
   // 8. Assemble canonical payload and reviewed digest (Use one exact payload for approval binding and ActionDraft)
+  const rawPayloadClean = input.payload ? { ...input.payload } : {};
+
   const canonicalPayload: Record<string, unknown> = {
-    ...(input.payload ?? {}),
+    ...rawPayloadClean,
     tenant_id: input.tenant_id,
     campaign_id: input.campaign_id,
     segment_id: input.segment_id,
@@ -548,6 +852,9 @@ export async function dispatchCampaign(
     ...(input.discount_amount !== undefined ? { discount_amount: input.discount_amount } : {}),
     ...(input.discount_percent !== undefined ? { discount_percent: input.discount_percent } : {}),
     ...(input.proposed_price !== undefined ? { proposed_price: input.proposed_price } : {}),
+    ...(input.price_source !== undefined ? { price_source: input.price_source } : {}),
+    ...(input.floor_source !== undefined ? { floor_source: input.floor_source } : {}),
+    ...(input.promotion_provenance !== undefined ? { promotion_provenance: input.promotion_provenance } : {}),
   };
   // Derive one recipient list from the exact canonical payload and validate it
   const canonicalRecipientsRaw = canonicalPayload.recipients;
@@ -652,44 +959,48 @@ export async function dispatchCampaign(
   // 10. Shared AUTH-4 human approval gate (refuse any reservation / provider call before release matching target payload digest)
   const approvalBinding = options.approvalBinding;
   if (!approvalBinding) {
-    // If workflowEngine is provided, checkpoint the pause atomically
-    if (ports.workflowEngine) {
-      const expectedTaskVersion =
-        options.expected_task_version ??
-        options.checkpointBinding?.expected_task_version ??
-        (context as Record<string, unknown>).expected_task_version ??
-        (context as Record<string, unknown>).task_version;
-
-      if (
-        expectedTaskVersion === undefined ||
-        typeof expectedTaskVersion !== 'number' ||
-        !Number.isInteger(expectedTaskVersion) ||
-        expectedTaskVersion < 1
-      ) {
-        throw new MarketingRuntimeError(
-          'TASK_VERSION_REQUIRED',
-          'Server-supplied expected_task_version is required for workflowEngine pause checkpoint (fail closed)',
-        );
-      }
-
-      await ports.workflowEngine.pauseForApproval({
-        tenant_id: context.tenant_id,
-        run_id: context.run_id,
-        expected_task_version: expectedTaskVersion,
-        checkpoint: {
-          stage: 'APPROVAL',
-          effect_key,
-          payload_sha256: targetPayloadSha256,
-          reviewed_digest: targetReviewedDigest,
-        },
-        approval: {
-          action_id: `action-${context.request_id}`,
-          effect_key,
-          payload: targetPayload,
-          reason: 'Campaign dispatch requires human approval (AUTH-4) at SCR-003',
-        },
-      });
+    if (!ports.workflowEngine) {
+      throw new MarketingRuntimeError(
+        'P1B_APPROVAL_PORT_UNAVAILABLE',
+        'Workflow engine port is unavailable for approval pause (fail closed)',
+      );
     }
+
+    const expectedTaskVersion =
+      options.expected_task_version ??
+      options.checkpointBinding?.expected_task_version ??
+      (context as Record<string, unknown>).expected_task_version ??
+      (context as Record<string, unknown>).task_version;
+
+    if (
+      expectedTaskVersion === undefined ||
+      typeof expectedTaskVersion !== 'number' ||
+      !Number.isInteger(expectedTaskVersion) ||
+      expectedTaskVersion < 1
+    ) {
+      throw new MarketingRuntimeError(
+        'TASK_VERSION_REQUIRED',
+        'Server-supplied expected_task_version is required for workflowEngine pause checkpoint (fail closed)',
+      );
+    }
+
+    await ports.workflowEngine.pauseForApproval({
+      tenant_id: context.tenant_id,
+      run_id: context.run_id,
+      expected_task_version: expectedTaskVersion,
+      checkpoint: {
+        stage: 'APPROVAL',
+        effect_key,
+        payload_sha256: targetPayloadSha256,
+        reviewed_digest: targetReviewedDigest,
+      },
+      approval: {
+        action_id: `action-${context.request_id}`,
+        effect_key,
+        payload: targetPayload,
+        reason: 'Campaign dispatch requires human approval (AUTH-4) at SCR-003',
+      },
+    });
     throw new MarketingRuntimeError(
       'APPROVAL_REQUIRED',
       'Campaign dispatch requires shared AUTH-4 approval release at SCR-003; provider call refused',
@@ -715,11 +1026,34 @@ export async function dispatchCampaign(
     effect_key,
     payload_sha256: targetPayloadSha256,
   });
+  await assertDurableApprovalClaim({
+    ports,
+    context,
+    binding: approvalBinding,
+    payload_sha256: targetPayloadSha256,
+  });
 
-  if (!approvalBinding.claimed || approvalBinding.decision !== 'APPROVED') {
+  if (
+    !approvalBinding.claimed ||
+    (approvalBinding.decision !== 'APPROVED' && approvalBinding.decision !== 'MODIFIED') ||
+    !approvalBinding.operator_id ||
+    typeof approvalBinding.operator_id !== 'string' ||
+    approvalBinding.operator_id.trim() === ''
+  ) {
     throw new MarketingRuntimeError(
       'APPROVAL_NOT_RELEASED',
-      `Approval ${approvalBinding.approval_id} is not released (decision: ${approvalBinding.decision}, claimed: ${approvalBinding.claimed}); provider call refused`,
+      `Approval ${approvalBinding.approval_id} is not released (decision: ${String(approvalBinding.decision)}, claimed: ${String(approvalBinding.claimed)}); provider call refused`,
+    );
+  }
+
+  if (
+    !approvalBinding.approval_id ||
+    typeof approvalBinding.approval_id !== 'string' ||
+    approvalBinding.approval_id.trim() === ''
+  ) {
+    throw new MarketingRuntimeError(
+      'APPROVAL_NOT_RELEASED',
+      'Approval binding lacks valid approval_id; provider call refused',
     );
   }
 
@@ -877,13 +1211,15 @@ export async function dispatchCampaign(
     effect_key,
     required_authority: 'AUTH-4',
     payload: targetPayload,
-    approval_payload_digest: targetReviewedDigest,
+    approval_payload_digest: targetPayloadSha256,
     approval_id: approvalBinding.approval_id,
     ...(effectivePrice !== undefined ? { proposed_price: effectivePrice } : {}),
-    ...(options.authoritativeValidation?.floor_price !== undefined
+    ...(options.authoritativeValidation?.floor_price !== undefined &&
+    typeof options.authoritativeValidation.floor_source === 'string' &&
+    options.authoritativeValidation.floor_source.trim().length > 0
       ? {
           computed_price_floor: options.authoritativeValidation.floor_price,
-          floor_source: options.authoritativeValidation.floor_source ?? 'ERP',
+          floor_source: options.authoritativeValidation.floor_source.trim(),
         }
       : {}),
   };

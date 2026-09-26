@@ -307,3 +307,20 @@ Requirement classification:
 Verification evidence: `git diff --check` passed. `python testcases/_generate.py --check` reports stale `testcases/manifest.json`; no testcase source/generated output changed. Marketing tests, worker typecheck/build, repository lint/typecheck/unit/contracts/adversarial/security/pilot/build commands were attempted but blocked by absent `node_modules`; dependency installation is not authorized. LSP diagnostics are unavailable because no language server is registered.
 
 Remaining blockers: P2 shared worker/domain routing must merge before production Marketing registration; API-003 credentials/provider and authoritative order evidence are absent; ASM/owner inputs such as audience limits, budgets, send/frequency limits, and attribution windows remain unresolved and fail closed. Formal Gate P3 remains blocked until Gate P2 closure and post-merge rebase/integration validation.
+
+
+## P3 Marketing CI follow-up — 36210697375
+
+- GitHub Actions run 36210697375 failed only job 1 (Static Analysis and Type Checking); jobs 2–5 were skipped. The GitHub adapter did not expose the failed job log tail.
+- The user confirms CI dependencies installed successfully; local verification commands in this workspace still report missing turbo/node_modules and therefore do not replace CI evidence.
+- This correction removes the fake approval_signature contract, requires canonical P1B workflow claim/release with real approval_id/operator_id, keeps AUTH-4 out of caller grants, and requires authoritative price/promotion provenance without mapping floor_price to proposed_price or defaulting floor_source.
+- testcases/sources/business.py was updated and generated outputs were regenerated from source. ~python testcases/_generate.py --check~ now passes with 419 files byte-for-byte current; ~git diff --check~ passes.
+- PENDING_P2_SHARED_ROUTING remains: no worker.ts or shared orchestrator/PEP/approval/durable/effect implementation changes are included.
+
+
+## P3 Marketing correction verification
+
+- Run 36210697375 remains the authoritative pre-fix CI evidence: static-analysis/typecheck failed and jobs 2–5 were skipped; GitHub job logs were unavailable through the repository tool.
+- Local reruns after the correction remain environment-blocked because this checkout has no node_modules/turbo. No dependency installation was performed.
+- ~python testcases/_generate.py --check~ passes: 419 generated files match source. ~git diff --check~ passes with only Git line-ending warnings.
+- The correction is ready for CI validation; PENDING_P2_SHARED_ROUTING remains unchanged.

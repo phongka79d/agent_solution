@@ -309,7 +309,7 @@ export const PILOT_01_OFFLINE_FIXTURE: Pilot01StageEvidence = {
     effect_key: PILOT_01_EFFECT_KEY,
     correlation_id: PILOT_01_CORRELATION_ID,
     description:
-      'P1B handoff: Campaign dispatch requires signed AUTH-4 human approval at SCR-003 Approval Center. Autonomous dispatch is halted.',
+      'P1B handoff: Campaign dispatch requires human approval at SCR-003 Approval Center. Autonomous dispatch is halted.',
   },
 
   outcome: {
@@ -367,12 +367,29 @@ export const PILOT_01_NEGATIVE_ATTRIBUTION_FIXTURE: Pilot01StageEvidence = {
 // ============================================================================
 
 export interface Pilot01HumanApprovalDecision {
+  readonly approval_id?: string;
   readonly decision: 'APPROVED' | 'REJECTED';
   readonly operator_id: string;
-  readonly granted_authority: 'AUTH-4';
   readonly approved_payload_digest: string;
-  readonly signature: string;
   readonly approved_at: string;
+}
+
+export interface Pilot01ApprovalClaimResult {
+  readonly claimed: boolean;
+  readonly approval_id?: string;
+  readonly operator_id?: string;
+}
+
+export interface Pilot01ApprovalPort {
+  readonly claimApprovalAndResume: (params: {
+    readonly tenant_id: string;
+    readonly run_id: string;
+    readonly approval_id: string;
+    readonly effect_key: string;
+    readonly expected_payload_sha256?: string;
+    readonly decision: 'APPROVED' | 'MODIFIED' | 'REJECTED';
+    readonly operator_id: string;
+  }) => Promise<Pilot01ApprovalClaimResult> | Pilot01ApprovalClaimResult;
 }
 
 export interface Pilot01SignalStageResult {
@@ -481,8 +498,8 @@ export interface Pilot01OfflinePorts {
   readonly contentGenerator?: (input: MarketingContentInput, approvedDocs: readonly MarketingKnowledgeDocument[]) => Promise<MarketingContentOutput> | MarketingContentOutput;
   readonly brandAuditor?: (input: MarketingBrandAuditInput, approvedDocs: readonly MarketingKnowledgeDocument[]) => Promise<MarketingBrandAuditOutput> | MarketingBrandAuditOutput;
   readonly providerDispatcher?: (action: Record<string, unknown>) => Promise<{ status: string; error?: string; [key: string]: unknown }> | { status: string; error?: string; [key: string]: unknown };
+  readonly approvalPort?: Pilot01ApprovalPort;
 }
-
 export interface Pilot01StagedPipelineOptions {
   readonly tenant_id?: string;
   readonly campaign_id?: string;
@@ -1107,13 +1124,23 @@ export async function executePilot01StagedPipeline(
         effect_key,
         correlation_id,
         description:
-          'P1B handoff: Campaign dispatch requires signed AUTH-4 human approval at SCR-003 Approval Center. Autonomous dispatch is halted.',
+          'P1B handoff: Campaign dispatch requires human approval at SCR-003 Approval Center. Autonomous dispatch is halted.',
       },
       payload_digest: payloadFingerprint,
       message: 'Approval unmet: pipeline paused at AUTH-4 gate (SCR-003).',
     };
   } else {
     const decision = options.approval_decision;
+    if (
+      (decision as unknown as Record<string, unknown>).granted_authority === 'AUTH-5' ||
+      (options as Record<string, unknown>).granted_authority === 'AUTH-5' ||
+      (options as Record<string, unknown>).authority_verdict === 'AUTH-5'
+    ) {
+      throw new MarketingRuntimeError(
+        'PROHIBITED_ACTION',
+        'AUTH-5 is prohibited; marketing pipeline cannot authorize autonomous or approvable dispatch under AUTH-5',
+      );
+    }
     if (decision.decision === 'REJECTED') {
       throw new MarketingRuntimeError(
         'APPROVAL_REJECTED',
@@ -1126,17 +1153,83 @@ export async function executePilot01StagedPipeline(
         `Invalid or non-approved decision '${String(decision.decision)}' at AUTH-4 gate`,
       );
     }
-    validateAuthority(decision.granted_authority, 'AUTH-4');
     validateApprovalDigest(payloadFingerprint, decision.approved_payload_digest);
     validatePayloadIntegrity(decision.approved_payload_digest, dispatchPayload);
-    approvalStage = {
-      stage: 'APPROVAL',
-      status: 'APPROVED',
-      required_authority: 'AUTH-4',
-      approval_decision: decision,
-      payload_digest: payloadFingerprint,
-      message: `AUTH-4 human approval granted by operator '${decision.operator_id}'.`,
-    };
+
+    // Offline approved paths must require a real server/decision-supplied approval_id
+    // and an injected canonical approval port; otherwise remain PAUSED_AWAITING_APPROVAL.
+    const approvalId = decision.approval_id?.trim();
+    if (!approvalId) {
+      approvalStage = {
+        stage: 'APPROVAL',
+        status: 'PAUSED_AWAITING_APPROVAL',
+        required_authority: 'AUTH-4',
+        handoff: {
+          dependency_id: 'dep-p1b-pilot01-gate',
+          required_authority: 'AUTH-4',
+          status: 'UNMET_DEPENDENCY',
+          blocking_reason: 'AWAITING_HUMAN_APPROVAL_SCR003',
+          target_skill_id: 'skill.mkt.dispatch_campaign',
+          tenant_id,
+          campaign_id,
+          effect_key,
+          correlation_id,
+          description:
+            'P1B handoff: Campaign dispatch requires real server-supplied approval_id at SCR-003. Autonomous dispatch is halted.',
+        },
+        approval_decision: decision,
+        payload_digest: payloadFingerprint,
+        message: 'Approval pending real approval_id: pipeline remained paused at AUTH-4 gate (SCR-003).',
+      };
+    } else if (!options.ports?.approvalPort) {
+      approvalStage = {
+        stage: 'APPROVAL',
+        status: 'PAUSED_AWAITING_APPROVAL',
+        required_authority: 'AUTH-4',
+        handoff: {
+          dependency_id: 'dep-p1b-pilot01-gate',
+          required_authority: 'AUTH-4',
+          status: 'UNMET_DEPENDENCY',
+          blocking_reason: 'AWAITING_HUMAN_APPROVAL_SCR003',
+          target_skill_id: 'skill.mkt.dispatch_campaign',
+          tenant_id,
+          campaign_id,
+          effect_key,
+          correlation_id,
+          description:
+            'P1B handoff: Campaign dispatch requires canonical approval port at SCR-003. Injected approval port absent.',
+        },
+        approval_decision: decision,
+        payload_digest: payloadFingerprint,
+        message: 'Approval pending canonical claim: pipeline remained paused at AUTH-4 gate (SCR-003).',
+      };
+    } else {
+      const canonicalClaim = await options.ports.approvalPort.claimApprovalAndResume({
+        tenant_id,
+        run_id,
+        approval_id: approvalId,
+        effect_key,
+        expected_payload_sha256: payloadFingerprint,
+        decision: decision.decision,
+        operator_id: decision.operator_id,
+      });
+
+      if (!canonicalClaim || canonicalClaim.claimed !== true) {
+        throw new MarketingRuntimeError(
+          'APPROVAL_NOT_RELEASED',
+          `Approval claim rejected or not claimed (claimed=${String(canonicalClaim?.claimed)}) at AUTH-4 gate`,
+        );
+      }
+
+      approvalStage = {
+        stage: 'APPROVAL',
+        status: 'APPROVED',
+        required_authority: 'AUTH-4',
+        approval_decision: decision,
+        payload_digest: payloadFingerprint,
+        message: `AUTH-4 human approval granted by operator '${decision.operator_id}'.`,
+      };
+    }
   }
 
   // ==========================================

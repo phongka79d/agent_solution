@@ -12,9 +12,9 @@ import type { PlatformSkillDependencies, PlatformSkillRow } from '../../contract
 import { definePlatformRow, type PlatformRowSpec } from '../row.js';
 
 /**
- * §4.1 field 3 `Input*` of the row. `approval_signature` is part of the payload, but the approval
- * itself is verified against the approvals gate — a signature field is evidence to check, never a
- * grant to trust.
+ * §4.1 field 3 `Input*` of the row. The approval itself is verified against the
+ * approvals gate (SCR-003) — approval_id and approval_payload_digest belong to
+ * the orchestrator dispatch envelope, never a fake payload signature.
  */
 export interface InputMktDispatchCampaign {
   tenant_id: string;
@@ -22,7 +22,10 @@ export interface InputMktDispatchCampaign {
   segment_id: string;
   channel: 'LINE' | 'WHATSAPP' | 'EMAIL' | 'SMS' | 'ZALO' | 'TIKTOK' | 'MESSENGER' | 'INSTAGRAM';
   approved_content_id: string;
-  approval_signature: string;
+  offer_id?: string;
+  discount_amount?: number;
+  discount_percent?: number;
+  proposed_price?: number;
 }
 
 /** §4.1 field 4 `Output*` of the row. */
@@ -50,7 +53,6 @@ const spec: Omit<PlatformRowSpec, 'skill_id'> = {
       'segment_id',
       'channel',
       'approved_content_id',
-      'approval_signature',
     ],
     properties: {
       tenant_id: { type: 'string' },
@@ -61,7 +63,6 @@ const spec: Omit<PlatformRowSpec, 'skill_id'> = {
         enum: ['LINE', 'WHATSAPP', 'EMAIL', 'SMS', 'ZALO', 'TIKTOK', 'MESSENGER', 'INSTAGRAM'],
       },
       approved_content_id: { type: 'string' },
-      approval_signature: { type: 'string' },
       offer_id: { type: 'string' },
       discount_amount: { type: 'number', minimum: 0 },
       discount_percent: { type: 'number', minimum: 0, maximum: 100 },
@@ -84,7 +85,7 @@ const spec: Omit<PlatformRowSpec, 'skill_id'> = {
   required_authority: 'AUTH-4',
   tool_binding: 'API-003.CommunicationConnector',
   validation_rules: [
-    "approval_signature must be verified against the approvals gate (SCR-003): the approval must exist, be bound to this run's effect_key, and authorize exactly one dispatch (BR-007)",
+    "the approval envelope (approval_id and approval_payload_digest) must be verified against the approvals gate (SCR-003): the approval must exist, be bound to this run's effect_key, and authorize exactly one dispatch (BR-007)",
     "an approval is never treated as a clearance grant and never raises the caller's authority",
     'channel quota must be available',
   ],
@@ -125,9 +126,9 @@ const spec: Omit<PlatformRowSpec, 'skill_id'> = {
       test_id: 'TC-SKILL-03',
       category: 'SCHEMA_INVALIDATION',
       scenario:
-        'Input missing `approved_content_id` or `approval_signature`, or carrying an illegal extra property.',
+        'Input missing `approved_content_id` or carrying an illegal extra property.',
       expected_outcome:
-        'Missing `approved_content_id` or `approval_signature` → `SCHEMA_VALIDATION_ERROR`; 0 recipients',
+        'Missing `approved_content_id` → `SCHEMA_VALIDATION_ERROR`; 0 recipients',
       required: true,
     },
     {
@@ -151,7 +152,7 @@ const spec: Omit<PlatformRowSpec, 'skill_id'> = {
       test_id: 'TC-SKILL-06-06',
       category: 'AUTHORITY',
       scenario:
-        'Invocation with no bound `approval_id`, an unverifiable `approval_signature`, or an approval bound to a different `effect_key`.',
+        'Invocation with no bound `approval_id`, an unverified approval digest, or an approval bound to a different `effect_key`.',
       expected_outcome:
         '`APPROVAL_REQUIRED`: exactly one PENDING approval row exists for the run and zero recipients are contacted; no rank comparison takes place.',
       required: true,

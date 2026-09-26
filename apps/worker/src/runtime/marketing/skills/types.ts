@@ -139,7 +139,6 @@ export interface InputMktDispatchCampaign {
   segment_id: string;
   channel: 'LINE' | 'WHATSAPP' | 'EMAIL' | 'SMS' | 'ZALO' | 'TIKTOK' | 'MESSENGER' | 'INSTAGRAM';
   approved_content_id: string;
-  approval_signature: string;
   offer_id?: string;
   discount_amount?: number;
   discount_percent?: number;

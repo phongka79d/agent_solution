@@ -312,9 +312,13 @@ export type CampaignLifecycleStage = (typeof CAMPAIGN_LIFECYCLE_STAGES)[number];
 export interface MarketingAuthoritativeValidation {
   readonly floor_price?: number;
   readonly floor_source?: string;
+  readonly authoritative_price?: number;
+  readonly price_source?: string;
   readonly approved_claims?: readonly string[];
   readonly max_discount_percent?: number;
   readonly max_discount_amount?: number;
+  readonly promotion_provenance?: string;
+  readonly promotion_source?: string;
 }
 
 export interface CampaignApprovalBinding {
@@ -324,10 +328,10 @@ export interface CampaignApprovalBinding {
   readonly effect_key: string;
   readonly payload_sha256: string;
   readonly reviewed_digest: string;
-  readonly decision: 'APPROVED' | 'MODIFIED' | 'REJECTED' | 'PAUSE' | 'CANCELLED';
-  readonly operator_id?: string;
+  readonly decision: 'APPROVED' | 'MODIFIED';
+  readonly operator_id: string;
   readonly review_comment?: string | null;
-  readonly claimed: boolean;
+  readonly claimed: true;
 }
 
 export interface CampaignDispatchInput {
@@ -344,13 +348,15 @@ export interface CampaignDispatchInput {
     | 'MESSENGER'
     | 'INSTAGRAM';
   readonly approved_content_id: string;
-  readonly approval_signature: string;
   readonly approval_id?: string;
   readonly recipients?: readonly string[];
   readonly offer_id?: string;
   readonly discount_amount?: number;
   readonly discount_percent?: number;
   readonly proposed_price?: number;
+  readonly price_source?: string;
+  readonly floor_source?: string;
+  readonly promotion_provenance?: string;
   readonly payload?: Record<string, unknown>;
   readonly authority_verdict?: string;
 }
@@ -384,6 +390,7 @@ export interface CampaignLifecycleState {
   audience?: readonly MarketingAudienceCandidate[];
   content?: MarketingContentOutput;
   brand_review?: MarketingBrandAuditOutput;
+  paused_approval_id?: string;
   approval_binding?: CampaignApprovalBinding;
   dispatch_result?: CampaignDispatchOutput;
   attribution_result?: MarketingAttributionResult;

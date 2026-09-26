@@ -262,7 +262,7 @@ describe('PILOT-01 Offline Fixture & Harness Interface', () => {
   });
 
   describe('Staged Acceptance Harness (Signal -> Segment -> Campaign -> Content -> Brand Review -> AUTH-4 Approval -> Dispatch -> Response -> Attribution)', () => {
-    it('MUST execute deterministic staged pipeline with signed AUTH-4 approval and report offline boundaries', async () => {
+    it('MUST execute deterministic staged pipeline with injected canonical approval claim and report offline boundaries', async () => {
       // Pre-compute expected payload fingerprint for valid AUTH-4 decision
       const expectedPayload = {
         tenant_id: PILOT_01_TENANT_ID,
@@ -274,16 +274,24 @@ describe('PILOT-01 Offline Fixture & Harness Interface', () => {
       };
       const digest = computeRequestFingerprint(expectedPayload);
       const approvalDecision: Pilot01HumanApprovalDecision = {
+        approval_id: 'appr-pilot01-gate',
         decision: 'APPROVED',
         operator_id: 'op-compliance-leader-01',
-        granted_authority: 'AUTH-4',
         approved_payload_digest: digest,
-        signature: 'sig-auth4-ed25519-valid-001',
         approved_at: '2026-03-01T09:00:00.000Z',
       };
 
       const result = await harness.executeStagedPipeline({
         approval_decision: approvalDecision,
+        ports: {
+          approvalPort: {
+            claimApprovalAndResume: async () => ({
+              claimed: true,
+              approval_id: 'appr-pilot01-gate',
+              operator_id: 'op-compliance-leader-01',
+            }),
+          },
+        },
       });
 
       // Top-level markers
@@ -371,14 +379,38 @@ describe('PILOT-01 Offline Fixture & Harness Interface', () => {
       expect(result.stages.dispatch.status).toBe('UNAVAILABLE_OFFLINE');
       expect(result.stages.attribution.contract.status).toBe('UNAVAILABLE');
     });
+    it('MUST remain PAUSED_AWAITING_APPROVAL when approval decision is provided without injected canonical approval claim/port', async () => {
+      const expectedPayload = {
+        tenant_id: PILOT_01_TENANT_ID,
+        campaign_id: PILOT_01_CAMPAIGN_ID,
+        segment_id: 'seg-champions-pilot01',
+        channel: 'LINE_FLEX',
+        approved_content_id: 'draft-pilot01-tw-01',
+        effect_key: PILOT_01_STAGED_EFFECT_KEY,
+      };
+      const digest = computeRequestFingerprint(expectedPayload);
+      const approvalDecision: Pilot01HumanApprovalDecision = {
+        approval_id: 'appr-pilot01-gate',
+        decision: 'APPROVED',
+        operator_id: 'op-compliance-leader-01',
+        approved_payload_digest: digest,
+        approved_at: '2026-03-01T09:00:00.000Z',
+      };
+
+      const result = await harness.executeStagedPipeline({
+        approval_decision: approvalDecision,
+      });
+
+      expect(result.stages.approval.status).toBe('PAUSED_AWAITING_APPROVAL');
+      expect(result.stages.approval.handoff?.status).toBe('UNMET_DEPENDENCY');
+    });
 
     it('MUST fail closed when AUTH-4 approval decision is REJECTED', async () => {
       const rejectedDecision: Pilot01HumanApprovalDecision = {
+        approval_id: 'appr-pilot01-reject',
         decision: 'REJECTED',
         operator_id: 'op-compliance-reject-01',
-        granted_authority: 'AUTH-4',
         approved_payload_digest: 'some-digest',
-        signature: 'sig-reject-001',
         approved_at: '2026-03-01T09:00:00Z',
       };
 
@@ -605,11 +637,10 @@ describe('PILOT-01 Offline Fixture & Harness Interface', () => {
 
       it('MUST fail staged pipeline when approval decision carries a stale digest', async () => {
         const staleDecision: Pilot01HumanApprovalDecision = {
+          approval_id: 'appr-pilot01-stale',
           decision: 'APPROVED',
           operator_id: 'op-stale-test-01',
-          granted_authority: 'AUTH-4',
           approved_payload_digest: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
-          signature: 'sig-stale-001',
           approved_at: '2026-03-01T08:30:00Z',
         };
 
@@ -657,11 +688,10 @@ describe('PILOT-01 Offline Fixture & Harness Interface', () => {
         };
         const digest = computeRequestFingerprint(preTamperedPayload);
         const decision: Pilot01HumanApprovalDecision = {
+          approval_id: 'appr-pilot01-tamper',
           decision: 'APPROVED',
           operator_id: 'op-tamper-test',
-          granted_authority: 'AUTH-4',
           approved_payload_digest: digest,
-          signature: 'sig-tamper-001',
           approved_at: '2026-03-01T09:00:00Z',
         };
 
@@ -694,7 +724,6 @@ describe('PILOT-01 Offline Fixture & Harness Interface', () => {
           operator_id: 'op-auth5-illegal',
           granted_authority: 'AUTH-5', // invalid/prohibited authority
           approved_payload_digest: 'some-hash',
-          signature: 'sig-001',
           approved_at: '2026-03-01T09:00:00Z',
         } as unknown as Pilot01HumanApprovalDecision;
 

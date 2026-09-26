@@ -42,7 +42,7 @@
     "segment_id": "SEG-atrisk-0115",
     "channel": "EMAIL",
     "approved_content_id": "DRAFT-0115-07",
-    "approval_signature": "APR-0115-01:sig:7f3c",
+    "approval_id": "APR-0115-01",
     "effect_key": "EK-CAMP-0115-01-EMAIL",
     "caller_agent": "MKT-05",
     "granted_authority": "AUTH-3",

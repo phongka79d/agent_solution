@@ -412,7 +412,6 @@ describe('Marketing Skill Services and Dispatcher', () => {
       segment_id: 'seg-test-1',
       channel: 'SMS' as const,
       approved_content_id: 'content-approved-99',
-      approval_signature: 'sig-human-audited-valid',
     };
 
     it('refuses AUTH-4 dispatch when approval_id is absent', async () => {
@@ -642,7 +641,6 @@ describe('Marketing Skill Services and Dispatcher', () => {
             segment_id: 'seg',
             channel: 'SMS',
             approved_content_id: 'app',
-            approval_signature: 'sig',
           },
         },
         {
@@ -804,7 +802,6 @@ describe('Marketing Skill Services and Dispatcher', () => {
       segment_id: 'seg-test-1',
       channel: 'SMS' as const,
       approved_content_id: 'draft-brand-approved-1',
-      approval_signature: 'sig-valid-operator-1',
     };
 
     const dummyContext = {

@@ -3794,7 +3794,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
   "segment_id": "SEG-atrisk-0115",
   "channel": "EMAIL",
   "approved_content_id": "DRAFT-0115-07",
-  "approval_signature": "APR-0115-01:sig:7f3c",
+  "approval_id": "APR-0115-01",
   "effect_key": "EK-CAMP-0115-01-EMAIL",
   "caller_agent": "MKT-04 (reviewer is not the dispatcher)",
   "granted_authority": "AUTH-3",
@@ -3809,7 +3809,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 |---|---|---|
 | 1 | Invoke skill.mkt.dispatch_campaign as MKT-04 (reviewer is not the dispatcher) (absent from allowed_agents) | UNAUTHORIZED_AGENT; adapter API-003.CommunicationConnector call count = 0 and the run is DENIED |
 | 2 | Invoke as an allowed agent holding AUTH-3 | APPROVAL_REQUIRED: the action is prepared and exactly one PENDING approval row exists for the run with 0 external calls; AUTH-4 is a verdict and is never rank-compared (implement/05 §1.1) |
-| 3 | Re-probe the remaining authority/identity boundary | MKT-05 invoking with no bound approval_id -> APPROVAL_REQUIRED: the action is prepared, not executed; no rank comparison happens and AUTH-4 never acts as a clearance (BR-007, AUTH-4/AUTH-5 separation) |
+| 3 | Re-probe the remaining authority/identity boundary | MKT-05 invoking with no bound approval_id or mismatched approval_payload_digest -> APPROVAL_REQUIRED: the action is prepared, not executed; no rank comparison happens and AUTH-4 never acts as a clearance (BR-007, AUTH-4/AUTH-5 separation) |
 | 4 | Confirm nothing was executed and the attempt is audited | effect_reservations has no row for this run (or the reservation was released), the run carries an AUTH-5 PROHIBITED_ACTION / DENIED audit entry with the attempted skill and caller, and the LLM's request never changed the clearance |
 
 **Assertions**
@@ -3908,7 +3908,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
   "segment_id": "SEG-atrisk-0115",
   "channel": "EMAIL",
   "approved_content_id": "DRAFT-0115-07",
-  "approval_signature": "APR-0115-01:sig:7f3c",
+  "approval_id": "APR-0115-01",
   "effect_key": "EK-CAMP-0115-01-EMAIL",
   "caller_agent": "MKT-05",
   "granted_authority": "AUTH-3"
@@ -3922,13 +3922,13 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 | 1 | Route the call through the orchestrator | Orchestrator resolves caller MKT-05 -> skill.mkt.dispatch_campaign; the registry row exposes required_authority=AUTH-4, allowed_agents=[MKT-05], tool=API-003.CommunicationConnector, timeout_ms=5000, retry_policy={max_retries:0, backoff_multiplier:1.0, retry_on_timeout:False} |
 | 2 | Invoke with the case input payload | Input validator (additionalProperties:false) accepts it; adapter API-003.CommunicationConnector is invoked exactly once with the tenant binding 11111111-1111-1111-1111-111111111111 |
 | 3 | Inspect the returned payload | dispatch_id=DSP-0115-01, recipient_count=2 (cust-b excluded: email opt-out), status='ENQUEUED' -> 'COMPLETED' after the connector's delivery receipt, dispatched_at=2026-01-15T10:00:00Z |
-| 4 | Re-run the boundary/validation probe | approval_signature bound to a different effect_key -> APPROVAL_REQUIRED, exactly one PENDING approval row exists for the run and 0 recipients contacted; a second dispatch of the same (campaign_id, segment_id) -> CAMPAIGN_ALREADY_SENT (max_retries 0) with unchanged recipient_count |
+| 4 | Re-run the boundary/validation probe | approval_id bound to a different effect_key or mismatched approval_payload_digest -> APPROVAL_REQUIRED, exactly one PENDING approval row exists for the run and 0 recipients contacted; a second dispatch of the same (campaign_id, segment_id) -> CAMPAIGN_ALREADY_SENT (max_retries 0) with unchanged recipient_count |
 | 5 | Collect the evidence and audit trail | Evidence card EV_CAMPAIGN_DISPATCH is written with mask=no masked fields and latency; the run record chains run_id -> skill -> tool -> decision -> execution_status (SRS-17) |
 
 **Assertions**
 
 - recipient_count counts only consent-verified recipients of the approved segment; the connector is invoked exactly once for the effect_key
-- the approval authorises exactly one (tenant_id, run_id, effect_key) dispatch and is consumed on success; a replayed approval cannot send a second campaign
+- the canonical approval_id bound to the exact approval_payload_digest and effect_key authorises exactly one (tenant_id, run_id, effect_key) dispatch and is consumed on success; a replayed approval cannot send a second campaign
 - the published dispatch references the approved_content_id whose brand audit returned compliant=true
 - adapter API-003.CommunicationConnector invocation count is exactly 1 for this run and the skill step ends execution_status='success' with latency recorded
 - the run audit ties run_id, caller MKT-05, skill skill.mkt.dispatch_campaign, decision and evidence card EV_CAMPAIGN_DISPATCH into one record; no component reports success for another component's work
@@ -4025,7 +4025,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
   "segment_id": "SEG-atrisk-0115",
   "channel": "EMAIL",
   "approved_content_id": "DRAFT-0115-07",
-  "approval_signature": "APR-0115-01:sig:7f3c",
+  "approval_id": "APR-0115-01",
   "effect_key": "EK-CAMP-0115-01-EMAIL",
   "caller_agent": "MKT-05",
   "granted_authority": "AUTH-3",
