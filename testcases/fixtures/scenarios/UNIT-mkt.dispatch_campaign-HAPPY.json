@@ -38,7 +38,7 @@
     "segment_id": "SEG-atrisk-0115",
     "channel": "EMAIL",
     "approved_content_id": "DRAFT-0115-07",
-    "approval_signature": "APR-0115-01:sig:7f3c",
+    "approval_id": "APR-0115-01",
     "effect_key": "EK-CAMP-0115-01-EMAIL",
     "caller_agent": "MKT-05",
     "granted_authority": "AUTH-3"
@@ -58,7 +58,7 @@
     },
     {
       "action": "Re-run the boundary/validation probe",
-      "expected": "approval_signature bound to a different effect_key -> APPROVAL_REQUIRED, exactly one PENDING approval row exists for the run and 0 recipients contacted; a second dispatch of the same (campaign_id, segment_id) -> CAMPAIGN_ALREADY_SENT (max_retries 0) with unchanged recipient_count"
+      "expected": "approval_id bound to a different effect_key or mismatched approval_payload_digest -> APPROVAL_REQUIRED, exactly one PENDING approval row exists for the run and 0 recipients contacted; a second dispatch of the same (campaign_id, segment_id) -> CAMPAIGN_ALREADY_SENT (max_retries 0) with unchanged recipient_count"
     },
     {
       "action": "Collect the evidence and audit trail",
@@ -67,7 +67,7 @@
   ],
   "assertions": [
     "recipient_count counts only consent-verified recipients of the approved segment; the connector is invoked exactly once for the effect_key",
-    "the approval authorises exactly one (tenant_id, run_id, effect_key) dispatch and is consumed on success; a replayed approval cannot send a second campaign",
+    "the canonical approval_id bound to the exact approval_payload_digest and effect_key authorises exactly one (tenant_id, run_id, effect_key) dispatch and is consumed on success; a replayed approval cannot send a second campaign",
     "the published dispatch references the approved_content_id whose brand audit returned compliant=true",
     "adapter API-003.CommunicationConnector invocation count is exactly 1 for this run and the skill step ends execution_status='success' with latency recorded",
     "the run audit ties run_id, caller MKT-05, skill skill.mkt.dispatch_campaign, decision and evidence card EV_CAMPAIGN_DISPATCH into one record; no component reports success for another component's work"

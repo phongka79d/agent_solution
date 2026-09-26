@@ -29,6 +29,11 @@ import {
   type DomainRuntimeRegistry,
   type DomainSignalContract,
 } from './runtime/domain-registry.js';
+import {
+  createMarketingOrchestratorFactory,
+  MARKETING_SIGNAL_CONTRACT_DEFAULTS,
+  type MarketingOrchestratorFactoryOptions,
+} from './runtime/marketing/factory.js';
 
 export const VALID_AGENT_MODULES: readonly string[] = Object.freeze(['support', 'sales', 'marketing']);
 
@@ -38,6 +43,7 @@ export const CARE_SIGNAL_CONTRACT: DomainSignalContract = Object.freeze({
   event_types: Object.freeze(['message.received']),
   signal_invalid_code: 'CARE_SIGNAL_INVALID',
 });
+
 
 export function parseEnabledAgentModules(raw?: string): readonly string[] {
   if (raw === undefined || raw.trim().length === 0) {
@@ -118,6 +124,9 @@ export interface WorkerEnv extends WorkerConnectorEnv {
   readonly ENABLED_AGENT_MODULES?: string;
   readonly SALES_SIGNAL_SOURCE_CHANNELS?: string;
   readonly SALES_SIGNAL_EVENT_TYPES?: string;
+  readonly MARKETING_SIGNAL_SOURCE_CHANNELS?: string;
+  readonly MARKETING_SIGNAL_EVENT_TYPES?: string;
+  readonly AUDIT_HMAC_SECRET?: string;
 }
 
 export interface WorkerExecutionOptions extends WorkerConnectorOptions {
@@ -127,6 +136,8 @@ export interface WorkerExecutionOptions extends WorkerConnectorOptions {
     'claimNextQueuedTask' | 'getTask' | 'releaseTaskLease' | 'recordFailure' | 'transitionTask'>;
   readonly orchestratorFactory?: (tenant_id: string) => Promise<RevenueOrchestrator | null> | RevenueOrchestrator | null;
   readonly salesOrchestratorFactory?: (tenant_id: string) => Promise<RevenueOrchestrator | null> | RevenueOrchestrator | null;
+  readonly marketingOrchestratorFactory?: (tenant_id: string) => Promise<RevenueOrchestrator | null> | RevenueOrchestrator | null;
+  readonly marketingFactoryOptions?: MarketingOrchestratorFactoryOptions;
   readonly domainRegistry?: DomainRuntimeRegistry;
   readonly pollIntervalMs?: number;
   readonly leaseDurationMs?: number;
@@ -495,6 +506,41 @@ export function startWorker(
           createOrchestrator: salesOrchestratorFactory,
         });
       }
+    }
+  }
+
+  if (enabledModules.includes('marketing')) {
+    const marketingChannels = env.MARKETING_SIGNAL_SOURCE_CHANNELS
+      ? env.MARKETING_SIGNAL_SOURCE_CHANNELS.split(',').map((value) => value.trim()).filter(Boolean)
+      : [...MARKETING_SIGNAL_CONTRACT_DEFAULTS.source_channels];
+    const marketingEventTypes = env.MARKETING_SIGNAL_EVENT_TYPES
+      ? env.MARKETING_SIGNAL_EVENT_TYPES.split(',').map((value) => value.trim()).filter(Boolean)
+      : [...MARKETING_SIGNAL_CONTRACT_DEFAULTS.event_types];
+
+    let marketingFactory = options.marketingOrchestratorFactory;
+    if (!marketingFactory) {
+      try {
+        marketingFactory = createMarketingOrchestratorFactory({
+          ...(options.marketingFactoryOptions ?? {}),
+          workerId,
+          workflowRepository: options.marketingFactoryOptions?.workflowRepository ?? workflowRepository as DurableWorkflowRepository,
+          ...(env.AUDIT_HMAC_SECRET === undefined ? {} : { auditSecret: env.AUDIT_HMAC_SECRET }),
+        });
+      } catch (error) {
+        blockers.push('MARKETING_ORCHESTRATOR_UNBOUND: ' + (error instanceof Error ? error.message : String(error)));
+      }
+    }
+
+    if (marketingFactory) {
+      bindings.push({
+        contract: {
+          module: 'marketing',
+          source_channels: Object.freeze(marketingChannels),
+          event_types: Object.freeze(marketingEventTypes),
+          signal_invalid_code: 'MARKETING_SIGNAL_INVALID',
+        },
+        createOrchestrator: marketingFactory,
+      });
     }
   }
 

@@ -36,7 +36,15 @@ export function parseEnabledAgentModules(raw?: string): readonly string[] {
 }
 
 export const CARE_EVENT_TYPES: readonly string[] = Object.freeze(['message.received']);
+export const MARKETING_EVENT_TYPES: readonly string[] = Object.freeze(['campaign.requested']);
 export const DEFAULT_ADMISSION_EVENT_TYPE = 'message.received';
+
+export function parseMarketingSignalEventTypes(raw?: string): readonly string[] {
+  if (raw === undefined || raw.trim().length === 0) {
+    return MARKETING_EVENT_TYPES;
+  }
+  return Object.freeze(raw.split(',').map((eventType) => eventType.trim()).filter(Boolean));
+}
 
 export function parseSalesSignalEventTypes(raw?: string): readonly string[] {
   if (raw === undefined || raw.trim().length === 0) {
@@ -47,7 +55,7 @@ export function parseSalesSignalEventTypes(raw?: string): readonly string[] {
 
 export function acceptedEventTypesForModule(
   module: string,
-  options?: { readonly salesSignalEventTypes?: readonly string[] },
+  options?: { readonly salesSignalEventTypes?: readonly string[]; readonly marketingSignalEventTypes?: readonly string[] },
 ): readonly string[] {
   if (module === 'support') {
     return CARE_EVENT_TYPES;
@@ -55,16 +63,19 @@ export function acceptedEventTypesForModule(
   if (module === 'sales') {
     return options?.salesSignalEventTypes ?? parseSalesSignalEventTypes(process.env.SALES_SIGNAL_EVENT_TYPES);
   }
+  if (module === 'marketing') {
+    return options?.marketingSignalEventTypes ?? parseMarketingSignalEventTypes(process.env.MARKETING_SIGNAL_EVENT_TYPES);
+  }
   return Object.freeze([]);
 }
 
 export function validateAdmissionEventType(
   eventType: unknown,
   module: string,
-  options?: { readonly salesSignalEventTypes?: readonly string[] },
+  options?: { readonly salesSignalEventTypes?: readonly string[]; readonly marketingSignalEventTypes?: readonly string[] },
 ): string {
   if (eventType === undefined) {
-    return DEFAULT_ADMISSION_EVENT_TYPE;
+    return module === 'marketing' ? MARKETING_EVENT_TYPES[0]! : DEFAULT_ADMISSION_EVENT_TYPE;
   }
   if (typeof eventType !== 'string' || eventType.trim().length === 0) {
     fail('VALIDATION_FAILED', 'event_type is required and must be a non-empty string');

@@ -13,12 +13,12 @@
     "algorithm": "sha256",
     "note": "SHA-256 of every generator input at the time these documents were produced; --check re-reads them so a review can pin exactly which sources were rendered.",
     "files": {
-      "testcases/_generate.py": "2750534a189d35338885561412bfa555daaab82e15f12c203cade50e935885b0",
-      "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md": "a29b443d83b3b1e83acfca73068999b3750aa7a4c53e9a45ce8de378865af141",
+      "testcases/_generate.py": "c9d1fd350fa741f233764686980beef06b6a01ed3203f64905d5b2065f419f0c",
+      "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md": "3d865e6ace8c292b57ea54dd679c1d5904f7b39cf5a330b31ff5cff865df25e7",
       "testcases/sources/requirements.json": "fd5f9150ef111d701839d2a388b01fd0226bbb4252bdda47874b96886d65576d",
       "testcases/sources/baseline-ids.json": "6a204d85bd631f167299d44cefb844452939c099a67a30d9502d438633975698",
-      "testcases/sources/business.py": "5b299149a69057ea1ecb94bfe90b1646bc3703b9f26549387bfaa93b71cac169",
-      "testcases/sources/governance.py": "e23bb3904ad3f1e231d523417988298e632f9feca35ce2152650f7ed7f44a55d",
+      "testcases/sources/business.py": "ff66668be4dedc427c6130cd3783ea6acd76de499de0d280607c535e62f45ce3",
+      "testcases/sources/governance.py": "3d3ea7e1df3267f156b1fa50f1d35b09d838d341f694bd7aa51732ff5f17115d",
       "testcases/sources/platform.py": "ccb27428fa58fac9c18c1fa955d1e07fa9ca25cd159bf2ef99ff3da956a3374e"
     }
   },

@@ -259,28 +259,29 @@ SKILLS = [
       reqs=["MKT-05", "BR-007", "BR-005", "AUTH-4", "TC-E2E-002", "SRS-11"],
       happy={"tenant_id": T1, "campaign_id": "CAMP-0115-01", "segment_id": "SEG-atrisk-0115",
              "channel": "EMAIL", "approved_content_id": "DRAFT-0115-07",
-             "approval_signature": "APR-0115-01:sig:7f3c", "effect_key": "EK-CAMP-0115-01-EMAIL",
+             "approval_id": "APR-0115-01", "effect_key": "EK-CAMP-0115-01-EMAIL",
              "caller_agent": "MKT-05", "granted_authority": "AUTH-3"},
       out=("dispatch_id=DSP-0115-01, recipient_count=2 (cust-b excluded: email opt-out), "
            "status='ENQUEUED' -> 'COMPLETED' after the connector's delivery receipt, "
            "dispatched_at=%s" % CLOCK),
-      probe=("approval_signature bound to a different effect_key -> APPROVAL_REQUIRED, exactly one "
-             "PENDING approval row exists for the run and 0 recipients contacted; a second dispatch "
-             "of the same (campaign_id, segment_id) -> CAMPAIGN_ALREADY_SENT (max_retries 0) with "
-             "unchanged recipient_count"),
+      probe=("approval_id bound to a different effect_key or mismatched approval_payload_digest -> "
+             "APPROVAL_REQUIRED, exactly one PENDING approval row exists for the run and 0 recipients "
+             "contacted; a second dispatch of the same (campaign_id, segment_id) -> CAMPAIGN_ALREADY_SENT "
+             "(max_retries 0) with unchanged recipient_count"),
       deny_agent="MKT-04 (reviewer is not the dispatcher)", deny_auth="AUTH-3",
       deny_err="UNAUTHORIZED_AGENT",
-      deny2=("MKT-05 invoking with no bound approval_id -> APPROVAL_REQUIRED: the action is "
-             "prepared, not executed; no rank comparison happens and AUTH-4 never acts as a "
-             "clearance (BR-007, AUTH-4/AUTH-5 separation)"),
+      deny2=("MKT-05 invoking with no bound approval_id or mismatched approval_payload_digest -> "
+             "APPROVAL_REQUIRED: the action is prepared, not executed; no rank comparison happens and "
+             "AUTH-4 never acts as a clearance (BR-007, AUTH-4/AUTH-5 separation)"),
       to=("connector accepts the batch then stops responding past 5000ms -> execution_status='failed' "
           "with error.code='DISPATCH_TIMEOUT', error.outcome='UNKNOWN'; effect_reservations for "
           "EK-CAMP-0115-01-EMAIL stays RESERVED and reconciliation by effect_key decides the outcome; "
           "max_retries=0 so nothing is re-dispatched"),
       asrt=["recipient_count counts only consent-verified recipients of the approved segment; the "
             "connector is invoked exactly once for the effect_key",
-            "the approval authorises exactly one (tenant_id, run_id, effect_key) dispatch and is "
-            "consumed on success; a replayed approval cannot send a second campaign",
+            "the canonical approval_id bound to the exact approval_payload_digest and effect_key "
+            "authorises exactly one (tenant_id, run_id, effect_key) dispatch and is consumed on "
+            "success; a replayed approval cannot send a second campaign",
             "the published dispatch references the approved_content_id whose brand audit returned "
             "compliant=true"],
       forb=["sending before a bound approval row exists",

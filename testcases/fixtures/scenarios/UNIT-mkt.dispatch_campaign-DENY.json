@@ -43,7 +43,7 @@
     "segment_id": "SEG-atrisk-0115",
     "channel": "EMAIL",
     "approved_content_id": "DRAFT-0115-07",
-    "approval_signature": "APR-0115-01:sig:7f3c",
+    "approval_id": "APR-0115-01",
     "effect_key": "EK-CAMP-0115-01-EMAIL",
     "caller_agent": "MKT-04 (reviewer is not the dispatcher)",
     "granted_authority": "AUTH-3",
@@ -61,7 +61,7 @@
     },
     {
       "action": "Re-probe the remaining authority/identity boundary",
-      "expected": "MKT-05 invoking with no bound approval_id -> APPROVAL_REQUIRED: the action is prepared, not executed; no rank comparison happens and AUTH-4 never acts as a clearance (BR-007, AUTH-4/AUTH-5 separation)"
+      "expected": "MKT-05 invoking with no bound approval_id or mismatched approval_payload_digest -> APPROVAL_REQUIRED: the action is prepared, not executed; no rank comparison happens and AUTH-4 never acts as a clearance (BR-007, AUTH-4/AUTH-5 separation)"
     },
     {
       "action": "Confirm nothing was executed and the attempt is audited",

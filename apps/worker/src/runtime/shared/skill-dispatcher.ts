@@ -39,6 +39,17 @@ export interface SkillAdapterDispatcherOptions {
     readonly outcome: 'SUCCEEDED' | 'FAILED' | 'INDETERMINATE';
     readonly receipt?: ExecutionReceipt;
   }>;
+  // Lets a domain bind its own provider query without a second dispatcher.
+  readonly provider_reconcile?: (input: {
+    readonly tenant_id: string;
+    readonly effect_key: string;
+    readonly action_id?: string;
+    readonly adapter_target?: string;
+    readonly skill_id?: string;
+  }) => Promise<{
+    readonly outcome: 'SUCCEEDED' | 'FAILED' | 'INDETERMINATE';
+    readonly receipt?: ExecutionReceipt;
+  }>;
   readonly special_receipt?: (input: { readonly action: ActionDraft; readonly output: Record<string, unknown> }) => ExecutionReceipt | null;
 }
 
@@ -121,6 +132,9 @@ export function createSkillAdapterDispatcher(options: SkillAdapterDispatcherOpti
       readonly outcome: 'SUCCEEDED' | 'FAILED' | 'INDETERMINATE';
       readonly receipt?: ExecutionReceipt;
     }> {
+      if (options.provider_reconcile) {
+        return await options.provider_reconcile(input);
+      }
       const isApi001 = input.adapter_target !== undefined
         ? input.adapter_target === 'API-001' || input.adapter_target.startsWith('API-001.')
         : input.skill_id !== 'skill.care.escalate_to_human';

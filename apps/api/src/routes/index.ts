@@ -31,6 +31,9 @@ export interface RouteDependencies {
       readonly alias_table_version: number;
     };
   };
+  readonly enabledModules?: readonly string[];
+  readonly salesSignalEventTypes?: readonly string[];
+  readonly marketingSignalEventTypes?: readonly string[];
   /** Releases resources owned by this composition. Test doubles may omit it. */
   readonly close?: () => Promise<void>;
 }

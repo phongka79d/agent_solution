@@ -443,6 +443,33 @@ describe('POST /conversations/:conversation_id/messages shared Care admission', 
     }
   });
 
+  it('admits module: marketing when enabled and uses the canonical campaign event type', async () => {
+    const originalEnv = process.env.ENABLED_AGENT_MODULES;
+    process.env.ENABLED_AGENT_MODULES = 'support,marketing';
+
+    const { app, appendMessage, start } = buildHarness();
+    const url = '/conversations/' + CONVERSATION_ID + '/messages';
+    const headers = { authorization: 'Bearer ' + SESSION_TOKEN };
+    const body = { message: 'Prepare a campaign draft', idempotency_key: 'turn-mkt-allowed', module: 'marketing' };
+
+    try {
+      const response = await app.inject({ method: 'POST', url, headers, payload: body });
+
+      expect(response.statusCode).toBe(202);
+      expect(start).toHaveBeenCalledTimes(1);
+      expect(start.mock.calls[0]?.[0]).toMatchObject({
+        request_id: 'turn-mkt-allowed',
+        event_type: 'campaign.requested',
+        payload: { conversation_id: CONVERSATION_ID, message: 'Prepare a campaign draft', module: 'marketing' },
+      });
+      expect(appendMessage).toHaveBeenCalledTimes(1);
+    } finally {
+      if (originalEnv !== undefined) process.env.ENABLED_AGENT_MODULES = originalEnv;
+      else delete process.env.ENABLED_AGENT_MODULES;
+      await app.close();
+    }
+  });
+
   it('respects injected deps.enabledModules over environment variable', async () => {
     const originalEnv = process.env.ENABLED_AGENT_MODULES;
     process.env.ENABLED_AGENT_MODULES = 'support';

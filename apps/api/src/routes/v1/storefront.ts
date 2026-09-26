@@ -69,6 +69,7 @@ export interface StorefrontRouteDeps {
   readonly normalizer?: StorefrontEventNormalizer;
   readonly enabledModules?: readonly string[];
   readonly salesSignalEventTypes?: readonly string[];
+  readonly marketingSignalEventTypes?: readonly string[];
 }
 
 /** An ISO-8601 instant: a date, a time to the second, and an explicit UTC offset or `Z`. */
@@ -209,6 +210,7 @@ function readTurn(
   principal: GatewayPrincipal,
   configuredModules?: readonly string[],
   configuredSalesEventTypes?: readonly string[],
+  configuredMarketingEventTypes?: readonly string[],
 ): StorefrontTurn {
   const body = bodyRecord(request);
 
@@ -236,8 +238,11 @@ function readTurn(
   }
 
   const rawEventType = body['event_type'];
-  const eventTypeOptions = configuredSalesEventTypes !== undefined
-    ? { salesSignalEventTypes: configuredSalesEventTypes }
+  const eventTypeOptions = configuredSalesEventTypes !== undefined || configuredMarketingEventTypes !== undefined
+    ? {
+        ...(configuredSalesEventTypes === undefined ? {} : { salesSignalEventTypes: configuredSalesEventTypes }),
+        ...(configuredMarketingEventTypes === undefined ? {} : { marketingSignalEventTypes: configuredMarketingEventTypes }),
+      }
     : undefined;
   const event_type = validateAdmissionEventType(rawEventType, module, eventTypeOptions);
 
@@ -339,7 +344,7 @@ async function handleStream(
   let turn: StorefrontTurn;
   try {
     principal = requireWidgetSession(request);
-    turn = readTurn(request, principal, deps.enabledModules, deps.salesSignalEventTypes);
+    turn = readTurn(request, principal, deps.enabledModules, deps.salesSignalEventTypes, deps.marketingSignalEventTypes);
   } catch (error) {
     await refuseOperation({ request, reply, runtime, operation: STREAM_OPERATION, error });
     return;
