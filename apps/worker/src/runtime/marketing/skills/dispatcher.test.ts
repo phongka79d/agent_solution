@@ -529,7 +529,7 @@ describe('Marketing Skill Services and Dispatcher', () => {
       const forwardedContext = callArgs[1]!;
       expect(forwardedContext.approval_id).toBe('appr-valid-1');
       expect(forwardedContext.approval_payload_digest).toBe(canonicalDigest);
-      expect(callArgs[0].recipients).toEqual(['cust-1', 'cust-2']);
+      expect(callArgs[0]).toEqual(expect.objectContaining({ recipients: ['cust-1', 'cust-2'] }));
     });
   });
 

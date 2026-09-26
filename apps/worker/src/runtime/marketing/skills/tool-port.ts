@@ -152,15 +152,6 @@ export function createMarketingSkillToolPort(
         }
 
         const typedInput = input as unknown as InputMktDispatchCampaign;
-        const resolved = await resolver(
-          {
-            tenant_id: typedInput.tenant_id,
-            segment_id: typedInput.segment_id,
-            channel: typedInput.channel,
-          },
-          context,
-        );
-
         const resolvedUnknown: unknown = await resolver(
           {
             tenant_id: typedInput.tenant_id,
