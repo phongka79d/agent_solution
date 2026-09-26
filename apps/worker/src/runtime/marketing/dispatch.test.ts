@@ -2409,7 +2409,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       expect(lifecycle.state.current_stage).toBe('APPROVAL');
 
       // Stage 5: APPROVAL (AUTH-4 Pause -> Claim)
-      const pauseRes = await lifecycle.stepApproval({}, CONTEXT);
+      const pauseRes = await lifecycle.stepApproval({ segment_id: 'SEG-loyal' }, CONTEXT);
       expect(pauseRes.paused).toBe(true);
       expect(pauseRes.approval_id).toBe('appr-auto-1');
       const realApprovalId = pauseRes.approval_id!;
@@ -2420,6 +2420,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
           approval_id: realApprovalId,
           decision: 'APPROVED',
           operator_id: 'op-compliance-leader-01',
+          segment_id: 'SEG-loyal',
         },
         CONTEXT,
       );

@@ -376,6 +376,8 @@ export class CampaignLifecycle {
       readonly modified_payload?: Record<string, unknown>;
       readonly expected_task_version?: number;
       readonly approval_id?: string;
+      /** Segment identity must be supplied before AUTH-4 review when publish uses a non-default segment. */
+      readonly segment_id?: string;
       readonly proposed_price?: number;
       readonly offer_id?: string;
       readonly discount_amount?: number;
@@ -414,7 +416,7 @@ export class CampaignLifecycle {
     const payload: Record<string, unknown> = params.modified_payload ?? {
       tenant_id: this._identity.tenant_id,
       campaign_id: this._identity.campaign_id,
-      segment_id: 'segment-cohort',
+      segment_id: params.segment_id ?? 'segment-cohort',
       channel: this._state.content.channel_payload.channel_type,
       approved_content_id: this._state.content.draft_id,
       recipients: (this._state.audience ?? []).map((c) => c.customer_id),
