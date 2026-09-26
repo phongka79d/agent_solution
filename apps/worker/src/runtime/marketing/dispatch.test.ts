@@ -29,6 +29,7 @@ import {
   type MarketingAuthoritativeValidation,
   type MarketingBrandAuditOutput,
   type MarketingConsentDecision,
+  type MarketingEvidence,
   type MarketingInvocationContext,
   type MarketingRuntimePorts,
   MarketingRuntimeError,
@@ -70,7 +71,7 @@ const CONTEXT: MarketingInvocationContext = {
 
 function createMockPorts(overrides: Partial<MarketingRuntimePorts> = {}) {
   const appendAudit = vi.fn(async () => undefined);
-  const appendEvidence = vi.fn(async () => 'persisted-ev-1');
+  const appendEvidence = vi.fn(async (_evidence: readonly MarketingEvidence[]) => 'persisted-ev-1');
   const consentCheck = vi.fn(async (input: { tenant_id: string; customer_id: string; channel: string }): Promise<MarketingConsentDecision> => ({
     ...input,
     allowed: true,
@@ -350,7 +351,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
 
     it('fails closed with APPROVAL_NOT_RELEASED on caller-only APPROVED when claimApprovalAndResume returns false', async () => {
       const { ports, dispatch, claimApprovalAndResume } = createMockPorts();
-      claimApprovalAndResume.mockResolvedValueOnce({ claimed: false as unknown as true });
+      claimApprovalAndResume.mockResolvedValueOnce({ claimed: false as unknown as true, approval_id: 'appr-caller-only', operator_id: 'op-caller-only', decision: 'APPROVED' });
 
       const input = makeValidInput();
       const callerOnlyPayload: Record<string, unknown> = {
@@ -1287,7 +1288,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
 
     it('reopens the effect key for retry on confirmed reconciliation failure before re-dispatch', async () => {
       const { ports, dispatch, reconcileDispatcher, reopenForRetry } = createMockPorts();
-      reconcileDispatcher.mockResolvedValueOnce({ outcome: 'FAILED' as const, receipt: undefined });
+      reconcileDispatcher.mockResolvedValueOnce({ outcome: 'FAILED' as const });
 
       const customPorts: MarketingRuntimePorts = {
         ...ports,
@@ -1316,7 +1317,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
 
     it('fails closed and refuses re-dispatch when reopenForRetry is unavailable on confirmed reconciliation failure', async () => {
       const { ports, dispatch, reconcileDispatcher } = createMockPorts();
-      reconcileDispatcher.mockResolvedValueOnce({ outcome: 'FAILED' as const, receipt: undefined });
+      reconcileDispatcher.mockResolvedValueOnce({ outcome: 'FAILED' as const });
 
       const { reopenForRetry: _omitted, ...effectGuardWithoutReopen } = ports.effectGuard!;
       const customPorts: MarketingRuntimePorts = {
@@ -1324,7 +1325,6 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
         effectGuard: {
           ...effectGuardWithoutReopen,
           reserve: vi.fn().mockResolvedValue({ kind: 'RECONCILE_REQUIRED' }),
-          reopenForRetry: undefined,
         },
       };
 
@@ -1345,7 +1345,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
 
     it('fails closed and refuses re-dispatch when reopenForRetry returns false on confirmed reconciliation failure', async () => {
       const { ports, dispatch, reconcileDispatcher } = createMockPorts();
-      reconcileDispatcher.mockResolvedValueOnce({ outcome: 'FAILED' as const, receipt: undefined });
+      reconcileDispatcher.mockResolvedValueOnce({ outcome: 'FAILED' as const });
       const failingReopen = vi.fn(async () => false);
 
       const customPorts: MarketingRuntimePorts = {
@@ -1385,7 +1385,6 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
         response_payload: { delivered: true },
         latency_ms: 50,
         token_usage: { prompt: 0, completion: 0, total_cost_usd: 0 },
-        attempt_count: 1,
         occurred_at: new Date().toISOString(),
       };
       reconcileDispatcher.mockResolvedValueOnce({
@@ -1423,7 +1422,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
 
     it('never dispatches again on indeterminate reconciliation outcome', async () => {
       const { ports, dispatch, reconcileDispatcher } = createMockPorts();
-      reconcileDispatcher.mockResolvedValueOnce({ outcome: 'INDETERMINATE' as const, receipt: undefined });
+      reconcileDispatcher.mockResolvedValueOnce({ outcome: 'INDETERMINATE' as const });
 
       const customPorts: MarketingRuntimePorts = {
         ...ports,
