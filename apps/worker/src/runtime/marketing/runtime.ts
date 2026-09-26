@@ -1,7 +1,6 @@
 import {
   type CampaignDispatchInput,
   type CampaignDispatchResult,
-  type CampaignLifecycleContext,
 } from './contracts.js';
 import {
   dispatchCampaign,
@@ -10,6 +9,7 @@ import {
 import {
   CampaignLifecycle,
   createCampaignLifecycle,
+  type CampaignLifecycleContext,
 } from './lifecycle.js';
 import { computeEffectKey, evaluateAuthorityVerdict, isAssignableAuthority } from '@agentos/core-engine';
 import {
@@ -255,7 +255,6 @@ export function createMarketingRuntime(options: MarketingRuntimeOptions): Market
   const now = ports.now ?? (() => new Date());
   let generatedId = 0;
   const newId = ports.newId ?? (() => `mkt-${++generatedId}`);
-  const enabledSkills = MARKETING_SKILL_CATALOG.filter((skill) => skill.enabled);
 
   async function appendAudit(
     skillId: string,

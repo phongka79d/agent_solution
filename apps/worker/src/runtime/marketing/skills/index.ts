@@ -11,7 +11,7 @@ import {
 } from '@agentos/skills';
 
 import { createMarketingSkillDispatcher, MARKETING_DISPATCH_INTEGRATION } from './dispatcher.js';
-import { createMarketingSkillToolPort, MarketingSkillToolError } from './tool-port.js';
+import { createMarketingSkillToolPort } from './tool-port.js';
 import {
   MARKETING_DISPATCH_INTEGRATION_STATUS,
   type MarketingSkillOptions,
@@ -54,10 +54,11 @@ export type {
   SkillToolPort,
 } from './types.js';
 
+export { MarketingSkillToolError } from './tool-port.js';
+
 export {
   MARKETING_DISPATCH_INTEGRATION,
   MARKETING_DISPATCH_INTEGRATION_STATUS,
-  MarketingSkillToolError,
   createMarketingSkillDispatcher,
   createMarketingSkillToolPort,
 };

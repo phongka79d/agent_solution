@@ -939,7 +939,9 @@ export async function executePilot01StagedPipeline(
     tenant_id,
     rfm_criteria: options.segment_input?.rfm_criteria ?? 'CHAMPIONS',
     min_days_inactive: options.segment_input?.min_days_inactive ?? 30,
-    max_segment_size: options.segment_input?.max_segment_size,
+    ...(options.segment_input?.max_segment_size === undefined
+      ? {}
+      : { max_segment_size: options.segment_input.max_segment_size }),
   };
   validateTenantIsolation(tenant_id, segmentInput, 'segment input');
 
