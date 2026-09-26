@@ -332,5 +332,14 @@ Remaining blockers: P2 shared worker/domain routing must merge before production
 - PostgreSQL/RLS rehearsal passed.
 - Unit and Contract Tests failed with process exit code 1; the public check annotations exposed no test-level failure details and job logs were unavailable through the repository/API tooling.
 - The preceding unit failure was the lifecycle approval digest mismatch; commit 69cc8e9 binds the approved segment to the publish fixture without weakening digest verification.
-- Full CI remains open: adversarial/security and Docker jobs were skipped because the unit job failed.
+- Historical snapshot; superseded by the green full-pipeline run recorded below.
 - PENDING_P2_SHARED_ROUTING, API-003 provider/credential availability, and authoritative order evidence remain unchanged.
+
+
+## P3 Marketing CI resolution — 36221622637
+
+- Final clean-workflow GitHub Actions run 36221622637 passed all five jobs: static analysis/typecheck/build, unit and contract tests, PostgreSQL/RLS rehearsal, adversarial/security, and named-image Docker build/load/inspect/boot.
+- The worker unit regression was fixed by supplying authoritative promotion provenance/limit in the digest-mismatch test, preserving fail-closed validation precedence.
+- Temporary CI diagnostic steps were removed before this final green run.
+- PILOT-01 remains PARTIAL / OFFLINE ONLY; provider dispatch and authoritative order attribution are unavailable offline.
+- PENDING_P2_SHARED_ROUTING remains unchanged; formal Gate P3 remains blocked on Gate P2 closure and post-merge integration validation.
