@@ -117,7 +117,7 @@ function createMockPorts(overrides: Partial<MarketingRuntimePorts> = {}) {
 
   const reserve = vi.fn(async (): Promise<ReservationOutcome> => ({ kind: 'RESERVED' }));
   const resolve = vi.fn(async () => undefined);
-  const reconcileGuard = vi.fn(async () => ({ outcome: 'SUCCEEDED' as const, receipt: undefined }));
+  const reconcileGuard = vi.fn(async () => ({ outcome: 'SUCCEEDED' as const }));
   const reopenForRetry = vi.fn(async () => true);
 
   const effectGuard: IEffectGuard = {
@@ -139,7 +139,7 @@ function createMockPorts(overrides: Partial<MarketingRuntimePorts> = {}) {
   };
 
   const dispatch = vi.fn(async (_action: ActionDraft) => defaultReceipt);
-  const reconcileDispatcher = vi.fn(async () => ({ outcome: 'SUCCEEDED' as const, receipt: defaultReceipt }));
+  const reconcileDispatcher = vi.fn(async (): Promise<{ outcome: 'SUCCEEDED' | 'FAILED' | 'INDETERMINATE'; receipt?: ExecutionReceipt }> => ({ outcome: 'SUCCEEDED', receipt: defaultReceipt }));
 
   const dispatcher: IAdapterDispatcher = {
     dispatch,
@@ -353,18 +353,27 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       claimApprovalAndResume.mockResolvedValueOnce({ claimed: false as unknown as true });
 
       const input = makeValidInput();
+      const callerOnlyPayload: Record<string, unknown> = {
+        tenant_id: input.tenant_id,
+        campaign_id: input.campaign_id,
+        segment_id: input.segment_id,
+        channel: input.channel,
+        approved_content_id: input.approved_content_id,
+        recipients: input.recipients ?? [],
+      };
+      const callerOnlyPayloadSha256 = computeCampaignPayloadSha256(callerOnlyPayload);
       // Caller-only fabricated binding without workflow claim release
       const unconfirmedBinding = {
         approval_id: 'appr-caller-only',
         tenant_id: CONTEXT.tenant_id,
         run_id: CONTEXT.run_id,
         effect_key: 'ek-camp-0115-01',
-        payload_sha256: computeCampaignPayloadSha256(input),
+        payload_sha256: callerOnlyPayloadSha256,
         reviewed_digest: computeReviewedDigest({
           tenant_id: CONTEXT.tenant_id,
           run_id: CONTEXT.run_id,
           effect_key: 'ek-camp-0115-01',
-          payload_sha256: computeCampaignPayloadSha256(input),
+          payload_sha256: callerOnlyPayloadSha256,
         }),
         decision: 'APPROVED' as const,
         operator_id: 'op-caller-only',
@@ -942,7 +951,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
 
     it('fails closed with AUDIENCE_REQUIRED when input has segment_id but no recipients and no payload recipients, never treating segment_id alone as consented audience', async () => {
       const { ports, dispatch } = createMockPorts();
-      const input = makeValidInput({ recipients: null, payload: undefined });
+      const input = makeValidInput({ recipients: null });
       const binding = await claimApprovedBinding(ports.workflowEngine!, input);
 
       await expect(
@@ -1168,7 +1177,6 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       const { ports, resolve, reconcileDispatcher } = createMockPorts();
       reconcileDispatcher.mockResolvedValueOnce({
         outcome: 'SUCCEEDED',
-        receipt: undefined,
       });
 
       const reconResult = await reconcileCampaignDispatch({
@@ -1444,7 +1452,6 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       const { ports, dispatch, resolve, reconcileDispatcher, appendEvidence } = createMockPorts();
       reconcileDispatcher.mockResolvedValueOnce({
         outcome: 'SUCCEEDED' as const,
-        receipt: undefined,
       });
 
       const customPorts: MarketingRuntimePorts = {
