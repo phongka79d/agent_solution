@@ -8,9 +8,10 @@
  *    module does not create a queue, orchestrator or effect subsystem of its own.
  *  * Admission refusals are fail-closed. CONFLICT and RECONCILE_REQUIRED never become fabricated
  *    success responses, and guard errors retain their HANDOFF_* code.
- *  * The Customer 360 timeline append is best effort after ADMITTED only. Its source-event key is
- *    the handoff idempotency key, so an append failure cannot turn an admitted handoff into a
- *    failure and a later replay never appends a second timeline event.
+ *  * The Customer 360 timeline row is committed BY THE ADMISSION, in the same tenant transaction as
+ *    the reservation, the target task and the ledger row. A handoff that committed therefore always
+ *    has its timeline row, and a replayed admission cannot append a second one: the row's
+ *    source-event key is the handoff idempotency key, which the stream deduplicates.
  */
 
 import { createHash, randomUUID } from 'node:crypto';
@@ -34,28 +35,18 @@ import {
   admitCrossDomainHandoff,
   readCrossDomainLifecycle,
   type AdmitCrossDomainHandoffInput,
-  type AppendCustomerEventInput,
+  type CrossDomainHandoffTimelineEvent,
   type CrossDomainLifecycleRecord,
 } from '@agentos/database';
 
-type CustomerEventAppendInput = AppendCustomerEventInput;
-
 type HandoffRepository = {
   readonly readCrossDomainLifecycle: typeof readCrossDomainLifecycle;
-};
-
-type EventRepository = {
-  append(input: CustomerEventAppendInput): Promise<{
-    readonly inserted: boolean;
-    readonly event_id: string | null;
-  }>;
 };
 
 export interface CrossDomainHandoffBrokerOptions {
   readonly handoffRepository: HandoffRepository;
   readonly admit?: typeof admitCrossDomainHandoff;
   readonly readLifecycle?: typeof readCrossDomainLifecycle;
-  readonly eventRepository?: EventRepository;
   readonly reservation_ttl_ms?: number;
   readonly now?: () => Date;
 }
@@ -166,19 +157,18 @@ export function buildCrossDomainHandoffSignal(
   };
 }
 
-function timelineEvent(pkg: CrossDomainHandoffPackage, session_id: string): CustomerEventAppendInput {
+function timelineEvent(pkg: CrossDomainHandoffPackage, session_id: string): CrossDomainHandoffTimelineEvent {
   return {
-    tenant_id: pkg.tenant_id,
     source_event_id: pkg.idempotency_key,
     event_name: 'ext.lifecycle.handoff',
     session_id,
-    customer_id: pkg.customer_id,
     occurred_at: pkg.occurred_at,
     channel: 'orchestrator',
     payload: {
       classification: pkg.classification,
       classification_authority: 'SERVER',
-      evidence_reference: pkg.handoff_id,
+      // `evidence_reference` is stamped by the admission with the ledger's own handoff id: the
+      // durable identity is generated there, so a caller-supplied one would cite nothing.
       domain: pkg.target_domain,
       stage: 'HANDOFF',
       summary: pkg.reason,
@@ -240,6 +230,7 @@ export function createCrossDomainHandoffBroker(
         occurred_at: pkg.occurred_at,
         run_id: randomUUID(),
         signal: buildCrossDomainHandoffSignal(pkg, session_id, randomUUID()),
+        timeline_event: timelineEvent(pkg, session_id),
         reservation_ttl_ms,
         now,
       };
@@ -259,14 +250,6 @@ export function createCrossDomainHandoffBroker(
         admitted: admission.kind === 'ADMITTED',
         lifecycle: pkg.lifecycle,
       };
-
-      if (admission.kind === 'ADMITTED' && options.eventRepository !== undefined) {
-        try {
-          await options.eventRepository.append(timelineEvent(pkg, session_id));
-        } catch {
-          // The handoff is already durable. The source-event id makes a later explicit append safe.
-        }
-      }
 
       return result;
     },

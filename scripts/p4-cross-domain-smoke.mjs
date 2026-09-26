@@ -18,8 +18,9 @@
  *   5. Lifecycle: the second hop advances the durable journey, and a repeated lifecycle version is
  *      refused by the ledger's `(tenant_id, customer_id, lifecycle_version)` constraint;
  *   6. Isolation: a hop addressed to another tenant's customer is refused;
- *   7. Timeline: the handoff event is appended once per handoff — a replay of the same source event
- *      identity inserts nothing — and reads back with its server marker.
+ *   7. Timeline: the handoff's Customer 360 row is committed BY the admission (same transaction),
+ *      cites the ledger's own handoff id, reads back with its server marker, and a replayed
+ *      admission appends no second row.
  *
  * Fail-closed rules: a missing `DATABASE_URL`, a managed `APP_ENV`, an unmigrated schema or a
  * bypassing role aborts the run instead of reporting a green path it did not exercise.
@@ -154,6 +155,25 @@ function handoffInput(overrides = {}) {
   return {
     ...base,
     idempotency_key,
+    // The Customer 360 row is part of the admission, so the smoke submits it with the hop exactly
+    // as the broker does; the store commits it in the same transaction.
+    timeline_event: {
+      source_event_id: idempotency_key,
+      event_name: 'ext.lifecycle.handoff',
+      session_id: base.source_run_id,
+      channel: 'orchestrator',
+      occurred_at: base.occurred_at,
+      payload: {
+        classification: base.classification,
+        classification_authority: 'SERVER',
+        domain: base.target_domain,
+        stage: 'HANDOFF',
+        summary: base.reason,
+        source_domain: base.source_domain,
+        target_domain: base.target_domain,
+        lifecycle_version: base.lifecycle_version,
+      },
+    },
     request_fingerprint: createHash('sha256').update(`${idempotency_key}:v1`).digest('hex'),
     run_id: `run_target_${randomUUID().slice(0, 8)}`,
     signal: {
@@ -409,40 +429,32 @@ describe('P4 cross-domain handoff ledger (real PostgreSQL)', () => {
     const admission = await context.db.admitCrossDomainHandoff(input);
     assert.equal(admission.kind, 'ADMITTED');
 
-    const event = {
-      tenant_id: context.tenant_id,
-      source_event_id: input.idempotency_key,
-      event_name: 'ext.lifecycle.handoff',
-      session_id: input.source_run_id,
-      channel: 'orchestrator',
-      customer_id,
-      occurred_at: input.occurred_at,
-      payload: {
-        classification: input.classification,
-        classification_authority: 'SERVER',
-        evidence_reference: admission.handoff_id,
-        domain: input.target_domain,
-        stage: 'HANDOFF',
-        summary: input.reason,
-        source_domain: input.source_domain,
-        target_domain: input.target_domain,
-        lifecycle_version: input.lifecycle_version,
-      },
-    };
-
-    const first = await context.events.append(event);
-    assert.equal(first.inserted, true);
-    const replay = await context.events.append(event);
-    assert.equal(replay.inserted, false, 'a replayed append must insert nothing');
-
+    // The row is written BY the admission, in the same transaction: the smoke appends nothing.
     const timeline = await context.events.listTimeline({
       tenant_id: context.tenant_id,
       customer_id,
       limit: 200,
     });
     const handoffEntries = timeline.items.filter((item) => item.event_name === 'ext.lifecycle.handoff');
-    assert.equal(handoffEntries.length, 1, 'exactly one handoff entry may exist per handoff identity');
+    assert.equal(handoffEntries.length, 1, 'the admission must have appended exactly one row');
+    assert.equal(handoffEntries[0].source_event_id, input.idempotency_key);
     assert.equal(handoffEntries[0].payload.classification_authority, 'SERVER');
     assert.equal(handoffEntries[0].payload.target_domain, 'sales');
+    // The row cites the handoff the LEDGER committed, not an id minted before the write.
+    assert.equal(handoffEntries[0].payload.evidence_reference, admission.handoff_id);
+
+    // A replayed admission must not append a second row.
+    const replay = await context.db.admitCrossDomainHandoff(input);
+    assert.notEqual(replay.kind, 'ADMITTED');
+    const afterReplay = await context.events.listTimeline({
+      tenant_id: context.tenant_id,
+      customer_id,
+      limit: 200,
+    });
+    assert.equal(
+      afterReplay.items.filter((item) => item.event_name === 'ext.lifecycle.handoff').length,
+      1,
+      'a replayed admission must not append a second timeline row',
+    );
   });
 });

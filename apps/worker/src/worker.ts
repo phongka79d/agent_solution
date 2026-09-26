@@ -3,7 +3,6 @@ import { packageName as adaptersPackageName } from '@agentos/adapters';
 import { packageName as coreEnginePackageName, RevenueOrchestrator } from '@agentos/core-engine';
 import {
   packageName as databasePackageName,
-  CustomerEventRepository,
   DurableWorkflowRepository,
   assertCompleteCheckpoint,
   readCrossDomainLifecycle,
@@ -182,8 +181,6 @@ export interface WorkerExecutionOptions extends WorkerConnectorOptions {
   readonly salesFactoryOptions?: SalesOrchestratorFactoryOptions;
   /** The brokered handoff binding; when supplied it overrides the env-gated default broker. */
   readonly crossDomainHandoff?: ICrossDomainHandoffBroker;
-  /** The Customer 360 timeline writer the broker appends the handoff event to. */
-  readonly customerEventRepository?: Pick<CustomerEventRepository, 'append'>;
   /** Persistence the broker reads the durable journey from; defaults to the real repository. */
   readonly handoffRepository?: { readCrossDomainLifecycle: typeof readCrossDomainLifecycle };
 }
@@ -477,7 +474,6 @@ export function startWorker(
     ?? (env.CROSS_DOMAIN_JOURNEY_ENABLED === 'true'
       ? createCrossDomainHandoffBroker({
           handoffRepository: options.handoffRepository ?? { readCrossDomainLifecycle },
-          eventRepository: options.customerEventRepository ?? new CustomerEventRepository(),
         })
       : undefined);
 

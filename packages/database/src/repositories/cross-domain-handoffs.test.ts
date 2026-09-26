@@ -140,6 +140,10 @@ vi.mock('./durable-workflows.js', () => ({
 const { admitCrossDomainHandoff } = await import('./cross-domain-handoffs.js');
 
 function input(overrides: Partial<AdmitCrossDomainHandoffInput> = {}): AdmitCrossDomainHandoffInput {
+  // The row is committed BY the admission and is checked for agreeing with the hop, so the fixture
+  // derives it from the same classification the case is exercising.
+  const classification = overrides.classification ?? 'SIGNAL';
+
   return {
     tenant_id: TENANT,
     customer_id: CUSTOMER,
@@ -153,7 +157,7 @@ function input(overrides: Partial<AdmitCrossDomainHandoffInput> = {}): AdmitCros
     target_agent: 'CS-01',
     target_module: 'care.intake',
     reason: 'customer requested help',
-    classification: 'SIGNAL',
+    classification,
     evidence: [],
     lifecycle_state: 'HANDED_OFF',
     lifecycle_version: 1,
@@ -162,6 +166,14 @@ function input(overrides: Partial<AdmitCrossDomainHandoffInput> = {}): AdmitCros
     occurred_at: NOW.toISOString(),
     run_id: TARGET_RUN,
     signal: { source: 'test' },
+    timeline_event: {
+      source_event_id: KEY,
+      event_name: 'ext.lifecycle.handoff',
+      session_id: SOURCE_RUN,
+      channel: 'orchestrator',
+      occurred_at: NOW.toISOString(),
+      payload: { classification, classification_authority: 'SERVER', stage: 'HANDOFF' },
+    },
     reservation_ttl_ms: 86_400_000,
     now: () => NOW,
     ...overrides,
@@ -195,6 +207,7 @@ describe('admitCrossDomainHandoff', () => {
       'INSERT INTO agentos.effect_reservations',
       'INSERT INTO agentos.platform_durable_tasks',
       expect.stringContaining('INSERT INTO agentos.cross_domain_handoffs'),
+      expect.stringContaining('INSERT INTO agentos.customer_events'),
       'RELEASE SAVEPOINT cross_domain_handoff_ledger',
     ]);
   });
@@ -274,5 +287,31 @@ describe('admitCrossDomainHandoff', () => {
       receipt: { target_run_id: STORED_TARGET_RUN },
     });
     expect(state.queries.filter(({ sql }) => sql.includes('INSERT INTO agentos.cross_domain_handoffs'))).toHaveLength(1);
+    // A recovered handoff must be as visible on the timeline as a fresh one.
+    expect(state.queries.filter(({ sql }) => sql.includes('INSERT INTO agentos.customer_events'))).toHaveLength(1);
+  });
+
+  it('refuses an admission whose Customer 360 row is missing, unkeyed or unmarked', async () => {
+    const without_row = input();
+    delete (without_row as { timeline_event?: unknown }).timeline_event;
+    await expect(admitCrossDomainHandoff(without_row)).rejects.toThrow('HANDOFF_TIMELINE_EVENT_REQUIRED');
+
+    await expect(
+      admitCrossDomainHandoff(input({ timeline_event: { ...input().timeline_event, source_event_id: 'c'.repeat(64) } })),
+    ).rejects.toThrow('HANDOFF_TIMELINE_EVENT_UNKEYED');
+
+    await expect(
+      admitCrossDomainHandoff(
+        input({
+          timeline_event: {
+            ...input().timeline_event,
+            payload: { classification: 'SIGNAL' },
+          },
+        }),
+      ),
+    ).rejects.toThrow('HANDOFF_TIMELINE_EVENT_UNMARKED');
+
+    // A refused admission never reaches the reservation: nothing is written for it.
+    expect(state.queries.filter(({ sql }) => sql.includes('INSERT INTO agentos.effect_reservations'))).toHaveLength(0);
   });
 });

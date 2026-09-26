@@ -57,8 +57,7 @@ function draft(overrides: Partial<CrossDomainHandoffDraft> = {}): CrossDomainHan
 
 interface Harness {
   readonly broker: ICrossDomainHandoffBroker;
-  readonly appended: Record<string, unknown>[];
-  readonly admitted: unknown[];
+  readonly admitted: Record<string, unknown>[];
   readonly drafts: CrossDomainHandoffDraft[];
 }
 
@@ -67,8 +66,7 @@ function harness(options: {
   readonly lifecycle?: { version: number; state: string; hop_count: number; domains: readonly string[] } | null;
   readonly outcome?: { kind: string; run_id?: string; handoff_id?: string };
 } = {}): Harness {
-  const appended: Record<string, unknown>[] = [];
-  const admitted: unknown[] = [];
+  const admitted: Record<string, unknown>[] = [];
   const drafts: CrossDomainHandoffDraft[] = [];
 
   const broker = createCrossDomainHandoffBroker({
@@ -86,7 +84,7 @@ function harness(options: {
               updated_at: OCCURRED_AT,
             },
     },
-    admit: (async (input: unknown) => {
+    admit: (async (input: Record<string, unknown>) => {
       admitted.push(input);
       return options.outcome?.kind === 'CONFLICT'
         ? { kind: 'CONFLICT' }
@@ -94,15 +92,9 @@ function harness(options: {
           ? { kind: 'REPLAY', handoff_id: 'handoff-existing', run_id: 'run_existing', receipt: null }
           : { kind: 'ADMITTED', handoff_id: 'handoff-1', run_id: 'run_sales_1', task: {}, reservation: {} };
     }) as never,
-    eventRepository: {
-      append: async (input) => {
-        appended.push(input as unknown as Record<string, unknown>);
-        return { inserted: true, event_id: 'event-1' };
-      },
-    },
   }) as unknown as ICrossDomainHandoffBroker;
 
-  return { broker, appended, admitted, drafts };
+  return { broker, admitted, drafts };
 }
 
 describe('buildCrossDomainHandoffSignal', () => {
@@ -150,8 +142,8 @@ describe('buildCrossDomainHandoffSignal', () => {
 });
 
 describe('createCrossDomainHandoffBroker', () => {
-  it('admits the first hop, reports it, and appends one server-marked timeline event', async () => {
-    const { broker, appended, admitted } = harness();
+  it('submits the server-marked timeline row WITH the admission', async () => {
+    const { broker, admitted } = harness();
 
     const admission = await broker.admit(draft());
 
@@ -160,24 +152,24 @@ describe('createCrossDomainHandoffBroker', () => {
     expect(admission.lifecycle).toEqual({ version: 1, state: 'HANDED_OFF' });
     expect(admitted).toHaveLength(1);
 
-    expect(appended).toHaveLength(1);
-    const event = appended[0]!;
+    // The row is part of the admission: the repository commits it in the same transaction, keyed by
+    // the handoff identity, so the ledger and the timeline can never disagree.
+    const event = admitted[0]!['timeline_event'] as Record<string, unknown>;
     expect(event['event_name']).toBe('ext.lifecycle.handoff');
-    expect(event['customer_id']).toBe(CUSTOMER);
+    expect(event['source_event_id']).toBe(admitted[0]!['idempotency_key']);
     const payload = event['payload'] as Record<string, unknown>;
     expect(payload['classification_authority']).toBe('SERVER');
     expect(payload['classification']).toBe('DECISION');
     expect(payload['target_domain']).toBe('sales');
   });
 
-  it('reports a replayed admission without appending a second timeline event', async () => {
-    const { broker, appended } = harness({ outcome: { kind: 'REPLAY' } });
+  it('reports a replayed admission without proposing a second timeline row', async () => {
+    const { broker } = harness({ outcome: { kind: 'REPLAY' } });
 
     const admission = await broker.admit(draft());
 
     expect(admission.admitted).toBe(false);
     expect(admission.target_run_id).toBe('run_existing');
-    expect(appended).toHaveLength(0);
   });
 
   it('refuses to report an unresolved admission as a handoff', async () => {
@@ -197,7 +189,7 @@ describe('createCrossDomainHandoffBroker', () => {
   });
 
   it('advances the durable journey for the second hop', async () => {
-    const { broker, appended } = harness({
+    const { broker, admitted } = harness({
       lifecycle: { version: 1, state: 'HANDED_OFF', hop_count: 1, domains: ['marketing'] },
     });
 
@@ -211,6 +203,7 @@ describe('createCrossDomainHandoffBroker', () => {
     );
 
     expect(admission.lifecycle.version).toBe(2);
-    expect(appended[0]?.['payload']).toMatchObject({ target_domain: 'care' });
+    const event = admitted[0]!['timeline_event'] as Record<string, unknown>;
+    expect(event['payload']).toMatchObject({ target_domain: 'care', lifecycle_version: 2 });
   });
 });

@@ -578,6 +578,25 @@ export interface CrossDomainLifecycleRecord {
   updated_at: string;
 }
 
+/**
+ * The Customer 360 timeline row a handoff appends.
+ *
+ * It is committed by the SAME tenant transaction as the reservation, the target task and the ledger
+ * row (`CareHandoffRepository` sets the same precedent for its queue row, parked task and
+ * reservation). A handoff therefore cannot exist without its timeline row, and a replayed admission
+ * cannot append a second one: `(tenant_id, source_event_id)` is the stream's deduplication key and
+ * the insert is `ON CONFLICT DO NOTHING`.
+ */
+export interface CrossDomainHandoffTimelineEvent {
+  /** The stream's deduplication key; the broker passes the handoff's own idempotency key. */
+  source_event_id: string;
+  event_name: string;
+  session_id: string;
+  channel: string;
+  occurred_at: string;
+  payload: Record<string, unknown>;
+}
+
 export interface AdmitCrossDomainHandoffInput {
   tenant_id: string;
   customer_id: string;
@@ -600,6 +619,12 @@ export interface AdmitCrossDomainHandoffInput {
   occurred_at: string;
   run_id: string;
   signal: Record<string, unknown>;
+  /**
+   * The Customer 360 row committed with the admission. REQUIRED: a handoff's timeline row is part
+   * of its admission, not a follow-up step, and the repository refuses an admission whose event is
+   * absent, unkeyed or unmarked rather than committing an invisible handoff.
+   */
+  timeline_event: CrossDomainHandoffTimelineEvent;
   reservation_ttl_ms: number;
   now?: () => Date;
 }
