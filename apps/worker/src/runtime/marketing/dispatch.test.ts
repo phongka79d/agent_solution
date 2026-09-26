@@ -28,6 +28,7 @@ import {
   type CampaignDispatchInput,
   type MarketingAuthoritativeValidation,
   type MarketingBrandAuditOutput,
+  type MarketingConsentDecision,
   type MarketingInvocationContext,
   type MarketingRuntimePorts,
   MarketingRuntimeError,
@@ -70,7 +71,7 @@ const CONTEXT: MarketingInvocationContext = {
 function createMockPorts(overrides: Partial<MarketingRuntimePorts> = {}) {
   const appendAudit = vi.fn(async () => undefined);
   const appendEvidence = vi.fn(async () => 'persisted-ev-1');
-  const consentCheck = vi.fn(async (input: { tenant_id: string; customer_id: string; channel: string }) => ({
+  const consentCheck = vi.fn(async (input: { tenant_id: string; customer_id: string; channel: string }): Promise<MarketingConsentDecision> => ({
     ...input,
     allowed: true,
     consent_timestamp: '2026-01-01T00:00:00.000Z',
@@ -181,15 +182,25 @@ function withoutWorkflow(ports: MarketingRuntimePorts): MarketingRuntimePorts {
   ) as MarketingRuntimePorts;
 }
 
-function makeValidInput(overrides: Partial<CampaignDispatchInput> = {}): CampaignDispatchInput {
-  return {
+type MarketingInputOverrides = Omit<Partial<CampaignDispatchInput>, 'recipients'> & {
+  recipients?: readonly string[] | null;
+};
+
+function makeValidInput(overrides: MarketingInputOverrides = {}): CampaignDispatchInput {
+  const { recipients, ...rest } = overrides;
+  const base = {
     tenant_id: TENANT,
     campaign_id: CAMPAIGN_ID,
     segment_id: 'SEG-atrisk-0115',
-    channel: 'SMS',
+    channel: 'SMS' as const,
     approved_content_id: 'draft-content-01',
-    recipients: ['cust-1', 'cust-2'],
-    ...overrides,
+    ...rest,
+  };
+  return {
+    ...base,
+    ...(recipients === null
+      ? {}
+      : { recipients: recipients ?? ['cust-1', 'cust-2'] }),
   };
 }
 
@@ -700,7 +711,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
 
       // Explicit input.recipients is absent / undefined; recipients are only in input.payload
       const input = makeValidInput({
-        recipients: undefined,
+        recipients: null,
         payload: {
           recipients: ['cust-payload-opted-in', 'cust-payload-opted-out', 'cust-payload-missing'],
         },
@@ -720,7 +731,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
 
       // (2) When re-approved with filtered payload recipients, dispatch succeeds
       const filteredInput = makeValidInput({
-        recipients: undefined,
+        recipients: null,
         payload: {
           recipients: ['cust-payload-opted-in'],
         },
@@ -781,7 +792,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       });
 
       const input = makeValidInput({
-        recipients: undefined,
+        recipients: null,
         payload: {
           recipients: ['cust-denied-only'],
         },
@@ -931,7 +942,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
 
     it('fails closed with AUDIENCE_REQUIRED when input has segment_id but no recipients and no payload recipients, never treating segment_id alone as consented audience', async () => {
       const { ports, dispatch } = createMockPorts();
-      const input = makeValidInput({ recipients: undefined, payload: undefined });
+      const input = makeValidInput({ recipients: null, payload: undefined });
       const binding = await claimApprovedBinding(ports.workflowEngine!, input);
 
       await expect(
@@ -944,7 +955,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
 
     it('fails closed with AUDIENCE_REQUIRED when input.payload carries empty recipients array, never invoking dispatcher', async () => {
       const { ports, dispatch } = createMockPorts();
-      const input = makeValidInput({ recipients: undefined, payload: { recipients: [] } });
+      const input = makeValidInput({ recipients: null, payload: { recipients: [] } });
       const binding = await claimApprovedBinding(ports.workflowEngine!, input);
 
       await expect(
