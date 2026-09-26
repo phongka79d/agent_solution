@@ -463,10 +463,16 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
   describe('2. Digest Mismatch & Payload Change Invalidation', () => {
     it('rejects with APPROVAL_DIGEST_MISMATCH when payload content is modified after review', async () => {
       const { ports, dispatch } = createMockPorts();
-      const input = makeValidInput({ discount_percent: 10 });
+      const input = makeValidInput({
+        discount_percent: 10,
+        promotion_provenance: 'PROMO_REGISTRY_2026',
+      });
       const binding = await claimApprovedBinding(ports.workflowEngine!, input);
       // Malicious or accidental modification: discount changed to 20 after approval!
-      const alteredInput = makeValidInput({ discount_percent: 20 });
+      const alteredInput = makeValidInput({
+        discount_percent: 20,
+        promotion_provenance: 'PROMO_REGISTRY_2026',
+      });
 
       await expect(
         dispatchCampaign(alteredInput, CONTEXT, ports, { brandReview: makeValidBrandReview(), approvalBinding: binding }),
