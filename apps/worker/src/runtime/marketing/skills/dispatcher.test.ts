@@ -2,6 +2,7 @@ import { computeEffectKey, computeRequestFingerprint } from '@agentos/core-engin
 import type { ActionDraft, AssignableAuthority } from '@agentos/core-engine/contracts';
 import { describe, expect, it, vi } from 'vitest';
 
+import type { MarketingAudienceResolver } from './types.js';
 import {
   MARKETING_DISPATCH_INTEGRATION,
   MARKETING_DISPATCH_INTEGRATION_STATUS,
@@ -945,7 +946,9 @@ describe('Marketing Skill Services and Dispatcher', () => {
       );
       expect(consent.checkConsent).toHaveBeenCalledTimes(2);
       expect(dispatchCampaign).toHaveBeenCalledTimes(1);
-      const passedInput = dispatchCampaign.mock.calls[0]![0]!;
+      const passedCall = dispatchCampaign.mock.calls[0]!;
+      expect(passedCall).toBeDefined();
+      const passedInput = passedCall[0]!;
       expect(passedInput.recipients).toEqual(['cust-opted-in']);
       expect(result.dispatch_id).toBe('disp-resolved-1');
     });
@@ -1057,7 +1060,7 @@ describe('Marketing Skill Services and Dispatcher', () => {
     });
 
     it('allows dispatch when audience resolver returns explicit verified-consent result without separate consent port', async () => {
-      const resolveAudience = vi.fn(async () => ({
+      const resolveAudience: MarketingAudienceResolver = vi.fn(async () => ({
         recipients: ['cust-verified-1', 'cust-verified-2'],
         consent_verified: true as const,
       }));
@@ -1095,7 +1098,7 @@ describe('Marketing Skill Services and Dispatcher', () => {
     });
 
     it('fails closed with CONSENT_PORT_REQUIRED when audience resolver returns unverified audience and consent port is missing', async () => {
-      const resolveAudience = vi.fn(async () => ({
+      const resolveAudience: MarketingAudienceResolver = vi.fn(async () => ({
         recipients: ['cust-unverified-1'],
         consent_verified: false as const,
       }));
