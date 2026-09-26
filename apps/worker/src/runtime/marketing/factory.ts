@@ -129,7 +129,7 @@ function signalInput(signal: SignalEnvelope, tenant_id: string): Record<string, 
 function skillId(signal: SignalEnvelope): string {
   const value = signal.payload['skill_id'];
   if (typeof value !== 'string' || !Object.hasOwn(MARKETING_AGENT_BY_SKILL, value)) {
-    throw new Error('MARKETING_SIGNAL_INVALID: payload.skill_id must name a canonical Marketing skill');
+    throw new OrchestratorError('MARKETING_SIGNAL_INVALID', 'payload.skill_id must name a canonical Marketing skill');
   }
   return value;
 }
@@ -195,7 +195,7 @@ class MarketingAgentRuntime implements IAgentRuntime {
     const signalId = hypothesis.derived_from_signals[0];
     const signal = typeof signalId === 'string' ? this.signals.get(signalId) : undefined;
     if (!signal) {
-      throw new Error('MARKETING_SIGNAL_CONTEXT_LOST: signal was not retained across shared planning stages');
+      throw new OrchestratorError('MARKETING_SIGNAL_CONTEXT_LOST', 'signal was not retained across shared planning stages');
     }
     this.signals.delete(signal.signal_id);
     const id = skillId(signal);
