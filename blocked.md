@@ -98,6 +98,28 @@ These stay fail-closed and are reported as unbound by the runtime rather than st
 credentials, cross-functional sign-off), not engineering gaps, and no offline or mock result is
 claimed as gate evidence.
 
+## Residual Sales capability gaps (recorded, not silently claimed)
+
+- **SAL-01 qualification persistence.** The `agentos.leads` table exists in the DDL
+  (`0000_agentos_schema.sql`), but no repository and no writer back it, so a qualified lead is not
+  persisted as a `leads` row. SAL-01's required behaviour is implemented — it resolves
+  qualification context from verified Customer360 facts only, discards any customer identifier a
+  signal payload asserts, and refuses rather than inferring private facts or a readiness score. A
+  `readiness_score`/`opportunity_potential` value has no owner-approved scoring policy in this
+  repository, and inventing one is refused, so lead persistence stays unbound rather than defaulted.
+- **SAL-02 policy/product explanation.** No Sales-side policy-explanation capability exists: the
+  platform's knowledge retrieval belongs to the Care pilot's Second Brain corpus, which is still a
+  draft with no owner approval, so an approved-corpus explanation path is not available to Sales and
+  none was substituted. Product specification explanation is served from the authoritative catalog
+  read.
+- **Human-approval operator surface.** The operator approval route and the Command Center approval
+  view are domain-generic — they read tenant-scoped pending approvals and bind a reviewed payload
+  digest — so a Sales AUTH-4 effect flows through the same surface with no Sales-specific queue, and
+  none was built. What is not yet demonstrated end to end for Sales is an operator approval
+  round-trip against a live provider: the DB-backed Sales smoke asserts the fail-closed refusals for
+  unbound capabilities, and the approval/replay/re-dispatch machinery is covered by the P1B
+  repository and security suites plus the offline PILOT-02 suite.
+
 # P1 Customer Care Runtime — Bound Paths and Guarded Outcomes
 
 ## Status
