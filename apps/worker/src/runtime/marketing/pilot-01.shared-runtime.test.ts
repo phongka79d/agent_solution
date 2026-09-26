@@ -210,7 +210,7 @@ describe('PILOT-01 through the shared P2 runtime', () => {
         autoStartPolling: false,
         marketingFactoryOptions: {
           auditSecret: 'pilot01-audit-secret-000000000000',
-          now: () => NOW,
+          now: () => new Date('2026-03-01T09:00:00.000Z'),
           resolve_grant: async () => 'AUTH-3',
           resolve_correlation_id: async () => PILOT_01_CORRELATION_ID,
           workflowEngine,
@@ -233,6 +233,8 @@ describe('PILOT-01 through the shared P2 runtime', () => {
       pauseForApproval,
       recordFailure,
       dispatchCampaign,
+      auditTrail,
+      transitionTask,
       getStatePayload: () => state_payload,
     };
   };
@@ -248,6 +250,14 @@ describe('PILOT-01 through the shared P2 runtime', () => {
       registry: scenario.worker.registry,
     });
 
+    if (scenario.pauseForApproval.mock.calls.length === 0) {
+      // TEMPORARY DIAGNOSTIC: surfaces why the run did not reach the AUTH-4 gate.
+      throw new Error('DIAG ' + JSON.stringify({
+        transitions: scenario.transitionTask.mock.calls.map((call) => [call[2], call[3]]),
+        failures: scenario.recordFailure.mock.calls.map((call) => call[0].error_details),
+        decisions: scenario.auditTrail.append.mock.calls.map((call) => call[0].decision),
+      }));
+    }
     expect(scenario.pauseForApproval).toHaveBeenCalledTimes(1);
     const approval = scenario.pauseForApproval.mock.calls[0]![0].approval;
     expect(approval.action_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
