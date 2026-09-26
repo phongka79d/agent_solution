@@ -1,9 +1,9 @@
 /**
- * @file Care Policy Engine Adapter (implement/04 §3.2, implement/08 §1.2, §7.1).
+ * @file Generic Domain Policy Engine Adapter (implement/04 §3.2, implement/08 §1.2, §7.1).
  *
  * Invariant:
- * The Care policy engine adapts the canonical PolicyEnforcementPoint (PEP).
- * 1. `validateAction` validates action drafts against registered skill schemas, rejecting
+ * Adapts the canonical PolicyEnforcementPoint (PEP) without domain-specific data.
+ * 1. `validateAction` validates action drafts against injected skill schemas, rejecting
  *    any unknown fields (fail closed) and asserting server-bound tenant and customer identity.
  * 2. `evaluateAuthority` re-reads the assigned authority grant from `agentos.agents.assigned_authority`
  *    for the run's agent, enforces takeover supremacy and AUTH-5 terminal deny, and returns
@@ -22,6 +22,7 @@ import { OrchestratorError } from '@agentos/core-engine/contracts';
 import {
   PolicyEnforcementPoint,
   type ApprovalQueuePort,
+  type ConsentSource,
   type PendingApprovalRequest,
   type PolicyActionProposal,
   type PolicyEnforcementOptions,
@@ -31,206 +32,35 @@ import {
   type PolicySecurityContext,
 } from '@agentos/core-engine';
 
-/** Allowed fields in action payloads per skill, using static Record lookup */
-const ALLOWED_PAYLOAD_FIELDS: Readonly<Record<string, Readonly<Record<string, true>>>> = Object.freeze({
-  'skill.care.lookup_order': Object.freeze({
-    order_id: true,
-    order_identifier: true,
-    customer_id: true,
-    verification_reference: true,
-    verification_status: true,
-    tenant_id: true,
-    effect_key: true,
-  }),
-  'skill.care.search_faq': Object.freeze({
-    query: true,
-    query_text: true,
-    category: true,
-    top_k: true,
-    limit: true,
-    tenant_id: true,
-    effect_key: true,
-  }),
-  'skill.care.track_shipping': Object.freeze({
-    tracking_number: true,
-    carrier: true,
-    order_identifier: true,
-    order_id: true,
-    customer_id: true,
-    tenant_id: true,
-    effect_key: true,
-  }),
-  'skill.care.manage_case': Object.freeze({
-    action: true,
-    case_id: true,
-    customer_id: true,
-    priority: true,
-    notes: true,
-    tenant_id: true,
-    effect_key: true,
-  }),
-  'skill.care.initiate_return': Object.freeze({
-    order_identifier: true,
-    order_id: true,
-    customer_id: true,
-    items: true,
-    reason: true,
-    tenant_id: true,
-    effect_key: true,
-  }),
-  'skill.care.escalate_to_human': Object.freeze({
-    tenant_id: true,
-    session_id: true,
-    conversation_id: true,
-    customer_id: true,
-    escalation_reason: true,
-    summary_context: true,
-    effect_key: true,
-  }),
-  'skill.care.analyze_churn_risk': Object.freeze({
-    customer_id: true,
-    signals: true,
-    tenant_id: true,
-    effect_key: true,
-  }),
-  'skill.care.issue_retention_offer': Object.freeze({
-    customer_id: true,
-    offer_type: true,
-    discount_rate: true,
-    catalog_ref_id: true,
-    proposed_price: true,
-    tenant_id: true,
-    effect_key: true,
-  }),
-});
-
-/** Canonical skill definitions for Customer Care from packages/skills/src/platform/care/*.ts */
-const CARE_SKILLS: Readonly<Record<string, PolicyRegistrySkill>> = Object.freeze({
-  'skill.care.lookup_order': {
-    skill_id: 'skill.care.lookup_order',
-    allowed_agents: Object.freeze(['CS-01']),
-    required_authority: 'AUTH-0',
-    mutating: false,
-    price_bearing: false,
-    idempotent: true,
-    epistemic_class: 'FACT',
-    write_target: 'HYPOTHESIS',
-    requires_consent: false,
-    requires_verified_identity: true,
-    timeout_ms: 2000,
-  },
-  'skill.care.search_faq': {
-    skill_id: 'skill.care.search_faq',
-    allowed_agents: Object.freeze(['CS-01']),
-    required_authority: 'AUTH-0',
-    mutating: false,
-    price_bearing: false,
-    idempotent: true,
-    epistemic_class: 'FACT',
-    write_target: 'HYPOTHESIS',
-    requires_consent: false,
-    requires_verified_identity: false,
-    timeout_ms: 1500,
-  },
-  'skill.care.track_shipping': {
-    skill_id: 'skill.care.track_shipping',
-    allowed_agents: Object.freeze(['CS-01']),
-    required_authority: 'AUTH-0',
-    mutating: false,
-    price_bearing: false,
-    idempotent: true,
-    epistemic_class: 'FACT',
-    write_target: 'HYPOTHESIS',
-    requires_consent: false,
-    requires_verified_identity: true,
-    timeout_ms: 2000,
-  },
-  'skill.care.manage_case': {
-    skill_id: 'skill.care.manage_case',
-    allowed_agents: Object.freeze(['CS-01']),
-    required_authority: 'AUTH-3',
-    mutating: true,
-    price_bearing: false,
-    idempotent: false,
-    epistemic_class: 'FACT',
-    write_target: 'FACT',
-    requires_consent: false,
-    requires_verified_identity: true,
-    timeout_ms: 3000,
-  },
-  'skill.care.initiate_return': {
-    skill_id: 'skill.care.initiate_return',
-    allowed_agents: Object.freeze(['CS-01']),
-    required_authority: 'AUTH-4',
-    mutating: true,
-    price_bearing: false,
-    idempotent: false,
-    epistemic_class: 'FACT',
-    write_target: 'FACT',
-    requires_consent: false,
-    requires_verified_identity: true,
-    timeout_ms: 3000,
-  },
-  'skill.care.escalate_to_human': {
-    skill_id: 'skill.care.escalate_to_human',
-    allowed_agents: Object.freeze(['CS-01', 'CS-02']),
-    required_authority: 'AUTH-3',
-    mutating: true,
-    price_bearing: false,
-    idempotent: false,
-    epistemic_class: 'FACT',
-    write_target: 'FACT',
-    requires_consent: false,
-    requires_verified_identity: false,
-    timeout_ms: 2000,
-  },
-  'skill.care.analyze_churn_risk': {
-    skill_id: 'skill.care.analyze_churn_risk',
-    allowed_agents: Object.freeze(['CS-02']),
-    required_authority: 'AUTH-1',
-    mutating: false,
-    price_bearing: false,
-    idempotent: true,
-    epistemic_class: 'HYPOTHESIS',
-    write_target: 'HYPOTHESIS',
-    requires_consent: false,
-    requires_verified_identity: true,
-    timeout_ms: 2500,
-  },
-  'skill.care.issue_retention_offer': {
-    skill_id: 'skill.care.issue_retention_offer',
-    allowed_agents: Object.freeze(['CS-02']),
-    required_authority: 'AUTH-3',
-    mutating: true,
-    price_bearing: true,
-    idempotent: false,
-    epistemic_class: 'DECISION',
-    write_target: 'FACT',
-    requires_consent: true,
-    requires_verified_identity: true,
-    timeout_ms: 3000,
-  },
-});
-
-export interface CarePolicyEngineOptions {
+export interface DomainPolicyEngineOptions {
+  readonly skills: Readonly<Record<string, PolicyRegistrySkill>>;
+  readonly allowed_payload_fields: Readonly<Record<string, Readonly<Record<string, true>>>>;
   readonly pep?: PolicyEnforcementPoint | undefined;
   readonly resolveGrant?: ((tenant_id: string, agent_id: string) => Promise<AssignableAuthority | null>) | undefined;
+  readonly defaultGrant?: ((agent_id: string) => AssignableAuthority | null) | undefined;
   readonly approvals?: ApprovalQueuePort | undefined;
+  readonly consent?: ConsentSource | undefined;
   readonly auditSecret?: string | undefined;
   readonly audit?: PolicyEnforcementOptions['audit'] | undefined;
   readonly now?: (() => Date) | undefined;
 }
 
-export class CarePolicyEngine implements IPolicyEngine {
-  private readonly pep: PolicyEnforcementPoint;
-  private readonly resolveGrantFn: (tenant_id: string, agent_id: string) => Promise<AssignableAuthority | null>;
-  private readonly agentGrantCache = new Map<string, AssignableAuthority>();
+export class DomainPolicyEngine implements IPolicyEngine {
+  protected readonly skills: Readonly<Record<string, PolicyRegistrySkill>>;
+  protected readonly allowedPayloadFields: Readonly<Record<string, Readonly<Record<string, true>>>>;
+  protected readonly pep: PolicyEnforcementPoint;
+  protected readonly resolveGrantFn: (tenant_id: string, agent_id: string) => Promise<AssignableAuthority | null>;
+  protected readonly agentGrantCache = new Map<string, AssignableAuthority>();
 
-  constructor(options: CarePolicyEngineOptions = {}) {
+  constructor(options: DomainPolicyEngineOptions) {
+    this.skills = options.skills;
+    this.allowedPayloadFields = options.allowed_payload_fields;
+
+    const defaultGrant = options.defaultGrant;
     this.resolveGrantFn = options.resolveGrant ?? (async (_tenant_id, agent_id) => {
-      // Default agent authority in Care domain for unconfigured test engines
-      if (agent_id === 'CS-01') return 'AUTH-2';
-      if (agent_id === 'CS-02') return 'AUTH-1';
+      if (defaultGrant) {
+        return defaultGrant(agent_id);
+      }
       return null;
     });
 
@@ -240,7 +70,7 @@ export class CarePolicyEngine implements IPolicyEngine {
       const self = this;
       const registryPort: PolicyRegistryPort = {
         getSkill(skill_id: string): PolicyRegistrySkill | undefined {
-          return CARE_SKILLS[skill_id];
+          return self.skills[skill_id];
         },
         getAgent(agent_id: string): PolicyRegistryAgent | undefined {
           const cached = self.agentGrantCache.get(agent_id);
@@ -263,6 +93,7 @@ export class CarePolicyEngine implements IPolicyEngine {
       this.pep = new PolicyEnforcementPoint({
         registry: registryPort,
         approvals: defaultApprovals,
+        ...(options.consent ? { consent: options.consent } : {}),
         ...(options.audit ? { audit: options.audit } : {}),
         ...(options.auditSecret ? { auditSecret: options.auditSecret } : {}),
         ...(options.now ? { now: options.now } : {}),
@@ -271,11 +102,11 @@ export class CarePolicyEngine implements IPolicyEngine {
   }
 
   async validateAction(action: ActionDraft, context: HydratedContext): Promise<ActionDraft> {
-    const allowedFields = ALLOWED_PAYLOAD_FIELDS[action.skill_id];
+    const allowedFields = this.allowedPayloadFields[action.skill_id];
     if (!allowedFields) {
       throw new OrchestratorError(
         'UNKNOWN_SKILL',
-        `UNKNOWN_SKILL: skill '${action.skill_id}' is not registered in Customer Care schema.`,
+        `UNKNOWN_SKILL: skill '${action.skill_id}' is not registered in schema.`,
       );
     }
 
@@ -306,11 +137,12 @@ export class CarePolicyEngine implements IPolicyEngine {
     }
 
     // Customer identity assertion
-    if (action.skill_id === 'skill.care.lookup_order') {
+    const skill = this.skills[action.skill_id];
+    if (skill?.requires_verified_identity) {
       if (!context.customer) {
         throw new OrchestratorError(
           'IDENTITY_UNVERIFIED',
-          'IDENTITY_UNVERIFIED: skill.care.lookup_order requires a server-verified customer binding.',
+          `IDENTITY_UNVERIFIED: ${action.skill_id} requires a server-verified customer binding.`,
         );
       }
       const assertedCustomer = payload.customer_id;
@@ -331,6 +163,7 @@ export class CarePolicyEngine implements IPolicyEngine {
         }
       }
     }
+
     return action;
   }
 
@@ -369,7 +202,7 @@ export class CarePolicyEngine implements IPolicyEngine {
       request_id: action.request_id,
       correlation_id: context.correlation_id,
       session_id: context.working_memory.session_id,
-      takeover_active: context.working_memory.takeover_active,
+      takeover_active: Boolean(context.working_memory?.takeover_active),
       ...(context.customer?.customer_id ? { verified_customer_id: context.customer.customer_id } : {}),
     };
 

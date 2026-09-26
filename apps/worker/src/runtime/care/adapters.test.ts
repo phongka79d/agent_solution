@@ -1,5 +1,5 @@
 /**
- * @file Unit tests for Customer Care Runtime Adapters (apps/worker/src/runtime/care/adapters.ts).
+ * @file Unit tests for Durable Runtime Adapters (apps/worker/src/runtime/shared/adapters.ts).
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -13,7 +13,7 @@ import type {
   DurableWorkflowRepository,
   EvidenceRepository,
 } from '@agentos/database';
-import { createCareAdapters } from './adapters.js';
+import { createDurableAdapters } from '../shared/adapters.js';
 
 function createFakeTaskRecord(overrides: Partial<DurableTaskRecord> = {}): DurableTaskRecord {
   return {
@@ -54,7 +54,7 @@ function createFakeConversationRecord(overrides: Partial<ConversationRecord> = {
   };
 }
 
-describe('createCareAdapters', () => {
+describe('createDurableAdapters', () => {
   const auditSecret = 'test-secret-that-is-at-least-32-chars-long!!';
   const fixedNow = new Date('2026-09-23T12:00:00.000Z');
 
@@ -114,7 +114,7 @@ describe('createCareAdapters', () => {
       setState: vi.fn().mockResolvedValue(true),
     } as unknown as ConversationRepository;
 
-    const adapters = createCareAdapters({
+    const adapters = createDurableAdapters({
       workflowRepository,
       approvalRepository,
       evidenceRepository,

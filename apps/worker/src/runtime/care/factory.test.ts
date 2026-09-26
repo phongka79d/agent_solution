@@ -22,9 +22,11 @@ import {
   defaultResolveCorrelationId,
   defaultResolveGrant,
   getUnboundCapabilities,
-  mapPolicyAuditRecordToAuditInput,
   type CareOrchestratorFactoryOptions,
 } from './factory.js';
+import {
+  mapPolicyAuditRecordToAuditInput,
+} from '../shared/policy-audit.js';
 
 describe('createCareOrchestratorFactory', () => {
   const tenant_id = '00000000-0000-4000-8000-000000000001';

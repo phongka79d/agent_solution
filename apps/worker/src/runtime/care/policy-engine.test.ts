@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ActionDraft, Customer360Fact, HydratedContext } from '@agentos/core-engine/contracts';
 import { OrchestratorError } from '@agentos/core-engine/contracts';
 
-import { CarePolicyEngine } from './policy-engine.js';
+import { createCarePolicyEngine } from './factory.js';
 
 describe('CarePolicyEngine', () => {
   const tenant_id = '00000000-0000-4000-8000-000000000001';
@@ -35,7 +35,7 @@ describe('CarePolicyEngine', () => {
     hydrated_at: '2026-09-01T00:00:00Z',
   };
 
-  const engine = new CarePolicyEngine();
+  const engine = createCarePolicyEngine();
 
   describe('validateAction', () => {
     it('normalizes valid action payload against registered skill schema', async () => {

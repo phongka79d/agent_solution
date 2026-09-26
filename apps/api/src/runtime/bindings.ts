@@ -624,10 +624,12 @@ export function createStartRunPort(
 
   return {
     async start(input): Promise<StartedRun> {
+      const rawModule = input.payload['module'];
+      const module = rawModule === undefined || rawModule === 'auto' ? 'support' : rawModule;
       const canonicalPayload = {
         message: input.payload['message'],
         conversation_id: input.payload['conversation_id'],
-        module: input.payload['module'] ?? 'support',
+        module,
         attachments: input.payload['attachments'] ?? null,
       };
 
@@ -652,7 +654,10 @@ export function createStartRunPort(
         source_channel: input.source_channel,
         event_type: input.event_type,
         timestamp: clock().toISOString(),
-        payload: input.payload,
+        payload: {
+          ...input.payload,
+          module,
+        },
         subject: {
           session_id: input.session_id,
           ...(typeof conversation_id === 'string' && conversation_id.length > 0 ? { conversation_id } : {}),

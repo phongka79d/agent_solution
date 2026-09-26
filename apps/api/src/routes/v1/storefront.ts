@@ -27,7 +27,11 @@ import type {
 } from '../../gateway/contracts.js';
 import { IDEMPOTENCY_KEY_MAX_LENGTH, MESSAGE_MAX_LENGTH } from '../../gateway/contracts.js';
 import { correlationIdOf, fail, mapError, replyFailure } from '../../gateway/http.js';
-import { admitCareTurn } from './care-turn.js';
+import {
+  admitCareTurn,
+  parseEnabledAgentModules,
+  validateAdmissionEventType,
+} from './care-turn.js';
 import type { CredentialStore } from '../../gateway/principal.js';
 import { authenticate, requirePrincipal } from '../../gateway/principal.js';
 import type { ConversationRecord, GatewayRuntime } from '../../gateway/ports.js';
@@ -63,6 +67,8 @@ export interface StorefrontRouteDeps {
   readonly credentials: CredentialStore;
   /** Bound by the composition root once `packages/adapters` API-002 is available. */
   readonly normalizer?: StorefrontEventNormalizer;
+  readonly enabledModules?: readonly string[];
+  readonly salesSignalEventTypes?: readonly string[];
 }
 
 /** An ISO-8601 instant: a date, a time to the second, and an explicit UTC offset or `Z`. */
@@ -155,7 +161,8 @@ async function refuseOperation(input: {
 interface StorefrontTurn {
   readonly message: string;
   readonly idempotency_key: string;
-  readonly module: 'support';
+  readonly module: AgentModule;
+  readonly event_type: string;
   readonly attachments?: readonly string[];
   /** The binding of the turn: the body's `session_id`, else the one the widget token carries. */
   readonly session_id: string;
@@ -197,7 +204,12 @@ function attachmentsOf(body: Record<string, unknown>): readonly string[] | undef
  * Validates the R11 body (`StorefrontStreamRequest` = `PostMessageRequest` plus `session_id`) and
  * binds the turn to a session. Message and idempotency key lengths are the frozen contract's.
  */
-function readTurn(request: FastifyRequest, principal: GatewayPrincipal): StorefrontTurn {
+function readTurn(
+  request: FastifyRequest,
+  principal: GatewayPrincipal,
+  configuredModules?: readonly string[],
+  configuredSalesEventTypes?: readonly string[],
+): StorefrontTurn {
   const body = bodyRecord(request);
 
   const message = stringField(body, 'message');
@@ -217,10 +229,17 @@ function readTurn(request: FastifyRequest, principal: GatewayPrincipal): Storefr
   if (requestedModule !== null && !AGENT_MODULES.some((member) => member === requestedModule)) {
     fail('VALIDATION_FAILED', 'module must be one of the declared agent modules (06 §1)');
   }
-  const module = requestedModule === null || requestedModule === 'auto' ? 'support' : requestedModule;
-  if (module !== 'support') {
+  const module = requestedModule === null || requestedModule === 'auto' ? 'support' : (requestedModule as AgentModule);
+  const enabledModules = configuredModules ?? parseEnabledAgentModules(process.env.ENABLED_AGENT_MODULES);
+  if (!enabledModules.includes(module)) {
     fail('CAPABILITY_NOT_ENABLED', 'only Customer Care support turns are enabled');
   }
+
+  const rawEventType = body['event_type'];
+  const eventTypeOptions = configuredSalesEventTypes !== undefined
+    ? { salesSignalEventTypes: configuredSalesEventTypes }
+    : undefined;
+  const event_type = validateAdmissionEventType(rawEventType, module, eventTypeOptions);
 
   const session_id = boundWidgetSessionId(principal, stringField(body, 'session_id'));
 
@@ -230,6 +249,7 @@ function readTurn(request: FastifyRequest, principal: GatewayPrincipal): Storefr
     message,
     idempotency_key,
     module,
+    event_type,
     ...(attachments !== undefined ? { attachments } : {}),
     session_id,
   };
@@ -319,7 +339,7 @@ async function handleStream(
   let turn: StorefrontTurn;
   try {
     principal = requireWidgetSession(request);
-    turn = readTurn(request, principal);
+    turn = readTurn(request, principal, deps.enabledModules, deps.salesSignalEventTypes);
   } catch (error) {
     await refuseOperation({ request, reply, runtime, operation: STREAM_OPERATION, error });
     return;
@@ -351,6 +371,7 @@ async function handleStream(
       request_id: turn.idempotency_key,
       message: turn.message,
       module: turn.module,
+      event_type: turn.event_type,
       ...(turn.attachments === undefined ? {} : { attachments: turn.attachments }),
       operation: STREAM_OPERATION,
     });

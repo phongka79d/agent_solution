@@ -1779,15 +1779,18 @@ export class RevenueOrchestrator {
     request_id: string,
     action_revision: number
   ): Promise<ActionDraft> {
+    const effect_key = this.dependencies.effectGuard.computeEffectKey({
+      tenant_id, skill_id: step.skill_id, step_index: step.step_index, action_revision, request_id,
+    });
     return this.dependencies.policyEngine.validateAction({
       action_id: randomUUID(), run_id, tenant_id, request_id, action_revision,
       agent_id: step.agent_id, skill_id: step.skill_id, adapter_target: step.adapter_target,
       step_index: step.step_index, mutating: step.mutating, price_bearing: step.price_bearing,
-      effect_key: this.dependencies.effectGuard.computeEffectKey({
-        tenant_id, skill_id: step.skill_id, step_index: step.step_index, action_revision, request_id,
-      }),
+      effect_key,
       required_authority: step.required_authority,
-      payload: { ...step.input_parameters, tenant_id },
+      payload: step.mutating
+        ? { ...step.input_parameters, tenant_id, effect_key }
+        : { ...step.input_parameters, tenant_id },
       ...this.floorMirrors(step),
     }, context);
   }

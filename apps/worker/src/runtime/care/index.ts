@@ -6,10 +6,12 @@
 
 export {
   createCareOrchestratorFactory,
+  createCarePolicyEngine,
   getUnboundCapabilities,
   type CareAdaptersShape,
   type CareOrchestratorFactoryOptions,
   type CareSkillEnv,
+  type CreateCarePolicyEngineOptions,
 } from './factory.js';
 
 export {
@@ -26,6 +28,6 @@ export {
 } from './agent-runtime.js';
 
 export {
-  CarePolicyEngine,
-  type CarePolicyEngineOptions,
-} from './policy-engine.js';
+  CARE_SKILLS,
+  CARE_ALLOWED_PAYLOAD_FIELDS,
+} from './policy-registry.js';

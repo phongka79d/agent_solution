@@ -8,6 +8,7 @@ export {
   SalesAgentRuntime,
   deriveEffectPolicy,
   extractMessageContent,
+  extractVerifiedPurchases,
   isCustomerLookupInquiry,
   isInventoryInquiry,
   isPriceInquiry,
@@ -17,14 +18,18 @@ export {
   type ParsedSalesRationale,
   type SalesAgentRuntimeOptions,
   type SalesIntent,
+  type SalesPurchaseEvidencePort,
+  type SalesPurchaseEvidenceQuery,
   type SkillRegistryPort,
   type SkillRegistryResolver,
   type SkillRegistryRowMetadata,
+  type VerifiedPurchaseEvidence,
 } from './agent-runtime.js';
 
 export {
   BoundedMap,
   SalesContextAggregator,
+  createCustomerEventPurchaseEvidencePort,
   type SalesContextAggregatorOptions,
   type SalesContextAggregatorRepositories,
   type SalesCustomerEventTimeline,
@@ -58,3 +63,20 @@ export {
   type SalesOfflineRefusalCode,
   type SalesOfflineSkillServiceOverrides,
 } from './offline-harness.js';
+export {
+  createSalesOrchestratorFactory,
+  getSalesUnboundCapabilities,
+  defaultResolveGrant,
+  defaultResolveCorrelationId,
+  type SalesAdaptersShape,
+  type SalesOrchestratorFactoryOptions,
+} from './factory.js';
+
+export {
+  SALES_SKILLS,
+  SALES_ALLOWED_PAYLOAD_FIELDS,
+  SalesPolicyEngine,
+  createSalesPolicyEngine,
+  type CreateSalesPolicyEngineOptions,
+  type SalesPolicyEngineOptions,
+} from './policy-engine.js';

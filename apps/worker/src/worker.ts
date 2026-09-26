@@ -18,6 +18,40 @@ import {
   getUnboundCapabilities,
   type CareOrchestratorFactoryOptions,
 } from './runtime/care/index.js';
+import {
+  createSalesOrchestratorFactory,
+  type SalesOrchestratorFactoryOptions,
+} from './runtime/sales/index.js';
+import {
+  createDomainRuntimeRegistry,
+  type DomainRuntimeBinding,
+  type DomainRuntimeRegistry,
+  type DomainSignalContract,
+} from './runtime/domain-registry.js';
+
+export const VALID_AGENT_MODULES: readonly string[] = Object.freeze(['support', 'sales', 'marketing']);
+
+export const CARE_SIGNAL_CONTRACT: DomainSignalContract = Object.freeze({
+  module: 'support',
+  source_channels: Object.freeze(['WEB_CHAT']),
+  event_types: Object.freeze(['message.received']),
+  signal_invalid_code: 'CARE_SIGNAL_INVALID',
+});
+
+export function parseEnabledAgentModules(raw?: string): readonly string[] {
+  if (raw === undefined || raw.trim().length === 0) {
+    return Object.freeze(['support']);
+  }
+  const parts = raw.split(',').map((p) => p.trim().toLowerCase()).filter(Boolean);
+  for (const part of parts) {
+    if (!VALID_AGENT_MODULES.includes(part)) {
+      throw new Error(
+        `ENABLED_AGENT_MODULES_INVALID: unknown module '${part}'. Valid modules are ${VALID_AGENT_MODULES.join(', ')}`,
+      );
+    }
+  }
+  return Object.freeze([...new Set(parts)]);
+}
 /**
  * Workspace packages this worker is allowed to depend on (02 §2 dependency DAG).
  */
@@ -65,6 +99,7 @@ export interface WorkerHandle {
   };
   readonly poller?: WorkerPollerHandle;
   readonly blockers?: readonly string[];
+  readonly registry?: DomainRuntimeRegistry;
   /**
    * Sends one already-authorized action draft to its `adapter_target` ({@link DEPENDENCIES}).
    *
@@ -78,19 +113,27 @@ export interface WorkerHandle {
   close(): Promise<void>;
 }
 
+export interface WorkerEnv extends WorkerConnectorEnv {
+  readonly ENABLED_AGENT_MODULES?: string;
+  readonly SALES_SIGNAL_SOURCE_CHANNELS?: string;
+  readonly SALES_SIGNAL_EVENT_TYPES?: string;
+}
+
 export interface WorkerExecutionOptions extends WorkerConnectorOptions {
   readonly workerId?: string;
   readonly tenantIds?: readonly string[];
   readonly workflowRepository?: Pick<DurableWorkflowRepository,
     'claimNextQueuedTask' | 'getTask' | 'releaseTaskLease' | 'recordFailure' | 'transitionTask'>;
   readonly orchestratorFactory?: (tenant_id: string) => Promise<RevenueOrchestrator | null> | RevenueOrchestrator | null;
+  readonly salesOrchestratorFactory?: (tenant_id: string) => Promise<RevenueOrchestrator | null> | RevenueOrchestrator | null;
+  readonly domainRegistry?: DomainRuntimeRegistry;
   readonly pollIntervalMs?: number;
   readonly leaseDurationMs?: number;
   readonly autoStartPolling?: boolean;
   readonly onError?: (tenant_id: string, error: unknown) => void;
   readonly careFactoryOptions?: CareOrchestratorFactoryOptions;
+  readonly salesFactoryOptions?: SalesOrchestratorFactoryOptions;
 }
-
 /**
  * Releases a task only while this worker still owns the lease. Event-bearing parked tasks retain
  * their state and resume event; a consumed resume event may explicitly release its parked lease.
@@ -142,9 +185,19 @@ export async function processClaimedTask(params: {
   worker_id: string;
   workflowRepository: Pick<DurableWorkflowRepository, 'getTask' | 'releaseTaskLease' | 'recordFailure' | 'transitionTask'>;
   orchestratorFactory?: (tenant_id: string) => Promise<RevenueOrchestrator | null> | RevenueOrchestrator | null;
+  registry?: DomainRuntimeRegistry | undefined;
 }): Promise<void> {
   const { taskRecord, tenant_id, worker_id, workflowRepository, orchestratorFactory } = params;
   const hadResumeEvent = hasResumeEvent(taskRecord.state_payload);
+
+  const registry = params.registry ?? (
+    orchestratorFactory
+      ? createDomainRuntimeRegistry([{
+          contract: CARE_SIGNAL_CONTRACT,
+          createOrchestrator: orchestratorFactory,
+        }])
+      : createDomainRuntimeRegistry([])
+  );
 
   try {
     const payload = taskRecord.state_payload;
@@ -186,13 +239,52 @@ export async function processClaimedTask(params: {
         return;
       }
 
-      const orchestrator = await orchestratorFactory?.(tenant_id);
-      if (!orchestrator) {
+      const signal = record?.['signal'];
+      const signalRecord = asRecord(signal);
+      const signalPayload = asRecord(signalRecord?.['payload']);
+      const moduleName = typeof signalPayload?.['module'] === 'string'
+        ? signalPayload['module']
+        : null;
+
+      if (!moduleName) {
         await workflowRepository.recordFailure({
           tenant_id,
           run_id: taskRecord.run_id,
           error_class: 'FATAL',
-          error_details: { code: 'CARE_ORCHESTRATOR_UNBOUND' },
+          error_details: { code: 'CARE_SIGNAL_INVALID' },
+          expected_task_version: taskRecord.task_version,
+          lease_owner: worker_id,
+        });
+        return;
+      }
+
+      const binding = registry.resolve(moduleName);
+      if (!binding) {
+        await workflowRepository.recordFailure({
+          tenant_id,
+          run_id: taskRecord.run_id,
+          error_class: 'FATAL',
+          error_details: {
+            code: 'CAPABILITY_NOT_ENABLED',
+            module: moduleName,
+            message: `module '${moduleName}' is not enabled`,
+          },
+          expected_task_version: taskRecord.task_version,
+          lease_owner: worker_id,
+        });
+        return;
+      }
+
+      const orchestrator = await binding.createOrchestrator(tenant_id);
+      if (!orchestrator) {
+        const unboundCode = binding.contract.module === 'support'
+          ? 'CARE_ORCHESTRATOR_UNBOUND'
+          : `${binding.contract.module.toUpperCase()}_ORCHESTRATOR_UNBOUND`;
+        await workflowRepository.recordFailure({
+          tenant_id,
+          run_id: taskRecord.run_id,
+          error_class: 'FATAL',
+          error_details: { code: unboundCode },
           lease_owner: worker_id,
         });
         return;
@@ -214,39 +306,67 @@ export async function processClaimedTask(params: {
     const signal = record?.['signal'];
     const signalRecord = asRecord(signal);
     const signalPayload = asRecord(signalRecord?.['payload']);
-    const valid = signalRecord !== null
-      && signalRecord['tenant_id'] === tenant_id
-      && signalRecord['correlation_id'] === taskRecord.correlation_id
-      && typeof signalRecord['signal_id'] === 'string'
-      && signalRecord['source_channel'] === 'WEB_CHAT'
-      && signalRecord['event_type'] === 'message.received'
-      && signalPayload !== null
-      && signalPayload['module'] === 'support';
-    if (!valid) {
-      await workflowRepository.recordFailure({
-        tenant_id,
-        run_id: taskRecord.run_id,
-        error_class: 'FATAL',
-        error_details: { code: 'CARE_SIGNAL_INVALID' },
-        expected_task_version: taskRecord.task_version,
-        lease_owner: worker_id,
-      });
+
+    if (signalPayload !== null && typeof signalPayload['module'] === 'string') {
+      const moduleName = signalPayload['module'];
+      const binding = registry.resolve(moduleName);
+      if (!binding) {
+        await workflowRepository.recordFailure({
+          tenant_id,
+          run_id: taskRecord.run_id,
+          error_class: 'FATAL',
+          error_details: {
+            code: 'CAPABILITY_NOT_ENABLED',
+            module: moduleName,
+            message: `module '${moduleName}' is not enabled`,
+          },
+          expected_task_version: taskRecord.task_version,
+          lease_owner: worker_id,
+        });
+        return;
+      }
+
+      const accepted = registry.accepts(signal, { tenant_id, correlation_id: taskRecord.correlation_id });
+      if (!accepted) {
+        await workflowRepository.recordFailure({
+          tenant_id,
+          run_id: taskRecord.run_id,
+          error_class: 'FATAL',
+          error_details: { code: binding.contract.signal_invalid_code },
+          expected_task_version: taskRecord.task_version,
+          lease_owner: worker_id,
+        });
+        return;
+      }
+
+      const orchestrator = await accepted.createOrchestrator(tenant_id);
+      if (!orchestrator) {
+        const unboundCode = binding.contract.module === 'support'
+          ? 'CARE_ORCHESTRATOR_UNBOUND'
+          : `${binding.contract.module.toUpperCase()}_ORCHESTRATOR_UNBOUND`;
+        await workflowRepository.recordFailure({
+          tenant_id,
+          run_id: taskRecord.run_id,
+          error_class: 'FATAL',
+          error_details: { code: unboundCode },
+          lease_owner: worker_id,
+        });
+        return;
+      }
+
+      await orchestrator.processQueuedSignal(taskRecord.run_id, signal as SignalEnvelope, { worker_id });
       return;
     }
 
-    const orchestrator = await orchestratorFactory?.(tenant_id);
-    if (!orchestrator) {
-      await workflowRepository.recordFailure({
-        tenant_id,
-        run_id: taskRecord.run_id,
-        error_class: 'FATAL',
-        error_details: { code: 'CARE_ORCHESTRATOR_UNBOUND' },
-        lease_owner: worker_id,
-      });
-      return;
-    }
-
-    await orchestrator.processQueuedSignal(taskRecord.run_id, signal as SignalEnvelope, { worker_id });
+    // Malformed signal without module field fails with CARE_SIGNAL_INVALID
+    await workflowRepository.recordFailure({
+      tenant_id,
+      run_id: taskRecord.run_id,
+      error_class: 'FATAL',
+      error_details: { code: 'CARE_SIGNAL_INVALID' },
+      expected_task_version: taskRecord.task_version,
+      lease_owner: worker_id,
+    });
   } finally {
     const current = await workflowRepository.getTask(tenant_id, taskRecord.run_id);
     const currentPayload = asRecord(current?.state_payload);
@@ -267,7 +387,7 @@ export async function processClaimedTask(params: {
  * Binds connectors, tenant-scoped durable PostgreSQL task polling, and fail-closed checks.
  */
 export function startWorker(
-  env: WorkerConnectorEnv = process.env,
+  env: WorkerEnv = process.env,
   options: WorkerExecutionOptions = { hmac: nodeHmacSha256Hex },
 ): WorkerHandle {
   const connectors = createWorkerConnectors(env, options);
@@ -306,30 +426,79 @@ export function startWorker(
     env,
   };
 
-  const unboundCapabilities = getUnboundCapabilities(careFactoryOptions);
-  for (const cap of unboundCapabilities) {
-    blockers.push(`CARE_CAPABILITY_UNBOUND: ${cap}`);
+  const enabledModules = parseEnabledAgentModules(env.ENABLED_AGENT_MODULES);
+  const bindings: DomainRuntimeBinding[] = [];
+
+  let careOrchestratorFactory: ((tenant_id: string) => Promise<RevenueOrchestrator | null> | RevenueOrchestrator | null) | null = null;
+  if (enabledModules.includes('support')) {
+    const unboundCapabilities = getUnboundCapabilities(careFactoryOptions);
+    for (const cap of unboundCapabilities) {
+      blockers.push(`CARE_CAPABILITY_UNBOUND: ${cap}`);
+    }
+
+    const careFactory = unboundCapabilities.length === 0
+      ? createCareOrchestratorFactory(careFactoryOptions)
+      : null;
+
+    careOrchestratorFactory = options.orchestratorFactory ?? careFactory;
+
+    if (!careOrchestratorFactory) {
+      blockers.push('CARE_ORCHESTRATOR_UNBOUND: No authentic Customer Care RevenueOrchestrator factory provided (fail closed).');
+    } else {
+      bindings.push({
+        contract: CARE_SIGNAL_CONTRACT,
+        createOrchestrator: careOrchestratorFactory,
+      });
+    }
   }
 
-  const careFactory = unboundCapabilities.length === 0
-    ? createCareOrchestratorFactory(careFactoryOptions)
-    : null;
+  if (enabledModules.includes('sales')) {
+    const rawChannels = env.SALES_SIGNAL_SOURCE_CHANNELS;
+    const rawEventTypes = env.SALES_SIGNAL_EVENT_TYPES;
+    const salesChannels = rawChannels ? rawChannels.split(',').map((c) => c.trim()).filter(Boolean) : [];
+    const salesEventTypes = rawEventTypes ? rawEventTypes.split(',').map((e) => e.trim()).filter(Boolean) : [];
 
-  const orchestratorFactory = options.orchestratorFactory ?? careFactory;
+    if (salesChannels.length === 0 || salesEventTypes.length === 0) {
+      blockers.push('SALES_CAPABILITY_UNBOUND: SALES_SIGNAL_SOURCE_CHANNELS and SALES_SIGNAL_EVENT_TYPES must be configured and non-empty');
+    } else {
+      const salesFactoryOptions: SalesOrchestratorFactoryOptions = options.salesFactoryOptions ?? {
+        workerId,
+        workflowRepository: workflowRepository as DurableWorkflowRepository,
+        erp_read: connectors.erp_read,
+      };
+
+      const salesFactory = typeof createSalesOrchestratorFactory === 'function'
+        ? createSalesOrchestratorFactory(salesFactoryOptions)
+        : null;
+      const salesOrchestratorFactory = options.salesOrchestratorFactory ?? salesFactory;
+
+      if (!salesOrchestratorFactory) {
+        blockers.push('SALES_ORCHESTRATOR_UNBOUND: No authentic Sales RevenueOrchestrator factory provided (fail closed).');
+      } else {
+        bindings.push({
+          contract: {
+            module: 'sales',
+            source_channels: Object.freeze(salesChannels),
+            event_types: Object.freeze(salesEventTypes),
+            signal_invalid_code: 'SALES_SIGNAL_INVALID',
+          },
+          createOrchestrator: salesOrchestratorFactory,
+        });
+      }
+    }
+  }
+
+  const registry = options.domainRegistry ?? createDomainRuntimeRegistry(bindings);
 
   if (tenantIds.length === 0) {
     blockers.push('CARE_TENANT_IDS_EMPTY: No tenants configured; background polling disabled (fail closed).');
   }
-  if (!orchestratorFactory) {
-    blockers.push('CARE_ORCHESTRATOR_UNBOUND: No authentic Customer Care RevenueOrchestrator factory provided (fail closed).');
-  }
-
   let running = false;
   let pollTimer: NodeJS.Timeout | null = null;
   let activePollCount = 0;
 
   const pollOnce = async (): Promise<number> => {
-    if (tenantIds.length === 0 || !orchestratorFactory) return 0;
+    if (tenantIds.length === 0 || registry.modules().length === 0) return 0;
     let claimedCount = 0;
 
     for (const tenant_id of tenantIds) {
@@ -347,7 +516,7 @@ export function startWorker(
             tenant_id,
             worker_id: workerId,
             workflowRepository,
-            orchestratorFactory,
+            registry,
           });
         }
       } catch (error) {
@@ -373,7 +542,7 @@ export function startWorker(
   };
 
   const shouldAutoStart = options.autoStartPolling ?? true;
-  if (shouldAutoStart && tenantIds.length > 0 && orchestratorFactory) {
+  if (shouldAutoStart && tenantIds.length > 0 && registry.modules().length > 0) {
     running = true;
     scheduleNext();
   }
@@ -401,6 +570,7 @@ export function startWorker(
     connectors: { bound: connectors.bound, unbound: connectors.unbound },
     poller,
     blockers: Object.freeze(blockers),
+    registry,
     dispatchAction: (draft) => connectors.dispatcher.dispatch(draft),
     async close(): Promise<void> {
       await poller.stop();
