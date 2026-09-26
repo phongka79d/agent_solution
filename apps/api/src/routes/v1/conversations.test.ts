@@ -364,4 +364,365 @@ describe('POST /conversations/:conversation_id/messages shared Care admission', 
       await app.close();
     }
   });
+
+  it('rejects module: sales with HTTP 403 and CAPABILITY_NOT_ENABLED when ENABLED_AGENT_MODULES is unset', async () => {
+    const originalEnv = process.env.ENABLED_AGENT_MODULES;
+    delete process.env.ENABLED_AGENT_MODULES;
+
+    const { app, appendMessage, start } = buildHarness();
+    const url = `/conversations/${CONVERSATION_ID}/messages`;
+    const headers = { authorization: `Bearer ${SESSION_TOKEN}` };
+    const body = { message: 'Can I buy this?', idempotency_key: 'turn-sales-denied', module: 'sales' };
+
+    try {
+      const response = await app.inject({ method: 'POST', url, headers, payload: body });
+
+      expect(response.statusCode).toBe(403);
+      expect(response.json()).toMatchObject({
+        error_code: 'CAPABILITY_NOT_ENABLED',
+        message: 'only Customer Care support turns are enabled',
+      });
+      expect(start).not.toHaveBeenCalled();
+      expect(appendMessage).not.toHaveBeenCalled();
+    } finally {
+      if (originalEnv !== undefined) process.env.ENABLED_AGENT_MODULES = originalEnv;
+      else delete process.env.ENABLED_AGENT_MODULES;
+      await app.close();
+    }
+  });
+
+  it('admits module: sales when ENABLED_AGENT_MODULES=support,sales and passes module to start run', async () => {
+    const originalEnv = process.env.ENABLED_AGENT_MODULES;
+    process.env.ENABLED_AGENT_MODULES = 'support,sales';
+
+    const { app, appendMessage, start } = buildHarness();
+    const url = `/conversations/${CONVERSATION_ID}/messages`;
+    const headers = { authorization: `Bearer ${SESSION_TOKEN}` };
+    const body = { message: 'Can I buy this product?', idempotency_key: 'turn-sales-allowed', module: 'sales' };
+
+    try {
+      const response = await app.inject({ method: 'POST', url, headers, payload: body });
+
+      expect(response.statusCode).toBe(202);
+      expect(start).toHaveBeenCalledTimes(1);
+      expect(start.mock.calls[0]?.[0]).toMatchObject({
+        request_id: 'turn-sales-allowed',
+        payload: { conversation_id: CONVERSATION_ID, message: 'Can I buy this product?', module: 'sales' },
+      });
+      expect(appendMessage).toHaveBeenCalledTimes(1);
+    } finally {
+      if (originalEnv !== undefined) process.env.ENABLED_AGENT_MODULES = originalEnv;
+      else delete process.env.ENABLED_AGENT_MODULES;
+      await app.close();
+    }
+  });
+
+  it('rejects module: marketing with HTTP 403 and CAPABILITY_NOT_ENABLED when only support,sales are enabled', async () => {
+    const originalEnv = process.env.ENABLED_AGENT_MODULES;
+    process.env.ENABLED_AGENT_MODULES = 'support,sales';
+
+    const { app, appendMessage, start } = buildHarness();
+    const url = `/conversations/${CONVERSATION_ID}/messages`;
+    const headers = { authorization: `Bearer ${SESSION_TOKEN}` };
+    const body = { message: 'Send me promo email', idempotency_key: 'turn-mkt-denied', module: 'marketing' };
+
+    try {
+      const response = await app.inject({ method: 'POST', url, headers, payload: body });
+
+      expect(response.statusCode).toBe(403);
+      expect(response.json()).toMatchObject({
+        error_code: 'CAPABILITY_NOT_ENABLED',
+        message: 'only Customer Care support turns are enabled',
+      });
+      expect(start).not.toHaveBeenCalled();
+      expect(appendMessage).not.toHaveBeenCalled();
+    } finally {
+      if (originalEnv !== undefined) process.env.ENABLED_AGENT_MODULES = originalEnv;
+      else delete process.env.ENABLED_AGENT_MODULES;
+      await app.close();
+    }
+  });
+
+  it('respects injected deps.enabledModules over environment variable', async () => {
+    const originalEnv = process.env.ENABLED_AGENT_MODULES;
+    process.env.ENABLED_AGENT_MODULES = 'support';
+
+    const { appendMessage, conversation, receipts, start } = buildHarness();
+    const app = Fastify({ logger: false });
+    registerConversationRoutes(app, {
+      runtime: {
+        conversations: {
+          get: vi.fn(async () => conversation),
+          appendMessage,
+        },
+        receipts: {
+          receiptFor: vi.fn(async (_tid: string, key: string) => receipts.get(key) ?? null),
+          storeReceipt: vi.fn(async (_tid: string, key: string, receipt: Record<string, unknown>) => {
+            receipts.set(key, receipt);
+          }),
+        },
+        takeover: { holder: vi.fn(async () => null) },
+        runs: { start },
+        effects: {
+          computeEffectKey: vi.fn(({ request_id }: { request_id: string }) => `${TENANT}:turn:${request_id}`),
+          computeRequestFingerprint: vi.fn((p: unknown) => JSON.stringify(p)),
+        },
+        audit: { record: vi.fn(async () => undefined) },
+        clock: () => new Date('2026-09-23T00:00:00.000Z'),
+        ids: () => 'corr-injected-sales',
+      } as unknown as GatewayRuntime,
+      credentials: createCredentialStore({
+        operators: [],
+        sessions: [
+          {
+            token: SESSION_TOKEN,
+            tenant_id: TENANT,
+            conversation_id: CONVERSATION_ID,
+            session_id: 'session-1',
+            channel: 'WEB_CHAT',
+          },
+        ],
+        widgets: [],
+      }),
+      enabledModules: ['support', 'sales'],
+    });
+
+    const url = `/conversations/${CONVERSATION_ID}/messages`;
+    const headers = { authorization: `Bearer ${SESSION_TOKEN}` };
+    const body = { message: 'Can I buy this?', idempotency_key: 'turn-injected-sales', module: 'sales' };
+
+    try {
+      const response = await app.inject({ method: 'POST', url, headers, payload: body });
+      expect(response.statusCode).toBe(202);
+      expect(start).toHaveBeenCalledTimes(1);
+    } finally {
+      if (originalEnv !== undefined) process.env.ENABLED_AGENT_MODULES = originalEnv;
+      else delete process.env.ENABLED_AGENT_MODULES;
+      await app.close();
+    }
+  });
+
+  it('admits module: sales with event_type: cart.abandoned when SALES_SIGNAL_EVENT_TYPES=cart.abandoned', async () => {
+    const originalModules = process.env.ENABLED_AGENT_MODULES;
+    const originalEventTypes = process.env.SALES_SIGNAL_EVENT_TYPES;
+    process.env.ENABLED_AGENT_MODULES = 'support,sales';
+    process.env.SALES_SIGNAL_EVENT_TYPES = 'cart.abandoned';
+
+    const { app, appendMessage, start } = buildHarness();
+    const url = `/conversations/${CONVERSATION_ID}/messages`;
+    const headers = { authorization: `Bearer ${SESSION_TOKEN}` };
+    const body = {
+      message: 'Restore my cart',
+      idempotency_key: 'turn-sales-cart',
+      module: 'sales',
+      event_type: 'cart.abandoned',
+    };
+
+    try {
+      const response = await app.inject({ method: 'POST', url, headers, payload: body });
+
+      expect(response.statusCode).toBe(202);
+      expect(start).toHaveBeenCalledTimes(1);
+      expect(start.mock.calls[0]?.[0]).toMatchObject({
+        request_id: 'turn-sales-cart',
+        event_type: 'cart.abandoned',
+        payload: { conversation_id: CONVERSATION_ID, message: 'Restore my cart', module: 'sales' },
+      });
+      expect(appendMessage).toHaveBeenCalledTimes(1);
+    } finally {
+      if (originalModules !== undefined) process.env.ENABLED_AGENT_MODULES = originalModules;
+      else delete process.env.ENABLED_AGENT_MODULES;
+      if (originalEventTypes !== undefined) process.env.SALES_SIGNAL_EVENT_TYPES = originalEventTypes;
+      else delete process.env.SALES_SIGNAL_EVENT_TYPES;
+      await app.close();
+    }
+  });
+
+  it('refuses module: sales with event_type: cart.abandoned when Sales contract is not configured', async () => {
+    const originalModules = process.env.ENABLED_AGENT_MODULES;
+    const originalEventTypes = process.env.SALES_SIGNAL_EVENT_TYPES;
+    process.env.ENABLED_AGENT_MODULES = 'support,sales';
+    delete process.env.SALES_SIGNAL_EVENT_TYPES;
+
+    const { app, appendMessage, start } = buildHarness();
+    const url = `/conversations/${CONVERSATION_ID}/messages`;
+    const headers = { authorization: `Bearer ${SESSION_TOKEN}` };
+    const body = {
+      message: 'Restore my cart',
+      idempotency_key: 'turn-sales-unconfigured',
+      module: 'sales',
+      event_type: 'cart.abandoned',
+    };
+
+    try {
+      const response = await app.inject({ method: 'POST', url, headers, payload: body });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toMatchObject({
+        error_code: 'VALIDATION_FAILED',
+        retryable: false,
+      });
+      expect(start).not.toHaveBeenCalled();
+      expect(appendMessage).not.toHaveBeenCalled();
+    } finally {
+      if (originalModules !== undefined) process.env.ENABLED_AGENT_MODULES = originalModules;
+      else delete process.env.ENABLED_AGENT_MODULES;
+      if (originalEventTypes !== undefined) process.env.SALES_SIGNAL_EVENT_TYPES = originalEventTypes;
+      else delete process.env.SALES_SIGNAL_EVENT_TYPES;
+      await app.close();
+    }
+  });
+
+  it('refuses request with an event_type outside the accepted set and never calls start', async () => {
+    const originalModules = process.env.ENABLED_AGENT_MODULES;
+    const originalEventTypes = process.env.SALES_SIGNAL_EVENT_TYPES;
+    process.env.ENABLED_AGENT_MODULES = 'support,sales';
+    process.env.SALES_SIGNAL_EVENT_TYPES = 'cart.abandoned';
+
+    const { app, appendMessage, start } = buildHarness();
+    const url = `/conversations/${CONVERSATION_ID}/messages`;
+    const headers = { authorization: `Bearer ${SESSION_TOKEN}` };
+
+    try {
+      // 1. Sales module with an unexpected event type
+      const salesBad = await app.inject({
+        method: 'POST',
+        url,
+        headers,
+        payload: {
+          message: 'Restore cart',
+          idempotency_key: 'turn-bad-event-sales',
+          module: 'sales',
+          event_type: 'order.cancelled',
+        },
+      });
+      expect(salesBad.statusCode).toBe(400);
+      expect(salesBad.json()).toMatchObject({
+        error_code: 'VALIDATION_FAILED',
+        retryable: false,
+      });
+      expect(start).not.toHaveBeenCalled();
+      expect(appendMessage).not.toHaveBeenCalled();
+
+      // 2. Support module with cart.abandoned (Care contract only accepts message.received)
+      const supportBad = await app.inject({
+        method: 'POST',
+        url,
+        headers,
+        payload: {
+          message: 'Help me',
+          idempotency_key: 'turn-bad-event-support',
+          module: 'support',
+          event_type: 'cart.abandoned',
+        },
+      });
+      expect(supportBad.statusCode).toBe(400);
+      expect(supportBad.json()).toMatchObject({
+        error_code: 'VALIDATION_FAILED',
+        retryable: false,
+      });
+      expect(start).not.toHaveBeenCalled();
+      expect(appendMessage).not.toHaveBeenCalled();
+
+      // 3. Invalid/empty string event_type
+      const emptyType = await app.inject({
+        method: 'POST',
+        url,
+        headers,
+        payload: {
+          message: 'Help me',
+          idempotency_key: 'turn-empty-event',
+          module: 'support',
+          event_type: '   ',
+        },
+      });
+      expect(emptyType.statusCode).toBe(400);
+      expect(emptyType.json()).toMatchObject({
+        error_code: 'VALIDATION_FAILED',
+        retryable: false,
+      });
+      expect(start).not.toHaveBeenCalled();
+      expect(appendMessage).not.toHaveBeenCalled();
+    } finally {
+      if (originalModules !== undefined) process.env.ENABLED_AGENT_MODULES = originalModules;
+      else delete process.env.ENABLED_AGENT_MODULES;
+      if (originalEventTypes !== undefined) process.env.SALES_SIGNAL_EVENT_TYPES = originalEventTypes;
+      else delete process.env.SALES_SIGNAL_EVENT_TYPES;
+      await app.close();
+    }
+  });
+
+  it('respects injected deps.salesSignalEventTypes over environment variable', async () => {
+    const originalModules = process.env.ENABLED_AGENT_MODULES;
+    const originalEventTypes = process.env.SALES_SIGNAL_EVENT_TYPES;
+    process.env.ENABLED_AGENT_MODULES = 'support,sales';
+    process.env.SALES_SIGNAL_EVENT_TYPES = 'unrelated.event';
+
+    const { appendMessage, conversation, receipts, start } = buildHarness();
+    const app = Fastify({ logger: false });
+    registerConversationRoutes(app, {
+      runtime: {
+        conversations: {
+          get: vi.fn(async () => conversation),
+          appendMessage,
+        },
+        takeover: { holder: vi.fn(async () => null) },
+        runs: { start },
+        receipts: {
+          receiptFor: vi.fn(async (_t, key) => receipts.get(key) ?? null),
+          storeReceipt: vi.fn(async (_t, key, r) => { receipts.set(key, r); }),
+        },
+        effects: {
+          computeEffectKey: (input: { tenant_id: string; skill_id: string; request_id: string }) =>
+            [input.tenant_id, input.skill_id, input.request_id].join(':'),
+          computeRequestFingerprint: (input: Record<string, unknown>) => JSON.stringify(input),
+        },
+        audit: { record: vi.fn(async () => undefined) },
+        clock: () => new Date('2026-09-23T00:00:00.000Z'),
+        ids: () => 'corr-injected-event',
+      } as unknown as GatewayRuntime,
+      credentials: createCredentialStore({
+        operators: [],
+        sessions: [{
+          token: SESSION_TOKEN,
+          tenant_id: TENANT,
+          conversation_id: CONVERSATION_ID,
+          session_id: 'session-1',
+          channel: 'WEB_CHAT',
+        }],
+        widgets: [],
+      }),
+      enabledModules: ['support', 'sales'],
+      salesSignalEventTypes: ['cart.abandoned'],
+    });
+
+    const url = `/conversations/${CONVERSATION_ID}/messages`;
+    const headers = { authorization: `Bearer ${SESSION_TOKEN}` };
+
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url,
+        headers,
+        payload: {
+          message: 'Restore cart',
+          idempotency_key: 'turn-injected-event',
+          module: 'sales',
+          event_type: 'cart.abandoned',
+        },
+      });
+      expect(response.statusCode).toBe(202);
+      expect(start).toHaveBeenCalledTimes(1);
+      expect(start.mock.calls[0]?.[0]).toMatchObject({
+        request_id: 'turn-injected-event',
+        event_type: 'cart.abandoned',
+      });
+    } finally {
+      if (originalModules !== undefined) process.env.ENABLED_AGENT_MODULES = originalModules;
+      else delete process.env.ENABLED_AGENT_MODULES;
+      if (originalEventTypes !== undefined) process.env.SALES_SIGNAL_EVENT_TYPES = originalEventTypes;
+      else delete process.env.SALES_SIGNAL_EVENT_TYPES;
+      await app.close();
+    }
+  });
 });

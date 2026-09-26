@@ -1,9 +1,9 @@
 /**
- * @file Customer Care Runtime Adapters (implement/04 §3.3, §4.4, §6.1).
+ * @file Durable Runtime Adapters (implement/04 §3.3, §4.4, §6.1).
  *
- * Implements the runtime seams (IStatefulWorkflowEngine, IEvidenceLogger, IAuditTrail,
- * ISessionControl, DurableLeaseManager) as thin delegations over the durable PostgreSQL
- * repositories in packages/database.
+ * Implements the domain-neutral runtime seams (IStatefulWorkflowEngine, IEvidenceLogger,
+ * IAuditTrail, ISessionControl, DurableLeaseManager) as thin delegations over the durable
+ * PostgreSQL repositories in packages/database. Serves Care, Sales and Marketing domain runtimes.
  *
  * INVARIANTS:
  * 1. Transactions stay inside packages/database: never re-implement hashing, chaining, SQL or advisory locks.
@@ -46,7 +46,7 @@ import type {
   RecordTaskFailureInput,
 } from '@agentos/database';
 
-export interface CareAdaptersOptions {
+export interface DurableAdaptersOptions {
   readonly workflowRepository: DurableWorkflowRepository;
   readonly approvalRepository: ApprovalRepository;
   readonly evidenceRepository: EvidenceRepository;
@@ -55,6 +55,7 @@ export interface CareAdaptersOptions {
   readonly auditSecret: string;
   readonly now?: () => Date;
 }
+
 function hasResumeEvent(state_payload: unknown): boolean {
   if (typeof state_payload !== 'object' || state_payload === null || Array.isArray(state_payload)) {
     return false;
@@ -64,7 +65,7 @@ function hasResumeEvent(state_payload: unknown): boolean {
   return typeof event === 'object' && event !== null && !Array.isArray(event);
 }
 
-export interface CareAdapters {
+export interface DurableAdapters {
   readonly workflowEngine: IStatefulWorkflowEngine;
   readonly evidenceLogger: IEvidenceLogger;
   readonly auditTrail: IAuditTrail;
@@ -164,9 +165,10 @@ async function resolveWorkflowGuard(
 }
 
 /**
- * Creates the runtime Care adapters bound to durable database repositories.
+ * Creates the runtime durable adapters bound to database repositories.
+ * Serves Care, Sales and Marketing domain runtimes.
  */
-export function createCareAdapters(options: {
+export function createDurableAdapters(options: {
   workflowRepository: DurableWorkflowRepository;
   approvalRepository: ApprovalRepository;
   evidenceRepository: EvidenceRepository;

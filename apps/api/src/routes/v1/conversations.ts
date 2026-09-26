@@ -22,6 +22,7 @@ import type { GatewayRuntime } from '../../gateway/ports.js';
 import {
   IDEMPOTENCY_KEY_MAX_LENGTH,
   MESSAGE_MAX_LENGTH,
+  type AgentModule,
   type ConversationResumeResponse,
   type ConversationSessionResponse,
   type ConversationTakeoverHeartbeatResponse,
@@ -33,8 +34,11 @@ import {
   type TaskWireStatus,
 } from '../../gateway/contracts.js';
 import { correlationIdOf, fail, replyFailure } from '../../gateway/http.js';
-import { admitCareTurn } from './care-turn.js';
-
+import {
+  admitCareTurn,
+  parseEnabledAgentModules,
+  validateAdmissionEventType,
+} from './care-turn.js';
 /** `06` §8.3 C-8: the wire vocabulary differs from the stored one in exactly one value. */
 export function toWireStatus(state: TaskStoredState): TaskWireStatus {
   return state === 'queued' ? 'accepted' : state;
@@ -62,15 +66,23 @@ function refuse(reply: FastifyReply, request: FastifyRequest, runtime: GatewayRu
   return replyFailure(reply, error, correlationIdOf(request, runtime));
 }
 
+/** Injected dependencies of the conversation routes: the gateway runtime, the credential store, and the agent modules the deployment enables. */
+export interface ConversationRouteDeps {
+  readonly runtime: GatewayRuntime;
+  readonly credentials: CredentialStore;
+  readonly enabledModules?: readonly string[];
+  readonly salesSignalEventTypes?: readonly string[];
+}
+
 /**
  * Registers R01, R02, R03, R06, R07 and R08 on the `/api/v1` prefix.
  *
  * @param app The Fastify instance.
- * @param deps The injected runtime and credential store.
+ * @param deps The injected runtime, credential store and the enabled agent modules.
  */
 export function registerConversationRoutes(
   app: FastifyInstance,
-  deps: { readonly runtime: GatewayRuntime; readonly credentials: CredentialStore },
+  deps: ConversationRouteDeps,
 ): void {
   const preHandler = authenticate(deps);
 
@@ -160,10 +172,16 @@ export function registerConversationRoutes(
         const idempotency_key = requiredString(body, 'idempotency_key', IDEMPOTENCY_KEY_MAX_LENGTH);
         const rawModule = body?.module;
         const normalizedModule = rawModule === undefined || rawModule === 'auto' ? 'support' : rawModule;
-        if (normalizedModule !== 'support') {
+        const enabledModules = deps.enabledModules ?? parseEnabledAgentModules(process.env.ENABLED_AGENT_MODULES);
+        if (!enabledModules.includes(normalizedModule as never)) {
           fail('CAPABILITY_NOT_ENABLED', 'only Customer Care support turns are enabled');
         }
 
+        const rawEventType = (body as Record<string, unknown> | undefined)?.['event_type'];
+        const eventTypeOptions = deps.salesSignalEventTypes !== undefined
+          ? { salesSignalEventTypes: deps.salesSignalEventTypes }
+          : undefined;
+        const event_type = validateAdmissionEventType(rawEventType, normalizedModule, eventTypeOptions);
         const conversation = await runtime.conversations.get(principal.tenant_id, conversation_id);
         if (conversation === null) {
           fail('CONVERSATION_NOT_FOUND', 'this tenant holds no conversation with that identifier');
@@ -185,7 +203,8 @@ export function registerConversationRoutes(
           correlation_id,
           request_id: idempotency_key,
           message,
-          module: 'support',
+          module: normalizedModule as AgentModule,
+          event_type,
           ...(body?.attachments === undefined ? {} : { attachments: body.attachments }),
           operation: 'conversations.messages',
         });

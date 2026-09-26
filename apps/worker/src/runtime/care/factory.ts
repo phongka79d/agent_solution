@@ -5,7 +5,7 @@
  * Assembles the Customer Care domain-specific RevenueOrchestrator from:
  *   1. CareContextAggregator (server-side customer identity resolution)
  *   2. CareAgentRuntime (deterministic, non-LLM Care agent logic)
- *   3. CarePolicyEngine (validates drafts and adapts PEP authority)
+ *   3. DomainPolicyEngine / createCarePolicyEngine (validates drafts and adapts PEP authority)
  *   4. Durable workflow & evidence adapters over PostgreSQL/Redis
  *   5. Skill-based adapter dispatcher for Customer Care skills
  *
@@ -17,11 +17,12 @@ import { randomUUID } from 'node:crypto';
 import {
   EffectGuard,
   RevenueOrchestrator,
+  type ApprovalQueuePort,
   type PolicyAuditPort,
-  type PolicyAuditRecord,
+  type PolicyEnforcementOptions,
+  type PolicyEnforcementPoint,
 } from '@agentos/core-engine';
 import type {
-  AgentRunLogRecord,
   AssignableAuthority,
   DurableLeaseManager,
   IAdapterDispatcher,
@@ -42,16 +43,18 @@ import {
   EffectReservationRepository,
   EvidenceRepository,
   withTenantContext,
-  type AuditRecordInput,
-  type ExecutionStatus,
   type TenantTransactionRunner,
 } from '@agentos/database';
 import { DEFAULT_P0_PLATFORM_SKILL_ENABLEMENT } from '@agentos/skills';
 
 import { CareAgentRuntime, type SkillRegistryResolver } from './agent-runtime.js';
 import { CareContextAggregator, type CareContextAggregatorRepositories } from './context-aggregator.js';
-import { CarePolicyEngine } from './policy-engine.js';
-import { createCareAdapters } from './adapters.js';
+import { createDurableAdapters, type DurableAdapters } from '../shared/adapters.js';
+import {
+  createPolicyAuditSink,
+} from '../shared/policy-audit.js';
+import { DomainPolicyEngine } from '../shared/policy-engine.js';
+import { CARE_SKILLS, CARE_ALLOWED_PAYLOAD_FIELDS } from './policy-registry.js';
 import {
   createCareSkillServices,
   type CareSkillEnv,
@@ -69,12 +72,7 @@ export const DEFAULT_P1B_CARE_SKILL_ENABLEMENT: NonNullable<CareSkillOptions['sk
 
 export type { CareSkillEnv };
 
-export interface CareAdaptersShape {
-  readonly workflowEngine: IStatefulWorkflowEngine;
-  readonly evidenceLogger: IEvidenceLogger;
-  readonly auditTrail: IAuditTrail;
-  readonly sessionControl: ISessionControl;
-  readonly leaseManager: DurableLeaseManager;
+export interface CareAdaptersShape extends DurableAdapters {
   readonly unbound?: readonly string[] | undefined;
 }
 
@@ -110,6 +108,43 @@ export interface CareOrchestratorFactoryOptions {
   readonly resolve_grant?: ((tenant_id: string, agent_id: string) => Promise<AssignableAuthority | null>) | undefined;
   readonly resolve_correlation_id?: ((tenant_id: string, run_id: string) => Promise<string>) | undefined;
   readonly audit?: PolicyAuditPort | null | undefined;
+}
+export interface CreateCarePolicyEngineOptions {
+  readonly pep?: PolicyEnforcementPoint | undefined;
+  readonly resolveGrant?: ((tenant_id: string, agent_id: string) => Promise<AssignableAuthority | null>) | undefined;
+  readonly approvals?: ApprovalQueuePort | undefined;
+  readonly auditSecret?: string | undefined;
+  readonly audit?: PolicyEnforcementOptions['audit'] | null | undefined;
+  readonly auditTrail?: IAuditTrail | undefined;
+  readonly auditRepository?: AuditRepository | undefined;
+  readonly now?: (() => Date) | undefined;
+}
+
+/**
+ * Creates a Customer Care policy engine bound to the Care policy registry and durable audit boundary.
+ */
+export function createCarePolicyEngine(options: CreateCarePolicyEngineOptions = {}): DomainPolicyEngine {
+  const durableAuditTarget = options.auditTrail ?? options.auditRepository;
+  const policyAuditSink =
+    options.audit === null
+      ? undefined
+      : options.audit ?? (durableAuditTarget ? createPolicyAuditSink(durableAuditTarget) : undefined);
+
+  return new DomainPolicyEngine({
+    skills: CARE_SKILLS,
+    allowed_payload_fields: CARE_ALLOWED_PAYLOAD_FIELDS,
+    ...(options.pep ? { pep: options.pep } : {}),
+    ...(options.resolveGrant ? { resolveGrant: options.resolveGrant } : {}),
+    defaultGrant: (agent_id: string) => {
+      if (agent_id === 'CS-01') return 'AUTH-2';
+      if (agent_id === 'CS-02') return 'AUTH-1';
+      return null;
+    },
+    ...(options.approvals ? { approvals: options.approvals } : {}),
+    ...(options.auditSecret ? { auditSecret: options.auditSecret } : {}),
+    ...(policyAuditSink ? { audit: policyAuditSink } : {}),
+    ...(options.now ? { now: options.now } : {}),
+  });
 }
 
 /**
@@ -157,133 +192,6 @@ export async function defaultResolveCorrelationId(
   return task.correlation_id;
 }
 
-export type DurableAuditSinkTarget =
-  | IAuditTrail
-  | AuditRepository
-  | { append(record: AgentRunLogRecord | AuditRecordInput): Promise<void> };
-
-/**
- * Maps a canonical PEP decision intent (PolicyAuditRecord) onto the repository-native
- * AuditRecordInput / AgentRunLogRecord, preserving tenant, run, correlation, skill, authority,
- * effect, payload binding, and signed audit semantics.
- */
-export function mapPolicyAuditRecordToAuditInput(
-  record: PolicyAuditRecord,
-): AuditRecordInput & AgentRunLogRecord {
-  const timestamp =
-    record.occurred_at && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(record.occurred_at)
-      ? record.occurred_at
-      : new Date(record.occurred_at || Date.now()).toISOString();
-
-  let execution_status: ExecutionStatus;
-  if (record.verdict === 'AUTO_APPROVED' || record.verdict === 'AWAITING_HUMAN_APPROVAL') {
-    execution_status = 'pending';
-  } else {
-    execution_status = 'denied';
-  }
-
-  const authority = record.authority ?? 'AUTH-0';
-  const correlationId = (record.correlation_id && record.correlation_id.trim().length > 0)
-    ? record.correlation_id.trim()
-    : record.run_id;
-
-  return {
-    run_id: record.run_id,
-    tenant_id: record.tenant_id,
-    agent_id: record.agent_id,
-    customer_or_entity_id: correlationId.slice(0, 64),
-    trigger: 'policy_enforcement',
-    context: {
-      correlation_id: record.correlation_id,
-      rule_id: record.rule_id,
-      error_code: record.error_code,
-      payload_sha256: record.payload_sha256,
-    },
-    skill: record.skill_id,
-    step_index: 0,
-    tool: record.tool_name,
-    decision: {
-      verdict: record.verdict,
-      decision_code: record.decision_code,
-      rule_id: record.rule_id,
-      error_code: record.error_code,
-      authority: record.authority,
-    },
-    authority,
-    approval: record.approval_id !== null ? { approval_id: record.approval_id } : null,
-    action: {
-      tool_name: record.tool_name,
-      skill_id: record.skill_id,
-      payload_sha256: record.payload_sha256,
-      effect_key: record.effect_key,
-    },
-    execution_status,
-    evidence: record.payload_sha256 !== null
-      ? {
-          payload_sha256: record.payload_sha256,
-          rule_id: record.rule_id,
-          error_code: record.error_code,
-        }
-      : {
-          rule_id: record.rule_id,
-          error_code: record.error_code,
-        },
-    outcome: record.verdict,
-    latency_ms: 0,
-    cost: { prompt: 0, completion: 0, total_cost_usd: 0 },
-    error: record.error_code !== null
-      ? { code: record.error_code, rule_id: record.rule_id }
-      : null,
-    timestamp,
-    started_at: timestamp,
-    completed_at: timestamp,
-  };
-}
-
-/**
- * Creates an append-only PolicyAuditPort adapter that binds the PolicyEnforcementPoint to
- * the existing durable audit boundary (IAuditTrail or AuditRepository).
- */
-export function createCarePolicyAuditSink(
-  target: DurableAuditSinkTarget,
-): PolicyAuditPort {
-  return {
-    async append(record: PolicyAuditRecord): Promise<void> {
-      const mapped = mapPolicyAuditRecordToAuditInput(record);
-      await target.append(mapped);
-    },
-  };
-}
-
-export interface CreateCarePolicyEngineOptions {
-  readonly auditSecret?: string | undefined;
-  readonly now?: (() => Date) | undefined;
-  readonly resolveGrant?: ((tenant_id: string, agent_id: string) => Promise<AssignableAuthority | null>) | undefined;
-  readonly audit?: PolicyAuditPort | null | undefined;
-  readonly auditTrail?: IAuditTrail | undefined;
-  readonly auditRepository?: AuditRepository | undefined;
-}
-
-/**
- * Creates a production CarePolicyEngine bound to the durable audit boundary.
- * When audit is explicitly null or no audit boundary is provided, fails closed without an audit sink.
- */
-export function createCarePolicyEngine(options: CreateCarePolicyEngineOptions = {}): CarePolicyEngine {
-  const durableAuditTarget: DurableAuditSinkTarget | undefined =
-    options.auditTrail ?? options.auditRepository;
-
-  const policyAuditSink: PolicyAuditPort | undefined =
-    options.audit === null
-      ? undefined
-      : options.audit ?? (durableAuditTarget ? createCarePolicyAuditSink(durableAuditTarget) : undefined);
-
-  return new CarePolicyEngine({
-    ...(options.auditSecret ? { auditSecret: options.auditSecret } : {}),
-    ...(options.now ? { now: options.now } : {}),
-    ...(options.resolveGrant ? { resolveGrant: options.resolveGrant } : {}),
-    ...(policyAuditSink ? { audit: policyAuditSink } : {}),
-  });
-}
 
 /**
  * Returns list of capabilities that are unbound in the given configuration.
@@ -337,7 +245,7 @@ export function createCareOrchestratorFactory(
     throw new Error('CARE_AUDIT_SECRET_REQUIRED: audit HMAC secret must be provided or configured in AUDIT_HMAC_SECRET environment variable.');
   }
 
-  // 1. Adapters from F2's createCareAdapters if not supplied directly
+  // 1. Adapters from createDurableAdapters if not supplied directly
   let workflowEngine = options.workflowEngine ?? options.adapters?.workflowEngine;
   let evidenceLogger = options.evidenceLogger ?? options.adapters?.evidenceLogger;
   let auditTrail = options.auditTrail ?? options.adapters?.auditTrail;
@@ -345,7 +253,7 @@ export function createCareOrchestratorFactory(
   let leaseManager = options.leaseManager ?? options.adapters?.leaseManager;
 
   if (!options.adapters && (!workflowEngine || !evidenceLogger || !auditTrail || !sessionControl || !leaseManager)) {
-    const generatedAdapters = createCareAdapters({
+    const generatedAdapters = createDurableAdapters({
       workflowRepository: options.workflowRepository ?? new DurableWorkflowRepository(),
       approvalRepository: options.approvalRepository ?? new ApprovalRepository(),
       evidenceRepository: options.evidenceRepository ?? new EvidenceRepository(),

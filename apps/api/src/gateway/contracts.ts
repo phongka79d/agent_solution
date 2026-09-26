@@ -254,6 +254,7 @@ export interface PostMessageRequest {
   readonly message: string;
   readonly idempotency_key: string;
   readonly attachments?: readonly string[];
+  readonly event_type?: string;
 }
 
 export interface TaskAcceptedResponse {

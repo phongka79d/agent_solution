@@ -7,6 +7,7 @@
  */
 
 import type {
+  AgentModule,
   GatewayPrincipal,
   TaskAcceptedResponse,
   TaskStoredState,
@@ -17,9 +18,66 @@ import type { ConversationRecord, GatewayRuntime, RunAdmission } from '../../gat
 
 const CONVERSATION_TURN_SKILL = 'conversation.turn';
 
+export const VALID_AGENT_MODULES: readonly string[] = Object.freeze(['support', 'sales', 'marketing']);
+
+export function parseEnabledAgentModules(raw?: string): readonly string[] {
+  if (raw === undefined || raw.trim().length === 0) {
+    return Object.freeze(['support']);
+  }
+  const parts = raw.split(',').map((p) => p.trim().toLowerCase()).filter(Boolean);
+  for (const part of parts) {
+    if (!VALID_AGENT_MODULES.includes(part)) {
+      throw new Error(
+        `ENABLED_AGENT_MODULES_INVALID: unknown module '${part}'. Valid modules are ${VALID_AGENT_MODULES.join(', ')}`,
+      );
+    }
+  }
+  return Object.freeze([...new Set(parts)]);
+}
+
+export const CARE_EVENT_TYPES: readonly string[] = Object.freeze(['message.received']);
+export const DEFAULT_ADMISSION_EVENT_TYPE = 'message.received';
+
+export function parseSalesSignalEventTypes(raw?: string): readonly string[] {
+  if (raw === undefined || raw.trim().length === 0) {
+    return Object.freeze([]);
+  }
+  return Object.freeze(raw.split(',').map((e) => e.trim()).filter(Boolean));
+}
+
+export function acceptedEventTypesForModule(
+  module: string,
+  options?: { readonly salesSignalEventTypes?: readonly string[] },
+): readonly string[] {
+  if (module === 'support') {
+    return CARE_EVENT_TYPES;
+  }
+  if (module === 'sales') {
+    return options?.salesSignalEventTypes ?? parseSalesSignalEventTypes(process.env.SALES_SIGNAL_EVENT_TYPES);
+  }
+  return Object.freeze([]);
+}
+
+export function validateAdmissionEventType(
+  eventType: unknown,
+  module: string,
+  options?: { readonly salesSignalEventTypes?: readonly string[] },
+): string {
+  if (eventType === undefined) {
+    return DEFAULT_ADMISSION_EVENT_TYPE;
+  }
+  if (typeof eventType !== 'string' || eventType.trim().length === 0) {
+    fail('VALIDATION_FAILED', 'event_type is required and must be a non-empty string');
+  }
+  const accepted = acceptedEventTypesForModule(module, options);
+  if (!accepted.includes(eventType)) {
+    fail('VALIDATION_FAILED', 'event_type is not accepted for the requested module');
+  }
+  return eventType;
+}
+
 const RECEIPT_WAIT_ATTEMPTS = 10;
 const RECEIPT_WAIT_INTERVAL_MS = 250;
-
 
 function wireStatusOf(state: TaskStoredState): TaskWireStatus {
   return state === 'queued' ? 'accepted' : state;
@@ -86,7 +144,8 @@ export async function admitCareTurn(input: {
   readonly correlation_id: string;
   readonly request_id: string;
   readonly message: string;
-  readonly module: 'support';
+  readonly module: AgentModule;
+  readonly event_type?: string;
   readonly attachments?: readonly string[];
   readonly operation: string;
 }): Promise<CareTurnAdmission> {
@@ -151,7 +210,7 @@ export async function admitCareTurn(input: {
     correlation_id: input.correlation_id,
     request_id: input.request_id,
     source_channel: conversation.channel,
-    event_type: 'message.received',
+    event_type: input.event_type ?? DEFAULT_ADMISSION_EVENT_TYPE,
     session_id,
     channel_type: conversation.channel,
     channel_identifier: conversation.external_thread_id,

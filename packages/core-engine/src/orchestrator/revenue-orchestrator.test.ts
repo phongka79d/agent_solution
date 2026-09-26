@@ -1388,4 +1388,53 @@ describe('RevenueOrchestrator', () => {
     expect((await workflow.getTask(TENANT, result.run_id))?.state_payload).not.toHaveProperty('resume_event');
     expect(backing.listEvidence(TENANT, result.run_id)).toHaveLength(1);
   });
+
+  it('injects canonical effect_key into the payload of a mutating step and leaves a read-only step payload byte-identical', async () => {
+    const mutatingStep = step({
+      step_index: 1,
+      skill_id: 'skill.sales.create_cart',
+      mutating: true,
+      input_parameters: { items: [{ sku: 'SKU-1', quantity: 2 }] },
+    });
+    const readOnlyStep = step({
+      step_index: 2,
+      skill_id: 'skill.care.lookup_order',
+      mutating: false,
+      input_parameters: { order_id: 'ord-123' },
+    });
+
+    const { orchestrator, dispatch, effectGuard } = harness({
+      steps: [mutatingStep, readOnlyStep],
+    });
+
+    const result = await orchestrator.processSignal(signal());
+    expect(result.lifecycle_state).toBe('completed');
+    expect(dispatch).toHaveBeenCalledTimes(2);
+
+    const mutatingAction = getDispatchedAction(dispatch, 0);
+    expect(mutatingAction.mutating).toBe(true);
+    expect(typeof mutatingAction.effect_key).toBe('string');
+    expect(mutatingAction.effect_key.length).toBeGreaterThan(0);
+    expect(mutatingAction.payload['effect_key']).toBe(mutatingAction.effect_key);
+    expect(mutatingAction.payload).toEqual({
+      items: [{ sku: 'SKU-1', quantity: 2 }],
+      tenant_id: TENANT,
+      effect_key: mutatingAction.effect_key,
+    });
+
+    const reservedRow = effectGuard.peek(TENANT, mutatingAction.effect_key);
+    expect(reservedRow).not.toBeNull();
+    expect(reservedRow?.effect_key).toBe(mutatingAction.effect_key);
+    expect(mutatingAction.payload['effect_key']).toBe(reservedRow?.effect_key);
+
+    const readOnlyAction = getDispatchedAction(dispatch, 1);
+    expect(readOnlyAction.mutating).toBe(false);
+    expect('effect_key' in readOnlyAction.payload).toBe(false);
+    expect(readOnlyAction.payload['effect_key']).toBeUndefined();
+    expect(readOnlyAction.payload).toEqual({
+      order_id: 'ord-123',
+      tenant_id: TENANT,
+    });
+    expect(effectGuard.peek(TENANT, readOnlyAction.effect_key)).toBeNull();
+  });
 });

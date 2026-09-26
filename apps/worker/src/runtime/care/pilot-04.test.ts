@@ -72,9 +72,12 @@ import type {
   ServiceCaseState,
 } from '@agentos/database';
 import { CareAgentRuntime } from './agent-runtime.js';
-import { CarePolicyEngine } from './policy-engine.js';
-import { createCareAdapters } from './adapters.js';
-import { createCareOrchestratorFactory, DEFAULT_P1B_CARE_SKILL_ENABLEMENT } from './factory.js';
+import { createDurableAdapters } from '../shared/adapters.js';
+import {
+  createCareOrchestratorFactory,
+  createCarePolicyEngine,
+  DEFAULT_P1B_CARE_SKILL_ENABLEMENT,
+} from './factory.js';
 import { createCareSkillServices } from './skills/index.js';
 
 type Mutable<T> = {
@@ -1020,7 +1023,7 @@ describe('PILOT-04 / E2E-OFF-ESC: Complaint Escalation, Operator Takeover & Auth
     };
 
     // BR-010: mutating escalation fails closed without durable audit sink
-    const unconfiguredEngine = new CarePolicyEngine({
+    const unconfiguredEngine = createCarePolicyEngine({
       auditSecret: AUDIT_SECRET,
       now: FROZEN_CLOCK,
       resolveGrant: async () => 'AUTH-3',
@@ -1030,7 +1033,7 @@ describe('PILOT-04 / E2E-OFF-ESC: Complaint Escalation, Operator Takeover & Auth
     expect(unconfiguredResult.reason).toContain('EVIDENCE_REQUIRED');
 
     // Real CarePolicyEngine with bound audit sink evaluates authority
-    const policyEngine = new CarePolicyEngine({
+    const policyEngine = createCarePolicyEngine({
       auditSecret: AUDIT_SECRET,
       now: FROZEN_CLOCK,
       resolveGrant: async () => 'AUTH-3',
@@ -1746,7 +1749,7 @@ describe('PILOT-04 / E2E-OFF-ESC: Complaint Escalation, Operator Takeover & Auth
       skillServices,
       case_sla_target_hours: async () => 4,
       skill_enablement: PILOT_SKILL_ENABLEMENT,
-      policyEngine: new CarePolicyEngine({
+      policyEngine: createCarePolicyEngine({
         auditSecret: AUDIT_SECRET,
         now: FROZEN_CLOCK,
         resolveGrant: async () => 'AUTH-3',
@@ -1817,7 +1820,7 @@ describe('PILOT-04 / E2E-OFF-ESC: Complaint Escalation, Operator Takeover & Auth
     repos.conversations.set(`${TENANT_T1}:${SESSION_ID}`, initialConversation);
 
     // Build real adapters over the repository doubles
-    const adapters = createCareAdapters({
+    const adapters = createDurableAdapters({
       workflowRepository: repos.workflowRepository,
       approvalRepository: repos.approvalRepository,
       evidenceRepository: repos.evidenceRepository,
@@ -2118,7 +2121,7 @@ describe('PILOT-04 / E2E-OFF-ESC: Complaint Escalation, Operator Takeover & Auth
     expect(fp1).toBe(fp2);
 
     // 3. Real PolicyEngine rejects cross-tenant action draft
-    const policyEngine = new CarePolicyEngine({
+    const policyEngine = createCarePolicyEngine({
       auditSecret: AUDIT_SECRET,
       now: FROZEN_CLOCK,
       resolveGrant: async () => 'AUTH-3',

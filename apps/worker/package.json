@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "node ../../scripts/eslint.mjs",
     "test:unit": "vitest run",
-    "test:pilots": "vitest run src/runtime/care/pilot-04.test.ts"
+    "test:pilots": "vitest run src/runtime/care/pilot-04.test.ts src/runtime/sales/pilot-02.test.ts"
   },
   "dependencies": {
     "@agentos/adapters": "workspace:*",

@@ -169,12 +169,16 @@ jobs:
       # builds the workspaces it loads before running it.
       - name: Build the workspaces the Care path smoke loads
         run: pnpm build
-      - name: Verify the P1 Customer Care execution path end to end
+      - name: Verify the P1 Customer Care and P2 Sales execution paths end to end
         env:
           APP_ENV: ci
           NODE_ENV: test
           DATABASE_URL: postgresql://agentos_app:agentos_app_password@127.0.0.1:5432/agent_os_rehearsal
           CARE_TENANT_IDS: 11111111-1111-1111-1111-111111111111
+          # The Sales smoke is scoped to the tenant the mock system of record's fixtures are bound
+          # to (services/mock-erp/src/fixtures.mjs); Care keeps its own pilot tenant above, so the
+          # two smokes never share fixtures, tenants or effect state.
+          SALES_TENANT_IDS: 00000000-0000-4000-8000-000000000001
           SESSION_SECRET: ci-session-secret-0000000000
           PLATFORM_SECRET: ci-platform-secret-0000000
           AUDIT_HMAC_SECRET: ci-audit-hmac-secret-000000
