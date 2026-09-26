@@ -304,7 +304,7 @@ Requirement classification:
 | API-003 outbound | EXTERNAL BLOCKED | Marketing binding is fail-closed and requires explicit tenant/provider/credential/transport configuration; no provider credentials or audited provider contract are available. |
 | PILOT-01 | PARTIAL / OFFLINE ONLY | Staged harness and named negative cases are present; provider dispatch/order attribution remain explicitly unavailable offline. |
 
-Verification evidence: `git diff --check` passed. `python testcases/_generate.py --check` reports stale `testcases/manifest.json`; no testcase source/generated output changed. Marketing tests, worker typecheck/build, repository lint/typecheck/unit/contracts/adversarial/security/pilot/build commands were attempted but blocked by absent `node_modules`; dependency installation is not authorized. LSP diagnostics are unavailable because no language server is registered.
+Verification evidence: `git diff --check` passed. `python testcases/_generate.py --check` passes with 419 generated files matching sources byte for byte. Marketing tests, worker typecheck/build, repository lint/typecheck/unit/contracts/adversarial/security/pilot/build commands were attempted but blocked by absent `node_modules`; dependency installation is not authorized. LSP diagnostics are unavailable because no language server is registered.
 
 Remaining blockers: P2 shared worker/domain routing must merge before production Marketing registration; API-003 credentials/provider and authoritative order evidence are absent; ASM/owner inputs such as audience limits, budgets, send/frequency limits, and attribution windows remain unresolved and fail closed. Formal Gate P3 remains blocked until Gate P2 closure and post-merge rebase/integration validation.
 
@@ -324,3 +324,13 @@ Remaining blockers: P2 shared worker/domain routing must merge before production
 - Local reruns after the correction remain environment-blocked because this checkout has no node_modules/turbo. No dependency installation was performed.
 - ~python testcases/_generate.py --check~ passes: 419 generated files match source. ~git diff --check~ passes with only Git line-ending warnings.
 - The correction is ready for CI validation; PENDING_P2_SHARED_ROUTING remains unchanged.
+
+
+## P3 Marketing CI follow-up — 36219425499
+
+- GitHub Actions static analysis/typecheck/build passed.
+- PostgreSQL/RLS rehearsal passed.
+- Unit and Contract Tests failed with process exit code 1; the public check annotations exposed no test-level failure details and job logs were unavailable through the repository/API tooling.
+- The preceding unit failure was the lifecycle approval digest mismatch; commit 69cc8e9 binds the approved segment to the publish fixture without weakening digest verification.
+- Full CI remains open: adversarial/security and Docker jobs were skipped because the unit job failed.
+- PENDING_P2_SHARED_ROUTING, API-003 provider/credential availability, and authoritative order evidence remain unchanged.
