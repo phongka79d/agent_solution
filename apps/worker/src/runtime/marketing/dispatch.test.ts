@@ -475,7 +475,14 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       });
 
       await expect(
-        dispatchCampaign(alteredInput, CONTEXT, ports, { brandReview: makeValidBrandReview(), approvalBinding: binding }),
+        dispatchCampaign(alteredInput, CONTEXT, ports, {
+          brandReview: makeValidBrandReview(),
+          approvalBinding: binding,
+          authoritativeValidation: {
+            max_discount_percent: 20,
+            promotion_provenance: 'PROMO_REGISTRY_2026',
+          },
+        }),
       ).rejects.toMatchObject({
         code: 'APPROVAL_DIGEST_MISMATCH',
       });
