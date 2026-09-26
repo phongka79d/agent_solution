@@ -79,9 +79,6 @@ jobs:
     needs: static-analysis
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      APP_ENV: ci
-      NODE_ENV: test
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -108,10 +105,13 @@ jobs:
       - name: Expose unit failure summary
         if: steps.unit_tests.outcome == 'failure'
         run: |
-          while IFS= read -r line; do
+          {
+            tail -n 120 unit-test-output.log
+            grep -nEi 'not ok|AssertionError|Error:|ERR_|uncaught|exception|fail' unit-test-output.log | tail -n 200
+          } | while IFS= read -r line; do
             escaped=$(printf '%s' "$line" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')
             echo "::error title=Unit test output::$escaped"
-          done < <(tail -n 120 unit-test-output.log)
+          done
           exit 1
       - name: Contract tests
         run: pnpm test:contracts
