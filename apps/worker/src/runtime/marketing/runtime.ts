@@ -1,4 +1,17 @@
-import { computeEffectKey, evaluateAuthorityVerdict } from '@agentos/core-engine';
+import {
+  type CampaignDispatchInput,
+  type CampaignDispatchResult,
+  type CampaignLifecycleContext,
+} from './contracts.js';
+import {
+  dispatchCampaign,
+  type DispatchCampaignOptions,
+} from './dispatch.js';
+import {
+  CampaignLifecycle,
+  createCampaignLifecycle,
+} from './lifecycle.js';
+import { computeEffectKey, evaluateAuthorityVerdict, isAssignableAuthority } from '@agentos/core-engine';
 import {
   type AudienceSegmentOutput,
   composeAudienceSegment,
@@ -118,6 +131,8 @@ export const MARKETING_SKILL_CATALOG: readonly MarketingSkillMetadata[] = Object
 
 export interface MarketingRuntimeOptions {
   readonly ports: MarketingRuntimePorts;
+  readonly enableDispatch?: boolean;
+  readonly enableMkt06?: boolean;
 }
 
 export interface MarketingRuntime {
@@ -132,6 +147,14 @@ export interface MarketingRuntime {
     input: MarketingAttributionInput,
     context: MarketingInvocationContext,
   ) => Promise<MarketingAttributionResult>;
+  readonly dispatchCampaign?: (
+    input: CampaignDispatchInput,
+    context: MarketingInvocationContext,
+    options?: DispatchCampaignOptions,
+  ) => Promise<CampaignDispatchResult>;
+  readonly createLifecycle?: (
+    identity: CampaignLifecycleContext,
+  ) => CampaignLifecycle;
 }
 
 /** MKT-06 linkage contract only; no KPI or performance values are calculated. */
@@ -259,8 +282,18 @@ export function createMarketingRuntime(options: MarketingRuntimeOptions): Market
 
   return {
     skills: MARKETING_SKILL_CATALOG,
-    capabilities: Object.freeze(enabledSkills.map((skill) => skill.skill_id)),
+    capabilities: Object.freeze(
+      MARKETING_SKILL_CATALOG
+        .filter((skill) => {
+          if (skill.skill_id === 'skill.mkt.evaluate_attribution' && options.enableMkt06) return true;
+          if (skill.skill_id === 'skill.mkt.dispatch_campaign' && options.enableDispatch) return true;
+          return skill.enabled;
+        })
+        .map((skill) => skill.skill_id),
+    ),
     evaluateAttribution: (input, context) => evaluateAttribution(input, context, ports),
+    dispatchCampaign: (input, context, opts) => dispatchCampaign(input, context, ports, opts),
+    createLifecycle: (identity) => createCampaignLifecycle(identity, ports),
     async execute<TInput = unknown, TOutput = unknown>(
       skill_id: string,
       input: TInput,
@@ -278,14 +311,48 @@ export function createMarketingRuntime(options: MarketingRuntimeOptions): Market
         throw new MarketingRuntimeError(code, message);
       };
 
-      const metadata = MARKETING_SKILL_CATALOG.find((skill) => skill.skill_id === skill_id);
-      if (skill_id === 'skill.mkt.dispatch_campaign') {
+      if (
+        (input as Record<string, unknown> | null)?.authority_verdict === 'AUTH-5' ||
+        (context as Record<string, unknown>).authority_verdict === 'AUTH-5'
+      ) {
         return reject(
-          'DISPATCH_DISABLED',
-          'Campaign dispatch is disabled pending the canonical AUTH-4 and SCR-003 P1B handoff',
+          'AUTH_5_PROHIBITED',
+          'AUTH-5 is strictly prohibited; hard deny. Never queued, never approvable, never dispatched.',
         );
       }
-      if (!metadata || !metadata.enabled) {
+      if (!isAssignableAuthority(context.granted_authority)) {
+        return reject(
+          'INVALID_CLEARANCE',
+          `granted_authority '${String(context.granted_authority)}' is not an assignable authority (BR-008)`,
+        );
+      }
+
+      const metadata = MARKETING_SKILL_CATALOG.find((skill) => skill.skill_id === skill_id);
+      if (skill_id === 'skill.mkt.dispatch_campaign') {
+        if (!options.enableDispatch && !ports.dispatcher) {
+          return reject(
+            'DISPATCH_DISABLED',
+            'Campaign dispatch is disabled pending the canonical AUTH-4 and SCR-003 P1B handoff',
+          );
+        }
+        const dispatchRes = await dispatchCampaign(
+          input as unknown as CampaignDispatchInput,
+          context,
+          ports,
+        );
+        return {
+          skill_id: 'skill.mkt.dispatch_campaign',
+          effect_key,
+          output: dispatchRes.output as TOutput,
+          evidence: dispatchRes.evidence,
+          audit: dispatchRes.audit,
+        };
+      }
+      if (
+        !metadata ||
+        (!metadata.enabled &&
+          !(skill_id === 'skill.mkt.evaluate_attribution' && (options.enableMkt06 || ports.attribution)))
+      ) {
         return reject('UNKNOWN_SKILL', `Unknown or disabled Marketing skill '${skill_id}'`);
       }
       if (input === null || typeof input !== 'object' || Array.isArray(input)) {
@@ -515,6 +582,20 @@ export function createMarketingRuntime(options: MarketingRuntimeOptions): Market
           if (!auditResult.compliant) {
             auditOutcome = 'DENIED';
             auditReason = `Brand compliance found ${auditResult.violations.length} blocking violation(s)`;
+          }
+          break;
+        }
+        case 'skill.mkt.evaluate_attribution': {
+          const attributionInput = input as unknown as MarketingAttributionInput;
+          const attrResult = await evaluateAttribution(attributionInput, context, ports);
+          output = attrResult.contract;
+          evidence = [...attrResult.evidence];
+          if (attrResult.contract.status === 'UNAVAILABLE') {
+            auditOutcome = 'DENIED';
+            auditReason = attrResult.contract.reason ?? 'Attribution evidence unavailable';
+          } else {
+            auditOutcome = 'SUCCEEDED';
+            auditReason = 'Attribution evaluated with matched downstream order evidence';
           }
           break;
         }

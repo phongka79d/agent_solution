@@ -286,3 +286,24 @@ These are truthful Gate P1 blockers; no draft knowledge was self-approved and no
 ## Decision
 
 Local P1B behavior, isolated PostgreSQL/RLS, DB-backed Care smoke, offline PILOT-04, isolated Docker health, and remote GitHub CI are green. Gate P1 remains open until approved knowledge, real API-001 SoR evidence, and production-like PILOT-03/PILOT-04 evidence exist.
+
+## P3 Marketing — feat/p3-marketing-completion
+
+Baseline evidence: this branch and `init/agent-solution` both pointed to `05c3cda`; no P2 shared-routing changes were present at inspection. Marketing changes remain isolated under `apps/worker/src/runtime/marketing`; shared worker, RevenueOrchestrator, PEP/effect guard, approval repositories, durable workflow repositories, shared FSM/registry architecture, and generic adapter dispatcher were not changed.
+
+Requirement classification:
+
+| Requirement | State | Evidence / boundary |
+|---|---|---|
+| MKT-01 signal analysis | ALREADY COMPLETE | Existing source/version/time preservation and SIGNAL/HYPOTHESIS separation retained. |
+| MKT-02 segmentation and consent | PARTIAL | Tenant-bound segmentation/consent foundation retained; lifecycle and dispatch-time suppression recheck added. Live Customer360/consent binding remains environment-dependent. |
+| MKT-03 content drafting | ALREADY COMPLETE | Deterministic DRAFT generation, approved-knowledge provenance, and injection screening retained. |
+| MKT-04 brand compliance | PARTIAL | Blocking brand review retained; dispatch requires blocking-free review and authoritative price/promotion validation, but no live authoritative provider is configured. |
+| MKT-05 lifecycle/dispatch | PARTIAL | Local eight-stage seam uses injected P1B workflow/effect/dispatcher ports; production worker routing remains `PENDING_P2_SHARED_ROUTING`. |
+| MKT-06 attribution | PARTIAL | Matching campaign/effect/correlation/order evidence is required; incomplete evidence returns UNAVAILABLE without fabricated revenue/KPIs. Live order evidence is absent. |
+| API-003 outbound | EXTERNAL BLOCKED | Marketing binding is fail-closed and requires explicit tenant/provider/credential/transport configuration; no provider credentials or audited provider contract are available. |
+| PILOT-01 | PARTIAL / OFFLINE ONLY | Staged harness and named negative cases are present; provider dispatch/order attribution remain explicitly unavailable offline. |
+
+Verification evidence: `git diff --check` passed. `python testcases/_generate.py --check` reports stale `testcases/manifest.json`; no testcase source/generated output changed. Marketing tests, worker typecheck/build, repository lint/typecheck/unit/contracts/adversarial/security/pilot/build commands were attempted but blocked by absent `node_modules`; dependency installation is not authorized. LSP diagnostics are unavailable because no language server is registered.
+
+Remaining blockers: P2 shared worker/domain routing must merge before production Marketing registration; API-003 credentials/provider and authoritative order evidence are absent; ASM/owner inputs such as audience limits, budgets, send/frequency limits, and attribution windows remain unresolved and fail closed. Formal Gate P3 remains blocked until Gate P2 closure and post-merge rebase/integration validation.

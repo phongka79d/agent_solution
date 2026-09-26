@@ -1,3 +1,10 @@
+import type {
+  ExecutionReceipt,
+  IAdapterDispatcher,
+  IEffectGuard,
+  IStatefulWorkflowEngine,
+} from '@agentos/core-engine/contracts';
+
 /** Marketing-local contracts for the isolated worker foundation. */
 
 export type MarketingSkillId =
@@ -239,7 +246,18 @@ export interface MarketingRuntimePorts {
   readonly attribution?: MarketingAttributionPort;
   readonly now?: () => Date;
   readonly newId?: () => string;
+  readonly workflowEngine?: IStatefulWorkflowEngine;
+  readonly effectGuard?: IEffectGuard;
+  readonly dispatcher?: IAdapterDispatcher;
 }
+
+export type MarketingAuthority =
+  | 'AUTH-0'
+  | 'AUTH-1'
+  | 'AUTH-2'
+  | 'AUTH-3';
+
+export type MarketingAssignableAuthority = MarketingAuthority;
 
 export interface MarketingInvocationContext {
   readonly tenant_id: string;
@@ -249,9 +267,10 @@ export interface MarketingInvocationContext {
   readonly step_index: number;
   readonly action_revision: number;
   readonly caller_agent: string;
-  readonly granted_authority: 'AUTH-0' | 'AUTH-1' | 'AUTH-2' | 'AUTH-3';
+  readonly granted_authority: MarketingAuthority;
   /** Set only by the server's verified-identity resolver; never copied from an input payload. */
   readonly verified_customer_id?: string;
+  readonly authority_verdict?: string;
 }
 
 export interface MarketingInvocationResult<TOutput = unknown> {
@@ -275,4 +294,97 @@ export class MarketingRuntimeError extends Error {
     this.name = 'MarketingRuntimeError';
     this.code = code;
   }
+}
+
+export const CAMPAIGN_LIFECYCLE_STAGES = [
+  'BRIEF',
+  'AUDIENCE',
+  'CONTENT',
+  'BRAND_REVIEW',
+  'APPROVAL',
+  'PUBLISH',
+  'MONITOR',
+  'OPTIMIZE',
+] as const;
+
+export type CampaignLifecycleStage = (typeof CAMPAIGN_LIFECYCLE_STAGES)[number];
+
+export interface MarketingAuthoritativeValidation {
+  readonly floor_price?: number;
+  readonly floor_source?: string;
+  readonly approved_claims?: readonly string[];
+  readonly max_discount_percent?: number;
+  readonly max_discount_amount?: number;
+}
+
+export interface CampaignApprovalBinding {
+  readonly approval_id: string;
+  readonly tenant_id: string;
+  readonly run_id: string;
+  readonly effect_key: string;
+  readonly payload_sha256: string;
+  readonly reviewed_digest: string;
+  readonly decision: 'APPROVED' | 'MODIFIED' | 'REJECTED' | 'PAUSE' | 'CANCELLED';
+  readonly operator_id?: string;
+  readonly review_comment?: string | null;
+  readonly claimed: boolean;
+}
+
+export interface CampaignDispatchInput {
+  readonly tenant_id: string;
+  readonly campaign_id: string;
+  readonly segment_id: string;
+  readonly channel:
+    | 'LINE'
+    | 'WHATSAPP'
+    | 'EMAIL'
+    | 'SMS'
+    | 'ZALO'
+    | 'TIKTOK'
+    | 'MESSENGER'
+    | 'INSTAGRAM';
+  readonly approved_content_id: string;
+  readonly approval_signature: string;
+  readonly approval_id?: string;
+  readonly recipients?: readonly string[];
+  readonly offer_id?: string;
+  readonly discount_amount?: number;
+  readonly discount_percent?: number;
+  readonly proposed_price?: number;
+  readonly payload?: Record<string, unknown>;
+  readonly authority_verdict?: string;
+}
+
+export interface CampaignDispatchOutput {
+  readonly dispatch_id: string;
+  readonly recipient_count: number;
+  readonly suppressed_count: number;
+  readonly status: 'ENQUEUED' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  readonly dispatched_at: string;
+  readonly execution_receipt?: ExecutionReceipt | unknown;
+  readonly replayed?: boolean;
+}
+
+export interface CampaignDispatchResult {
+  readonly skill_id: 'skill.mkt.dispatch_campaign';
+  readonly effect_key: string;
+  readonly output: CampaignDispatchOutput;
+  readonly evidence: readonly MarketingEvidence[];
+  readonly audit: MarketingAuditRecord;
+}
+
+export interface CampaignLifecycleState {
+  readonly tenant_id: string;
+  readonly campaign_id: string;
+  readonly run_id: string;
+  readonly correlation_id: string;
+  current_stage: CampaignLifecycleStage;
+  readonly visited_stages: CampaignLifecycleStage[];
+  brief?: unknown;
+  audience?: readonly MarketingAudienceCandidate[];
+  content?: MarketingContentOutput;
+  brand_review?: MarketingBrandAuditOutput;
+  approval_binding?: CampaignApprovalBinding;
+  dispatch_result?: CampaignDispatchOutput;
+  attribution_result?: MarketingAttributionResult;
 }
