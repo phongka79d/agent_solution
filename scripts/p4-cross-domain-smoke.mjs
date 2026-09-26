@@ -427,10 +427,14 @@ describe('P4 cross-domain handoff ledger (real PostgreSQL)', () => {
 
     // TC-E2E-001's data half, executed against real PostgreSQL: marketing -> sales -> care for one
     // verified customer, each leg admitted once, all of it on one tenant/customer timeline.
+    // Each leg is stamped at its own instant. The timeline orders by `(occurred_at, id)`, so legs
+    // sharing one instant would be ordered by a UUID tiebreak and would prove nothing about leg
+    // order; distinct instants make the assertion below a real one.
     const legs = [
-      handoffInput({ customer_id }),
+      handoffInput({ customer_id, occurred_at: '2026-09-26T10:00:00.000Z' }),
       handoffInput({
         customer_id,
+        occurred_at: '2026-09-26T10:01:00.000Z',
         source_domain: 'sales',
         source_agent: 'SAL-02',
         target_domain: 'care',
@@ -443,6 +447,7 @@ describe('P4 cross-domain handoff ledger (real PostgreSQL)', () => {
       }),
       handoffInput({
         customer_id,
+        occurred_at: '2026-09-26T10:02:00.000Z',
         source_domain: 'care',
         source_agent: 'CS-01',
         target_domain: 'retention',
@@ -491,7 +496,7 @@ describe('P4 cross-domain handoff ledger (real PostgreSQL)', () => {
     assert.deepEqual(
       entries.map((entry) => entry.payload.target_domain),
       ['sales', 'care', 'retention'],
-      'the rows are ordered by the leg they opened',
+      'the rows are ordered by the instant each leg was admitted at',
     );
 
     // The ledger stores what it is told and deduplicates by identity: re-admitting the final leg
