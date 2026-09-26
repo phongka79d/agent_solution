@@ -313,7 +313,7 @@ export function createMarketingRuntime(options: MarketingRuntimeOptions): Market
 
       if (
         (input as Record<string, unknown> | null)?.authority_verdict === 'AUTH-5' ||
-        (context as Record<string, unknown>).authority_verdict === 'AUTH-5'
+        (context as unknown as Record<string, unknown>).authority_verdict === 'AUTH-5'
       ) {
         return reject(
           'AUTH_5_PROHIBITED',

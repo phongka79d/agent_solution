@@ -156,7 +156,7 @@ export class CampaignLifecycle {
     if (
       input?.authority_verdict === 'AUTH-5' ||
       input?.payload?.authority_verdict === 'AUTH-5' ||
-      (context as Record<string, unknown>).authority_verdict === 'AUTH-5'
+      (context as unknown as Record<string, unknown>).authority_verdict === 'AUTH-5'
     ) {
       throw new MarketingRuntimeError(
         'AUTH_5_PROHIBITED',
@@ -442,8 +442,8 @@ export class CampaignLifecycle {
     const expectedTaskVersion =
       params.expected_task_version ??
       this._identity.expected_task_version ??
-      (context as Record<string, unknown>).expected_task_version ??
-      (context as Record<string, unknown>).task_version;
+      (context as unknown as Record<string, unknown>).expected_task_version ??
+      (context as unknown as Record<string, unknown>).task_version;
 
     if (!params.decision) {
       if (!this._ports.workflowEngine) {
@@ -602,10 +602,12 @@ export class CampaignLifecycle {
     };
 
     const options: DispatchCampaignOptions = {
-      brandReview: this._state.brand_review,
-      authoritativeValidation,
-      approvalBinding: this._state.approval_binding,
-      expected_task_version: this._identity.expected_task_version,
+      ...(this._state.brand_review === undefined ? {} : { brandReview: this._state.brand_review }),
+      ...(authoritativeValidation === undefined ? {} : { authoritativeValidation }),
+      ...(this._state.approval_binding === undefined ? {} : { approvalBinding: this._state.approval_binding }),
+      ...(this._identity.expected_task_version === undefined
+        ? {}
+        : { expected_task_version: this._identity.expected_task_version }),
     };
     const dispatchResult = await dispatchCampaign(
       fullInput,

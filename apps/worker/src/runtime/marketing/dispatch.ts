@@ -675,7 +675,7 @@ export async function dispatchCampaign(
     input.authority_verdict === 'AUTH-5' ||
     options.authorityVerdict === 'AUTH-5' ||
     input.payload?.authority_verdict === 'AUTH-5' ||
-    (context as Record<string, unknown>).authority_verdict === 'AUTH-5'
+    (context as unknown as Record<string, unknown>).authority_verdict === 'AUTH-5'
   ) {
     await ports.audit.append({
       tenant_id: context.tenant_id,
@@ -969,8 +969,8 @@ export async function dispatchCampaign(
     const expectedTaskVersion =
       options.expected_task_version ??
       options.checkpointBinding?.expected_task_version ??
-      (context as Record<string, unknown>).expected_task_version ??
-      (context as Record<string, unknown>).task_version;
+      (context as unknown as Record<string, unknown>).expected_task_version ??
+      (context as unknown as Record<string, unknown>).task_version;
 
     if (
       expectedTaskVersion === undefined ||
