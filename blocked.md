@@ -93,24 +93,36 @@ These stay fail-closed and are reported as unbound by the runtime rather than st
 - A **signed P2 bundle** (Sales + Finance + Integration) does not exist, and no production-like
   sandbox run has been executed.
 
-`P2 ENGINEERING MERGE READY: YES` — the engineering scope is implemented, verified and committed.
-`FORMAL GATE P2 CLOSED: NO` — the blockers above are external (owner policy, real provider
-credentials, cross-functional sign-off), not engineering gaps, and no offline or mock result is
-claimed as gate evidence.
+`P2 ENGINEERING MERGE READY: YES` for the Sales scope this branch was asked to deliver — generic
+domain routing, SAL-01..05 behaviour, the eight canonical skill rows, reuse of the P1B
+approval/effect/reconciliation machinery, consent and outbound enforcement, executable PILOT-02
+coverage, and the verification matrix below. That is a statement about the delivered engineering
+scope, not a claim that every `FR-SAL` MUST leg is implemented: the residual gaps below name the
+legs that are not, and why. `FORMAL GATE P2 CLOSED: NO` — the blockers above are external (owner
+policy, real provider credentials, cross-functional sign-off), not engineering gaps, and no offline
+or mock result is claimed as gate evidence.
 
 ## Residual Sales capability gaps (recorded, not silently claimed)
 
-- **SAL-01 qualification persistence.** The `agentos.leads` table exists in the DDL
-  (`0000_agentos_schema.sql`), but no repository and no writer back it, so a qualified lead is not
-  persisted as a `leads` row. SAL-01's required behaviour is implemented — it resolves
-  qualification context from verified Customer360 facts only, discards any customer identifier a
-  signal payload asserts, and refuses rather than inferring private facts or a readiness score. A
-  `readiness_score`/`opportunity_potential` value has no owner-approved scoring policy in this
-  repository, and inventing one is refused, so lead persistence stays unbound rather than defaulted.
-- **SAL-02 policy/product explanation.** No Sales-side policy-explanation capability exists: the
-  platform's knowledge retrieval belongs to the Care pilot's Second Brain corpus, which is still a
-  draft with no owner approval, so an approved-corpus explanation path is not available to Sales and
-  none was substituted. Product specification explanation is served from the authoritative catalog
+These are canonical `FR-SAL` legs that are NOT implemented. They are named here rather than folded
+into "merge ready", and each states why it was not closed on this branch.
+
+- **`FR-SAL-001` lead qualification persistence (SAL-01).** The `agentos.leads` table exists in the
+  DDL (`0000_agentos_schema.sql`, with `customer_type`, `needs_summary`, `interested_products`,
+  `readiness_score`, `recent_behavior`, `purchase_history_summary`, `opportunity_potential`,
+  `qualification_status`, `reason`, `evidence`), but no repository and no writer back it, so a
+  qualified lead is not persisted as a `leads` row. SAL-01's required behaviour is implemented — it
+  resolves qualification context from verified Customer360 facts only, discards any customer
+  identifier a signal payload asserts, and refuses rather than inferring private facts. Two things
+  are missing and neither is an engineering default: the eight canonical Sales skills contain no row
+  that writes a lead, so where that write belongs is an architecture/owner decision rather than
+  something to invent here; and `readiness_score` / `opportunity_potential` have no owner-approved
+  scoring policy in this repository, so a score would have to be fabricated to fill them.
+- **`FR-SAL-002` policy explanation (SAL-02).** No Sales-side policy-explanation capability exists.
+  The platform's approved-corpus retrieval belongs to the Care pilot's Second Brain corpus, which is
+  still a draft with no owner approval, so an approved-corpus explanation path is unavailable to
+  Sales and none was substituted. This leg is blocked by the same approved-knowledge blocker that
+  holds Gate P1 open. Product specification explanation is served from the authoritative catalog
   read.
 - **Human-approval operator surface.** The operator approval route and the Command Center approval
   view are domain-generic — they read tenant-scoped pending approvals and bind a reviewed payload
