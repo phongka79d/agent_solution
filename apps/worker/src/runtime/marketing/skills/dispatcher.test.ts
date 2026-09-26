@@ -293,7 +293,7 @@ describe('Marketing Skill Services and Dispatcher', () => {
       services.registry.register({
         skill_id: 'skill.mkt.prohibited_op',
         purpose: 'Prohibited destructive marketing action',
-        effect_class: 'EXTERNAL_SIDE_EFFECT',
+        effect_class: 'EFFECT',
         guarded_dependency: 'API-003.CommunicationConnector',
         input_schema: {
           type: 'object',
@@ -522,8 +522,8 @@ describe('Marketing Skill Services and Dispatcher', () => {
 
       // Verify that the tool invocation received the approval_id and approval_payload_digest unchanged
       expect(communication.dispatchCampaign).toHaveBeenCalledTimes(1);
-      const callArgs = vi.mocked(communication.dispatchCampaign).mock.calls[0];
-      const forwardedContext = callArgs[1];
+      const callArgs = vi.mocked(communication.dispatchCampaign).mock.calls[0]!;
+      const forwardedContext = callArgs[1]!;
       expect(forwardedContext.approval_id).toBe('appr-valid-1');
       expect(forwardedContext.approval_payload_digest).toBe(canonicalDigest);
       expect(callArgs[0].recipients).toEqual(['cust-1', 'cust-2']);
@@ -943,7 +943,7 @@ describe('Marketing Skill Services and Dispatcher', () => {
       );
       expect(consent.checkConsent).toHaveBeenCalledTimes(2);
       expect(dispatchCampaign).toHaveBeenCalledTimes(1);
-      const passedInput = dispatchCampaign.mock.calls[0][0];
+      const passedInput = dispatchCampaign.mock.calls[0]![0]!;
       expect(passedInput.recipients).toEqual(['cust-opted-in']);
       expect(result.dispatch_id).toBe('disp-resolved-1');
     });
