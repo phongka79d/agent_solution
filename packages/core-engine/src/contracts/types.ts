@@ -9,6 +9,11 @@
  * home of shared orchestration contracts.
  */
 
+// Type-only, and therefore erased at runtime: `cross-domain-handoff.ts` imports this module's
+// vocabulary for real (it builds `OrchestratorError`s), while this module only names the two
+// handoff shapes its plans and results carry. There is no runtime cycle.
+import type { HandoffAdmission, HandoffIntent } from './cross-domain-handoff.js';
+
 export type EpistemicClassification = 'FACT' | 'SIGNAL' | 'HYPOTHESIS' | 'DECISION' | 'ACTION';
 
 /**
@@ -242,6 +247,13 @@ export interface ExecutionPlan {
   readonly plan_id: string;
   readonly steps: PlannedStep[];
   readonly fallback_strategy: 'FAIL_CLOSED' | 'ESCALATE_HUMAN';
+  /**
+   * The next leg of the customer journey this run asks the orchestrator to broker, when the plan
+   * has one (implement/04 §8, plans/customer-lifecycle.md §3). It is an intent, not an admission:
+   * the orchestrator builds the handoff package and the durable broker decides. A plan without an
+   * intent simply finishes; a plan is never required to hand off and never hands off implicitly.
+   */
+  readonly handoff_intent?: HandoffIntent;
 }
 
 export interface ActionDraft {
@@ -351,6 +363,12 @@ export interface OrchestratorRunResult {
   readonly lifecycle_state: TaskLifecycleState;
   readonly evidence?: ImmutableEvidenceRecord;
   readonly message?: string;
+  /**
+   * The brokered handoff this run produced, when its plan declared one and the durable admission
+   * completed (implement/04 §8). Absent for a run that completes without a next leg — and never
+   * present as a fabricated success: a handoff that could not be admitted parks the run instead.
+   */
+  readonly handoff?: HandoffAdmission;
 }
 
 export interface ResolvedSubject {

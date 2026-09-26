@@ -24,6 +24,7 @@ import {
 } from '@agentos/core-engine';
 import type {
   AssignableAuthority,
+  ICrossDomainHandoffBroker,
   DurableLeaseManager,
   IAdapterDispatcher,
   IAgentRuntime,
@@ -88,6 +89,12 @@ export interface CareOrchestratorFactoryOptions {
   readonly effectGuard?: IEffectGuard | undefined;
   readonly sessionControl?: ISessionControl | undefined;
   readonly leaseManager?: DurableLeaseManager | undefined;
+  /**
+   * The brokered cross-domain handoff binding (plans/customer-lifecycle.md §3). Absent ⇒ a plan
+   * that declares a handoff refuses (`HANDOFF_BROKER_UNBOUND`) instead of completing a journey leg
+   * whose successor cannot be admitted.
+   */
+  readonly crossDomainHandoff?: ICrossDomainHandoffBroker | undefined;
   readonly effectReservationRepository?: EffectReservationRepository | undefined;
   readonly adapters?: Partial<CareAdaptersShape> | undefined;
   readonly skillServices?: CareSkillServices | undefined;
@@ -345,6 +352,9 @@ export function createCareOrchestratorFactory(
       sessionControl,
       leaseManager,
       workerId,
+      ...(options.crossDomainHandoff === undefined
+        ? {}
+        : { crossDomainHandoff: options.crossDomainHandoff }),
     });
   };
 }

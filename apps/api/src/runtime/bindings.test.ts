@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type {
   AgentRunLog,
   CustomerIdentityRow,
+  CustomerEventRepository,
   DurableTaskRecord,
   RedisInjectedClient,
 } from '@agentos/database';
@@ -18,6 +19,7 @@ type ScriptedClient = Parameters<Parameters<TenantTransactionRunner>[1]>[0];
 
 import {
   createApprovalReadPort,
+  createEventPort,
   createDurableRunPort,
   createIdentityPort,
   createStartRunPort,
@@ -385,10 +387,13 @@ describe('createIdentityPort', () => {
 
   it('stays unresolved without a verified channel identifier', async () => {
     let lookups = 0;
-    const port = createIdentityPort(async () => {
-      lookups += 1;
-      return null;
-    });
+    const port = createIdentityPort(
+      async () => {
+        lookups += 1;
+        return null;
+      },
+      async () => null,
+    );
 
     await expect(
       port.resolveCustomer({
@@ -399,6 +404,88 @@ describe('createIdentityPort', () => {
       }),
     ).resolves.toEqual({ customer_id: null, verdict: 'UNRESOLVED' });
     expect(lookups).toBe(0);
+  });
+});
+
+describe('createEventPort', () => {
+  const appendInput = {
+    tenant_id: TENANT,
+    source_event_id: 'event-a',
+    event_name: 'ext.sales.purchase_completed',
+    session_id: 'session-a',
+    channel: 'WEB_CHAT',
+    customer_id: 'customer-a',
+    occurred_at: NOW,
+  };
+
+  function repository(overrides: Record<string, unknown> = {}): CustomerEventRepository {
+    return {
+      append: async () => ({ inserted: true, event_id: 'event-a' }),
+      findByIdempotencyKey: async () => null,
+      listTimeline: async () => ({ items: [], next_cursor: null }),
+      ...overrides,
+    } as unknown as CustomerEventRepository;
+  }
+
+  it('refuses a client-owned classification before the repository is called', async () => {
+    let appends = 0;
+    const port = createEventPort(repository({
+      append: async () => {
+        appends += 1;
+        return { inserted: true, event_id: 'event-a' };
+      },
+    }));
+
+    await expect(port.append({ ...appendInput, payload: { classification: 'FACT' } })).rejects.toMatchObject({
+      failure: { error_code: 'CUSTOMER_EVENT_RESERVED_PAYLOAD_FIELD' },
+    });
+    expect(appends).toBe(0);
+  });
+
+  it('projects an existing claimed classification as SIGNAL without a server marker', async () => {
+    const port = createEventPort(repository({
+      listTimeline: async () => ({
+        items: [{
+          event_id: 'event-a', source_event_id: 'source-a', event_name: 'ext.sales.purchase_completed',
+          session_id: 'session-a', channel: 'WEB_CHAT', occurred_at: NOW,
+          payload: {
+            classification: 'FACT', evidence_reference: 'client-evidence', domain: 'MARKETING',
+            summary: 'Purchase completed', source_record_id: 'source-a',
+          },
+        }],
+        next_cursor: null,
+      }),
+    }));
+
+    const page = await port.timeline({ tenant_id: TENANT, customer_id: 'customer-a' });
+    expect(page.items[0]).toMatchObject({
+      classification: 'SIGNAL',
+      domain: 'SALES',
+      stage: 'Purchase',
+      gap_reason: expect.stringContaining('CLASSIFICATION_NOT_SERVER_AUTHORITATIVE'),
+    });
+    expect(page.items[0]).not.toHaveProperty('evidence_reference');
+  });
+
+  it('projects server-authoritative classification and evidence from the stored event', async () => {
+    const port = createEventPort(repository({
+      listTimeline: async () => ({
+        items: [{
+          event_id: 'event-a', source_event_id: 'source-a', event_name: 'ext.sales.purchase_completed',
+          session_id: 'session-a', channel: 'WEB_CHAT', occurred_at: NOW,
+          payload: {
+            classification: 'FACT', classification_authority: 'SERVER', evidence_reference: 'evidence-a',
+            domain: 'MARKETING', summary: 'Purchase completed', source_record_id: 'source-a',
+          },
+        }],
+        next_cursor: null,
+      }),
+    }));
+
+    const page = await port.timeline({ tenant_id: TENANT, customer_id: 'customer-a' });
+    expect(page.items[0]).toMatchObject({
+      classification: 'FACT', evidence_reference: 'evidence-a', domain: 'SALES', stage: 'Purchase',
+    });
   });
 });
 

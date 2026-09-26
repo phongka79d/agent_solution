@@ -26,13 +26,18 @@ import { randomUUID } from 'node:crypto';
 import {
   GENESIS_HASH,
   OrchestratorError,
+  assertHandoffSourceDomain,
+  highestAuthority,
   type ActionDraft,
   type AgentRunLogRecord,
   type AuthorityLevel,
+  type CrossDomainHandoffDraft,
   type DurableTaskCheckpoint,
   type ExecutionPlan,
   type ExecutionReceipt,
   type ExecutionStatus,
+  type HandoffAdmission,
+  type HandoffEvidenceRef,
   type HydratedContext,
   type HypothesisRecord,
   type ImmutableEvidenceRecord,
@@ -49,6 +54,7 @@ import type {
   IAgentRuntime,
   IAuditTrail,
   IContextAggregator,
+  ICrossDomainHandoffBroker,
   IEffectGuard,
   IEvidenceLogger,
   IPolicyEngine,
@@ -153,6 +159,12 @@ export class RevenueOrchestrator {
       effectGuard: IEffectGuard;
       sessionControl: ISessionControl;
       leaseManager: DurableLeaseManager;
+      /**
+       * The ONLY brokered route between domains (plans/customer-lifecycle.md §3). Optional: a
+       * deployment that runs a single domain binds no broker, and a plan that declares a handoff
+       * without one refuses rather than completing a journey leg it cannot continue.
+       */
+      crossDomainHandoff?: ICrossDomainHandoffBroker;
       workerId?: string;
       /** The authoritative worker lease is rechecked immediately before external dispatch. */
       assertExecutionLease?: (tenant_id: string, run_id: string) => Promise<void>;
@@ -419,12 +431,30 @@ export class RevenueOrchestrator {
           this.journal.enter('OUTCOME');
           await this.updateLearningMemory(signal.tenant_id, run_id, hypothesis, outcome.evidence);
         }
+
+        // STEP 10.5: the brokered handoff, before the run is settled. A plan that declared a next
+        // leg either hands off, parks on an unresolved admission, or refuses — it never completes
+        // as though the journey had no successor (§8, plans/customer-lifecycle.md §3).
+        const handoff = await this.brokerPlanHandoff({
+          tenant_id: signal.tenant_id,
+          run_id,
+          correlation_id: signal.correlation_id,
+          plan,
+          context,
+          request_id,
+          previous_evidence_hash: outcome.evidence?.chain_hash ?? chain.previous,
+        });
+        if (handoff.kind === 'PARKED') {
+          return handoff.result;
+        }
+
         await this.dependencies.workflowEngine.transitionTask(signal.tenant_id, run_id, 'completed', 'All plan steps verified');
 
         return {
           run_id,
           lifecycle_state: 'completed',
           ...outcomeFields(outcome),
+          ...(handoff.kind === 'ADMITTED' ? { handoff: handoff.admission } : {}),
         };
       },
     );
@@ -1327,11 +1357,27 @@ export class RevenueOrchestrator {
       if (outcome.evidence !== undefined) {
         this.journal.enter('OUTCOME');
       }
+
+      const resumedHandoff = await this.brokerPlanHandoff({
+        tenant_id: resumeEvent.tenant_id,
+        run_id,
+        correlation_id: task.correlation_id,
+        plan: checkpoint.plan,
+        context: checkpoint.context,
+        request_id: checkpoint.request_id,
+        previous_evidence_hash: outcome.evidence?.chain_hash
+          ?? checkpoint.previous_evidence_hash,
+      });
+      if (resumedHandoff.kind === 'PARKED') {
+        return resumedHandoff.result;
+      }
+
       await this.dependencies.workflowEngine.transitionTask(resumeEvent.tenant_id, run_id, 'completed', 'All resumed steps verified');
       return {
         run_id,
         lifecycle_state: 'completed',
         ...outcomeFields(outcome),
+        ...(resumedHandoff.kind === 'ADMITTED' ? { handoff: resumedHandoff.admission } : {}),
       };
     } catch (error) {
       if (!executionResumed) {
@@ -1904,6 +1950,157 @@ export class RevenueOrchestrator {
     if (input.disposition === 'terminal') {
       await this.dependencies.evidenceLogger.logAgentRun(record);
     }
+  }
+
+  /**
+   * STEP 10.5 of the run lifecycle: the brokered handoff (implement/04 §8, plans/customer-lifecycle.md §3).
+   *
+   * A plan that declares a next leg of the customer journey is handed to the injected broker BEFORE
+   * the run is settled, so a handoff that could not be admitted parks the run instead of completing
+   * a journey leg whose successor does not exist. Everything in the draft is server-derived: the
+   * verified customer of the run's own hydrated context, the leg the run's own steps corroborate,
+   * the authority those steps actually required, and evidence references that describe what the run
+   * did — never a value the inbound signal asserted.
+   *
+   * A guard refusal is permanent and propagates: the plan asked for a handoff the journey does not
+   * contain, and re-running it would refuse again. An admission that could not be resolved is an
+   * unresolved effect, so the run is parked in `waiting` with the same complete checkpoint a
+   * reconciliation resume uses, and the same idempotency key is reused when it is claimed again.
+   */
+  private async brokerPlanHandoff(params: {
+    tenant_id: string;
+    run_id: string;
+    correlation_id: string;
+    plan: ExecutionPlan;
+    context: HydratedContext;
+    /** The immutable inbound identity of this run; never synthesized from the run id (§3.2.3). */
+    request_id: string;
+    previous_evidence_hash: string;
+  }): Promise<
+    | { readonly kind: 'NONE' }
+    | { readonly kind: 'ADMITTED'; readonly admission: HandoffAdmission }
+    | { readonly kind: 'PARKED'; readonly result: OrchestratorRunResult }
+  > {
+    const intent = params.plan.handoff_intent;
+    if (intent === undefined) {
+      return { kind: 'NONE' };
+    }
+
+    const sourceRunId = params.run_id;
+
+    assertHandoffSourceDomain(
+      intent.source_domain,
+      params.plan.steps.map((step) => step.agent_id),
+    );
+
+    const sourceStep = params.plan.steps[0];
+    if (sourceStep === undefined) {
+      throw new OrchestratorError(
+        'HANDOFF_PACKAGE_INVALID',
+        'A plan that declares a handoff must have at least one step: an empty plan has no leg of '
+          + 'the journey to hand off from (plans/customer-lifecycle.md §3).',
+      );
+    }
+
+    const draft: CrossDomainHandoffDraft = {
+      tenant_id: params.tenant_id,
+      customer_id: params.context.customer?.customer_id ?? '',
+      correlation_id: params.correlation_id,
+      source_domain: intent.source_domain,
+      source_agent: sourceStep.agent_id,
+      source_run_id: sourceRunId,
+      source_authority: highestAuthority(params.plan.steps.map((step) => step.required_authority)),
+      target_domain: intent.target_domain,
+      target_agent: intent.target_agent,
+      reason: intent.reason,
+      evidence: this.handoffEvidenceRefs(sourceRunId, params.plan, intent.source_domain),
+      occurred_at: new Date().toISOString(),
+    };
+
+    const broker = this.dependencies.crossDomainHandoff;
+    if (broker === undefined) {
+      throw new OrchestratorError(
+        'HANDOFF_BROKER_UNBOUND',
+        'This plan declares a handoff but no cross-domain broker is bound; a journey leg is never '
+          + 'reported complete without its successor (implement/09 §1.1 Gate P4).',
+      );
+    }
+
+    try {
+      return { kind: 'ADMITTED', admission: await broker.admit(draft) };
+    } catch (error) {
+      if (error instanceof OrchestratorError && error.code.startsWith('HANDOFF_')
+        && error.code !== 'HANDOFF_ADMISSION_UNRESOLVED') {
+        // A guard refusal is a property of the plan, not of this attempt: parking it would replay
+        // the same refusal forever. Fail closed and let the durable recovery envelope book it.
+        throw error;
+      }
+
+      await this.parkTask({
+        tenant_id: params.tenant_id,
+        run_id: sourceRunId,
+        reason: 'HANDOFF_ADMISSION_UNRESOLVED: the durable handoff could not be admitted; the same '
+          + 'idempotency key is retried before the journey leg is reported complete (§4.4).',
+        plan: params.plan,
+        current_step: params.plan.steps.length,
+        pending_action: null,
+        context: params.context,
+        previous_evidence_hash: params.previous_evidence_hash,
+        request_id: params.request_id,
+      });
+
+      return {
+        kind: 'PARKED',
+        result: {
+          run_id: sourceRunId,
+          lifecycle_state: 'waiting',
+          ...outcomeFields({
+            message: 'Handoff admission unresolved; the run parks and retries the same handoff key',
+          }),
+        },
+      };
+    }
+  }
+
+  /**
+   * The evidence a handoff carries: what THIS run did, described from its own plan.
+   *
+   * The references are built field by field from server-derived plan data, so an inbound payload
+   * can never place a fact, a receipt or a claim into a handoff. The classification is the
+   * strongest the run can honestly assert about itself — a `DECISION` that the leg completed, plus
+   * an `ACTION` for every mutating step it executed — and never a `FACT` about the customer, which
+   * only an authoritative read can produce and only the admission boundary may accept.
+   */
+  private handoffEvidenceRefs(
+    run_id: string,
+    plan: ExecutionPlan,
+    source_domain: string,
+  ): readonly HandoffEvidenceRef[] {
+    const refs: HandoffEvidenceRef[] = [
+      {
+        classification: 'DECISION',
+        claim: `Run ${run_id} completed the ${source_domain} leg of the customer journey `
+          + `(${plan.steps.length} planned step(s), plan ${plan.plan_id})`,
+        source_uri: `agentos://runs/${run_id}`,
+        source_version: String(plan.steps.length),
+        verified_by: 'agentos.orchestrator',
+      },
+    ];
+
+    for (const step of plan.steps) {
+      if (!step.mutating) {
+        continue;
+      }
+      refs.push({
+        classification: 'ACTION',
+        claim: `${step.skill_id} executed by ${step.agent_id} at step ${step.step_index}`,
+        source_uri: `agentos://runs/${run_id}/steps/${step.step_index}`,
+        source_version: String(step.step_index),
+        verified_by: step.agent_id,
+      });
+    }
+
+    return refs;
   }
 
   /**

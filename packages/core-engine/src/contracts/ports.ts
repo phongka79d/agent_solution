@@ -9,6 +9,10 @@
  */
 
 import type {
+  CrossDomainHandoffDraft,
+  HandoffAdmission,
+} from './cross-domain-handoff.js';
+import type {
   ActionDraft,
   AgentRunLogRecord,
   ApprovalGateResult,
@@ -193,4 +197,25 @@ export interface ISessionControl {
 export interface DurableLeaseManager {
   acquireLease(tenant_id: string, run_id: string, worker_id: string): Promise<boolean>;
   releaseLease(tenant_id: string, run_id: string, worker_id: string): Promise<void>;
+}
+
+/**
+ * The ONLY brokered route between domains (implement/04 §1.1, plans/customer-lifecycle.md §3).
+ *
+ * A run that finished a leg of the customer journey asks the orchestrator to hand off; the
+ * orchestrator builds the package, and this binding admits the target domain's durable run. An
+ * agent never calls, messages or addresses another agent, and this port never executes a skill:
+ * it admits a run, and the target domain's own runtime plans and executes it under the same PEP,
+ * effect guard, evidence and audit boundaries as any other run.
+ *
+ * Fail closed. A broker that cannot decide must raise rather than report an admission: a handoff
+ * that did not happen is never reported as one, and a replayed admission is reported as
+ * `admitted: false` with the run the ledger already holds.
+ *
+ * The broker owns the durable identity of the hop: it reads the ledger, completes the package from
+ * the draft, asserts `assertHandoffAdmissible` against the durable facts it read, and only then
+ * admits. A draft is a request; the ledger decides what exists.
+ */
+export interface ICrossDomainHandoffBroker {
+  admit(draft: CrossDomainHandoffDraft): Promise<HandoffAdmission>;
 }

@@ -8,7 +8,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { apiOrigin } from '../../lib/api-client';
+import { apiClient, ApiError } from '../../lib/api-client';
 import type {
   TimelineEvent,
   TimelineGap,
@@ -86,7 +86,7 @@ export function Customer360Timeline({
     const summary = String(raw.summary || raw.description || raw.message || '');
     const sourceRecordId = raw.source_record_id ? String(raw.source_record_id) : raw.sourceRecordId ? String(raw.sourceRecordId) : undefined;
 
-    let classification: EvidenceClassification | undefined = undefined;
+    let classification: EvidenceClassification = 'SIGNAL';
     const rawClass = String(raw.classification || (raw.evidenceCard as Record<string, unknown>)?.classification || '');
     if (rawClass === 'FACT' || rawClass === 'SIGNAL' || rawClass === 'HYPOTHESIS' || rawClass === 'DECISION' || rawClass === 'ACTION') {
       classification = rawClass;
@@ -177,52 +177,10 @@ export function Customer360Timeline({
       }
 
       try {
-        const origin = apiOrigin();
-        let url = `${origin}/api/v1/customers/${encodeURIComponent(targetId)}/timeline?limit=20`;
-        if (cursor) {
-          url += `&cursor=${encodeURIComponent(cursor)}`;
-        }
-
-        const res = await fetch(url, {
-          method: 'GET',
-          headers: {
-            Accept: 'application/json',
-          },
+        const data = await apiClient.getCustomerTimeline(targetId, {
+          limit: 20,
+          ...(cursor === undefined || cursor === null ? {} : { cursor }),
         });
-
-        if (!res.ok) {
-          let errMsg = `Request failed: HTTP ${res.status}`;
-          try {
-            const errJson = await res.json();
-            if (errJson.message) errMsg = errJson.message;
-          } catch {
-            // fallback
-          }
-
-          if (res.status === 403) {
-            setErrorState({
-              status: 403,
-              type: 'permission_denied',
-              message:
-                'permission_denied: Cross-tenant or unverified private lookup refused. An authorized operator with a verified customer binding is required.',
-            });
-          } else if (res.status === 404) {
-            setErrorState({
-              status: 404,
-              type: 'not_found',
-              message: `Customer ${targetId} not found in this tenant.`,
-            });
-          } else {
-            setErrorState({
-              status: res.status,
-              type: 'fail_closed',
-              message: `dependency_unavailable: ${errMsg}`,
-            });
-          }
-          return;
-        }
-
-        const data = await res.json();
 
         // Customer Profile info if provided by R15
         if (data.customer && typeof data.customer === 'object') {
@@ -297,10 +255,27 @@ export function Customer360Timeline({
 
         setNextCursor(data.next_cursor || data.nextCursor || null);
       } catch (err: unknown) {
-        setErrorState({
-          type: 'dependency_unavailable',
-          message: `fail_closed: ${(err as Error).message || 'Failed to reach gateway'}`,
-        });
+        const status = err instanceof ApiError ? err.status : undefined;
+        const message = err instanceof Error ? err.message : 'Failed to reach gateway';
+        if (status === 403) {
+          setErrorState({
+            status,
+            type: 'permission_denied',
+            message: 'permission_denied: Cross-tenant or unverified private lookup refused.',
+          });
+        } else if (status === 404) {
+          setErrorState({
+            status,
+            type: 'not_found',
+            message: 'Customer ' + targetId + ' not found in this tenant.',
+          });
+        } else {
+          setErrorState({
+            ...(status === undefined ? {} : { status }),
+            type: 'dependency_unavailable',
+            message: 'fail_closed: ' + message,
+          });
+        }
       } finally {
         setIsLoading(false);
         setIsLoadingMore(false);
@@ -566,7 +541,9 @@ export function Customer360Timeline({
             {events.map((evt) => {
               const classification = evt.classification;
               const classMeta = classification ? getClassificationBadge(classification) : null;
+              const isFact = classification === 'FACT';
               const isHypothesis = classification === 'HYPOTHESIS';
+              const isNonFact = classification !== undefined && !isFact;
 
               return (
                 <div
@@ -574,13 +551,17 @@ export function Customer360Timeline({
                   className={`relative pl-6 transition-all ${
                     isHypothesis
                       ? 'p-3 bg-amber-950/20 border border-amber-800/50 rounded-xl ml-2'
+                      : isFact
+                      ? 'p-3 bg-emerald-950/10 border border-emerald-900/50 rounded-xl'
+                      : isNonFact
+                      ? 'p-3 bg-slate-950/30 border border-slate-800/70 rounded-xl'
                       : ''
                   }`}
                 >
                   {/* Timeline bullet dot */}
                   <span
                     className={`absolute -left-1.5 top-1.5 w-3 h-3 rounded-full border-2 border-slate-900 ${
-                      isHypothesis ? 'bg-amber-400 animate-pulse' : 'bg-slate-600'
+                      isHypothesis ? 'bg-amber-400 animate-pulse' : isFact ? 'bg-emerald-400' : 'bg-slate-600'
                     }`}
                   ></span>
 

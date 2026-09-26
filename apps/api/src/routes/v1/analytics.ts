@@ -122,6 +122,7 @@ async function handleTimeline(
 
   let operator: GatewayPrincipal;
   let customer_id: string;
+  let claimed_customer_id: string;
   let query: TimelineQuery;
   try {
     operator = requireOperator(request, 'customer:read');
@@ -129,7 +130,7 @@ async function handleTimeline(
     if (claimed === null) {
       fail('VALIDATION_FAILED', 'customer_id is required in the path');
     }
-    customer_id = claimed;
+    claimed_customer_id = claimed;
     query = timelineQuery(request);
   } catch (error) {
     await refuseOperation({ request, reply, runtime, operation: TIMELINE_OPERATION, error });
@@ -150,22 +151,26 @@ async function handleTimeline(
       tenant_id: operator.tenant_id,
       session_id: subject,
       channel_type: 'OPERATOR',
-      claimed_customer_id: customer_id,
+      claimed_customer_id,
     });
 
-    if (resolution.customer_id === null) {
+    const resolvedCustomerId = resolution.customer_id;
+    if (resolvedCustomerId === null || resolution.verdict !== 'OPERATOR_VERIFIED') {
       fail(
         'CUSTOMER_UNVERIFIED',
-        'no verified customer identity could be bound for this request; the timeline is refused rather than projected from a claimed identifier',
+        'no tenant-scoped operator customer resolution could be established; the timeline is refused rather than projected from a claimed identifier',
       );
     }
 
-    if (resolution.customer_id !== customer_id) {
+    if (resolvedCustomerId !== claimed_customer_id) {
       fail(
         'CUSTOMER_UNVERIFIED',
         'the verified identity bound to this request is not the requested customer; a cross-customer private lookup is refused',
       );
     }
+
+    // The authenticated, tenant-scoped resolution is the only customer id allowed into the read.
+    customer_id = resolvedCustomerId;
 
     page = await runtime.timeline.timeline({
       tenant_id: operator.tenant_id,

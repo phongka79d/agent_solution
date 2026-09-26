@@ -11,6 +11,7 @@ import { randomUUID } from 'node:crypto';
 import type {
   AuthorityLevel,
   ExecutionPlan,
+  HandoffIntent,
   HydratedContext,
   HypothesisRecord,
   IAgentRuntime,
@@ -176,6 +177,20 @@ type CareIntent =
   | 'human_escalation'
   | 'requires_clarification';
 
+/**
+ * The journey leg an admitted handoff run is for, or `null` for an ordinary customer signal.
+ *
+ * The package is written by the broker into the target run's own signal; nothing a customer sends
+ * can place it there, and a malformed one is treated as absent so the run is planned as the
+ * ordinary Care turn it then is.
+ */
+function readHandoffTargetDomain(signal: SignalEnvelope): string | null {
+  const handoff = signal.payload['handoff'];
+  if (typeof handoff !== 'object' || handoff === null || Array.isArray(handoff)) return null;
+  const target = (handoff as Record<string, unknown>)['target_domain'];
+  return typeof target === 'string' ? target : null;
+}
+
 /** Specific and high-risk intent patterns precede broad FAQ/question detection. */
 function classifyCareIntent(text: string): CareIntent {
   const normalized = normalizeIntentText(text);
@@ -271,6 +286,8 @@ export interface ParsedRationale {
   readonly orderRef?: string;
   readonly faqQuery?: string;
   readonly careIntent?: CareIntent;
+  /** The journey leg this run was admitted for, when it arrived through a brokered handoff. */
+  readonly handoffTarget?: string;
 }
 
 export interface CareAgentRuntimeOptions {
@@ -293,6 +310,24 @@ export class CareAgentRuntime implements IAgentRuntime {
   }
 
   async deriveHypothesis(signal: SignalEnvelope, context: HydratedContext): Promise<HypothesisRecord> {
+    const handoffTarget = readHandoffTargetDomain(signal);
+
+    // A run admitted by a handoff is not a customer message: it is a leg of the journey the
+    // orchestrator brokered, so it is classified by its leg rather than by message text. The leg is
+    // recorded in the intent, which is what planning branches on.
+    if (handoffTarget !== null) {
+      return {
+        classification: 'HYPOTHESIS',
+        intent: `care:${handoffTarget}`,
+        confidence: 1,
+        churn_risk_score: 0,
+        purchase_propensity: 0,
+        reasoning: `Routed by the brokered customer journey leg '${handoffTarget}' `
+          + '(implement/09 §1.1 Gate P4, plans/customer-lifecycle.md §3).',
+        derived_from_signals: [signal.signal_id],
+      };
+    }
+
     const text = extractMessageContent(signal);
     const careIntent = classifyCareIntent(text);
     const orderRef = careIntent === 'order_status' || careIntent === 'shipping'
@@ -307,6 +342,7 @@ export class CareAgentRuntime implements IAgentRuntime {
     const rationaleData: ParsedRationale = {
       reason,
       careIntent,
+      ...(handoffTarget === null ? {} : { handoffTarget }),
       ...(careIntent === 'product_info' || careIntent === 'price' || careIntent === 'stock'
         || careIntent === 'return_refund' || careIntent === 'usage'
         ? { faqQuery: text }
@@ -413,7 +449,76 @@ export class CareAgentRuntime implements IAgentRuntime {
     context: HydratedContext,
     hypothesis: HypothesisRecord,
   ): Promise<ExecutionPlan> {
+    const plan = await this.composePlan(routing, context, hypothesis);
+
+    return this.withRetentionIntent(plan, context, hypothesis);
+  }
+
+  /**
+   * The next leg: a Care run admitted for the onboarding leg hands the verified customer to the
+   * retention leg (implement/09 §1.1 Gate P4, plans/customer-lifecycle.md §3).
+   *
+   * The intent is attached only to a handoff-admitted care run that actually planned a step, so an
+   * empty plan never brokers a handoff on the strength of nothing. The customer is the run's own
+   * verified subject; the reason states the leg, and neither is read from the inbound payload.
+   */
+  private withRetentionIntent(
+    plan: ExecutionPlan,
+    context: HydratedContext,
+    hypothesis: HypothesisRecord,
+  ): ExecutionPlan {
+    if (hypothesis.intent !== 'care:care' || plan.steps.length === 0) return plan;
+    if (!context.customer?.customer_id) return plan;
+
+    const handoff_intent: HandoffIntent = {
+      source_domain: 'care',
+      target_domain: 'retention',
+      target_agent: 'CS-02',
+      reason: 'Care onboarding leg completed for a verified customer; retention is the next leg',
+    };
+
+    return { ...plan, handoff_intent };
+  }
+
+  private async composePlan(
+    routing: RoutingDecision,
+    context: HydratedContext,
+    hypothesis: HypothesisRecord,
+  ): Promise<ExecutionPlan> {
     const plan_id = `plan_${randomUUID().slice(0, 8)}`;
+
+    // The retention leg is planned from its own canonical CS-02 row. Its authoritative ports
+    // (`Customer360.AnalyticsLayer` for the churn hypothesis) are not bound by every deployment, in
+    // which case the dispatch boundary refuses with `AUTHORITATIVE_SOURCE_UNAVAILABLE` — no churn
+    // score and no retention offer is ever synthesized in their place (implement/05 §6 row 22-23).
+    if (hypothesis.intent === 'care:retention') {
+      const row = lookupRegistryRow(this.registry, 'skill.care.analyze_churn_risk');
+      if (!row) return { plan_id, steps: [], fallback_strategy: 'FAIL_CLOSED' };
+      const policy = deriveEffectPolicy(row.effect_class);
+      const customer_id = context.customer?.customer_id;
+
+      return {
+        plan_id,
+        steps: [{
+          step_index: 1,
+          agent_id: 'CS-02',
+          skill_id: 'skill.care.analyze_churn_risk',
+          adapter_target: row.guarded_dependency,
+          input_parameters: {
+            tenant_id: context.tenant_id,
+            ...(customer_id === undefined ? {} : { customer_id }),
+          },
+          required_authority: row.required_authority,
+          mutating: policy.mutating,
+          price_bearing: policy.price_bearing,
+          idempotent: policy.idempotent,
+          timeout_ms: row.timeout_ms,
+          depends_on_steps: [],
+        }],
+        fallback_strategy: 'FAIL_CLOSED',
+      };
+    }
+
     if (routing.requires_clarification) {
       return { plan_id, steps: [], fallback_strategy: 'FAIL_CLOSED' };
     }

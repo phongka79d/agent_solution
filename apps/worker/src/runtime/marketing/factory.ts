@@ -32,8 +32,10 @@ import type {
 } from '@agentos/core-engine/contracts';
 import type {
   DurableLeaseManager,
+  HandoffIntent,
   IAdapterDispatcher,
   IAuditTrail,
+  ICrossDomainHandoffBroker,
   IEvidenceLogger,
   ISessionControl,
 } from '@agentos/core-engine/contracts';
@@ -160,6 +162,12 @@ class MarketingContextAggregator implements IContextAggregator {
 class MarketingAgentRuntime implements IAgentRuntime {
   private readonly signals = new Map<string, SignalEnvelope>();
 
+  /**
+   * @param journeyEntry Whether this deployment brokered the cross-domain journey. When false the
+   * planner is exactly what it was before P4: it plans its own leg and hands off to nobody.
+   */
+  constructor(private readonly journeyEntry: boolean = false) {}
+
   async deriveHypothesis(signal: SignalEnvelope, _context: HydratedContext): Promise<HypothesisRecord> {
     const id = skillId(signal);
     this.signals.set(signal.signal_id, signal);
@@ -201,6 +209,8 @@ class MarketingAgentRuntime implements IAgentRuntime {
     const id = skillId(signal);
     const agent_id = MARKETING_AGENT_BY_SKILL[id]!;
     const input_parameters = signalInput(signal, context.tenant_id);
+    const handoff_intent = this.journeyEntryIntent(signal, context);
+
     return {
       plan_id: 'plan_' + signal.signal_id,
       steps: [{
@@ -221,6 +231,32 @@ class MarketingAgentRuntime implements IAgentRuntime {
         timeout_ms: MARKETING_TIMEOUT_MS[id]!,
       }],
       fallback_strategy: 'FAIL_CLOSED',
+      ...(handoff_intent === undefined ? {} : { handoff_intent }),
+    };
+  }
+
+  /**
+   * The journey entry: a marketing run that completed its own leg hands the customer to Sales
+   * (implement/09 §1.1 Gate P4, plans/customer-lifecycle.md §3).
+   *
+   * The intent is produced only when the journey is bound, the run is an ENTRY (a run admitted BY
+   * a handoff continues the journey and never re-enters it), and the run's own hydrated context
+   * carries a server-verified customer. Nothing in the inbound payload can produce, address or
+   * re-reason an intent: a customer id or a reason a caller asserted is never read here.
+   */
+  private journeyEntryIntent(
+    signal: SignalEnvelope,
+    context: HydratedContext,
+  ): HandoffIntent | undefined {
+    if (!this.journeyEntry) return undefined;
+    if (signal.payload['handoff'] !== undefined) return undefined;
+    if (!context.customer?.customer_id) return undefined;
+
+    return {
+      source_domain: 'marketing',
+      target_domain: 'sales',
+      target_agent: 'SAL-02',
+      reason: 'Marketing leg completed for a verified customer; Sales consultation is the next leg',
     };
   }
 }
@@ -403,6 +439,12 @@ export interface MarketingOrchestratorFactoryOptions {
   readonly auditTrail?: IAuditTrail;
   readonly sessionControl?: ISessionControl;
   readonly leaseManager?: DurableLeaseManager;
+  /**
+   * The brokered cross-domain handoff binding (plans/customer-lifecycle.md §3). Absent ⇒ a plan
+   * that declares a handoff refuses (`HANDOFF_BROKER_UNBOUND`) instead of completing a journey leg
+   * whose successor cannot be admitted.
+   */
+  readonly crossDomainHandoff?: ICrossDomainHandoffBroker;
   readonly effectGuard?: IEffectGuard;
   readonly adapterDispatcher?: IAdapterDispatcher;
   readonly skillServices?: MarketingSkillServices;
@@ -475,7 +517,8 @@ export function createMarketingOrchestratorFactory(
   const services = options.skillServices ?? createMarketingSkillServices(skillOptions);
   const adapterDispatcher = options.adapterDispatcher ?? services.dispatcher;
   const contextAggregator = options.contextAggregator ?? new MarketingContextAggregator();
-  const agentRuntime = options.agentRuntime ?? new MarketingAgentRuntime();
+  const agentRuntime = options.agentRuntime
+    ?? new MarketingAgentRuntime(options.crossDomainHandoff !== undefined);
   const policyAudit = options.audit === null
     ? undefined
     : options.audit ?? (auditTrail ? createPolicyAuditSink(auditTrail) : undefined);
@@ -508,6 +551,9 @@ export function createMarketingOrchestratorFactory(
       sessionControl,
       leaseManager,
       ...(options.workerId === undefined ? {} : { workerId: options.workerId }),
+      ...(options.crossDomainHandoff === undefined
+        ? {}
+        : { crossDomainHandoff: options.crossDomainHandoff }),
     });
   };
 }

@@ -101,6 +101,12 @@ export type {
   CustomerEventTimelineQuery,
 } from './customer-events.js';
 export { CareHandoffRepository } from './care-handoffs.js';
+export {
+  admitCrossDomainHandoff,
+  listCrossDomainHandoffs,
+  readCrossDomainHandoff,
+  readCrossDomainLifecycle,
+} from './cross-domain-handoffs.js';
 export type {
   CareHandoffClaimOutcome,
   CareHandoffCompletionOutcome,

@@ -37,6 +37,7 @@ export {
 } from './memory/qdrant.js';
 export type * from './contracts/index.js';
 export { ServiceCaseRepository } from './repositories/service-cases.js';
+export { admitCrossDomainHandoff } from './repositories/cross-domain-handoffs.js';
 
 /** Durable PostgreSQL repositories and their structural ports. */
 export * from './repositories/index.js';

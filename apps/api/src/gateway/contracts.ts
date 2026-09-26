@@ -66,6 +66,8 @@ export type GatewayErrorCode =
   | 'RUN_NOT_RECONCILABLE'
   /** Another worker holds the fenced execution lease for this `(tenant, run)` (`04` §4.4). */
   | 'RUN_LEASE_HELD'
+  /** Client event payload attempted to provide a server-owned evidence field (06 §8.1.1/§8.1.2). */
+  | 'CUSTOMER_EVENT_RESERVED_PAYLOAD_FIELD'
   | 'INTERNAL_ERROR';
 
 export type GatewayErrorCode_ = BaselineErrorCode | RuleErrorCode | ApprovalErrorCode | GatewayErrorCode;
@@ -121,6 +123,7 @@ export const FAILURE_STATUS: Readonly<Partial<Record<GatewayErrorCode_, number>>
   RUN_NOT_RETRYABLE: 409,
   RUN_NOT_RECONCILABLE: 409,
   RUN_LEASE_HELD: 409,
+  CUSTOMER_EVENT_RESERVED_PAYLOAD_FIELD: 422,
   APPROVAL_REQUIRED: 409,
   TASK_NOT_FOUND: 404,
   NOT_FOUND: 404,
@@ -499,16 +502,20 @@ export interface ReconciliationRequest {
 
 /** The ten-stage projection vocabulary (`03` §8). */
 export type EvidenceClassification = 'FACT' | 'SIGNAL' | 'HYPOTHESIS' | 'DECISION' | 'ACTION';
+export type TimelineDomain = 'MARKETING' | 'SALES' | 'COMMERCE' | 'SUPPORT' | 'ORCHESTRATOR';
 
 export interface TimelineEntry {
   readonly occurred_at: string;
-  readonly source_record_id: string;
+  readonly source_record_id?: string;
   readonly event_id: string;
+  readonly event_type: string;
   readonly stage: string;
   readonly canonical_event: string | null;
   readonly classification: EvidenceClassification;
-  readonly evidence_reference: string | null;
-  /** A gap is returned explicitly, never as a fabricated zero entry (`06` §8.1.3 R15). */
+  readonly domain?: TimelineDomain;
+  readonly summary?: string;
+  readonly evidence_reference?: string;
+  /** A gap is returned explicitly, never as a fabricated zero entry (06 §8.1.3 R15). */
   readonly gap_reason?: string;
 }
 

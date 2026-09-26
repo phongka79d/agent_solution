@@ -246,13 +246,34 @@ export interface TimelineEntry {
 
 export type CustomerTimelineEntry = TimelineEntry;
 
+/**
+ * The verified Customer 360 profile a timeline read MAY carry alongside its page.
+ *
+ * R15 sends it only when it resolved a tenant-scoped profile for the requesting operator, so every
+ * field is optional: an absent field is rendered as absent, never defaulted. A read that supplies
+ * no `customer` renders no profile banner rather than a synthesized one.
+ */
+export interface CustomerTimelineProfile {
+  readonly customer_id?: string | undefined;
+  readonly name?: string | undefined;
+  readonly tier?: string | undefined;
+  readonly ltv_twd?: number | undefined;
+  readonly aov_twd?: number | undefined;
+  readonly churn_risk_score?: number | undefined;
+}
+
 /** Wire response from GET /api/v1/customers/{customer_id}/timeline */
 export interface CustomerTimelineResponse {
   readonly items: readonly TimelineEntry[];
   readonly next_cursor: string | null;
   // Broad compatibility fields
   readonly entries?: readonly TimelineEntry[] | undefined;
+  readonly events?: readonly TimelineEntry[] | undefined;
+  readonly gaps?: readonly Record<string, unknown>[] | undefined;
+  readonly nextCursor?: string | null | undefined;
   readonly customer_id?: string | undefined;
+  /** Present only when the read resolved a verified, tenant-scoped profile. */
+  readonly customer?: CustomerTimelineProfile | undefined;
 }
 
 // ============================================================================

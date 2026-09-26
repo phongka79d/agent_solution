@@ -37,6 +37,7 @@ import { randomUUID } from 'node:crypto';
 import type {
   AuthorityLevel,
   ExecutionPlan,
+  HandoffIntent,
   HydratedContext,
   HypothesisRecord,
   IAgentRuntime,
@@ -161,6 +162,15 @@ function lookupRegistryRow(
 /**
  * Extracts raw textual message from signal payload.
  */
+/** Reads only the admitted package reason for the canonical marketing → sales edge. */
+function extractSalesHandoffReason(signal: SignalEnvelope): string | undefined {
+  const raw = signal.payload.handoff;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const handoff = raw as Record<string, unknown>;
+  if (handoff.target_domain !== 'sales' || typeof handoff.reason !== 'string') return undefined;
+  return handoff.reason.trim().length > 0 ? handoff.reason : undefined;
+}
+
 export function extractMessageContent(signal: SignalEnvelope): string {
   const p = signal.payload as Record<string, unknown> | null | undefined;
   if (!p || typeof p !== 'object') return '';
@@ -668,6 +678,7 @@ export interface ParsedSalesRationale {
   readonly priorPurchaseRef?: string | undefined;
   readonly replenishmentIntervalDays?: number | undefined;
   readonly refusalReason?: string | undefined;
+  readonly handoff_reason?: string | undefined;
 }
 
 export interface SalesAgentRuntimeOptions {
@@ -951,6 +962,11 @@ export interface SalesAgentRuntimeOptions {
       };
     }
 
+    const handoff_reason = extractSalesHandoffReason(signal);
+    if (handoff_reason) {
+      rationaleData = { ...rationaleData, handoff_reason };
+    }
+
     const derived_from_signals = [signal.signal_id];
     if (rationaleData.sku) {
       derived_from_signals.push(`sku:${rationaleData.sku}`);
@@ -1166,6 +1182,16 @@ export interface SalesAgentRuntimeOptions {
   }
 
   async formulatePlan(
+    routing: RoutingDecision,
+    context: HydratedContext,
+    hypothesis: HypothesisRecord,
+  ): Promise<ExecutionPlan> {
+    const plan = await this.composePlan(routing, context, hypothesis);
+
+    return this.withHandoffIntent(plan, context, this.retainedRationales.get(hypothesis));
+  }
+
+  private async composePlan(
     routing: RoutingDecision,
     context: HydratedContext,
     hypothesis: HypothesisRecord,
@@ -1808,6 +1834,29 @@ export interface SalesAgentRuntimeOptions {
       steps: [],
       fallback_strategy: 'FAIL_CLOSED',
     };
+  }
+
+  private withHandoffIntent(
+    plan: ExecutionPlan,
+    context: HydratedContext,
+    rationale: ParsedSalesRationale | undefined,
+  ): ExecutionPlan {
+    if (
+      plan.steps.length === 0
+      || !context.customer?.customer_id
+      || !rationale?.handoff_reason
+      || !plan.steps.every((step) => step.agent_id.startsWith('SAL-'))
+    ) {
+      return plan;
+    }
+
+    const handoff_intent: HandoffIntent = {
+      source_domain: 'sales',
+      target_domain: 'care',
+      target_agent: 'CS-01',
+      reason: rationale.handoff_reason,
+    };
+    return { ...plan, handoff_intent };
   }
 
   private buildPlannedStep(

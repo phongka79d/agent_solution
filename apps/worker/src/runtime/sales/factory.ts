@@ -28,6 +28,7 @@ import type {
   AssignableAuthority,
   DurableLeaseManager,
   IAdapterDispatcher,
+  ICrossDomainHandoffBroker,
   IAgentRuntime,
   IAuditTrail,
   IContextAggregator,
@@ -94,6 +95,12 @@ export interface SalesOrchestratorFactoryOptions {
   readonly auditTrail?: IAuditTrail | undefined;
   readonly sessionControl?: ISessionControl | undefined;
   readonly leaseManager?: DurableLeaseManager | undefined;
+  /**
+   * The brokered cross-domain handoff binding (plans/customer-lifecycle.md §3). Absent ⇒ a plan
+   * that declares a handoff refuses (`HANDOFF_BROKER_UNBOUND`) instead of completing a journey leg
+   * whose successor cannot be admitted.
+   */
+  readonly crossDomainHandoff?: ICrossDomainHandoffBroker | undefined;
   readonly effectGuard?: IEffectGuard | undefined;
   readonly adapterDispatcher?: IAdapterDispatcher | undefined;
   readonly skillServices?: SalesSkillServices | undefined;
@@ -407,6 +414,9 @@ export function createSalesOrchestratorFactory(
       sessionControl,
       leaseManager,
       workerId,
+      ...(options.crossDomainHandoff === undefined
+        ? {}
+        : { crossDomainHandoff: options.crossDomainHandoff }),
     });
   };
 }
