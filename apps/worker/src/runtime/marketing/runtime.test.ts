@@ -28,6 +28,7 @@ function makePorts(
   const readMarketSignals = vi.fn(async () => ({
     signals: [],
     trend_velocity: 'STABLE' as const,
+    analyzed_at: '2026-01-01T00:00:00.000Z',
     source_uri: 'research://test',
     source_version: 'test-v1',
   }));
@@ -175,7 +176,7 @@ describe('Marketing runtime routing and fail-closed composition', () => {
     const state = makePorts({ research: {
       readMarketSignals: async () => ({
         signals: [{ tenant_id: TENANT, signal_id: 'signal-1', keyword: 'shoes', search_volume_growth: 4, price_pressure_index: 2, source_uri: 'research://signal-1', source_version: 'v1', observed_at: '2026-01-01T00:00:00.000Z' }],
-        trend_velocity: 'STABLE', source_uri: 'research://test', source_version: 'v1',
+        trend_velocity: 'STABLE', analyzed_at: '2026-01-01T00:00:00.000Z', source_uri: 'research://test', source_version: 'v1',
       }),
       segmentAudience: async () => [],
     } });
@@ -192,7 +193,7 @@ describe('Marketing runtime routing and fail-closed composition', () => {
     const state = makePorts({
       policy: { getApprovedAudienceLimit: async () => 25 },
       research: {
-        readMarketSignals: async () => ({ signals: [], trend_velocity: 'STABLE', source_uri: 'research://test', source_version: 'v1' }),
+        readMarketSignals: async () => ({ signals: [], trend_velocity: 'STABLE', analyzed_at: '2026-01-01T00:00:00.000Z', source_uri: 'research://test', source_version: 'v1' }),
         segmentAudience: async (input) => {
           expect(input.max_segment_size).toBe(25);
           return [{ tenant_id: TENANT, customer_id: 'customer-1', source_uri: 'c360://customer-1', source_version: 'v1', observed_at: '2026-01-01T00:00:00.000Z', match_reason: 'owner-approved cohort query' }];

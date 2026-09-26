@@ -78,6 +78,7 @@ export interface MarketingSignalResearchResult {
   readonly signals: readonly MarketingSignalObservation[];
   /** Supplied by the tenant's authorized signal source; this runtime does not invent thresholds. */
   readonly trend_velocity: MarketingTrendVelocity;
+  readonly analyzed_at: string;
   readonly source_uri: string;
   readonly source_version: string;
 }

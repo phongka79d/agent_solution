@@ -395,6 +395,7 @@ describe('createMarketingResearchPort', () => {
     const mockSignalsResult = {
       signals: [],
       trend_velocity: 'STABLE' as const,
+      analyzed_at: '2026-01-01T00:00:00.000Z',
       source_uri: 'urn:mock:signals',
       source_version: 'v1',
     };

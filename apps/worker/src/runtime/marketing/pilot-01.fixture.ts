@@ -748,7 +748,7 @@ export function validateProviderResponse(response: {
  */
 export function validateTenantIsolation(
   expectedTenantId: string,
-  item: { tenant_id: string; [key: string]: unknown },
+  item: { tenant_id: string },
   label = 'item',
 ): void {
   if (!item || typeof item !== 'object' || typeof item.tenant_id !== 'string') {
@@ -1375,7 +1375,7 @@ export interface Pilot01HarnessValidator {
   readonly validateAuthority: (granted: unknown, required: unknown) => { verdict: string; errorCode: string | null; reason: string };
   readonly validateEffectReservation: (effectKey: string, reservedKeys: Set<string>) => void;
   readonly validateProviderResponse: (response: { status: string; [key: string]: unknown }) => void;
-  readonly validateTenantIsolation: (expectedTenantId: string, item: { tenant_id: string; [key: string]: unknown }, label?: string) => void;
+  readonly validateTenantIsolation: (expectedTenantId: string, item: { tenant_id: string }, label?: string) => void;
   readonly assertAttributionEvidenceAvailable: (input: MarketingAttributionInput, availableOrderEvidence: readonly MarketingAttributedOrderEvidence[]) => void;
 }
 

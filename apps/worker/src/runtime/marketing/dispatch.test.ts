@@ -2246,6 +2246,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
           readMarketSignals: async () => ({
             signals: [],
             trend_velocity: 'STABLE',
+            analyzed_at: '2026-01-01T00:00:00.000Z',
             source_uri: 'research://signals',
             source_version: 'v1',
           }),
