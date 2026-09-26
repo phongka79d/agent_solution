@@ -27,7 +27,7 @@ const REQUEST_ID = 'req-marketing-test-1';
 
 function createMockSignalReads(): MarketingSignalReadPort {
   return {
-    readSignals: vi.fn(async () => ({
+    readSignals: vi.fn(async (_input: unknown, _context: unknown) => ({
       signals: [
         {
           signal_id: 'sig-1',

@@ -161,49 +161,34 @@ export function createMarketingSkillToolPort(
           context,
         );
 
-        let resolvedRecipients: readonly string[];
-        let consentAlreadyVerified = false;
-
-        if (Array.isArray(resolved)) {
-          resolvedRecipients = resolved;
-        } else if (typeof resolved === 'object' && resolved !== null) {
-          const verifiedAudience = resolved as { recipients?: unknown; consent_verified?: unknown };
-          if (!Array.isArray(verifiedAudience.recipients)) {
-            throw new MarketingSkillToolError(
-              'AUDIENCE_REQUIRED',
-              `Audience resolver returned no eligible recipients for segment '${typedInput.segment_id}'; campaign dispatch refused (fail closed)`,
-            );
-          }
-          resolvedRecipients = verifiedAudience.recipients as readonly string[];
-          if (verifiedAudience.consent_verified === true) {
-            consentAlreadyVerified = true;
-          }
-        } else {
+        const audienceResult = Array.isArray(resolved)
+          ? { recipients: resolved as readonly string[], consent_verified: false }
+          : typeof resolved === 'object' && resolved !== null
+            ? resolved as { recipients?: unknown; consent_verified?: unknown }
+            : null;
+        if (audienceResult === null || !Array.isArray(audienceResult.recipients)) {
           throw new MarketingSkillToolError(
             'AUDIENCE_REQUIRED',
             `Audience resolver returned no eligible recipients for segment '${typedInput.segment_id}'; campaign dispatch refused (fail closed)`,
           );
         }
-
+        const resolvedRecipients = audienceResult.recipients as readonly string[];
         if (resolvedRecipients.length === 0) {
           throw new MarketingSkillToolError(
             'AUDIENCE_REQUIRED',
             `Audience resolver returned no eligible recipients for segment '${typedInput.segment_id}'; campaign dispatch refused (fail closed)`,
           );
         }
-
-        for (const r of resolvedRecipients) {
-          if (typeof r !== 'string' || r.trim() === '') {
+        for (const recipient of resolvedRecipients) {
+          if (typeof recipient !== 'string' || recipient.trim() === '') {
             throw new MarketingSkillToolError(
               'AUDIENCE_REQUIRED',
               'Audience resolver returned invalid or empty recipient identifier (fail closed)',
             );
           }
         }
-
         let eligibleRecipients: readonly string[];
-
-        if (consentAlreadyVerified) {
+        if (audienceResult.consent_verified === true) {
           eligibleRecipients = resolvedRecipients;
         } else {
           const consentPort =
@@ -213,14 +198,12 @@ export function createMarketingSkillToolPort(
             options.communication.consent ??
             options.communication.consent_port ??
             options.communication.consentPort;
-
           if (!consentPort) {
             throw new MarketingSkillToolError(
               'CONSENT_PORT_REQUIRED',
               'Server-side MarketingConsentPort is required for skill.mkt.dispatch_campaign before communication dispatch; no consent port configured (fail closed)',
             );
           }
-
           const consentChecks = await Promise.all(
             resolvedRecipients.map((customerId) =>
               consentPort.checkConsent(
@@ -234,9 +217,8 @@ export function createMarketingSkillToolPort(
             ),
           );
           eligibleRecipients = resolvedRecipients.filter(
-            (_, idx) => consentChecks[idx]?.allowed === true,
+            (_, index) => consentChecks[index]?.allowed === true,
           );
-
           if (eligibleRecipients.length === 0) {
             throw new MarketingSkillToolError(
               'AUDIENCE_REQUIRED',
