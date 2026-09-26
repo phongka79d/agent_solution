@@ -910,7 +910,7 @@ describe('Marketing Skill Services and Dispatcher', () => {
 
     it('resolves segment to recipients server-side, checks consent, and passes only consented recipients onward', async () => {
       const resolveAudience: MarketingAudienceResolver = vi.fn(async () => ['cust-opted-in', 'cust-opted-out']);
-      const dispatchCampaign = vi.fn(async () => ({
+      const dispatchCampaign = vi.fn(async (_input: InputMktDispatchCampaign) => ({
         dispatch_id: 'disp-resolved-1',
         recipient_count: 1,
         status: 'ENQUEUED' as const,
@@ -955,7 +955,7 @@ describe('Marketing Skill Services and Dispatcher', () => {
 
     it('resolves audience when resolver is configured via options.audience_resolver', async () => {
       const audience_resolver: MarketingAudienceResolver = vi.fn(async () => ['cust-opted']);
-      const dispatchCampaign = vi.fn(async () => ({
+      const dispatchCampaign = vi.fn(async (_input: InputMktDispatchCampaign) => ({
         dispatch_id: 'disp-opt-1',
         recipient_count: 1,
         status: 'ENQUEUED' as const,
@@ -982,7 +982,7 @@ describe('Marketing Skill Services and Dispatcher', () => {
 
     it('fails closed with CONSENT_PORT_REQUIRED before communication when server-side consent port is missing', async () => {
       const resolveAudience: MarketingAudienceResolver = vi.fn(async () => ['cust-1', 'cust-2']);
-      const dispatchCampaign = vi.fn(async () => ({
+      const dispatchCampaign = vi.fn(async (_input: InputMktDispatchCampaign) => ({
         dispatch_id: 'disp-test',
         recipient_count: 2,
         status: 'ENQUEUED' as const,
@@ -1010,7 +1010,7 @@ describe('Marketing Skill Services and Dispatcher', () => {
 
     it('fails closed with CONSENT_PORT_REQUIRED via dispatcher when server-side consent port is missing', async () => {
       const resolveAudience: MarketingAudienceResolver = vi.fn(async () => ['cust-1', 'cust-2']);
-      const dispatchCampaign = vi.fn(async () => ({
+      const dispatchCampaign = vi.fn(async (_input: InputMktDispatchCampaign) => ({
         dispatch_id: 'disp-test',
         recipient_count: 2,
         status: 'ENQUEUED' as const,
@@ -1064,7 +1064,7 @@ describe('Marketing Skill Services and Dispatcher', () => {
         recipients: ['cust-verified-1', 'cust-verified-2'],
         consent_verified: true as const,
       }));
-      const dispatchCampaign = vi.fn(async () => ({
+      const dispatchCampaign = vi.fn(async (_input: InputMktDispatchCampaign) => ({
         dispatch_id: 'disp-verified-1',
         recipient_count: 2,
         status: 'ENQUEUED' as const,
@@ -1102,7 +1102,7 @@ describe('Marketing Skill Services and Dispatcher', () => {
         recipients: ['cust-unverified-1'],
         consent_verified: false as const,
       }));
-      const dispatchCampaign = vi.fn(async () => ({
+      const dispatchCampaign = vi.fn(async (_input: InputMktDispatchCampaign) => ({
         dispatch_id: 'disp-test',
         recipient_count: 1,
         status: 'ENQUEUED' as const,
@@ -1132,7 +1132,7 @@ describe('Marketing Skill Services and Dispatcher', () => {
         recipients: [],
         consent_verified: true as const,
       }));
-      const dispatchCampaign = vi.fn(async () => ({
+      const dispatchCampaign = vi.fn(async (_input: InputMktDispatchCampaign) => ({
         dispatch_id: 'disp-test',
         recipient_count: 0,
         status: 'ENQUEUED' as const,
@@ -1159,7 +1159,7 @@ describe('Marketing Skill Services and Dispatcher', () => {
 
     it('allows consent port configured on communication connector or via consent_port alias', async () => {
       const resolveAudience: MarketingAudienceResolver = vi.fn(async () => ['cust-1']);
-      const dispatchCampaign = vi.fn(async () => ({
+      const dispatchCampaign = vi.fn(async (_input: InputMktDispatchCampaign) => ({
         dispatch_id: 'disp-alias-1',
         recipient_count: 1,
         status: 'ENQUEUED' as const,
