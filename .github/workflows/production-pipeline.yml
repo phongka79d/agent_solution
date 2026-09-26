@@ -97,7 +97,19 @@ jobs:
       - name: Require the unit and contract tasks to be implemented
         run: node scripts/require-implemented-tasks.mjs test:unit test:contracts test:pilots
       - name: Unit tests
-        run: pnpm test:unit
+        id: unit_tests
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          pnpm test:unit 2>&1 | tee unit-test-output.log
+      - name: Expose unit failure summary
+        if: steps.unit_tests.outcome == 'failure'
+        run: |
+          while IFS= read -r line; do
+            escaped=$(printf '%s' "$line" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')
+            echo "::error title=Unit test output::$escaped"
+          done < <(tail -n 120 unit-test-output.log)
+          exit 1
       - name: Contract tests
         run: pnpm test:contracts
       - name: Offline P1 pilot harness
