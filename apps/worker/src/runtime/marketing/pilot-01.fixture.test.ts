@@ -806,10 +806,14 @@ describe('PILOT-01 Offline Fixture & Harness Interface', () => {
               signalReader: () => ({
                 signals: [
                   {
+                    tenant_id: 'foreign-tenant-xyz',
                     signal_id: 'sig-foreign-001',
                     keyword: 'bubble_tea',
                     search_volume_growth: 1.2,
                     price_pressure_index: 0.1,
+                    source_uri: 'research://foreign/signals',
+                    source_version: 'v2026-03',
+                    observed_at: '2026-03-01T08:00:00Z',
                   },
                 ],
                 trend_velocity: 'STABLE',

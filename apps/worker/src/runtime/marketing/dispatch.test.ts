@@ -2304,6 +2304,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
           correlation_id: CORRELATION_ID,
           expected_task_version: 1,
         },
+        ports,
       );
 
       expect(lifecycle.state.current_stage).toBe('BRIEF');
