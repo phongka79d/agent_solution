@@ -413,10 +413,20 @@ export class CampaignLifecycle {
       request_id: context.request_id,
     });
 
+    const modifiedSegment = params.modified_payload?.segment_id;
+    const segment_id = params.segment_id
+      ?? (typeof modifiedSegment === 'string' ? modifiedSegment : undefined);
+    if (typeof segment_id !== 'string' || segment_id.trim().length === 0) {
+      throw new MarketingRuntimeError(
+        'SEGMENT_REQUIRED',
+        'A canonical segment_id is required before Marketing approval or publish; no fallback segment is allowed.',
+      );
+    }
+
     const payload: Record<string, unknown> = params.modified_payload ?? {
       tenant_id: this._identity.tenant_id,
       campaign_id: this._identity.campaign_id,
-      segment_id: params.segment_id ?? 'segment-cohort',
+      segment_id,
       channel: this._state.content.channel_payload.channel_type,
       approved_content_id: this._state.content.draft_id,
       recipients: (this._state.audience ?? []).map((c) => c.customer_id),

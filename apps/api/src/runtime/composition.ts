@@ -36,7 +36,7 @@ import type {
   StreamPort,
   TakeoverLeasePort,
 } from '../gateway/ports.js';
-import { parseEnabledAgentModules, parseSalesSignalEventTypes } from '../routes/v1/care-turn.js';
+import { parseEnabledAgentModules, parseMarketingSignalEventTypes, parseSalesSignalEventTypes } from '../routes/v1/care-turn.js';
 import { createCredentialStore, type CredentialStore } from '../gateway/principal.js';
 import {
   createCanonicalEventNormalizer,
@@ -96,6 +96,7 @@ export interface GatewayEnv {
   readonly REDIS_DB?: string;
   readonly ENABLED_AGENT_MODULES?: string;
   readonly SALES_SIGNAL_EVENT_TYPES?: string;
+  readonly MARKETING_SIGNAL_EVENT_TYPES?: string;
 }
 
 /** The assembled gateway: the routes' runtime, the credential store and the derivation binding. */
@@ -107,6 +108,7 @@ export interface GatewayComposition {
   readonly unbound: readonly string[];
   readonly enabledModules: readonly string[];
   readonly salesSignalEventTypes: readonly string[];
+  readonly marketingSignalEventTypes: readonly string[];
   readonly close: () => Promise<void>;
 }
 
@@ -188,6 +190,7 @@ export function createGatewayComposition(
 ): GatewayComposition {
   const enabledModules = parseEnabledAgentModules(env.ENABLED_AGENT_MODULES);
   const salesSignalEventTypes = parseSalesSignalEventTypes(env.SALES_SIGNAL_EVENT_TYPES);
+  const marketingSignalEventTypes = parseMarketingSignalEventTypes(env.MARKETING_SIGNAL_EVENT_TYPES);
   const { session_secret, platform_secret } = resolveSecrets(env);
   const hmac = options?.hmac ?? nodeHmacSha256Hex;
 
@@ -351,6 +354,7 @@ export function createGatewayComposition(
     unbound: unbound_ports,
     enabledModules,
     salesSignalEventTypes,
+    marketingSignalEventTypes,
     close: async () => {
       if (ownedRedis !== null) {
         await ownedRedis.quit();

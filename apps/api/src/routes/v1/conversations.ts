@@ -72,6 +72,7 @@ export interface ConversationRouteDeps {
   readonly credentials: CredentialStore;
   readonly enabledModules?: readonly string[];
   readonly salesSignalEventTypes?: readonly string[];
+  readonly marketingSignalEventTypes?: readonly string[];
 }
 
 /**
@@ -178,8 +179,11 @@ export function registerConversationRoutes(
         }
 
         const rawEventType = (body as Record<string, unknown> | undefined)?.['event_type'];
-        const eventTypeOptions = deps.salesSignalEventTypes !== undefined
-          ? { salesSignalEventTypes: deps.salesSignalEventTypes }
+        const eventTypeOptions = deps.salesSignalEventTypes !== undefined || deps.marketingSignalEventTypes !== undefined
+          ? {
+              ...(deps.salesSignalEventTypes === undefined ? {} : { salesSignalEventTypes: deps.salesSignalEventTypes }),
+              ...(deps.marketingSignalEventTypes === undefined ? {} : { marketingSignalEventTypes: deps.marketingSignalEventTypes }),
+            }
           : undefined;
         const event_type = validateAdmissionEventType(rawEventType, normalizedModule, eventTypeOptions);
         const conversation = await runtime.conversations.get(principal.tenant_id, conversation_id);

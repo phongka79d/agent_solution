@@ -30,7 +30,7 @@ function isAssignableAuthority(value: unknown): value is AssignableAuthority {
 /**
  * Dispatch integration marker. Routing via apps/worker/src/worker.ts is deferred.
  */
-export const MARKETING_DISPATCH_INTEGRATION = 'PENDING_P2_SHARED_ROUTING' as const;
+export const MARKETING_DISPATCH_INTEGRATION = 'SHARED_P2_RUNTIME' as const;
 
 export interface MarketingSkillDispatcherOptions {
   readonly engine: SkillRuntimeEngine;

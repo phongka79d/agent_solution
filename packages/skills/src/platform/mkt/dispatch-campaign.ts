@@ -26,6 +26,12 @@ export interface InputMktDispatchCampaign {
   discount_amount?: number;
   discount_percent?: number;
   proposed_price?: number;
+  price_source?: string;
+  floor_source?: string;
+  promotion_provenance?: string;
+  promotion_source?: string;
+  /** Shared orchestrator binding; present on effect-bearing dispatches. */
+  effect_key?: string;
 }
 
 /** §4.1 field 4 `Output*` of the row. */
@@ -67,6 +73,11 @@ const spec: Omit<PlatformRowSpec, 'skill_id'> = {
       discount_amount: { type: 'number', minimum: 0 },
       discount_percent: { type: 'number', minimum: 0, maximum: 100 },
       proposed_price: { type: 'number', exclusiveMinimum: 0 },
+      price_source: { type: 'string' },
+      floor_source: { type: 'string' },
+      promotion_provenance: { type: 'string' },
+      promotion_source: { type: 'string' },
+      effect_key: { type: 'string' },
     },
     additionalProperties: false,
   },

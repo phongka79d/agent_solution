@@ -1014,7 +1014,12 @@ export interface OutputMktAuditBrand {
     "offer_id": { "type": "string" },
     "discount_amount": { "type": "number", "minimum": 0 },
     "discount_percent": { "type": "number", "minimum": 0, "maximum": 100 },
-    "proposed_price": { "type": "number", "exclusiveMinimum": 0 }
+    "proposed_price": { "type": "number", "exclusiveMinimum": 0 },
+    "price_source": { "type": "string" },
+    "floor_source": { "type": "string" },
+    "promotion_provenance": { "type": "string" },
+    "promotion_source": { "type": "string" },
+    "effect_key": { "type": "string" }
   },
   "additionalProperties": false
 }
@@ -1051,6 +1056,13 @@ export interface InputMktDispatchCampaign {
   segment_id: string;
   channel: 'LINE' | 'WHATSAPP' | 'EMAIL' | 'SMS' | 'ZALO' | 'TIKTOK' | 'MESSENGER' | 'INSTAGRAM';
   approved_content_id: string;
+  proposed_price?: number;
+  price_source?: string;
+  floor_source?: string;
+  promotion_provenance?: string;
+  promotion_source?: string;
+  /** Shared orchestrator effect binding on effect-bearing dispatches. */
+  effect_key?: string;
 }
 export interface OutputMktDispatchCampaign {
   dispatch_id: string;

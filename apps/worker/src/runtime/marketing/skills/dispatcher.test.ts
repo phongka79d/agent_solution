@@ -723,11 +723,11 @@ describe('Marketing Skill Services and Dispatcher', () => {
       expect(result).toEqual({ outcome: 'INDETERMINATE' });
     });
 
-    it('marks dispatch integration status as PENDING_P2_SHARED_ROUTING', () => {
+    it('marks dispatch integration status as SHARED_P2_RUNTIME', () => {
       const services = createServices();
-      expect(services.dispatch_integration).toBe('PENDING_P2_SHARED_ROUTING');
-      expect(MARKETING_DISPATCH_INTEGRATION).toBe('PENDING_P2_SHARED_ROUTING');
-      expect(MARKETING_DISPATCH_INTEGRATION_STATUS).toBe('PENDING_P2_SHARED_ROUTING');
+      expect(services.dispatch_integration).toBe('SHARED_P2_RUNTIME');
+      expect(MARKETING_DISPATCH_INTEGRATION).toBe('SHARED_P2_RUNTIME');
+      expect(MARKETING_DISPATCH_INTEGRATION_STATUS).toBe('SHARED_P2_RUNTIME');
     });
   });
 

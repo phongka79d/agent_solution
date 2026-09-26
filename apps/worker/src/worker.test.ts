@@ -764,4 +764,125 @@ describe('startWorker', () => {
     });
     expect(orchestratorFactory).not.toHaveBeenCalled();
   });
+
+  it('routes fresh Marketing tasks through the shared domain registry and orchestrator path', async () => {
+    const tenant_id = '00000000-0000-4000-8000-000000000001';
+    const signal = {
+      signal_id: 'sig-marketing-fresh-1',
+      tenant_id,
+      correlation_id: 'corr-marketing-fresh-1',
+      source_channel: 'MARKETING_CAMPAIGN',
+      event_type: 'campaign.requested',
+      payload: {
+        module: 'marketing',
+        skill_id: 'skill.mkt.analyze_market_signal',
+        input: { tenant_id, market_region: 'TW', category_id: 'tea', observation_window_days: 7 },
+      },
+    };
+    const taskRecord = {
+      tenant_id,
+      run_id: 'run-marketing-fresh-1',
+      correlation_id: signal.correlation_id,
+      task_version: 1,
+      state: 'queued',
+      lease_owner: 'worker-1',
+      state_payload: { signal },
+    } as DurableTaskRecord;
+    const processQueuedSignal = vi.fn().mockResolvedValue(undefined);
+    const marketingOrchestratorFactory = vi.fn().mockResolvedValue({ processQueuedSignal });
+    const worker = startWorker(
+      { ENABLED_AGENT_MODULES: 'marketing' },
+      {
+        hmac: () => '',
+        tenantIds: [tenant_id],
+        autoStartPolling: false,
+        marketingOrchestratorFactory,
+      },
+    );
+
+    expect(worker.registry?.resolve('marketing')).not.toBeNull();
+    await processClaimedTask({
+      taskRecord,
+      tenant_id,
+      worker_id: 'worker-1',
+      workflowRepository: {
+        getTask: vi.fn().mockResolvedValue(taskRecord),
+        releaseTaskLease: vi.fn().mockResolvedValue(true),
+        recordFailure: vi.fn(),
+        transitionTask: vi.fn(),
+      } as unknown as DurableWorkflowRepository,
+      registry: worker.registry,
+    });
+
+    expect(marketingOrchestratorFactory).toHaveBeenCalledWith(tenant_id);
+    expect(processQueuedSignal).toHaveBeenCalledWith('run-marketing-fresh-1', signal, { worker_id: 'worker-1' });
+    await worker.close();
+  });
+
+  it('routes resumed Marketing tasks through the shared domain registry and orchestrator path', async () => {
+    const tenant_id = '00000000-0000-4000-8000-000000000001';
+    const resumeEvent = {
+      tenant_id,
+      run_id: 'run-marketing-resume-1',
+      event_type: 'human.approval',
+      approval_id: '00000000-0000-4000-8000-000000000099',
+      expected_payload_sha256: 'a'.repeat(64),
+      operator_id: 'operator-marketing-1',
+    };
+    const signal = {
+      signal_id: 'sig-marketing-resume-1',
+      tenant_id,
+      correlation_id: 'corr-marketing-resume-1',
+      source_channel: 'MARKETING_CAMPAIGN',
+      event_type: 'campaign.requested',
+      payload: { module: 'marketing', skill_id: 'skill.mkt.dispatch_campaign', input: { tenant_id } },
+    };
+    const taskRecord = {
+      tenant_id,
+      run_id: 'run-marketing-resume-1',
+      correlation_id: signal.correlation_id,
+      task_version: 2,
+      state: 'awaiting_human',
+      lease_owner: 'worker-1',
+      state_payload: {
+        signal,
+        resume_event: resumeEvent,
+        plan: { plan_id: 'plan-marketing-1', steps: [], fallback_strategy: 'FAIL_CLOSED' },
+        current_step: 1,
+        pending_action: { action_id: '00000000-0000-4000-8000-000000000098', effect_key: 'effect-marketing-1' },
+        context: { tenant_id, correlation_id: signal.correlation_id },
+        previous_evidence_hash: '0'.repeat(64),
+        request_id: signal.signal_id,
+      },
+    } as DurableTaskRecord;
+    const resumeTask = vi.fn().mockResolvedValue(undefined);
+    const marketingOrchestratorFactory = vi.fn().mockResolvedValue({ resumeTask });
+    const worker = startWorker(
+      { ENABLED_AGENT_MODULES: 'marketing' },
+      {
+        hmac: () => '',
+        tenantIds: [tenant_id],
+        autoStartPolling: false,
+        marketingOrchestratorFactory,
+      },
+    );
+
+    await processClaimedTask({
+      taskRecord,
+      tenant_id,
+      worker_id: 'worker-1',
+      workflowRepository: {
+        getTask: vi.fn().mockResolvedValue(taskRecord),
+        releaseTaskLease: vi.fn().mockResolvedValue(true),
+        recordFailure: vi.fn(),
+        transitionTask: vi.fn(),
+      } as unknown as DurableWorkflowRepository,
+      registry: worker.registry,
+    });
+
+    expect(marketingOrchestratorFactory).toHaveBeenCalledWith(tenant_id);
+    expect(resumeTask).toHaveBeenCalledWith('run-marketing-resume-1', resumeEvent);
+    await worker.close();
+  });
+
 });

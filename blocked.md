@@ -299,7 +299,7 @@ Requirement classification:
 | MKT-02 segmentation and consent | PARTIAL | Tenant-bound segmentation/consent foundation retained; lifecycle and dispatch-time suppression recheck added. Live Customer360/consent binding remains environment-dependent. |
 | MKT-03 content drafting | ALREADY COMPLETE | Deterministic DRAFT generation, approved-knowledge provenance, and injection screening retained. |
 | MKT-04 brand compliance | PARTIAL | Blocking brand review retained; dispatch requires blocking-free review and authoritative price/promotion validation, but no live authoritative provider is configured. |
-| MKT-05 lifecycle/dispatch | PARTIAL | Local eight-stage seam uses injected P1B workflow/effect/dispatcher ports; production worker routing remains `PENDING_P2_SHARED_ROUTING`. |
+| MKT-05 lifecycle/dispatch | PARTIAL | Local eight-stage seam and worker admission now use the shared P2 DomainRuntimeRegistry/RevenueOrchestrator path; external provider capabilities remain fail-closed. |
 | MKT-06 attribution | PARTIAL | Matching campaign/effect/correlation/order evidence is required; incomplete evidence returns UNAVAILABLE without fabricated revenue/KPIs. Live order evidence is absent. |
 | API-003 outbound | EXTERNAL BLOCKED | Marketing binding is fail-closed and requires explicit tenant/provider/credential/transport configuration; no provider credentials or audited provider contract are available. |
 | PILOT-01 | PARTIAL / OFFLINE ONLY | Staged harness and named negative cases are present; provider dispatch/order attribution remain explicitly unavailable offline. |
@@ -315,7 +315,7 @@ Remaining blockers: P2 shared worker/domain routing must merge before production
 - The user confirms CI dependencies installed successfully; local verification commands in this workspace still report missing turbo/node_modules and therefore do not replace CI evidence.
 - This correction removes the fake approval_signature contract, requires canonical P1B workflow claim/release with real approval_id/operator_id, keeps AUTH-4 out of caller grants, and requires authoritative price/promotion provenance without mapping floor_price to proposed_price or defaulting floor_source.
 - testcases/sources/business.py was updated and generated outputs were regenerated from source. ~python testcases/_generate.py --check~ now passes with 419 files byte-for-byte current; ~git diff --check~ passes.
-- PENDING_P2_SHARED_ROUTING remains: no worker.ts or shared orchestrator/PEP/approval/durable/effect implementation changes are included.
+- SHARED_P2_RUNTIME is now wired through worker.ts and the shared DomainRuntimeRegistry; no duplicate worker/router/approval/effect subsystem was added.
 
 
 ## P3 Marketing correction verification
@@ -323,7 +323,7 @@ Remaining blockers: P2 shared worker/domain routing must merge before production
 - Run 36210697375 remains the authoritative pre-fix CI evidence: static-analysis/typecheck failed and jobs 2–5 were skipped; GitHub job logs were unavailable through the repository tool.
 - Local reruns after the correction remain environment-blocked because this checkout has no node_modules/turbo. No dependency installation was performed.
 - ~python testcases/_generate.py --check~ passes: 419 generated files match source. ~git diff --check~ passes with only Git line-ending warnings.
-- The correction is ready for CI validation; PENDING_P2_SHARED_ROUTING remains unchanged.
+- The correction is superseded by the post-P2 shared-runtime integration; full post-rebase validation is required.
 
 
 ## P3 Marketing CI follow-up — 36219425499
@@ -333,7 +333,7 @@ Remaining blockers: P2 shared worker/domain routing must merge before production
 - Unit and Contract Tests failed with process exit code 1; the public check annotations exposed no test-level failure details and job logs were unavailable through the repository/API tooling.
 - The preceding unit failure was the lifecycle approval digest mismatch; commit 69cc8e9 binds the approved segment to the publish fixture without weakening digest verification.
 - Historical snapshot; superseded by the green full-pipeline run recorded below.
-- PENDING_P2_SHARED_ROUTING, API-003 provider/credential availability, and authoritative order evidence remain unchanged.
+- SHARED_P2_RUNTIME, API-003 provider/credential availability, and authoritative order evidence remain unchanged.
 
 
 ## P3 Marketing CI resolution — 36221622637
@@ -342,4 +342,4 @@ Remaining blockers: P2 shared worker/domain routing must merge before production
 - The worker unit regression was fixed by supplying authoritative promotion provenance/limit in the digest-mismatch test, preserving fail-closed validation precedence.
 - Temporary CI diagnostic steps were removed before this final green run.
 - PILOT-01 remains PARTIAL / OFFLINE ONLY; provider dispatch and authoritative order attribution are unavailable offline.
-- PENDING_P2_SHARED_ROUTING remains unchanged; formal Gate P3 remains blocked on Gate P2 closure and post-merge integration validation.
+- SHARED_P2_RUNTIME is integrated; formal Gate P3 remains blocked by external/provider/owner evidence and post-integration validation.
