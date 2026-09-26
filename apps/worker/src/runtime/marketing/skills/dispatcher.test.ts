@@ -31,7 +31,7 @@ const REQUEST_ID = 'req-marketing-test-1';
 
 function createMockSignalReads(): MarketingSignalReadPort {
   return {
-    readSignals: vi.fn(async (input: InputMktAnalyzeSignal) => ({
+    readSignals: vi.fn(async () => ({
       signals: [
         {
           signal_id: 'sig-1',
@@ -48,7 +48,7 @@ function createMockSignalReads(): MarketingSignalReadPort {
 
 function createMockCustomer360(): MarketingCustomer360Port {
   return {
-    segmentAudience: vi.fn(async (input: InputMktSegmentAudience) => ({
+    segmentAudience: vi.fn(async () => ({
       segment_id: 'seg-test-1',
       matched_customer_count: 2,
       customer_ids: ['cust-1', 'cust-2'],
@@ -59,7 +59,7 @@ function createMockCustomer360(): MarketingCustomer360Port {
 
 function createMockConsent(): MarketingConsentPort {
   return {
-    checkConsent: vi.fn(async (input: InputMktCheckConsent) => ({
+    checkConsent: vi.fn(async () => ({
       allowed: true,
       consent_timestamp: '2026-09-26T12:00:00.000Z',
       suppression_reason: null,
@@ -69,7 +69,7 @@ function createMockConsent(): MarketingConsentPort {
 
 function createMockContentEngine(): MarketingContentEnginePort {
   return {
-    generateContent: vi.fn(async (input: InputMktGenerateContent) => ({
+    generateContent: vi.fn(async () => ({
       draft_id: 'draft-test-1',
       headline: 'Fresh Tea Offers',
       body_content: 'Discover our seasonal tea selections.',
@@ -83,7 +83,7 @@ function createMockContentEngine(): MarketingContentEnginePort {
 
 function createMockBrandGuard(): MarketingBrandGuardPort {
   return {
-    auditBrandCompliance: vi.fn(async (input: InputMktAuditBrand) => ({
+    auditBrandCompliance: vi.fn(async () => ({
       compliant: true,
       violations: [],
       confidence_score: 0.98,
@@ -96,7 +96,7 @@ function createMockCommunication(
 ): MarketingCommunicationPort {
   return {
     resolveAudience: vi.fn(async () => ['cust-1', 'cust-2']),
-    dispatchCampaign: vi.fn(async (input: InputMktDispatchCampaign) => ({
+    dispatchCampaign: vi.fn(async () => ({
       dispatch_id: 'disp-test-999',
       recipient_count: 50,
       status: 'ENQUEUED' as const,
@@ -744,7 +744,7 @@ describe('Marketing Skill Services and Dispatcher', () => {
     });
 
     it('delegates reconcile to injected handler when provided', async () => {
-      const mockReconcile = vi.fn(async (input: { tenant_id: string; effect_key: string }) => ({
+      const mockReconcile = vi.fn(async () => ({
         outcome: 'SUCCEEDED' as const,
         receipt: {
           execution_id: 'exec-reconciled-1',

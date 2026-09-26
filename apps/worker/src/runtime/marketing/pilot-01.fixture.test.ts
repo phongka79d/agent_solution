@@ -814,6 +814,8 @@ describe('PILOT-01 Offline Fixture & Harness Interface', () => {
                 ],
                 trend_velocity: 'STABLE',
                 analyzed_at: '2026-03-01T08:00:00Z',
+                source_uri: 'research://pilot01/signals',
+                source_version: 'v2026-03',
               }),
             },
             signal_input: {
