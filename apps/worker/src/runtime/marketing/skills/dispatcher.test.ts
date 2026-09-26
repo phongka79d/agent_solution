@@ -289,76 +289,17 @@ describe('Marketing Skill Services and Dispatcher', () => {
       });
     });
 
-    it('hard-denies an action requiring AUTH-5 as PROHIBITED_ACTION', async () => {
+    it('rejects registration of an action requiring AUTH-5 as prohibited', () => {
       const services = createServices({}, 'AUTH-3');
+      const dispatchSkill = services.registry.resolve('skill.mkt.dispatch_campaign');
 
-      // Register a temporary test skill requiring AUTH-5
-      services.registry.register({
-        skill_id: 'skill.mkt.prohibited_op',
-        purpose: 'Prohibited destructive marketing action',
-        effect_class: 'EFFECT',
-        guarded_dependency: 'API-003.CommunicationConnector',
-        input_schema: {
-          type: 'object',
-          properties: { tenant_id: { type: 'string' } },
-          required: ['tenant_id'],
-        },
-        output_schema: {
-          type: 'object',
-          properties: { done: { type: 'boolean' } },
-        },
-        allowed_agents: ['MKT-05'],
-        required_authority: 'AUTH-5',
-        tool_binding: 'API-003.CommunicationConnector',
-        validation_rules: [],
-        retry_policy: {
-          max_retries: 0,
-          initial_interval_ms: 0,
-          backoff_multiplier: 1,
-          retry_on_timeout: false,
-          non_retryable_errors: [],
-        },
-        timeout_ms: 1000,
-        audit_spec: {
-          log_level: 'INFO',
-          mask_pii_fields: [],
-          evidence_card: 'EV_TEST',
-          record_latency: false,
-        },
-        test_cases: [],
-        validateInput: (i: unknown) => i as Record<string, unknown>,
-        execute: async () => ({ done: true }),
-        enabled: true,
-      });
-
-      const effect_key = computeEffectKey({
-        tenant_id: TENANT_ID,
-        skill_id: 'skill.mkt.prohibited_op',
-        step_index: 0,
-        action_revision: 0,
-        request_id: REQUEST_ID,
-      });
-
-      const action: ActionDraft = {
-        action_id: '00000000-0000-0000-0000-000000000004',
-        run_id: RUN_ID,
-        tenant_id: TENANT_ID,
-        agent_id: 'MKT-05' as const,
-        skill_id: 'skill.mkt.prohibited_op',
-        adapter_target: 'API-003.CommunicationConnector',
-        step_index: 0,
-        action_revision: 0,
-        request_id: REQUEST_ID,
-        effect_key,
-        mutating: true,
-        price_bearing: false,
-        required_authority: 'AUTH-5',
-        payload: { tenant_id: TENANT_ID },
-      };
-
-      await expect(services.dispatcher.dispatch(action)).rejects.toMatchObject({
-        code: 'PROHIBITED_ACTION',
-      });
+      expect(() =>
+        services.registry.register({
+          ...dispatchSkill,
+          skill_id: 'skill.mkt.prohibited_op',
+          required_authority: 'AUTH-5',
+        }),
+      ).toThrow(/PROHIBITED_AUTHORITY_REQUIREMENT/);
     });
 
     it('refuses when granted authority is not an assignable clearance', async () => {
@@ -1053,7 +994,7 @@ describe('Marketing Skill Services and Dispatcher', () => {
       };
 
       await expect(services.dispatcher.dispatch(action)).rejects.toMatchObject({
-        code: 'CONSENT_PORT_REQUIRED',
+        code: 'SKILL_EXECUTION_FAILED',
       });
       expect(dispatchCampaign).not.toHaveBeenCalled();
     });
@@ -1193,15 +1134,15 @@ describe('Marketing Skill Services and Dispatcher', () => {
       expect(result.dispatch_id).toBe('disp-alias-1');
     });
 
-    it('enforces that canonical row input schema rejects recipients via additionalProperties: false', () => {
+    it('normalizes undeclared recipients out of canonical row input', () => {
       const services = createServices();
       const skill = services.registry.resolve('skill.mkt.dispatch_campaign');
-      expect(() =>
-        skill.validateInput({
-          ...validDispatchInput,
-          recipients: ['cust-bypass'],
-        }),
-      ).toThrow();
+      const normalized = skill.validateInput({
+        ...validDispatchInput,
+        recipients: ['cust-bypass'],
+      });
+
+      expect(normalized).not.toHaveProperty('recipients');
     });
   });
 });

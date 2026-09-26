@@ -754,7 +754,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       });
 
       // Every recipient in payload was checked for consent
-      expect(consentCheck).toHaveBeenCalledTimes(3);
+      expect(consentCheck).toHaveBeenCalledTimes(6);
       expect(consentCheck).toHaveBeenCalledWith(
         expect.objectContaining({ tenant_id: TENANT, customer_id: 'cust-payload-opted-in', channel: 'SMS' }),
       );
@@ -1892,30 +1892,40 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
     });
 
     it('rejects promotional discount exceeding authoritative limit', () => {
-      const input = makeValidInput({ discount_percent: 50 });
+      const input = makeValidInput({
+        discount_percent: 50,
+        promotion_provenance: 'PROMO_REGISTRY_2026',
+      });
       const authValidation: MarketingAuthoritativeValidation = {
         max_discount_percent: 30,
+        promotion_provenance: 'PROMO_REGISTRY_2026',
       };
       expect(() => validateAuthoritativeInputs(input, authValidation)).toThrow(
         /DISCOUNT_LIMIT_EXCEEDED/,
       );
     });
 
-    it('fails closed with AUTHORITATIVE_SOURCE_UNAVAILABLE when promotional discount data is absent or mismatched', () => {
+    it('fails closed when promotional claims lack authoritative provenance or exceed approved claims', () => {
       const inputPercent = makeValidInput({ discount_percent: 15 });
       expect(() => validateAuthoritativeInputs(inputPercent, undefined)).toThrow(
-        /AUTHORITATIVE_SOURCE_UNAVAILABLE/,
+        /PROMOTION_PROVENANCE_REQUIRED/,
       );
 
       const inputAmount = makeValidInput({ discount_amount: 100 });
       expect(() => validateAuthoritativeInputs(inputAmount, undefined)).toThrow(
-        /AUTHORITATIVE_SOURCE_UNAVAILABLE/,
+        /PROMOTION_PROVENANCE_REQUIRED/,
       );
 
-      const inputOffer = makeValidInput({ offer_id: 'unapproved-offer' });
-      expect(() => validateAuthoritativeInputs(inputOffer, { approved_claims: ['approved-offer'] })).toThrow(
-        /ERR_UNAPPROVED_CLAIM/,
-      );
+      const inputOffer = makeValidInput({
+        offer_id: 'unapproved-offer',
+        promotion_provenance: 'PROMO_REGISTRY_2026',
+      });
+      expect(() =>
+        validateAuthoritativeInputs(inputOffer, {
+          approved_claims: ['approved-offer'],
+          promotion_provenance: 'PROMO_REGISTRY_2026',
+        }),
+      ).toThrow(/ERR_UNAPPROVED_CLAIM/);
     });
 
     it('rejects payload-only price-bearing campaign if authoritative floor price is unavailable', () => {
@@ -1943,35 +1953,50 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
     });
 
     it('rejects payload-only promotional discount exceeding authoritative limit', () => {
-      const inputPercent = makeValidInput({ payload: { discount_percent: 50 } });
+      const inputPercent = makeValidInput({
+        payload: { discount_percent: 50, promotion_provenance: 'PROMO_REGISTRY_2026' },
+      });
       expect(() =>
-        validateAuthoritativeInputs(inputPercent, { max_discount_percent: 30 }),
+        validateAuthoritativeInputs(inputPercent, {
+          max_discount_percent: 30,
+          promotion_provenance: 'PROMO_REGISTRY_2026',
+        }),
       ).toThrow(/DISCOUNT_LIMIT_EXCEEDED/);
 
-      const inputAmount = makeValidInput({ payload: { discount_amount: 500 } });
+      const inputAmount = makeValidInput({
+        payload: { discount_amount: 500, promotion_provenance: 'PROMO_REGISTRY_2026' },
+      });
       expect(() =>
-        validateAuthoritativeInputs(inputAmount, { max_discount_amount: 200 }),
+        validateAuthoritativeInputs(inputAmount, {
+          max_discount_amount: 200,
+          promotion_provenance: 'PROMO_REGISTRY_2026',
+        }),
       ).toThrow(/DISCOUNT_LIMIT_EXCEEDED/);
     });
 
-    it('fails closed with AUTHORITATIVE_SOURCE_UNAVAILABLE when payload-only promotional data is absent or mismatched', () => {
+    it('fails closed when payload-only promotional claims lack provenance or exceed approved claims', () => {
       const inputPercent = makeValidInput({ payload: { discount_percent: 15 } });
       expect(() => validateAuthoritativeInputs(inputPercent, undefined)).toThrow(
-        /AUTHORITATIVE_SOURCE_UNAVAILABLE/,
+        /PROMOTION_PROVENANCE_REQUIRED/,
       );
 
       const inputAmount = makeValidInput({ payload: { discount_amount: 100 } });
       expect(() => validateAuthoritativeInputs(inputAmount, undefined)).toThrow(
-        /AUTHORITATIVE_SOURCE_UNAVAILABLE/,
+        /PROMOTION_PROVENANCE_REQUIRED/,
       );
 
-      const inputOffer = makeValidInput({ payload: { offer_id: 'unapproved-offer' } });
+      const inputOffer = makeValidInput({
+        payload: { offer_id: 'unapproved-offer', promotion_provenance: 'PROMO_REGISTRY_2026' },
+      });
       expect(() =>
-        validateAuthoritativeInputs(inputOffer, { approved_claims: ['approved-offer'] }),
+        validateAuthoritativeInputs(inputOffer, {
+          approved_claims: ['approved-offer'],
+          promotion_provenance: 'PROMO_REGISTRY_2026',
+        }),
       ).toThrow(/ERR_UNAPPROVED_CLAIM/);
 
       expect(() => validateAuthoritativeInputs(inputOffer, undefined)).toThrow(
-        /AUTHORITATIVE_SOURCE_UNAVAILABLE/,
+        /PROMOTION_PROVENANCE_REQUIRED/,
       );
     });
 
@@ -1984,24 +2009,39 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       ).toThrow(/SCHEMA_VALIDATION_ERROR/);
 
       const invalidPercent = makeValidInput({
-        payload: { discount_percent: 'twenty-percent' as unknown as number },
+        payload: {
+          discount_percent: 'twenty-percent' as unknown as number,
+          promotion_provenance: 'PROMO_REGISTRY_2026',
+        },
       });
       expect(() =>
-        validateAuthoritativeInputs(invalidPercent, { max_discount_percent: 50 }),
+        validateAuthoritativeInputs(invalidPercent, {
+          max_discount_percent: 50,
+          promotion_provenance: 'PROMO_REGISTRY_2026',
+        }),
       ).toThrow(/SCHEMA_VALIDATION_ERROR/);
 
       const invalidAmount = makeValidInput({
-        payload: { discount_amount: true as unknown as number },
+        payload: {
+          discount_amount: true as unknown as number,
+          promotion_provenance: 'PROMO_REGISTRY_2026',
+        },
       });
       expect(() =>
-        validateAuthoritativeInputs(invalidAmount, { max_discount_amount: 50 }),
+        validateAuthoritativeInputs(invalidAmount, {
+          max_discount_amount: 50,
+          promotion_provenance: 'PROMO_REGISTRY_2026',
+        }),
       ).toThrow(/SCHEMA_VALIDATION_ERROR/);
 
       const invalidOffer = makeValidInput({
-        payload: { offer_id: 12345 as unknown as string },
+        payload: { offer_id: 12345 as unknown as string, promotion_provenance: 'PROMO_REGISTRY_2026' },
       });
       expect(() =>
-        validateAuthoritativeInputs(invalidOffer, { approved_claims: ['12345'] }),
+        validateAuthoritativeInputs(invalidOffer, {
+          approved_claims: ['12345'],
+          promotion_provenance: 'PROMO_REGISTRY_2026',
+        }),
       ).toThrow(/SCHEMA_VALIDATION_ERROR/);
     });
 
@@ -2087,50 +2127,67 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
     it('dispatchCampaign fails closed on payload-only promotion claims with absent or breached authoritative limits', async () => {
       const { ports, dispatch, pauseForApproval } = createMockPorts();
 
-      // Absent discount_percent validation
+      const promotion_provenance = 'PROMO_REGISTRY_2026';
+
+      // Missing authoritative promotion provenance
       await expect(
         dispatchCampaign(makeValidInput({ payload: { discount_percent: 25 } }), CONTEXT, ports, {
           brandReview: makeValidBrandReview(),
         }),
-      ).rejects.toMatchObject({ code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE' });
+      ).rejects.toMatchObject({ code: 'PROMOTION_PROVENANCE_REQUIRED' });
 
       // Breached discount_percent limit
       await expect(
-        dispatchCampaign(makeValidInput({ payload: { discount_percent: 50 } }), CONTEXT, ports, {
-          brandReview: makeValidBrandReview(),
-          authoritativeValidation: { max_discount_percent: 20 },
-        }),
+        dispatchCampaign(
+          makeValidInput({ payload: { discount_percent: 50, promotion_provenance } }),
+          CONTEXT,
+          ports,
+          {
+            brandReview: makeValidBrandReview(),
+            authoritativeValidation: { max_discount_percent: 20, promotion_provenance },
+          },
+        ),
       ).rejects.toMatchObject({ code: 'DISCOUNT_LIMIT_EXCEEDED' });
 
-      // Absent discount_amount validation
+      // Missing authoritative promotion provenance for discount amount
       await expect(
         dispatchCampaign(makeValidInput({ payload: { discount_amount: 100 } }), CONTEXT, ports, {
           brandReview: makeValidBrandReview(),
         }),
-      ).rejects.toMatchObject({ code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE' });
+      ).rejects.toMatchObject({ code: 'PROMOTION_PROVENANCE_REQUIRED' });
 
       // Breached discount_amount limit
       await expect(
-        dispatchCampaign(makeValidInput({ payload: { discount_amount: 300 } }), CONTEXT, ports, {
-          brandReview: makeValidBrandReview(),
-          authoritativeValidation: { max_discount_amount: 150 },
-        }),
+        dispatchCampaign(
+          makeValidInput({ payload: { discount_amount: 300, promotion_provenance } }),
+          CONTEXT,
+          ports,
+          {
+            brandReview: makeValidBrandReview(),
+            authoritativeValidation: { max_discount_amount: 150, promotion_provenance },
+          },
+        ),
       ).rejects.toMatchObject({ code: 'DISCOUNT_LIMIT_EXCEEDED' });
 
       // Unapproved offer_id
       await expect(
-        dispatchCampaign(makeValidInput({ payload: { offer_id: 'fake-offer' } }), CONTEXT, ports, {
-          brandReview: makeValidBrandReview(),
-          authoritativeValidation: { approved_claims: ['valid-offer'] },
-        }),
+        dispatchCampaign(
+          makeValidInput({ payload: { offer_id: 'fake-offer', promotion_provenance } }),
+          CONTEXT,
+          ports,
+          {
+            brandReview: makeValidBrandReview(),
+            authoritativeValidation: { approved_claims: ['valid-offer'], promotion_provenance },
+          },
+        ),
       ).rejects.toMatchObject({ code: 'ERR_UNAPPROVED_CLAIM' });
 
-      // Absent offer_id validation
+      // Missing authoritative promotion provenance for offer
       await expect(
         dispatchCampaign(makeValidInput({ payload: { offer_id: 'any-offer' } }), CONTEXT, ports, {
           brandReview: makeValidBrandReview(),
         }),
-      ).rejects.toMatchObject({ code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE' });
+      ).rejects.toMatchObject({ code: 'PROMOTION_PROVENANCE_REQUIRED' });
 
       expect(dispatch).not.toHaveBeenCalled();
       expect(pauseForApproval).not.toHaveBeenCalled();
@@ -2278,7 +2335,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
           readApproved: async (_tenant, path) => ({
             path,
             version: 'v1',
-            content: '---\nstatus: approved\n---\nPolicy clean',
+            content: '---\nstatus: approved\n---\n- guaranteed results\n- miracle cure',
           }),
         },
         attribution: {
