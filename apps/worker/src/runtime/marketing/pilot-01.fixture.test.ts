@@ -775,9 +775,31 @@ describe('PILOT-01 Offline Fixture & Harness Interface', () => {
       it('MUST fail staged pipeline when injected provider dispatcher returns UNKNOWN', async () => {
         await expect(
           harness.executeStagedPipeline({
-            ports: {
-              providerDispatcher: () => ({ status: 'UNKNOWN', error: 'Indeterminate network partition' }),
+            approval_decision: {
+            approval_id: 'appr-pilot01-unknown',
+            decision: 'APPROVED',
+            operator_id: 'op-pilot01-unknown',
+            approved_payload_digest: computeRequestFingerprint({
+              tenant_id: PILOT_01_TENANT_ID,
+              campaign_id: PILOT_01_CAMPAIGN_ID,
+              segment_id: 'seg-champions-pilot01',
+              channel: 'LINE_FLEX',
+              approved_content_id: 'draft-pilot01-tw-01',
+              effect_key: PILOT_01_STAGED_EFFECT_KEY,
+            }),
+            approved_at: '2026-03-01T09:00:00.000Z',
+          },
+          ports: {
+            approvalPort: {
+              claimApprovalAndResume: async () => ({
+                claimed: true,
+                approval_id: 'appr-pilot01-unknown',
+                decision: 'APPROVED' as const,
+                operator_id: 'op-pilot01-unknown',
+              }),
             },
+            providerDispatcher: () => ({ status: 'UNKNOWN', error: 'Indeterminate network partition' }),
+          },
           }),
         ).rejects.toThrow(/PROVIDER_UNKNOWN/);
       });
