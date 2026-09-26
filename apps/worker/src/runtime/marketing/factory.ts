@@ -434,7 +434,7 @@ export function createMarketingOrchestratorFactory(
       effectGuard,
       sessionControl,
       leaseManager,
-      workerId: options.workerId,
+      ...(options.workerId === undefined ? {} : { workerId: options.workerId }),
     });
   };
 }
