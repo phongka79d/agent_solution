@@ -819,6 +819,65 @@ describe('startWorker', () => {
     await worker.close();
   });
 
+  it('admits an API-shaped marketing turn (WEB_CHAT) through the shared registry binding', async () => {
+    const tenant_id = '00000000-0000-4000-8000-000000000001';
+    // The API gateway stamps an admitted conversation turn with the conversation channel
+    // (`WEB_CHAT`), so the marketing signal contract must accept it as well as the internal
+    // campaign channel. A turn without a canonical `skill_id` still fails closed in the planner.
+    const signal = {
+      signal_id: 'sig-marketing-web-chat-1',
+      tenant_id,
+      correlation_id: 'corr-marketing-web-chat-1',
+      source_channel: 'WEB_CHAT',
+      event_type: 'campaign.requested',
+      timestamp: '2026-03-01T09:00:00.000Z',
+      subject: { session_id: 'session-marketing-1', channel_type: 'WEB_CHAT' },
+      payload: {
+        module: 'marketing',
+        skill_id: 'skill.mkt.dispatch_campaign',
+        input: { tenant_id, campaign_id: 'CAMP-0115-01', segment_id: 'SEG-loyal', channel: 'LINE', approved_content_id: 'draft-1' },
+      },
+    };
+    const taskRecord = {
+      tenant_id,
+      run_id: 'run-marketing-web-chat-1',
+      correlation_id: signal.correlation_id,
+      task_version: 1,
+      state: 'queued',
+      lease_owner: 'worker-1',
+      state_payload: { signal },
+    } as DurableTaskRecord;
+    const processQueuedSignal = vi.fn().mockResolvedValue(undefined);
+    const marketingOrchestratorFactory = vi.fn().mockResolvedValue({ processQueuedSignal });
+    const worker = startWorker(
+      { ENABLED_AGENT_MODULES: 'marketing' },
+      {
+        hmac: () => '',
+        tenantIds: [tenant_id],
+        autoStartPolling: false,
+        marketingOrchestratorFactory,
+      },
+    );
+    const recordFailure = vi.fn();
+
+    await processClaimedTask({
+      taskRecord,
+      tenant_id,
+      worker_id: 'worker-1',
+      workflowRepository: {
+        getTask: vi.fn().mockResolvedValue(taskRecord),
+        releaseTaskLease: vi.fn().mockResolvedValue(true),
+        recordFailure,
+        transitionTask: vi.fn(),
+      } as unknown as DurableWorkflowRepository,
+      registry: worker.registry,
+    });
+
+    expect(recordFailure).not.toHaveBeenCalled();
+    expect(processQueuedSignal).toHaveBeenCalledWith('run-marketing-web-chat-1', signal, { worker_id: 'worker-1' });
+    await worker.close();
+  });
+
   it('routes resumed Marketing tasks through the shared domain registry and orchestrator path', async () => {
     const tenant_id = '00000000-0000-4000-8000-000000000001';
     const resumeEvent = {

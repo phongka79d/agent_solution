@@ -466,7 +466,10 @@ export function createMarketingOrchestratorFactory(
 
 /** Exposed for worker composition and focused routing tests. */
 export const MARKETING_SIGNAL_CONTRACT_DEFAULTS = Object.freeze({
-  source_channels: Object.freeze(['MARKETING_CAMPAIGN']),
+  // `WEB_CHAT` is the channel the API gateway stamps on an admitted conversation turn; the
+  // `MARKETING_CAMPAIGN` channel covers internal campaign producers. A turn without a canonical
+  // `payload.skill_id` still fails closed in the planner.
+  source_channels: Object.freeze(['WEB_CHAT', 'MARKETING_CAMPAIGN']),
   event_types: Object.freeze(['campaign.requested']),
 });
 
