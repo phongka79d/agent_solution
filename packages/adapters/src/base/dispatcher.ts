@@ -42,5 +42,29 @@ export function createAdapterDispatcher(deps: {
         throw error;
       }
     },
+    reconcile: async (input: {
+      readonly tenant_id: string;
+      readonly effect_key: string;
+      readonly action_id?: string;
+      readonly adapter_target?: string;
+      readonly skill_id?: string;
+    }): Promise<{
+      readonly outcome: 'SUCCEEDED' | 'FAILED' | 'INDETERMINATE';
+      readonly receipt?: ExecutionReceipt;
+    }> => {
+      const target = input.adapter_target ?? 'API-001';
+      try {
+        const connector = deps.registry.resolve(target);
+        if (connector.reconcile) {
+          return await connector.reconcile(input);
+        }
+        return { outcome: 'INDETERMINATE' };
+      } catch (error) {
+        if (error instanceof UnknownConnectorError) {
+          throw refuse(target);
+        }
+        throw error;
+      }
+    },
   };
 }

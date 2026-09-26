@@ -122,15 +122,23 @@ export class ApiError extends Error {
   readonly correlationId: string;
   readonly status: number;
   readonly details?: Record<string, unknown> | unknown | undefined;
+  readonly envelope?: ApiErrorEnvelope | undefined;
+  readonly code: string;
+  readonly error_code: string;
+  readonly correlation_id: string;
 
   constructor(status: number, envelope: ApiErrorEnvelope) {
     super(envelope.message);
     this.name = 'ApiError';
     this.status = status;
     this.errorCode = envelope.error_code;
+    this.code = envelope.error_code;
+    this.error_code = envelope.error_code;
     this.retryable = envelope.retryable;
     this.correlationId = envelope.correlation_id;
+    this.correlation_id = envelope.correlation_id;
     this.details = envelope.details;
+    this.envelope = envelope;
 
     Object.setPrototypeOf(this, ApiError.prototype);
   }
@@ -230,13 +238,43 @@ export class CommandCenterApiClient {
     if (!response.ok) {
       let envelope: ApiErrorEnvelope;
       try {
-        const errorJson = await response.json();
+        const errorJson = (await response.json()) as Record<string, unknown>;
+        const raw =
+          errorJson && typeof errorJson.error === 'object' && errorJson.error !== null
+            ? (errorJson.error as Record<string, unknown>)
+            : errorJson;
+        const rawMsg =
+          (typeof raw?.message === 'string' && raw.message) ||
+          (typeof errorJson?.message === 'string' && errorJson.message) ||
+          (typeof errorJson?.error === 'string' && errorJson.error) ||
+          response.statusText ||
+          `Request failed with status ${response.status}`;
+        const rawCode =
+          (typeof raw?.error_code === 'string' && raw.error_code) ||
+          (typeof raw?.code === 'string' && raw.code) ||
+          (typeof errorJson?.error_code === 'string' && errorJson.error_code) ||
+          (typeof errorJson?.code === 'string' && errorJson.code) ||
+          'HTTP_ERROR';
+        const rawCorr =
+          (typeof raw?.correlation_id === 'string' && raw.correlation_id) ||
+          (typeof raw?.correlationId === 'string' && raw.correlationId) ||
+          (typeof errorJson?.correlation_id === 'string' && errorJson.correlation_id) ||
+          (typeof errorJson?.correlationId === 'string' && errorJson.correlationId) ||
+          response.headers.get('x-correlation-id') ||
+          '';
+        const rawRetry =
+          typeof raw?.retryable === 'boolean'
+            ? raw.retryable
+            : typeof errorJson?.retryable === 'boolean'
+              ? errorJson.retryable
+              : response.status >= 500 && response.status !== 501;
+
         envelope = {
-          error_code: errorJson.error_code || 'HTTP_ERROR',
-          message: errorJson.message || response.statusText,
-          retryable: Boolean(errorJson.retryable),
-          correlation_id: errorJson.correlation_id || response.headers.get('x-correlation-id') || '',
-          details: errorJson.details,
+          error_code: rawCode,
+          message: rawMsg,
+          retryable: rawRetry,
+          correlation_id: rawCorr,
+          details: raw?.details ?? errorJson?.details,
         };
       } catch {
         envelope = {

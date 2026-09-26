@@ -15,7 +15,7 @@ import {
   type SkillEffectClass,
   type SkillToolInvocation,
 } from '../contracts/index.js';
-import { createPlatformSkillRegistry, createPlatformSkills } from './index.js';
+import { DEFAULT_P0_PLATFORM_SKILL_ENABLEMENT, createPlatformSkillRegistry, createPlatformSkills } from './index.js';
 
 /** No connector is bound in this suite: the rows are inspected, never dispatched. */
 const DEPS: PlatformSkillDependencies = {
@@ -120,13 +120,61 @@ describe('platform skill registry', () => {
     }
   });
 
-  it('enables the read-only class and nothing else at Gate P0', () => {
-    for (const row of rows) {
-      expect(row.enabled, `${row.skill_id} (${row.effect_class})`).toBe(row.effect_class === 'READ');
-    }
-    expect(rows.filter((row) => row.enabled).length).toBeGreaterThan(0);
+  it('enables exactly the rows explicitly approved by the Gate P0 read-only policy', () => {
+    const enabledIds = rows.filter((row) => row.enabled).map((row) => row.skill_id);
+    const readOnlyIds = rows.filter((row) => row.effect_class === 'READ').map((row) => row.skill_id);
+
+    expect(enabledIds).toEqual(readOnlyIds);
+    expect(rows.some((row) => row.skill_id === 'skill.mkt.segment_audience' && row.enabled)).toBe(false);
+  });
+  it('enables escalation only when a later gate explicitly opts it in', () => {
+    const p1Enablement = {
+      enabled_skill_ids: [
+        ...DEFAULT_P0_PLATFORM_SKILL_ENABLEMENT.enabled_skill_ids,
+        'skill.care.escalate_to_human',
+      ],
+    } as const;
+    const rows = createPlatformSkills(DEPS, p1Enablement);
+
+    expect(rows.find((row) => row.skill_id === 'skill.care.escalate_to_human')?.enabled).toBe(true);
+    expect(rows.find((row) => row.skill_id === 'skill.care.manage_case')?.enabled).toBe(false);
+    expect(rows.filter((row) => row.enabled).map((row) => row.skill_id)).toContain('skill.care.search_faq');
   });
 
+  it('keeps manage_case disabled until a later gate explicitly enables it', () => {
+    expect(rows.find((row) => row.skill_id === 'skill.care.manage_case')?.enabled).toBe(false);
+    const p1bEnablement = {
+      enabled_skill_ids: [
+        ...DEFAULT_P0_PLATFORM_SKILL_ENABLEMENT.enabled_skill_ids,
+        'skill.care.manage_case',
+      ],
+    } as const;
+
+    const p1bRows = createPlatformSkills(DEPS, p1bEnablement);
+    expect(p1bRows.find((row) => row.skill_id === 'skill.care.manage_case')?.enabled).toBe(true);
+  });
+
+  it('requires case id and expected version on every non-create manage_case action', () => {
+    const manageCase = rows.find((row) => row.skill_id === 'skill.care.manage_case')!;
+    const base = {
+      tenant_id: 'tenant-1',
+      customer_id: 'customer-1',
+      intent: 'billing',
+      priority: 'P2',
+      conversation_id: 'conversation-1',
+      action_type: 'CREATE',
+    };
+
+    expect(() => manageCase.validateInput(base)).not.toThrow();
+    expect(() => manageCase.validateInput({ ...base, action_type: 'TRANSITION_STATE' })).toThrow();
+    expect(() => manageCase.validateInput({ ...base, action_type: 'TRANSITION_STATE', case_id: 'case-1' })).toThrow();
+    expect(() => manageCase.validateInput({
+      ...base,
+      action_type: 'TRANSITION_STATE',
+      case_id: 'case-1',
+      expected_case_version: 1,
+    })).not.toThrow();
+  });
   it('resolves every row through a registry built from the same rows', () => {
     const registry = createPlatformSkillRegistry(DEPS);
 

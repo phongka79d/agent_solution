@@ -28,15 +28,12 @@ import {
   type ConversationTakeoverResponse,
   type CreateConversationRequest,
   type PostMessageRequest,
-  type TaskAcceptedResponse,
   type TaskStateResponse,
   type TaskStoredState,
   type TaskWireStatus,
 } from '../../gateway/contracts.js';
 import { correlationIdOf, fail, replyFailure } from '../../gateway/http.js';
-
-/** The skill identity a conversational turn is reserved under. */
-const CONVERSATION_TURN_SKILL = 'conversation.turn';
+import { admitCareTurn } from './care-turn.js';
 
 /** `06` §8.3 C-8: the wire vocabulary differs from the stored one in exactly one value. */
 export function toWireStatus(state: TaskStoredState): TaskWireStatus {
@@ -181,115 +178,19 @@ export function registerConversationRoutes(
           fail('CAPABILITY_NOT_ENABLED', 'only WEB_CHAT Customer Care turns are enabled');
         }
 
-        // A conversation held by another operator is locked: the message is refused rather than
-        // queued behind a human who is answering it directly (`07` §6.2).
-        if (conversation.state === 'paused_takeover') {
-          const lease = await runtime.takeover.holder(principal.tenant_id, conversation_id);
-          if (lease === null || lease.operator_id !== principal.operator_id) {
-            fail(
-              'CONVERSATION_LOCKED',
-              'another operator holds the takeover lease for this conversation, so no new agent turn may start',
-            );
-          }
-        }
-
-        // One effect per immutable inbound identity. The key is derived by the canonical guard from
-        // the idempotency key, so a replay of the same turn never reserves a second slot.
-        const effect_key = runtime.effects.computeEffectKey({
-          tenant_id: principal.tenant_id,
-          skill_id: CONVERSATION_TURN_SKILL,
-          step_index: 0,
-          action_revision: 0,
+        const admission = await admitCareTurn({
+          runtime,
+          principal,
+          conversation,
+          correlation_id,
           request_id: idempotency_key,
-        });
-        const request_fingerprint = runtime.effects.computeRequestFingerprint({
           message,
-          conversation_id,
-          module: normalizedModule,
-          attachments: body?.attachments ?? null,
-        });
-
-        const stored = await runtime.receipts.receiptFor(principal.tenant_id, effect_key);
-        if (stored !== null) {
-          if (stored['request_fingerprint'] !== request_fingerprint) {
-            // The same identity carrying different bytes: the only idempotency conflict there is.
-            fail(
-              'IDEMPOTENCY_CONFLICT',
-              'this idempotency key was already claimed for a different payload; the turn is not started again',
-            );
-          }
-
-          await runtime.audit.record({
-            tenant_id: principal.tenant_id,
-            correlation_id,
-            operation: 'conversations.messages',
-            principal_kind: principal.kind,
-            ...(principal.operator_id === undefined ? {} : { operator_id: principal.operator_id }),
-            outcome: 'ACCEPTED',
-            detail: { replay: true, effect_key, conversation_id },
-          });
-
-          return reply.code(202).send(replayAccepted(stored, conversation_id));
-        }
-
-        const session_id = principal.session_id ?? conversation.external_thread_id;
-        const verified_customer_id = conversation.customer_id;
-
-        const started = await runtime.runs.start({
-          tenant_id: principal.tenant_id,
-          correlation_id,
-          request_id: idempotency_key,
-          source_channel: conversation.channel,
-          event_type: 'message.received',
-          session_id,
-          channel_type: conversation.channel,
-          channel_identifier: conversation.external_thread_id,
-          ...(verified_customer_id === null ? {} : { verified_customer_id }),
-          payload: {
-            message,
-            conversation_id,
-            module: normalizedModule,
-            ...(body?.attachments === undefined ? {} : { attachments: [...body.attachments] }),
-          },
-        });
-        await runtime.conversations.appendMessage({
-          tenant_id: principal.tenant_id,
-          conversation_id,
-          sender_type: 'customer',
-          sender_id: session_id,
-          content: message,
-        });
-
-        const receipt: Record<string, unknown> = {
-          task_id: started.run_id,
-          conversation_id,
-          status: toWireStatus(started.lifecycle_state),
-          task_version: started.task_version,
-          correlation_id: started.correlation_id,
-          request_fingerprint,
-        };
-
-        await runtime.receipts.storeReceipt(principal.tenant_id, effect_key, receipt);
-
-        await runtime.audit.record({
-          tenant_id: principal.tenant_id,
-          correlation_id,
+          module: 'support',
+          ...(body?.attachments === undefined ? {} : { attachments: body.attachments }),
           operation: 'conversations.messages',
-          principal_kind: principal.kind,
-          ...(principal.operator_id === undefined ? {} : { operator_id: principal.operator_id }),
-          outcome: 'ACCEPTED',
-          detail: { run_id: started.run_id, effect_key, conversation_id },
         });
 
-        const accepted: TaskAcceptedResponse = {
-          task_id: started.run_id,
-          conversation_id,
-          status: toWireStatus(started.lifecycle_state),
-          task_version: started.task_version,
-          correlation_id: started.correlation_id,
-        };
-
-        return reply.code(202).send(accepted);
+        return reply.code(202).send(admission.accepted);
       } catch (error) {
         return refuse(reply, request, runtime, error);
       }
@@ -385,7 +286,33 @@ export function registerConversationRoutes(
           fail('TAKEOVER_LEASE_LOST', 'the takeover lease could not be established for this conversation');
         }
 
-        await runtime.conversations.setState(principal.tenant_id, conversation_id, 'paused_takeover', operator_id);
+        const releaseNewLease = async () => {
+          if (acquired.outcome === 'ACQUIRED') {
+            await runtime.takeover.release({
+              tenant_id: principal.tenant_id,
+              conversation_id,
+              operator_id,
+            });
+          }
+        };
+        let handoffClaim: Awaited<ReturnType<typeof runtime.handoffs.claim>>;
+        try {
+          handoffClaim = await runtime.handoffs.claim({
+            tenant_id: principal.tenant_id,
+            conversation_id,
+            operator_id,
+          });
+          if (handoffClaim === 'NO_HANDOFF') {
+            await runtime.conversations.setState(principal.tenant_id, conversation_id, 'paused_takeover', operator_id);
+          }
+        } catch (error) {
+          await releaseNewLease();
+          throw error;
+        }
+        if (handoffClaim === 'HELD_BY_ANOTHER_OPERATOR') {
+          await releaseNewLease();
+          fail('TAKEOVER_LEASE_HELD', 'another operator already owns this durable human handoff');
+        }
 
         await runtime.audit.record({
           tenant_id: principal.tenant_id,
@@ -521,7 +448,21 @@ export function registerConversationRoutes(
           );
         }
 
-        await runtime.conversations.setState(principal.tenant_id, conversation_id, 'open', null);
+        const handoffCompletion = await runtime.handoffs.complete({
+          tenant_id: principal.tenant_id,
+          conversation_id,
+          operator_id,
+          completion_summary: handoff_summary,
+        });
+        if (handoffCompletion === 'HELD_BY_ANOTHER_OPERATOR') {
+          fail('TAKEOVER_LEASE_HELD', 'another operator owns this durable human handoff');
+        }
+        if (handoffCompletion === 'NOT_ASSIGNED') {
+          fail('TAKEOVER_LEASE_LOST', 'this human handoff is not assigned to the authenticated operator');
+        }
+        if (handoffCompletion === 'NO_HANDOFF') {
+          await runtime.conversations.setState(principal.tenant_id, conversation_id, 'open', null);
+        }
 
         await runtime.audit.record({
           tenant_id: principal.tenant_id,
@@ -558,23 +499,4 @@ function requireOperatorIdentifier(operator_id: string | undefined): string {
     fail('AUTHENTICATION_FAILED', 'the authenticated operator principal carries no operator identifier');
   }
   return operator_id;
-}
-
-/** Renders a stored receipt as the R02 acceptance, so a replay reproduces the original answer. */
-function replayAccepted(receipt: Record<string, unknown>, conversation_id: string): TaskAcceptedResponse {
-  const task_id = receipt['task_id'];
-  const task_version = receipt['task_version'];
-  const correlation_id = receipt['correlation_id'];
-
-  if (typeof task_id !== 'string' || typeof task_version !== 'number' || typeof correlation_id !== 'string') {
-    fail('INTERNAL_ERROR', 'the receipt stored for this idempotency key is incomplete and cannot be returned');
-  }
-
-  return {
-    task_id,
-    conversation_id,
-    status: 'accepted',
-    task_version,
-    correlation_id,
-  };
 }

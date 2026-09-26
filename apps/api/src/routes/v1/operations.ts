@@ -51,6 +51,11 @@ function isStoredState(value: string): value is TaskStoredState {
 function isResolution(value: unknown): value is ReconciliationResolution {
   return typeof value === 'string' && (RESOLUTIONS as readonly string[]).includes(value);
 }
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
 
 /**
  * Registers R13, R16 and R18 on the `/api/v1` prefix.
@@ -217,11 +222,11 @@ export function registerOperationRoutes(
         }
 
         const body: unknown = request.body;
-        if (typeof body !== 'object' || body === null) {
+        if (!isPlainRecord(body)) {
           fail('VALIDATION_FAILED', 'the request body must be a JSON object');
         }
 
-        const candidate = body as Record<string, unknown>;
+        const candidate = body;
         const resolution = candidate['resolution'];
         const reason = candidate['reason'];
 
@@ -236,6 +241,9 @@ export function registerOperationRoutes(
         }
 
         const receipt = candidate['receipt'];
+        if (receipt !== undefined && !isPlainRecord(receipt)) {
+          fail('VALIDATION_FAILED', 'receipt must be a JSON object when supplied');
+        }
         const run_id = request.params.run_id;
 
         const accepted = await runtime.runs.reconcile({
@@ -244,9 +252,7 @@ export function registerOperationRoutes(
           resolution,
           reason,
           operator_id,
-          ...(typeof receipt === 'object' && receipt !== null && !Array.isArray(receipt)
-            ? { receipt: receipt as Record<string, unknown> }
-            : {}),
+          ...(receipt === undefined ? {} : { receipt }),
         });
 
         await runtime.audit.record({

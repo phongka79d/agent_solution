@@ -1,10 +1,14 @@
 # Core Engine and Revenue Orchestrator Specification
 
-> **BLUEPRINT STATUS — target design; NOT IMPLEMENTED, DEPLOYED, MEASURED, or runtime evidence.**
-> This document owns the future orchestrator contract for SRS §12, §17, §19 / NFR-003, NFR-006, NFR-007, and NFR-008.
-> Every code, workflow, and interface block is a **target snippet**, not a present runtime artifact.
+> **Runtime delta — P1B Care handoff.** The durable task/event, lease-fenced worker resume, approval
+> claim, and API-001/mock GET provider-proof reconciliation paths described below are implemented and verified by
+> repository/core/worker tests. Confirmed success durably settles the reservation and replays the proven receipt
+> without a second dispatch; confirmed absence settles FAILED, reopens the SAME effect key, and permits exactly
+> one re-dispatch. Operator labels/receipts are never accepted as proof. The broader eleven-stage contract,
+> live database/deployment verification, and unimplemented adapters remain target design; this document does
+> not claim live PostgreSQL/RLS, Docker smoke, PILOT-04, or production external ERP evidence.
 
-Status: Target Blueprint Specification (Gate P0) — not an implemented system
+Status: Runtime-backed P1B handoff slice plus target contract for the remaining Core Engine
 System Component: Core Platform Engine (Layer 1)
 Document Version: 1.0.0
 Target Directory: `implement/04-core-engine-and-orchestrator.md`
@@ -194,8 +198,10 @@ export interface SignalEnvelope {
 }
 
 export interface SignalSubject {
-  /** Server-issued, unique per conversation/visit. Mandatory, including for anonymous traffic. */
+  /** Server-issued session identity, distinct from the durable conversation row UUID. */
   readonly session_id: string;
+  /** Canonical tenant-scoped conversation UUID resolved by the API; never client-asserted. */
+  readonly conversation_id?: string;
   readonly channel_type: string; // 'line' | 'whatsapp' | 'web' | 'sms' | ...
   /** Channel-native UID (LINE UID, WhatsApp WAID, web visitor id). Exact-match join key only. */
   readonly channel_identifier?: string;
@@ -225,6 +231,8 @@ export interface Customer360Fact {
 export interface WorkingMemoryContext {
   /** Server-issued unique session id. Anonymous sessions are isolated per `session_id`. */
   readonly session_id: string;
+  /** Canonical conversation row UUID, present only after tenant/channel/thread validation. */
+  readonly conversation_id?: string;
   readonly active_cart_id?: string;
   readonly last_touch_channel: string;
   readonly turn_count: number;
@@ -1067,205 +1075,19 @@ export class RevenueOrchestrator {
     return { lifecycle_state: 'completed', evidence: latestEvidence };
   }
 
-  /**
-   * Resumes a paused task after a human decision (SCR-003) or a schedule/reconciliation event.
-   * The approval row is claimed and the task re-activated in ONE transaction, so an approval can
-   * never be consumed twice and can never resume a task it was not bound to.
-   */
-  public async resumeTask(
-    run_id: string,
-    resumeEvent: {
-      tenant_id: string;
-      event_type: 'human.approval' | 'human.modify' | 'human.reject' | 'human.pause' | 'human.cancel' | 'human.reconcile' | 'timer.expired' | 'reconcile.completed';
-      approval_id?: string;
-      expected_payload_sha256?: string; // required for every approval decision; digest of reviewed payload
-      operator_id?: string;
-      reconciliation_resolution?: 'PROVIDER_CONFIRMED_SUCCEEDED' | 'PROVIDER_CONFIRMED_ABSENT' | 'ESCALATE_MANUALLY';
-      reconciliation_receipt?: unknown;
-      modifications?: Record<string, unknown>;
-      reason?: string;
-    }
-  ): Promise<OrchestratorRunResult> {
-    const task = await this.dependencies.workflowEngine.getTask(resumeEvent.tenant_id, run_id);
-    if (!task) {
-      throw new OrchestratorError('TASK_NOT_FOUND', `Task ${run_id} does not exist`);
-    }
-    if (task.state !== 'awaiting_human' && task.state !== 'waiting') {
-      throw new OrchestratorError('INVALID_TASK_STATE', `Cannot resume task currently in '${task.state}'`);
-    }
+**Runtime handoff implementation (`packages/core-engine/src/orchestrator/revenue-orchestrator.ts`).** `resumeTask()` is a worker-only resume path, not an API-side decision executor:
 
-    const checkpoint: DurableTaskCheckpoint = task.state_payload;
-    if (!checkpoint?.plan || !checkpoint.context || !checkpoint.request_id) {
-      // Re-entering a plan requires the checkpoint that carries the immutable `request_id`, the
-      // context and the evidence cursor. Re-drafting from scratch would re-decide the plan and
-      // re-derive keys from a different identity, so an incomplete checkpoint fails closed and is
-      // escalated to SCR-003 instead of guessed at.
-      throw new OrchestratorError(
-        'CHECKPOINT_INCOMPLETE',
-        `Task ${run_id} has no complete resume checkpoint; a human operator must resolve it in SCR-003.`
-      );
-    }
-    const pendingAction: ActionDraft | null = checkpoint.pending_action ?? null;
-    const isReconciliationResolution = resumeEvent.event_type === 'human.reconcile';
-    const isHumanApprovalDecision = resumeEvent.event_type === 'human.approval'
-      || resumeEvent.event_type === 'human.modify'
-      || resumeEvent.event_type === 'human.reject'
-      || resumeEvent.event_type === 'human.pause'
-      || resumeEvent.event_type === 'human.cancel';
-    const isAutomaticResume = resumeEvent.event_type === 'timer.expired'
-      || resumeEvent.event_type === 'reconcile.completed';
-    if ((isHumanApprovalDecision && task.state !== 'awaiting_human')
-      || (isReconciliationResolution && task.state !== 'awaiting_human')
-      || (isAutomaticResume && task.state !== 'waiting')) {
-      throw new OrchestratorError('INVALID_TASK_STATE', 'Resume event does not match the durable waiting state.');
-    }
+1. Read the task and require a complete six-member `DurableTaskCheckpoint`: `plan`, `current_step`, `pending_action` (or `null`), `context`, `previous_evidence_hash`, and `request_id`. Approval and reconciliation events are accepted only for `awaiting_human` and `waiting`, respectively.
+2. Acquire the worker lease, re-read the task, and revalidate the state. Durable snapshots must still carry this worker's live lease and the exact canonical `state_payload.resume_event`; otherwise the method refuses with a concurrent-lock or event-conflict error.
+3. For human decisions, recheck takeover/policy/floor guards before the fenced `claimApprovalAndResume()` transaction. That transaction locks task → action → approval, verifies the reviewed digest and binding, consumes the event, and moves/retains/stops the task atomically. The API only queues the event.
+4. For `human.reconcile`, `ESCALATE_MANUALLY` atomically removes the consumed event while keeping the complete checkpoint in `waiting`. For provider-confirmed resolutions (`PROVIDER_CONFIRMED_SUCCEEDED` and `PROVIDER_CONFIRMED_ABSENT`), operator labels and operator-supplied receipts are never accepted as proof. Instead, the orchestrator invokes `adapterDispatcher.reconcile` for the exact pending mutating action (bound to API-001 / mock GET):
+   - Confirmed `SUCCEEDED`: durably settles the reservation in `effect_reservations` and replays the proven provider receipt without a second dispatch, advancing the step through normal completion.
+   - Confirmed `ABSENT` (provider returned `FAILED`): durably marks the reservation `FAILED`, reopens the SAME `effect_key` reservation, and permits exactly one re-dispatch of the pending mutating action under the unchanged key.
+   - Indeterminate or unavailable provider proof: fails closed and keeps the task parked in `waiting`. The resume event is removed only after decisive provider proof or manual escalation; on indeterminate or unavailable proof, the event is retained so recovery is not prematurely dismissed or re-claimed forever. Tenant isolation, leases, and complete checkpoints are strictly preserved throughout.
+5. All resumed execution re-enters the same guarded step loop. Every exit releases the lease. An indeterminate provider result parks `waiting` with the reservation unresolved; it never claims success or blindly dispatches again.
 
-    // The lease is taken BEFORE the approval is claimed: an approval authorizes exactly one
-    // execution, so it must never be consumed by a worker that cannot actually run the task.
-    const leaseAcquired = await this.dependencies.leaseManager.acquireLease(resumeEvent.tenant_id, run_id, this.workerId);
-    if (!leaseAcquired) {
-      throw new OrchestratorError('CONCURRENT_TASK_LOCK', `Unable to acquire lease to resume ${run_id}`);
-    }
+The worker consumes `state_payload.resume_event` before generic signal recovery. Event-bearing `waiting` / `awaiting_human` rows are claimable with `FOR UPDATE SKIP LOCKED`, retain their lifecycle state while leased, and release with the event intact when the orchestrator has not consumed it. After consumption, the worker releases the parked row without a resume event; rows without a resume event remain parked and are not claimable by generic recovery.
 
-    let executionResumed = false;
-    try {
-      let releasedAction: ActionDraft | null = null;
-      let approvalRef: {
-        approval_id: string | null;
-        decision: 'APPROVED' | 'MODIFIED' | null;
-        operator_id: string | null;
-      } | null = null;
-
-      if (isReconciliationResolution) {
-        if (!resumeEvent.operator_id || !resumeEvent.reconciliation_resolution || !pendingAction) {
-          throw new OrchestratorError('RECONCILIATION_BINDING_REQUIRED', 'Manual reconciliation requires an authenticated operator, resolution and pending action.');
-        }
-        if (resumeEvent.reconciliation_resolution === 'ESCALATE_MANUALLY') {
-          return { run_id, lifecycle_state: 'awaiting_human', message: 'Provider outcome remains unresolved; no dispatch was authorized.' };
-        }
-        await this.dependencies.effectGuard.resolve({
-          tenant_id: resumeEvent.tenant_id,
-          effect_key: pendingAction.effect_key,
-          status: resumeEvent.reconciliation_resolution === 'PROVIDER_CONFIRMED_SUCCEEDED' ? 'SUCCEEDED' : 'FAILED',
-          receipt: resumeEvent.reconciliation_receipt,
-        });
-        await this.dependencies.workflowEngine.transitionTask(resumeEvent.tenant_id, run_id, 'running', 'Manual provider reconciliation resolved');
-        executionResumed = true;
-      }
-
-      if (isHumanApprovalDecision) {
-        if (!resumeEvent.approval_id || !pendingAction || !resumeEvent.operator_id || !resumeEvent.expected_payload_sha256) {
-          throw new OrchestratorError('APPROVAL_BINDING_REQUIRED', 'Decision requires authenticated operator, approval and reviewed digest.');
-        }
-        const decision: 'APPROVED' | 'MODIFIED' | 'REJECTED' | 'PAUSE' | 'CANCELLED' =
-          resumeEvent.event_type === 'human.approval' ? 'APPROVED'
-          : resumeEvent.event_type === 'human.modify' ? 'MODIFIED'
-          : resumeEvent.event_type === 'human.reject' ? 'REJECTED'
-          : resumeEvent.event_type === 'human.pause' ? 'PAUSE'
-          : 'CANCELLED';
-        if (decision === 'MODIFIED' && !resumeEvent.modifications) {
-          throw new OrchestratorError('MODIFICATION_REQUIRED', 'MODIFY requires a proposed payload delta.');
-        }
-        const candidate = decision === 'MODIFIED'
-          ? await this.applyModification(pendingAction, resumeEvent.modifications!, checkpoint.context)
-          : pendingAction;
-        if (decision === 'APPROVED' || decision === 'MODIFIED') {
-          this.verifyFloorPrice(candidate);
-          const eligibility = await this.dependencies.policyEngine.evaluateAuthority(candidate, checkpoint.context);
-          if (eligibility.verdict === 'DENIED') {
-            throw new OrchestratorError('AUTHORITY_DENIED', eligibility.reason);
-          }
-        }
-        // Lock current task/action/approval; check the reviewed digest and operator; atomically
-        // save the authorized revision. The store's full transaction contract is §4.2(4).
-        const claimed = await this.dependencies.workflowEngine.claimApprovalAndResume({
-          tenant_id: resumeEvent.tenant_id,
-          run_id,
-          approval_id: resumeEvent.approval_id,
-          effect_key: pendingAction.effect_key,
-          expected_payload_sha256: resumeEvent.expected_payload_sha256,
-          authorized_action: decision === 'APPROVED' || decision === 'MODIFIED' ? candidate : null,
-          decision,
-          operator_id: resumeEvent.operator_id,
-          review_comment: resumeEvent.reason ?? null,
-        });
-        if (!claimed.claimed) {
-          throw new OrchestratorError('APPROVAL_NOT_CLAIMABLE', 'Approval is stale, decided, or bound to a different action.');
-        }
-        if (decision === 'PAUSE') {
-          return { run_id, lifecycle_state: 'awaiting_human', message: 'Approval remains pending under an explicit human pause' };
-        }
-        if (decision === 'REJECTED' || decision === 'CANCELLED') {
-          return { run_id, lifecycle_state: 'stopped', message: `Task ${decision.toLowerCase()} by human operator` };
-        }
-        executionResumed = true;
-        releasedAction = { ...candidate, approval_id: resumeEvent.approval_id };
-        approvalRef = { approval_id: resumeEvent.approval_id, decision, operator_id: resumeEvent.operator_id };
-      }
-
-      if (isAutomaticResume && !executionResumed) {
-        await this.dependencies.workflowEngine.transitionTask(resumeEvent.tenant_id, run_id, 'running', `Resumed by ${resumeEvent.event_type}`);
-        executionResumed = true;
-      }
-
-      // The human path already committed its transition. All resumed steps recheck safety;
-      // the claimed decision satisfies only AUTH-4 and cannot outlive a policy revocation.
-      const outcome = await this.executeSteps({
-        signal: null,
-        tenant_id: resumeEvent.tenant_id,
-        run_id,
-        correlation_id: task.correlation_id,
-        request_id: checkpoint.request_id,
-        plan: checkpoint.plan,
-        context: checkpoint.context,
-        chain: { previous: checkpoint.previous_evidence_hash ?? GENESIS_HASH },
-        from_step: checkpoint.current_step,
-        approved_action: releasedAction,
-        approval_ref: approvalRef,
-      });
-      if (outcome.lifecycle_state !== 'completed') {
-        return { run_id, lifecycle_state: outcome.lifecycle_state, evidence: outcome.evidence, message: outcome.message };
-      }
-
-      await this.dependencies.workflowEngine.transitionTask(resumeEvent.tenant_id, run_id, 'completed', 'All resumed steps verified');
-      return { run_id, lifecycle_state: 'completed', evidence: outcome.evidence };
-    } catch (error) {
-      // A refused human decision must not fail or re-queue the still-pending task.
-      if (!executionResumed) throw error;
-      // Identical durable-recovery contract to the first pass (§4.4). An indeterminate external
-      // outcome never reaches this block: the guarded step engine parks it as `waiting` with its
-      // checkpoint and with the reservation still RESERVED, so only RETRYABLE and FATAL failures
-      // are classified and handed to the durable scheduler here.
-      const failure_class = this.classifyFailure(error);
-      if (failure_class === 'UNKNOWN') {
-        await this.parkTask({
-          tenant_id: resumeEvent.tenant_id,
-          run_id,
-          reason: 'EFFECT_UNKNOWN: provider outcome indeterminate; reconciliation scheduled (§4.4)',
-          plan: checkpoint.plan,
-          current_step: checkpoint.current_step,
-          pending_action: checkpoint.pending_action ?? null,
-          context: checkpoint.context,
-          previous_evidence_hash: checkpoint.previous_evidence_hash ?? GENESIS_HASH,
-          request_id: checkpoint.request_id,
-        });
-        return {
-          run_id,
-          lifecycle_state: 'waiting',
-          message: 'Provider outcome is UNKNOWN; reconciling by effect_key before any retry',
-        };
-      }
-      await this.dependencies.workflowEngine.recordFailure({
-        tenant_id: resumeEvent.tenant_id,
-        run_id,
-        error_class: failure_class,
-        error_details: this.serializeError(error),
-      });
-      throw error;
-    } finally {
-      await this.dependencies.leaseManager.releaseLease(resumeEvent.tenant_id, run_id, this.workerId);
-    }
-  }
 
   /**
    * Operator hands the conversation back to the agent (SCR-005). Releases the takeover lock and
@@ -1827,11 +1649,11 @@ The Task Engine manages durable tasks that survive process restarts, power loss,
 | `running` | `task.success` | `completed` | All plan steps verified. Immutable evidence hashed and chained. |
 | `running` | `task.retryable_error` | `queued` | `retry_count < max_retries`; `last_error_class = 'RETRYABLE'`; backoff timer set. No evidence or state is rolled back. |
 | `running` | `task.fatal_error` | `failed` | Non-retryable error, or `retry_count >= max_retries`. Fail-closed; `error_details` and an audit record are written. |
-| `waiting` | `event.received` | `running` | Correlation ID verified; state re-hydrated; worker lease re-acquired. |
-| `waiting` | `timer.expired` | `running` | Scheduled delay reached (e.g., 24-hr abandoned cart sequence). |
-| `waiting` | `reconcile.completed` | `running` | The outstanding effect was confirmed applied or confirmed absent; execution resumes from `current_step`. |
-| `awaiting_human`| `human.approval` | `running` | Reviewed digest and operator checked; approval and task claimed transactionally; current policy rechecked before the same effect key dispatches. |
-| `awaiting_human`| `human.modify` | `running` | Normalized new payload/revision is explicitly authorized after all guards; action, approval and checkpoint change atomically; the old digest authorizes nothing further. |
+| `waiting` | `event.received` | `running` | Correlation and tenant binding are verified; an event-bearing row is claimed with an optimistic version and worker lease, then the checkpoint is re-read before resume. |
+| `waiting` | `human.reconcile` | `waiting` / `running` | R18 queues one durable event. `ESCALATE_MANUALLY` consumes it and remains `waiting`; a provider-confirmed resolution may resume only after authoritative provider proof. |
+| `waiting` | `timer.expired` | `running` | Scheduled delay reached; the worker rechecks the complete checkpoint and lease fence before execution. |
+| `waiting` | `reconcile.completed` | `running` | Automated or background provider reconciliation verified conclusive outcome (confirmed succeeded or absent); worker rechecks complete checkpoint and lease fence before resuming running plan execution. |
+| `awaiting_human` | `human.approval` / `human.modify` | `running` | The API queues the event. The worker rechecks the reviewed digest, policy, takeover and floor, then claims approval and task transactionally; the old digest authorizes nothing further. |
 | `awaiting_human` | `human.pause` | `awaiting_human` | Reviewed digest and operator checked; set `is_paused=TRUE`, retain PENDING and its action binding; audit without dispatch. Repeated PAUSE conflicts; a later explicit terminal decision may resolve it. |
 | `awaiting_human`| `human.reject` / `human.cancel` | `stopped` | Terminal. The approval row is decided in the same transaction; the reason is written to the audit trail. |
 | `*` | `human.takeover` | `stopped` | Immediate hard kill of bot execution on the session (`SCR-005`). Re-checked before every step, retry and resume; a late takeover never leaves a queued dispatch behind. |
@@ -1852,7 +1674,10 @@ UPDATE agentos.platform_durable_tasks
        updated_at = CURRENT_TIMESTAMP
  WHERE tenant_id = $1
    AND run_id = $2
-   AND state IN ('queued', 'running', 'waiting', 'awaiting_human')
+   AND (
+     state IN ('queued', 'running')
+     OR (state IN ('waiting', 'awaiting_human') AND state_payload ? 'resume_event')
+   )
    AND task_version = $expected_task_version
    AND (lease_owner IS NULL OR lease_owner = $3 OR lease_expires_at < CURRENT_TIMESTAMP)
 RETURNING task_version;           -- 0 rows ⇒ another worker owns a live lease ⇒ CONCURRENT_TASK_LOCK
@@ -1890,24 +1715,22 @@ COMMIT;
 -- (4) Human decision uses the transactional procedure specified immediately below this block.
 -- Digest normalization is RFC 8785 in the application, never PostgreSQL JSON text formatting.
 
--- (5) Stale-lease requeue (crash recovery). Only tasks whose owner stopped heart-beating are
---     re-queued; a task parked in `waiting` / `awaiting_human` is never touched.
-UPDATE agentos.platform_durable_tasks
-   SET state = 'queued', lease_owner = NULL, lease_expires_at = NULL,
-       task_version = task_version + 1, updated_at = CURRENT_TIMESTAMP
- WHERE tenant_id = $1 AND state = 'running' AND lease_expires_at < CURRENT_TIMESTAMP;
+-- (5) Scheduler claim/recovery. A parked human or reconciliation event is not converted to
+--     `queued`: the worker leases the event-bearing row, retains its state, consumes the event
+--     through `resumeTask`, and releases the lease only after the guarded transition.
+--     Rows without a resume event remain parked and are not claimable by generic recovery.
 
 -- No approval-expiry sweep is defined: there is no approved TTL source/column in §03.
 -- The provisional 72h effect-cache/reconciliation window is NOT an approval lifetime.
 ```
 
-**(4) Human-decision transaction — target procedure, not optional checks.** `claimApprovalAndResume` runs under tenant RLS and the authenticated operator identity. Lock the task, action and approval in that order with `SELECT ... FOR UPDATE`; require `awaiting_human`, matching `paused_for_approval_id`, unexpired owned worker lease, and the pending `(tenant_id, run_id, effect_key)` binding. Recompute SHA-256 over RFC 8785 canonical `approvals.payload` while locked and compare it with `expected_payload_sha256`; mismatch returns `409 APPROVAL_STALE_PAYLOAD` without writes. A decided claim or repeated PAUSE returns `APPROVAL_NOT_CLAIMABLE`; a paused PENDING item may still receive an explicit terminal decision. The skill dispatch digest check separately uses `APPROVAL_PAYLOAD_MISMATCH` for an action not covered by its authorization (`05`).
+**(4) Decision handoff — queue first, consume under a worker fence.** The API validates the authenticated operator and queues exactly one `state_payload.resume_event` under tenant RLS. `ApprovalRepository.queueDecision` locks the durable task, requires `awaiting_human` plus the matching approval binding, verifies the reviewed payload digest, and stores the event with the complete checkpoint; identical canonical replays are no-ops and a different event conflicts. It does not mark the approval decided and does not execute a provider call.
 
-For APPROVE, persist the unchanged authorized action. For MODIFY, allow only the registered schema's editable payload fields; preserve tenant, subject, skill and inbound identity, increment `action_revision`, and derive its new deterministic key. Revalidate all policy/source/consent/identity/floor checks, compare the normalized authorized payload, and refuse if the old effect was ever dispatched or is indeterminate. Atomically update `actions.action_payload`/`effect_key`, `approvals.payload`/`effect_key`, and the checkpoint's pending action; append audit containing old/new digests, keys, revision, policy versions and operator. The explicit MODIFY decision is authorization for this new revision, not reuse of the previous digest.
+The worker claims the event-bearing task with its optimistic version and lease fence. `resumeTask` rechecks the current policy, takeover state and floor before `claimApprovalAndResume` locks task → action → approval and applies APPROVE, MODIFY, REJECT, PAUSE or CANCEL atomically. The claim is the only point that consumes the approval event; a stale digest, binding, operator or lease refuses without a partial write. MODIFY stores a new validated action revision and effect key; the old digest never authorizes it.
 
-For any terminal decision, write the approval decision/operator/reason/time, clear `is_paused`, increment the locked task version, and clear `paused_for_approval_id`. APPROVED/MODIFIED transitions to `running`; REJECTED/CANCELLED to `stopped`. Every expected update must affect exactly one row and audit must append, or the entire transaction rolls back. `PAUSE` uses the same reviewed-digest/operator checks, sets only `is_paused=TRUE`, keeps PENDING/`awaiting_human`, increments task version and audits; a subsequent explicit human decision can decide that paused item through the same five-decision route. No timer or automatic worker may clear a pause.
+Reconciliation uses the same durable event slot. R18 queues `human.reconcile`; the worker consumes it under lease and version fences. Provider proof is bound via API-001 / mock GET: confirmed success durably settles the reservation and replays the proven provider receipt without a second dispatch; confirmed absence durably settles the reservation as FAILED, reopens the SAME effect key, and permits exactly one re-dispatch. Operator-supplied labels or receipts are not proof and are ignored. Indeterminate or unavailable provider outcomes fail closed, retaining the resume event and keeping the task `waiting`. `ESCALATE_MANUALLY` consumes the event and keeps the task `waiting` with its complete checkpoint. No resolution blindly re-dispatches an indeterminate effect.
 
-After commit, dispatch rechecks current policy and the stored binding; the one-time decision does not authorize future steps. Approval expiry is `[OWNER-DECISION-REQUIRED]` for Business/Operations with `03`/`04`: until a policy/version and server-observable deadline are specified, no automated expiry or UI countdown is enabled. Stale policy, revoked permission, changed digest and decided rows are refused independently of TTL.
+After the guarded claim, resumed execution re-enters the normal step loop and releases the worker lease. Approval expiry is [OWNER-DECISION-REQUIRED] for Business/Operations with `03`/`04`: no automated expiry or UI countdown is enabled until a policy/version and server-observable deadline are specified.
 
 **Binding rules.**
 
@@ -2006,13 +1829,22 @@ NFR-004 requires durable workflows with finite exponential backoff, timeouts and
                    continue with the next step (never re-dispatch this effect).
      • FAILED    → re-dispatch once under the SAME effect_key. If the action is AUTH-4, reuse the
                    existing approvals row bound to that key; never insert a second approval.
+     • TRANSITION → the resumption transitions `waiting` -> `reconcile.completed` -> `running`
+                   under the worker lease fence, rechecks the complete checkpoint, and re-enters the execution loop.
 4. ESCALATE  when an indeterminate reservation reaches `expires_at` (default 72 h, = the
              idempotency window): mark the reservation EXPIRED, park the task in
              `awaiting_human`, and raise an SCR-003 exception item so a human resolves the
              provider state. The run is never silently abandoned.
-5. RETRY  a task in `queued`/`running` whose lease expired is reclaimed by the stale-lease
-          requeue (§4.2 statement 5); `retry_count` is incremented only on a `RETRYABLE` failure,
-          and the task fails terminally at `max_retries`.
+5. CRASH RECOVERY & LEASE RECLAIM: A task in `queued`/`running` whose worker process crashed or whose
+   lease expired is reclaimed by the stale-lease query (§4.2 statement 5). The reclaiming worker
+   inspects the durable task state:
+     • If a `resume_event` is present, it is consumed first under the lease fence (`resumeTask`).
+     • If an unconfirmed mutating step was in flight (`pending_action.mutating === true`), the worker
+       transitions the task to `waiting` with `EFFECT_UNKNOWN: reclaimed mutating action requires provider reconciliation`,
+       preserving the complete checkpoint payload for provider reconciliation (§4.4) rather than blindly re-dispatching.
+     • If no unconfirmed mutating action was in flight, the task runs inside the durable recovery envelope:
+       failures book `RETRYABLE`/`FATAL` and spend retry budget, stage replay resumes from `CONTEXT`
+       (avoiding duplicate `SIGNAL` entry), and exhausted retries fail terminally.
 ```
 
 **Backoff.** Delay is `initial_interval_ms × backoff_multiplier^(retry_count - 1)` with full jitter, capped by the step's `timeout_ms` budget for the whole attempt sequence. The schedule lives in the durable task row, so a crashed worker resumes the wait instead of restarting it.
@@ -2406,7 +2238,7 @@ Approvals are **not** written here: the pause/claim transaction of §4.2 is the 
 
 ## 8. Contract-Complete Stage, Control-Flow, and Recovery Rules `[SRS-MUST][SRS §12, §17, §19 / NFR-003, NFR-004, NFR-007, NFR-008]`
 
-This section is the owner contract for the eleven stages. The snippets and tables are `[NOT-RUNTIME-EVIDENCE]` until a future worker executes them against real durable state.
+This section remains the owner contract for the eleven stages. The P1B Care handoff slice is runtime-backed: durable event queueing, lease-fenced worker claiming, strict checkpoint re-read, approval claim, safe manual reconciliation, and API-001/mock GET provider-proof reconciliation (success settlement/replay, confirmed absence FAILED settlement and same-key re-dispatch) are covered by repository, core-engine, and worker integration tests. Rows outside that slice remain target contracts until their owning boundary is bound.
 
 | Stage | Input → output | Durable state / side effect | Authority/evidence/retry rule |
 |---|---|---|---|
@@ -2434,7 +2266,7 @@ No price-bearing dispatch is allowed without an owner-approved, provenance-beari
 
 ### 8.3 Durable task lifecycle and reconciliation `[SRS §12, §17 / NFR-003, NFR-004]`
 
-Stored task states are `queued`, `running`, `waiting`, `awaiting_human`, `completed`, `stopped`, and `failed` (`03` DOMAIN 5). `UNKNOWN` is an unconfirmed effect outcome represented by `waiting`, `error.outcome = 'UNKNOWN'`, and an open reservation; it is neither a task state nor an audit execution status. Optimistic `task_version` and fenced leases reject stale workers. Approval claim and task transition are atomic. Stop/revocation checks run before each dispatch. Recovery loads committed checkpoints and never infers success from an in-memory response.
+Stored task states are `queued`, `running`, `waiting`, `awaiting_human`, `completed`, `stopped`, and `failed` (`03` DOMAIN 5). `UNKNOWN` is an unconfirmed effect outcome represented by `waiting`, an open reservation and a durable reconciliation event; it is neither a task state nor an audit execution status. Optimistic `task_version` and fenced leases reject stale workers. API decisions queue events; worker approval claim and task transition are atomic. Stop/revocation checks run before each dispatch. Recovery loads committed checkpoints and never infers success from an in-memory response.
 
 ### 8.4 Stage-entry and recovery invariants `[BLUEPRINT][SRS §9, §12, §17, §19]`
 
@@ -2442,7 +2274,7 @@ Stored task states are `queued`, `running`, `waiting`, `awaiting_human`, `comple
 
 The stage boundary is pre-side-effect through `APPROVAL`: tenant and subject binding, schema validation, skill/agent authorization, business rules, consent, floor provenance, takeover state, and approval digest are evaluated before `IEffectGuard.reserve()`. `EXECUTION` is the only stage allowed to invoke an external mutating adapter, and only after a durable reservation succeeds. `EVIDENCE` cannot be skipped after a provider attempt; if its append fails, the run cannot claim success and enters reconciliation/operator review. `OUTCOME` accepts only a source event or SoR receipt linked to the effect; `LEARNING` writes a versioned, retention-approved projection and never overwrites source facts.
 
-Recovery decisions are explicit: `SUCCEEDED` reservation advances the cursor without dispatch; provider-confirmed `FAILED` absence permits one same-key re-dispatch; `RESERVED`/indeterminate remains `waiting` and is reconciled; an expired unresolved reservation becomes an operator-visible `awaiting_human` exception. A retry is therefore a new attempt record with the same effect identity, never a new effect identity. These are target invariants and `[NOT-RUNTIME-EVIDENCE]` until a future durable worker and provider boundary execute them.
+Recovery decisions are explicit: a succeeded reservation advances the cursor without dispatch; provider-confirmed absence may permit a same-key re-dispatch only after authoritative provider proof; an unresolved reservation remains `waiting` and is reconciled; an expired unresolved reservation remains an operator-visible exception. The P1B runtime never treats an operator receipt as provider proof, never settles a reservation from an unverified claim and never blindly retries an indeterminate effect. Provider proof is bound via API-001/mock GET: confirmed success settles and replays without second dispatch; confirmed absence settles FAILED, reopens the same effect key, and permits exactly one re-dispatch. Broader recovery cases, live PostgreSQL/RLS, and unimplemented adapters stay fail-closed until their boundaries are implemented.
 
 ## 9. Dependency Interface Catalog `[BLUEPRINT][SRS §12, §17, §19]`
 
@@ -2465,3 +2297,5 @@ Recovery decisions are explicit: `SUCCEEDED` reservation advances the cursor wit
 Trace propagation carries `tenant_id`, `run_id`, `correlation_id`, and `effect_key` through all stages. Evidence stores canonical JSON digest, predecessor hash, provider receipt or truthful failure, and source references. Audit and evidence are separate: audit records the governance decision; evidence records the immutable payload/result. Outcome attribution requires a source event/SoR reference and never fabricates revenue, delivery, or learning. Learning writes are versioned and restricted to validated outcome classes.
 
 Future scenarios MUST cover: a complete eleven-stage run; missing context; unknown identity; missing consent; AUTH-4 pause/resume; AUTH-5 deny; provider timeout with reconciliation; duplicate retry; takeover suppression; absent floor provenance; and HYPOTHESIS separation. No scenario is runtime evidence until executed and attached to a gate bundle.
+
+Gate P1 remains open until live PostgreSQL/RLS, DB-backed Care pilots, Docker services, approved knowledge corpus, and real System-of-Record (SoR) evidence exist. Offline test harnesses verify local code paths only and do not close the gate.

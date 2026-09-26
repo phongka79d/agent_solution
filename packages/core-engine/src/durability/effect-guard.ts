@@ -237,6 +237,14 @@ export class EffectGuard implements IEffectGuard {
 
     const current = await this.repository.getReservation(input.tenant_id, input.effect_key);
 
+    // A worker may crash after durable settlement but before its task resume event is consumed.
+    // Matching status is the durable outcome already established by the first attempt; keep the
+    // stored receipt and let the retry finish event consumption instead of treating the replay as a
+    // conflicting second settlement.
+    if (current?.status === input.status) {
+      return;
+    }
+
     throw new OrchestratorError(
       'RESERVATION_NOT_SETTLEABLE',
       `effect_key ${input.effect_key} was not settled as ${input.status}: the durable row is `
@@ -290,6 +298,23 @@ export class EffectGuard implements IEffectGuard {
             + 'RESERVED | SUCCEEDED | FAILED | EXPIRED (§03 DOMAIN 5); refusing to report an outcome for it.',
         );
     }
+  }
+
+  /**
+   * Returns a FAILED reservation to RESERVED with a fresh window (implement/04 §4.4 step 3).
+   * A provider-confirmed absence is the only condition that clears the way for one more dispatch
+   * under the SAME effect key.
+   */
+  async reopenForRetry(input: {
+    tenant_id: string;
+    effect_key: string;
+  }): Promise<boolean> {
+    const expiresAt = new Date(this.now().getTime() + this.reservationTtlMs).toISOString();
+    return await this.repository.reopenReservation({
+      tenant_id: input.tenant_id,
+      effect_key: input.effect_key,
+      expires_at: expiresAt,
+    });
   }
 
   /**

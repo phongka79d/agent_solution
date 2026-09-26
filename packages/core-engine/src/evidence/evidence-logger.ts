@@ -83,6 +83,12 @@ export class MemoryEvidenceLogger implements IEvidenceLogger {
    *   `CANONICAL_JSON_UNSUPPORTED` (the payload has no canonical form, so its digest would not be
    *   reproducible).
    */
+  public async findImmutableRecord(params: { tenant_id: string; run_id: string; effect_key: string; step_index: number }): Promise<ImmutableEvidenceRecord | null> {
+    const existing = this.evidence.get(scopedKey(params.tenant_id, params.run_id))
+      ?.find((record) => record.effect_key === params.effect_key && record.step_index === params.step_index);
+    return existing ?? null;
+  }
+
   public async createImmutableRecord(params: {
     run_id: string;
     tenant_id: string;

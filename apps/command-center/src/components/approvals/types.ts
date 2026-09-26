@@ -20,7 +20,8 @@ export type ApprovalStatus =
   | 'APPROVED'
   | 'REJECTED'
   | 'MODIFIED'
-  | 'CANCELLED';
+  | 'CANCELLED'
+  | 'QUEUED';
 
 /** Standardized rejection reason codes for REJECT action */
 export const STANDARD_REJECTION_CODES = [
@@ -57,6 +58,7 @@ export interface ApprovalItem {
   readonly decisionNotes?: string | undefined;
   /** Optional customer binding in payload for cross-navigation to SCR-004 */
   readonly customerId?: string | undefined;
+  readonly queuedAt?: string | undefined;
 }
 
 /** Wire request payload for POST /api/v1/approvals/{id}/decision */
@@ -69,12 +71,15 @@ export interface ApprovalDecisionRequest {
   readonly modified_payload?: Record<string, unknown> | undefined;
 }
 
-/** Wire response from POST /api/v1/approvals/{id}/decision */
+/** Approval decision wire status returned by POST /api/v1/approvals/{id}/decision (R05 queue-first contract) */
+export type ApprovalDecisionStatus = 'QUEUED';
+
+/** Wire response from POST /api/v1/approvals/{id}/decision (R05 queue-first contract) */
 export interface ApprovalDecisionResponse {
   readonly approval_id: string;
   readonly task_id: string;
-  readonly status: 'APPROVED' | 'REJECTED' | 'MODIFIED' | 'PAUSED' | 'CANCELLED';
-  readonly decided_at: string;
+  readonly status: ApprovalDecisionStatus;
+  readonly queued_at: string;
   readonly correlation_id: string;
 }
 

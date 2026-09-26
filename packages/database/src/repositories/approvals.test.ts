@@ -9,6 +9,7 @@ import type {
   ApprovalListInput,
   ApprovalStatus,
   ClaimApprovalAndResumeInput,
+  QueueApprovalDecisionInput,
   PauseForApprovalInput,
 } from './approvals.js';
 import type { DurableTaskRow } from './durable-workflows.js';
@@ -135,7 +136,8 @@ type StatementKind =
   | 'pause_approval'
   | 'decide_approval'
   | 'modify_action'
-  | 'modify_approval';
+  | 'modify_approval'
+  | 'queue_resume_event';
 
 function classify(sql: string): StatementKind {
   if (sql.startsWith('INSERT INTO agentos.actions')) {
@@ -148,6 +150,13 @@ function classify(sql: string): StatementKind {
 
   if (sql.startsWith('UPDATE agentos.actions')) {
     return 'modify_action';
+  }
+
+  if (
+    sql.includes('SET state_payload = $3::jsonb') &&
+    sql.includes('paused_for_approval_id = $5::uuid')
+  ) {
+    return 'queue_resume_event';
   }
 
   if (sql.includes("SET state = 'awaiting_human'")) {
@@ -496,6 +505,32 @@ function claimInput(
   };
 
   return Object.assign(input, overrides);
+}
+/** A durable approval decision event; it is not an approval claim. */
+function queueInput(
+  overrides: Partial<QueueApprovalDecisionInput> = {},
+): QueueApprovalDecisionInput {
+  const input: QueueApprovalDecisionInput = {
+    tenant_id: TENANT,
+    approval_id: APPROVAL_ID,
+    run_id: RUN_ID,
+    effect_key: EFFECT_KEY,
+    expected_payload_sha256: PAYLOAD_SHA256,
+    decision: 'APPROVE',
+    operator_id: OPERATOR_ID,
+    reason: COMMENT,
+  };
+
+  return Object.assign(input, overrides);
+}
+
+function queueAnswers(task: DurableTaskRow = parkedTaskRow()): ScriptedAnswers {
+  return {
+    lock_task: { rows: [task] },
+    lock_action: { rows: [actionRow()] },
+    lock_approval: { rows: [approvalRow()] },
+    queue_resume_event: { rows: [task] },
+  };
 }
 
 /** The two approvals-side locks of a decision: the action of the key and the approval row. */
@@ -908,6 +943,74 @@ describe('ApprovalRepository.pauseForApproval', () => {
   });
 });
 
+describe('ApprovalRepository.queueDecision', () => {
+  const resumeEvent = {
+    tenant_id: TENANT,
+    run_id: RUN_ID,
+    effect_key: EFFECT_KEY,
+    event_type: 'human.approval',
+    approval_id: APPROVAL_ID,
+    expected_payload_sha256: PAYLOAD_SHA256,
+    operator_id: OPERATOR_ID,
+    reason: COMMENT,
+  };
+
+  it('queues a durable event without deciding or consuming the approval', async () => {
+    const { repository, client, boundTenants } = harnessFor(queueAnswers());
+
+    const result = await repository.queueDecision(queueInput());
+
+    expect(boundTenants).toEqual([TENANT]);
+    expect(statementsOf(client)).toEqual([
+      'lock_task',
+      'lock_action',
+      'lock_approval',
+      'queue_resume_event',
+    ]);
+    expect(result).toEqual({
+      approval_id: APPROVAL_ID,
+      task_id: TASK_ID,
+      status: 'QUEUED',
+      queued_at: UPDATED_AT.toISOString(),
+    });
+    const queuedParams = bindingsOf(client, 'queue_resume_event');
+    expect(queuedParams[0]).toBe(TENANT);
+    expect(queuedParams[1]).toBe(RUN_ID);
+    expect(JSON.parse(String(queuedParams[2]))).toEqual({
+      ...CHECKPOINT,
+      resume_event: resumeEvent,
+    });
+    expect(queuedParams[3]).toBe(PARKED_TASK_VERSION);
+    expect(queuedParams[4]).toBe(APPROVAL_ID);
+  });
+
+  it('replays an identical queued decision without writing a second event', async () => {
+    const task = parkedTaskRow({
+      state_payload: { ...CHECKPOINT, resume_event: resumeEvent },
+    });
+    const { repository, client } = harnessFor(queueAnswers(task));
+
+    const result = await repository.queueDecision(queueInput());
+
+    expect(result.status).toBe('QUEUED');
+    expect(statementsOf(client)).toEqual(['lock_task', 'lock_action', 'lock_approval']);
+  });
+
+  it('rejects a different decision already queued for the same approval', async () => {
+    const task = parkedTaskRow({
+      state_payload: { ...CHECKPOINT, resume_event: resumeEvent },
+    });
+    const { repository, client } = harnessFor(queueAnswers(task));
+
+    await expect(
+      repository.queueDecision(queueInput({
+        decision: 'REJECT',
+        reason: 'operator changed the decision',
+      })),
+    ).rejects.toThrow('APPROVAL_DECISION_CONFLICT');
+    expect(statementsOf(client)).toEqual(['lock_task', 'lock_action', 'lock_approval']);
+  });
+});
 describe('ApprovalRepository.claimApprovalAndResume', () => {
   it('releases the parked run on one APPROVED decision, in task -> action -> approval lock order', async () => {
     const { repository, client, boundTenants } = harnessFor(

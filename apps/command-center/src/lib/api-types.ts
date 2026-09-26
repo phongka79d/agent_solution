@@ -138,9 +138,9 @@ export interface ApiErrorEnvelope {
 export type ApprovalDecision = 'APPROVE' | 'REJECT' | 'MODIFY' | 'PAUSE' | 'CANCEL';
 
 /**
- * Approval decision status returned by POST /api/v1/approvals/{id}/decision.
+ * Approval decision status returned by POST /api/v1/approvals/{id}/decision (R05 queue-first contract).
  */
-export type ApprovalDecisionStatus = 'APPROVED' | 'REJECTED' | 'MODIFIED' | 'PAUSED' | 'CANCELLED';
+export type ApprovalDecisionStatus = 'QUEUED';
 
 /**
  * Approval status enum across queue and outcomes.
@@ -152,7 +152,8 @@ export type ApprovalStatus =
   | 'APPROVED'
   | 'REJECTED'
   | 'MODIFIED'
-  | 'CANCELLED';
+  | 'CANCELLED'
+  | 'QUEUED';
 
 /** Query parameters for R14 GET /api/v1/approvals */
 export interface GetApprovalsParams {
@@ -210,12 +211,12 @@ export interface ApprovalDecisionRequest {
   readonly modified_payload?: Record<string, unknown> | undefined;
 }
 
-/** Wire response from POST /api/v1/approvals/{id}/decision */
+/** Wire response from POST /api/v1/approvals/{id}/decision (R05 queue-first contract) */
 export interface ApprovalDecisionResponse {
   readonly approval_id: string;
   readonly task_id: string;
   readonly status: ApprovalDecisionStatus;
-  readonly decided_at: string;
+  readonly queued_at: string;
   readonly correlation_id: string;
 }
 

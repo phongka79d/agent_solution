@@ -17,11 +17,10 @@
 # gate-environment rehearsal. A green suite here proves the named offline cases
 # ran — it does not close a durability item that needs the real durable store.
 #
-# `test:pilots` and `test:e2e` stay declared in `turbo.json` for the later gates
-# (implement/09 §8) but no workspace package implements them and this pipeline
-# never invokes them: a job that ran an empty pilot/e2e suite would report a gate
-# that the repository cannot yet evidence. The suite tasks above run offline,
-# unit-level evidence only, and are named for exactly what they execute.
+# \`test:pilots\` is implemented by apps/worker and runs the executable offline
+# E2E-OFF-ESC/PILOT-04 harness. It is included here as local regression evidence;
+# the database and production-like pilot boundaries remain the live gate evidence.
+# \`test:e2e\` remains a later-gate task and is not invoked here.
 #
 # Nothing in this pipeline publishes: `permissions` is read-only, and the Docker
 # job only builds images into the local daemon, inspects them, boots the Compose
@@ -33,7 +32,7 @@ name: Production Quality and Verification Pipeline
 # a workflow that only names `main` never validates the code that actually lands.
 on:
   push:
-    branches: [main, 'init/agent-solution', 'release/*']
+    branches: [main, 'init/agent-solution', 'release/*', 'feat/**']
   pull_request:
     branches: [main, 'init/agent-solution']
 
@@ -66,7 +65,7 @@ jobs:
       # images — instead of reporting "0 total" as a green suite in job 2, 3 or 4.
       - name: Require every gate task this pipeline invokes to be implemented
         run: >-
-          node scripts/require-implemented-tasks.mjs lint typecheck build test:unit test:contracts
+          node scripts/require-implemented-tasks.mjs lint typecheck build test:unit test:contracts test:pilots
           test:adversarial test:security db:migrate:rehearse
       - name: Lint
         run: pnpm lint
@@ -96,11 +95,13 @@ jobs:
       # if that implementer disappears, because reporting this job green would
       # claim a suite that never ran.
       - name: Require the unit and contract tasks to be implemented
-        run: node scripts/require-implemented-tasks.mjs test:unit test:contracts
+        run: node scripts/require-implemented-tasks.mjs test:unit test:contracts test:pilots
       - name: Unit tests
         run: pnpm test:unit
       - name: Contract tests
         run: pnpm test:contracts
+      - name: Offline P1 pilot harness
+        run: pnpm test:pilots
 
   database-migration-rehearsal:
     name: 3. Raw SQL Migration and RLS Rehearsal

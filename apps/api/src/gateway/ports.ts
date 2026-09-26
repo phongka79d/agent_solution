@@ -13,6 +13,13 @@
 import type { IEffectGuard } from '@agentos/core-engine/contracts';
 
 import type {
+  CareHandoffClaimOutcome,
+  CareHandoffCompletionOutcome,
+  ClaimCareHandoffInput,
+  CompleteCareHandoffInput,
+} from '@agentos/database';
+
+import type {
   ApprovalDecision,
   ApprovalDetailResponse,
   ApprovalQueueItem,
@@ -127,15 +134,27 @@ export interface TakeoverLeasePort {
   holder(tenant_id: string, conversation_id: string): Promise<TakeoverLease | null>;
 }
 
+/** Durable assignment/completion operations for an enqueued human handoff. */
+export interface CareHandoffPort {
+  claim(input: ClaimCareHandoffInput): Promise<CareHandoffClaimOutcome>;
+  complete(input: CompleteCareHandoffInput): Promise<CareHandoffCompletionOutcome>;
+}
+
 // ============================================================================
 // Durable runs, approvals, reservations (`04` §4, `03` §1 DOMAIN 5)
 // ============================================================================
+
+export type RunAdmission = 'ADMITTED' | 'REPLAY' | 'IN_FLIGHT';
 
 export interface StartedRun {
   readonly run_id: string;
   readonly task_version: number;
   readonly correlation_id: string;
   readonly lifecycle_state: TaskStoredState;
+  /** Which delivery owns the reservation; absent only for legacy injected test ports. */
+  readonly admission?: RunAdmission;
+  /** Persisted receipt when the reservation was already settled as a replay. */
+  readonly receipt?: Record<string, unknown>;
 }
 
 export interface RunPort {
@@ -208,10 +227,8 @@ export interface ApprovalPort {
   /** §8.2.1 detail read; a cross-tenant id is `null` so the route answers `404`, never redacted. */
   detail(tenant_id: string, approval_id: string): Promise<ApprovalDetailResponse | null>;
   /**
-   * R05: one-time compare-and-set claim on the `PENDING` row bound to
-   * `(tenant_id, run_id, effect_key)`, with the reviewed digest re-verified in the same
-   * transaction. A stale digest is `APPROVAL_STALE_PAYLOAD`; a decided row is
-   * `APPROVAL_NOT_CLAIMABLE`.
+   * R05: authenticate and queue one durable human decision. The worker later performs the
+   * lease/policy/checkpoint-fenced claim, so this port never reports a terminal decision here.
    */
   decide(input: {
     tenant_id: string;
@@ -226,8 +243,8 @@ export interface ApprovalPort {
   }): Promise<{
     readonly approval_id: string;
     readonly task_id: string;
-    readonly status: 'APPROVED' | 'REJECTED' | 'MODIFIED' | 'PAUSED' | 'CANCELLED';
-    readonly decided_at: string;
+    readonly status: 'QUEUED';
+    readonly queued_at: string;
   }>;
 }
 
@@ -386,6 +403,7 @@ export interface ReceiptPort {
 export interface GatewayRuntime {
   readonly conversations: ConversationPort;
   readonly takeover: TakeoverLeasePort;
+  readonly handoffs: CareHandoffPort;
   readonly runs: RunPort;
   readonly approvals: ApprovalPort;
   readonly events: EventPort;

@@ -5,16 +5,16 @@
 > Every SQL, JSON, TypeScript, and shell block is a **target snippet**, not a file that currently exists.
 
 
-## 1. PostgreSQL DDL Schema (28 Canonical Entities + 1 Child Entity + 3 Audit Tables + 3 Runtime Tables + 2 Views)
+## 1. PostgreSQL DDL Schema (28 Canonical Entities + 2 Child Entities + 3 Audit Tables + 4 Runtime Tables + 2 Views)
 
 The data layer implements the 28 canonical entities defined in Section 14 of the SRS across 4 functional domains, plus the child, runtime, and projection objects consumed by the Core Engine:
 
 | Object Class | Count | Where |
 |---|---|---|
 | Canonical entities (SRS §14, Entities 1 - 28) | 28 | §1 DDL — DOMAIN 1 - DOMAIN 4 |
-| Child entity (`conversation_messages`, Entity 11.1) | 1 | §1 DDL — DOMAIN 3 |
+| Child entities (`conversation_messages`, Entity 11.1; `service_case_events`, Entity 18.1) | 2 | §1 DDL — DOMAIN 3 |
 | Audit tables (`audit_records`, `evidence_records`, `agent_run_logs`) | 3 | §1 DDL — DOMAIN 5 |
-| Runtime tables (`platform_durable_tasks`, `pending_outcome_attributions`, `effect_reservations`) | 3 | §1 DDL — DOMAIN 5 |
+| Runtime tables (platform_durable_tasks, pending_outcome_attributions, effect_reservations, care_handoffs) | 4 | §1 DDL — DOMAIN 5 |
 | SCR-003 queue view (`approval_queue`, over the single canonical `approvals` table) | 1 view | §1 DDL — DOMAIN 5 |
 | Customer 360 projection view (`customer_360_profiles`) | 1 | §1 DDL — DOMAIN 5 |
 | Composite tenant-scoped FK convention + negative tests | — | §1.1 |
@@ -462,6 +462,42 @@ CREATE TABLE service_cases (
     CONSTRAINT ck_cases_reopen_pair CHECK ((reopen_count = 0) = (reopened_at IS NULL)) -- reopen bookkeeping is paired: a reopen always stamps both fields (§9)
 );
 CREATE INDEX idx_service_cases_state ON service_cases (tenant_id, state, priority);
+-- Migration 0003 additions: versioned case writes, authoritative SLA policy and durable receipts.
+ALTER TABLE service_cases
+    ADD COLUMN evidence_refs JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(evidence_refs) = 'array'),
+    ADD COLUMN sla_target_hours INT CHECK (sla_target_hours IS NULL OR sla_target_hours > 0),
+    ADD CONSTRAINT uq_service_cases_tenant_id UNIQUE (tenant_id, id);
+
+CREATE TABLE service_case_events (
+    id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
+    tenant_id UUID NOT NULL,
+    case_id UUID NOT NULL,
+    effect_key CHAR(64) NOT NULL CHECK (effect_key ~ '^[0-9a-f]{64}$'),
+    request_fingerprint CHAR(64) NOT NULL CHECK (request_fingerprint ~ '^[0-9a-f]{64}$'),
+    action_type VARCHAR(32) NOT NULL CHECK (action_type IN ('CREATE', 'TRANSITION_STATE', 'ASSIGN', 'RESOLVE', 'REOPEN', 'CLOSE')),
+    actor_id VARCHAR(128) NOT NULL,
+    case_version INT NOT NULL CHECK (case_version > 0),
+    previous_state VARCHAR(32),
+    next_state VARCHAR(32) NOT NULL CHECK (next_state IN ('NEW', 'CLASSIFIED', 'ASSIGNED', 'IN_PROGRESS', 'WAITING_CUSTOMER', 'RESOLVED', 'CLOSED')),
+    action_details JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(action_details) = 'object'),
+    result_payload JSONB NOT NULL CHECK (jsonb_typeof(result_payload) = 'object'),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_service_case_events_effect UNIQUE (tenant_id, effect_key),
+    CONSTRAINT uq_service_case_events_version UNIQUE (tenant_id, case_id, case_version),
+    CONSTRAINT fk_service_case_events_case FOREIGN KEY (tenant_id, case_id)
+        REFERENCES service_cases (tenant_id, id) ON DELETE CASCADE
+);
+CREATE INDEX idx_service_case_events_case ON service_case_events (tenant_id, case_id, case_version);
+
+-- Receipts are tenant-scoped and append-only for the application role.
+ALTER TABLE service_case_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE service_case_events FORCE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation_policy ON service_case_events
+    AS PERMISSIVE FOR ALL
+    USING (tenant_id = ANY (string_to_array(current_setting('app.current_tenant_id', true), ',')::uuid[]))
+    WITH CHECK (tenant_id = ANY (string_to_array(current_setting('app.current_tenant_id', true), ',')::uuid[]));
+GRANT SELECT, INSERT ON service_case_events TO agentos_app;
+REVOKE UPDATE, DELETE, TRUNCATE ON service_case_events FROM agentos_app;
 
 -- ----------------------------------------------------------------------------
 -- DOMAIN 4: GOVERNANCE & INTELLIGENCE (Entities 19 - 28)
@@ -557,10 +593,11 @@ CREATE INDEX idx_actions_decision ON actions (tenant_id, decision_id);
 
 -- Entity 24: Approval (the SINGLE canonical human-authorization record - SCR-003, AUTH-4)
 -- One row is created PENDING when the orchestrator pauses for AUTH-4, and it is the only
--- object that authorizes a resume. `approval_queue` (DOMAIN 5) is a read-only VIEW over the
--- PENDING rows; there is no second queue table. The resume path updates this row
--- (decision + decided_by + decided_at) in the SAME transaction that re-activates the durable
--- task, so an approval can never be consumed twice or resume a task against stale state.
+-- object that authorizes a resume. approval_queue (DOMAIN 5) is a read-only VIEW over the
+-- PENDING rows; there is no second approval table. The API queues a canonical
+-- state_payload.resume_event; the worker later locks task -> action -> approval and updates
+-- this row (decision + decided_by + decided_at) in the SAME transaction that re-activates or
+-- stops the durable task, so an approval cannot be consumed twice.
 -- SCR-003 verbs map as: Approve -> decision APPROVED; Reject -> REJECTED; Modify -> MODIFIED
 -- (payload delta captured in `review_comment` + `payload`); Pause -> `is_paused = TRUE`
 -- (still PENDING, not decided); Cancel -> CANCELLED.
@@ -663,8 +700,8 @@ ALTER TABLE service_cases
 -- ----------------------------------------------------------------------------
 -- DOMAIN 5: CUSTOMER360 PROJECTION VIEW, AUDIT & RUNTIME TABLES
 -- These objects are the persistence contract of the Core Engine (§04): the
--- 11-stage lifecycle reads the projection at CONTEXT and writes the
--- append-only chains, durable task, effect reservation, outcome watcher, and approval lifecycle.
+-- 11-stage lifecycle reads the projection at CONTEXT and writes the append-only chains, durable task,
+-- effect reservation, outcome watcher, approval lifecycle and Care handoff queue.
 -- RLS is not declared inline: the §2 auto-policy DO block enables and FORCEs
 -- `tenant_isolation_policy` on every table of the `agentos` schema, so the tables
 -- below are covered by construction. The views (`customer_360_profiles`,
@@ -866,6 +903,48 @@ CREATE TABLE platform_durable_tasks (
 CREATE INDEX idx_tasks_tenant_state ON platform_durable_tasks (tenant_id, state);
 CREATE INDEX idx_tasks_lease ON platform_durable_tasks (state, lease_expires_at) WHERE state IN ('queued', 'running');
 CREATE INDEX idx_tasks_correlation ON platform_durable_tasks (tenant_id, correlation_id);
+-- Runtime Table 4: Care handoffs (durable human escalation queue, P1B).
+-- skill.care.escalate_to_human writes this row through Orchestrator.HandoffBus. The handoff
+-- repository binds tenant, run, checkpoint identity, session/conversation/customer and effect
+-- reservation before enqueueing. The partial active-conversation index prevents two open Care
+-- handoffs for one tenant conversation; RLS and the missing DELETE grant make it tenant-scoped and
+-- operator-auditable. Task parking, reservation settlement and queue insertion remain one transaction.
+CREATE TABLE care_handoffs (
+    id UUID PRIMARY KEY DEFAULT agentos.uuid_generate_v7(),
+    tenant_id UUID NOT NULL,
+    run_id VARCHAR(64) NOT NULL,
+    step_index INT NOT NULL CHECK (step_index > 0),
+    effect_key VARCHAR(128) NOT NULL CHECK (effect_key ~ '^[0-9a-f]{64}$'),
+    request_fingerprint CHAR(64) NOT NULL,
+    session_id VARCHAR(128) NOT NULL,
+    conversation_id UUID NOT NULL,
+    customer_id UUID,
+    escalation_reason TEXT NOT NULL,
+    summary_context TEXT,
+    status VARCHAR(16) NOT NULL DEFAULT 'ENQUEUED' CHECK (status IN ('ENQUEUED', 'ASSIGNED', 'COMPLETED')),
+    queue_position INT NOT NULL CHECK (queue_position > 0),
+    result_payload JSONB NOT NULL,
+    execution_receipt JSONB NOT NULL,
+    operator_id VARCHAR(128),
+    claimed_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    completion_summary TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_care_handoffs_effect UNIQUE (tenant_id, effect_key),
+    CONSTRAINT fk_care_handoffs_conversation FOREIGN KEY (tenant_id, conversation_id)
+      REFERENCES conversations (tenant_id, id) ON DELETE RESTRICT,
+    CONSTRAINT fk_care_handoffs_customer FOREIGN KEY (tenant_id, customer_id)
+      REFERENCES customers (tenant_id, id) ON DELETE RESTRICT,
+    CONSTRAINT fk_care_handoffs_task FOREIGN KEY (tenant_id, run_id)
+      REFERENCES platform_durable_tasks (tenant_id, run_id) ON DELETE RESTRICT,
+    CONSTRAINT fk_care_handoffs_effect FOREIGN KEY (tenant_id, effect_key)
+      REFERENCES effect_reservations (tenant_id, effect_key) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX uq_care_handoffs_active_conversation
+  ON care_handoffs (tenant_id, conversation_id) WHERE status IN ('ENQUEUED', 'ASSIGNED');
+CREATE INDEX idx_care_handoffs_queue
+  ON care_handoffs (tenant_id, created_at, id) WHERE status = 'ENQUEUED';
 
 -- Audit Table 2: Evidence Records (cryptographically chained, append-only).
 -- §04 6.1 writes one row per mutating step; `previous_evidence_hash` links each
@@ -947,7 +1026,7 @@ CREATE TRIGGER trg_immutable_decisions
 -- DOMAIN 5 append-only chains. `approvals` is intentionally excluded: it is the mutable
 -- SCR-003 lifecycle whose rows move PENDING -> decided exactly once (and `approval_queue`
 -- is only a view over it, so it inherits this mutability through its base table).
--- `platform_durable_tasks` and `effect_reservations` are likewise mutable runtime state.
+-- platform_durable_tasks, effect_reservations and care_handoffs are likewise mutable runtime state.
 CREATE TRIGGER trg_immutable_evidence_records
     BEFORE UPDATE OR DELETE ON evidence_records
     FOR EACH ROW EXECUTE FUNCTION agentos.prevent_immutable_table_modification();
@@ -1033,7 +1112,7 @@ The DDL in §1 declares the entity graph with single-column `REFERENCES` for rea
 
 ## 2. Row-Level Security (RLS) Policy Implementation
 
-To satisfy **NFR-006 (Zero Data Bleeding)**, Row-Level Security is strictly enabled and forced across every table in the `agentos` schema — the 28 canonical tables, the child table `conversation_messages`, and the DOMAIN 5 audit/runtime tables (`audit_records`, `evidence_records`, `agent_run_logs`, `platform_durable_tasks`, `pending_outcome_attributions`, `effect_reservations`). The two views (`customer_360_profiles`, `approval_queue`) are not tables and therefore carry no policy of their own; both are declared `WITH (security_invoker = true)` so the policies of their base tables are evaluated against the calling role. Queries that omit a valid tenant context return 0 rows (default deny) or throw an error.
+To satisfy NFR-006 (Zero Data Bleeding), Row-Level Security is strictly enabled and forced across every table in the agentos schema — the 28 canonical tables, the child tables (`conversation_messages`, `service_case_events`), and the DOMAIN 5 audit/runtime tables (`audit_records`, `evidence_records`, `agent_run_logs`, `platform_durable_tasks`, `pending_outcome_attributions`, `effect_reservations`, `care_handoffs`). The two views (`customer_360_profiles`, `approval_queue`) are not tables and therefore carry no policy of their own; both are declared WITH (security_invoker = true) so the policies of their base tables are evaluated against the calling role. Queries that omit a valid tenant context return 0 rows (default deny) or throw an error.
 
 **Predicate contract.** The tenant context is a comma-separated list of UUIDs stored in `app.current_tenant_id`, parsed with `string_to_array(current_setting('app.current_tenant_id', true), ',')::uuid[]`. The explicit `::uuid[]` cast is what keeps the predicate type-correct: `tenant_id` is `UUID`, the parsed value is `UUID[]`, so PostgreSQL resolves `uuid = ANY(uuid[])` and never has to resolve `uuid = text` (which has no operator and would raise `operator does not exist: uuid = text`). An unset setting yields `NULL`, and an empty setting yields the empty array — both make `= ANY(...)` evaluate to NULL/FALSE, so the failure mode is deny, never allow.
 
@@ -1392,6 +1471,7 @@ The DDL above is the target persistence contract. The canonical ordinal is the S
 | Offer | `offers` | `(tenant_id,id)` | policy-bound, floor-provenance-bearing, quota audited | DECISION / `03` |
 | Recommendation | `recommendations` | `(tenant_id,id)` | reason/evidence required; no inference promoted to FACT | HYPOTHESIS / `03` |
 | Service Case | `service_cases` | `(tenant_id,id)` | seven stored states plus `REOPEN` action | DECISION / `03` |
+| Service Case Event | `service_case_events` | `(tenant_id,id)` | append-only case lifecycle receipts; `(tenant_id,effect_key)` deduplication | DECISION / `03` |
 | Agent | `agents` | `(tenant_id,id)` | only AUTH-0..AUTH-3 assigned grants | DECISION / `03` |
 | Skill | `skills` | `(tenant_id,id)` | exactly 23 platform registry rows; required AUTH-4 routes approval | DECISION / `03` + `05` |
 | Workflow | `workflows` | `(tenant_id,id)` | durable versioned definition and state | DECISION / `03` + `04` |
@@ -1451,6 +1531,7 @@ Ordering uses `(occurred_at, source_record_id, event_id)`; deduplication uses th
 Stored states are exactly `NEW`, `CLASSIFIED`, `ASSIGNED`, `IN_PROGRESS`, `WAITING_CUSTOMER`, `RESOLVED`, and `CLOSED`. `REOPEN` is an action/event, not an eighth stored state: `RESOLVED` or `CLOSED` → `IN_PROGRESS`, incrementing `reopen_count`, recording `reopened_at`, appending SLA history and evidence. Illegal transitions fail with a domain error and create no state mutation. The downstream `REOPENED` proposal remains a known propagation conflict in plans/testcases and is not adopted here.
 
 The seven baseline states come from SRS §8; the allowed edges and `REOPEN` below are blueprint refinements. Every change requires the same tenant/customer binding, the expected `case_version`, an authorized owner, and an audit/evidence reference. Successful changes increment `case_version`; stale versions return conflict without another transition.
+**Durable effect handling.** Each case mutation and its immutable `service_case_events` receipt commit in one tenant-scoped transaction. `(tenant_id,effect_key)` binds the idempotency receipt and request fingerprint; an identical replay returns the stored output and a different fingerprint conflicts. After an ambiguous timeout, check the durable receipt first; if none exists and `case_id` is known, re-read `(tenant_id,case_id)` before any retry. `retry_on_timeout` remains `false` and the implementation performs no automatic retry. A timed-out CREATE has no known `case_id`; absent a receipt it fails closed as unresolved. This store covers PostgreSQL case writes only, not provider-side mutations.
 
 | Current state | Allowed action → next state | Required input / retained history |
 |---|---|---|
@@ -1468,7 +1549,7 @@ Migration order is extension/schema → tables/keys → indexes → RLS enable/f
 
 ### 9.1 Canonical persistence objects and projections `[BLUEPRINT][SRS §14, §17]`
 
-The 28 canonical SRS entities remain `customers` through `learnings` in §1. DOMAIN 5 objects are additional runtime/audit projections, not replacement entities. Entity 26 is `evidences` (grounding taxonomy); `evidence_records` is the separate immutable per-run cryptographic payload chain keyed by `evidence_id`. Entity 27 is `outcomes`; `pending_outcome_attributions` is its observation watcher. Entity 28 is `learnings`; there is no `learning_records` table or alias.
+The 28 canonical SRS entities remain `customers` through `learnings` in §1. DOMAIN 3 child entities include `conversation_messages` (Entity 11.1) and `service_case_events` (Entity 18.1, append-only durable case mutation receipts). DOMAIN 5 objects are additional runtime/audit projections, not replacement entities. Entity 26 is `evidences` (grounding taxonomy); `evidence_records` is the separate immutable per-run cryptographic payload chain keyed by `evidence_id`. Entity 27 is `outcomes`; `pending_outcome_attributions` is its observation watcher. Entity 28 is `learnings`; there is no `learning_records` table or alias.
 
 The same rule applies to `agent_run_logs` versus `audit_records`: the former is the per-step six-status operational run log; the latter is the canonical 18-field compliance chain. A route, UI, skill, or test MUST identify which object it reads or writes; no alias may create a second writer or bypass tenant/RLS/append-only rules.
 
@@ -1480,3 +1561,5 @@ Wire projections are explicit: stored conversation `open`/`paused_takeover`/`clo
 ## 10. Verification Scenarios `[BLUEPRINT][SRS §14, §19 / NFR-003, NFR-006]`
 
 Future verification MUST cover cross-tenant composite-FK rejection; RLS context reset; memory-layer separation and expiry; ten-stage timeline reconstruction with late/replayed events; refusal to promote HYPOTHESIS to FACT; every legal/illegal Service Case transition including REOPEN; migration ordering and partial recovery; and uniqueness of tenant/effect/idempotency keys. These scenarios are `[NOT-RUNTIME-EVIDENCE]` until executed against the future runtime.
+
+Gate P1 remains open until live PostgreSQL/RLS migrations, DB-backed Care pilots, Docker services, approved knowledge corpus, and real System-of-Record (SoR) evidence exist. Offline test harnesses verify local code paths only and do not close the gate.

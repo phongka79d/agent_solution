@@ -55,15 +55,26 @@ describe('startWorker', () => {
     expect(releaseTaskLease).not.toHaveBeenCalled();
   });
 
-  it('resumes task when payload carries resume_event and a complete checkpoint', async () => {
+  it('resumes task when payload carries a valid resume event and complete checkpoint', async () => {
     const tenant_id = '00000000-0000-4000-8000-000000000001';
+    const resumeEvent = {
+      tenant_id,
+      run_id: 'run-1',
+      effect_key: 'effect-1',
+      event_type: 'human.approval',
+      approval_id: 'appr-1',
+      expected_payload_sha256: 'a'.repeat(64),
+      operator_id: 'operator-1',
+      reason: 'approve',
+    };
     const completeCheckpoint = {
-      resume_event: { type: 'human_approval', approval_id: 'appr-1' },
+      resume_event: resumeEvent,
       plan: { plan_id: 'plan-1', steps: [], fallback_strategy: 'FAIL_CLOSED' },
+      current_step: 1,
       context: { tenant_id, correlation_id: 'corr-1' },
-      hypothesis: { classification: 'HYPOTHESIS' },
-      pending_action: { action_id: 'act-1', run_id: 'run-1', skill_id: 'skill.care.lookup_order' },
-      completed_steps: [],
+      previous_evidence_hash: '0'.repeat(64),
+      request_id: 'request-1',
+      pending_action: { action_id: 'act-1', effect_key: 'effect-1' },
     };
 
     const taskRecord = {
@@ -71,7 +82,7 @@ describe('startWorker', () => {
       run_id: 'run-1',
       correlation_id: 'corr-1',
       task_version: 2,
-      state: 'running',
+      state: 'awaiting_human',
       lease_owner: 'worker-1',
       state_payload: completeCheckpoint,
     } as DurableTaskRecord;
@@ -79,7 +90,7 @@ describe('startWorker', () => {
     const resumeTask = vi.fn().mockResolvedValue(undefined);
     const mockOrchestrator = { resumeTask };
     const orchestratorFactory = vi.fn().mockResolvedValue(mockOrchestrator);
-    const getTask = vi.fn().mockResolvedValue({ ...taskRecord, state: 'completed' });
+    const getTask = vi.fn().mockResolvedValue(taskRecord);
     const releaseTaskLease = vi.fn().mockResolvedValue(true);
     const recordFailure = vi.fn();
 
@@ -97,15 +108,73 @@ describe('startWorker', () => {
     });
 
     expect(orchestratorFactory).toHaveBeenCalledWith(tenant_id);
-    expect(resumeTask).toHaveBeenCalledWith('run-1', completeCheckpoint.resume_event);
+    expect(resumeTask).toHaveBeenCalledWith('run-1', resumeEvent);
     expect(recordFailure).not.toHaveBeenCalled();
+    expect(releaseTaskLease).toHaveBeenCalledWith({
+      tenant_id,
+      run_id: 'run-1',
+      lease_owner: 'worker-1',
+      task_version: 2,
+      target_state: 'awaiting_human',
+    });
+  });
+  it('releases a parked lease after the orchestrator consumes its resume event', async () => {
+    const tenant_id = '00000000-0000-4000-8000-000000000001';
+    const resumeEvent = { tenant_id, event_type: 'human.reconcile', operator_id: 'operator-1', reconciliation_resolution: 'ESCALATE_MANUALLY' };
+    const checkpoint = {
+      plan: { plan_id: 'plan-1', steps: [], fallback_strategy: 'FAIL_CLOSED' },
+      current_step: 1,
+      pending_action: { mutating: true, effect_key: 'effect-1' },
+      context: { tenant_id },
+      previous_evidence_hash: '0'.repeat(64),
+      request_id: 'request-1',
+    };
+    const taskRecord = {
+      tenant_id,
+      run_id: 'run-1',
+      correlation_id: 'corr-1',
+      task_version: 2,
+      state: 'waiting',
+      lease_owner: 'worker-1',
+      state_payload: { ...checkpoint, resume_event: resumeEvent },
+    } as DurableTaskRecord;
+    const resumeTask = vi.fn().mockResolvedValue(undefined);
+    const releaseTaskLease = vi.fn().mockResolvedValue(true);
+
+    await processClaimedTask({
+      taskRecord,
+      tenant_id,
+      worker_id: 'worker-1',
+      workflowRepository: {
+        getTask: vi.fn().mockResolvedValue({ ...taskRecord, state_payload: checkpoint }),
+        releaseTaskLease,
+        recordFailure: vi.fn(),
+        transitionTask: vi.fn(),
+      } as unknown as DurableWorkflowRepository,
+      orchestratorFactory: vi.fn().mockResolvedValue({ resumeTask }),
+    });
+
+    expect(resumeTask).toHaveBeenCalledWith('run-1', resumeEvent);
+    expect(releaseTaskLease).toHaveBeenCalledWith({
+      tenant_id,
+      run_id: 'run-1',
+      lease_owner: 'worker-1',
+      task_version: 2,
+      target_state: 'waiting',
+    });
   });
 
   it('fails closed with CHECKPOINT_INCOMPLETE when resume_event has incomplete checkpoint', async () => {
     const tenant_id = '00000000-0000-4000-8000-000000000001';
     const incompletePayload = {
-      resume_event: { type: 'human_approval', approval_id: 'appr-1' },
-      // Missing context, hypothesis, pending_action, completed_steps
+      resume_event: {
+        tenant_id,
+        event_type: 'human.approval',
+        approval_id: 'appr-1',
+        expected_payload_sha256: 'a'.repeat(64),
+        operator_id: 'operator-1',
+      },
+      // Missing current_step, context, previous_evidence_hash, request_id and pending_action.
       plan: { plan_id: 'plan-1', steps: [] },
     };
 

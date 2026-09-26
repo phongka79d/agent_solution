@@ -9,6 +9,7 @@ import {
   assertCompleteCheckpoint,
   assertGuard,
   assertIdentifier,
+  assertLeaseHeld,
   assertPositiveInteger,
   assertSingleRow,
   isPlainObject,
@@ -91,6 +92,7 @@ export interface ApprovalActionDraft {
   readonly action_revision: number;
   readonly effect_key: string;
   readonly required_authority: string;
+  readonly approval_payload_digest?: string;
   readonly payload: Record<string, unknown>;
 }
 
@@ -203,6 +205,33 @@ export interface ClaimApprovalAndResumeInput {
   readonly decision: ApprovalDecision;
   readonly operator_id: string;
   readonly review_comment: string | null;
+  /** Version and lease fence supplied by the worker after it claimed the durable handoff. */
+  readonly expected_task_version?: number;
+  readonly lease_owner?: string;
+  readonly expected_resume_event?: Record<string, unknown>;
+}
+/** Decision values accepted by the API handoff writer before the worker consumes the approval. */
+export type QueuedApprovalDecision = 'APPROVE' | 'REJECT' | 'MODIFY' | 'PAUSE' | 'CANCEL';
+
+/** Input of the durable approval decision handoff. */
+export interface QueueApprovalDecisionInput {
+  readonly tenant_id: string;
+  readonly approval_id: string;
+  readonly run_id: string;
+  readonly effect_key: string;
+  readonly expected_payload_sha256: string;
+  readonly decision: QueuedApprovalDecision;
+  readonly operator_id: string;
+  readonly reason: string;
+  readonly modified_payload?: Record<string, unknown>;
+}
+
+/** Result of persisting a decision event without consuming the approval. */
+export interface QueueApprovalDecisionResult {
+  readonly approval_id: string;
+  readonly task_id: string;
+  readonly status: 'QUEUED';
+  readonly queued_at: string;
 }
 
 /** Outcome of `claimApprovalAndResume()`: the decided rows and the task they moved. */
@@ -362,37 +391,42 @@ const PAUSE_TASK = `UPDATE ${PLATFORM_DURABLE_TASKS}
   SET state = 'awaiting_human',
       paused_for_approval_id = $3::uuid,
       state_payload = $4::jsonb,
+      lease_owner = NULL,
+      lease_expires_at = NULL,
       task_version = task_version + 1,
       updated_at = CURRENT_TIMESTAMP
   WHERE tenant_id = $1 AND run_id = $2 AND task_version = $5
   RETURNING${TASK_PROJECTION}`;
 
 /**
- * An explicit human PAUSE: the row stays PENDING and the task stays parked, so only the version
- * moves. `state_payload` is deliberately untouched - the checkpoint the pause wrote is still the
- * cursor the next resume re-enters from.
+ * An explicit human PAUSE: the row stays PENDING and the task stays parked. It clears only the
+ * worker handoff lease/event; the checkpoint remains the cursor the next resume re-enters from.
  */
 const HOLD_TASK = `UPDATE ${PLATFORM_DURABLE_TASKS}
   SET state = 'awaiting_human',
       paused_for_approval_id = $3::uuid,
+      state_payload = state_payload - 'resume_event',
+      lease_owner = NULL,
+      lease_expires_at = NULL,
       task_version = task_version + 1,
       updated_at = CURRENT_TIMESTAMP
   WHERE tenant_id = $1 AND run_id = $2 AND task_version = $4
   RETURNING${TASK_PROJECTION}`;
 
-/** APPROVED / MODIFIED: the task leaves the gate and re-enters the plan on the same checkpoint. */
+/** APPROVED / MODIFIED: leave the gate and consume the queued handoff event. */
 const RESUME_TASK = `UPDATE ${PLATFORM_DURABLE_TASKS}
   SET state = 'running',
       paused_for_approval_id = NULL,
+      state_payload = state_payload - 'resume_event',
       task_version = task_version + 1,
       updated_at = CURRENT_TIMESTAMP
   WHERE tenant_id = $1 AND run_id = $2 AND task_version = $3
   RETURNING${TASK_PROJECTION}`;
 
 /**
- * MODIFIED resume: the checkpoint's `pending_action` is rewritten in the same statement, so the
+ * MODIFIED resume: the checkpoint pending_action is rewritten in the same statement, so the
  * revision the operator authorized - not the revision that was reviewed - is what a later resume
- * reads back (§4.2 step 4: the authorized revision is saved atomically with the decision).
+ * reads back (the authorized revision is saved atomically with the decision).
  */
 const RESUME_TASK_REVISED = `UPDATE ${PLATFORM_DURABLE_TASKS}
   SET state = 'running',
@@ -407,16 +441,30 @@ const RESUME_TASK_REVISED = `UPDATE ${PLATFORM_DURABLE_TASKS}
 const STOP_TASK = `UPDATE ${PLATFORM_DURABLE_TASKS}
   SET state = 'stopped',
       paused_for_approval_id = NULL,
+      state_payload = state_payload - 'resume_event',
+      lease_owner = NULL,
+      lease_expires_at = NULL,
       task_version = task_version + 1,
       updated_at = CURRENT_TIMESTAMP
   WHERE tenant_id = $1 AND run_id = $2 AND task_version = $3
   RETURNING${TASK_PROJECTION}`;
 
-/** Explicit PAUSE: `is_paused` is the only column it writes, and the row stays PENDING. */
+/** Explicit PAUSE: the row stays PENDING and the worker consumes the event before this write. */
 const PAUSE_APPROVAL = `UPDATE ${APPROVALS}
   SET is_paused = TRUE
   WHERE tenant_id = $1 AND id = $2 AND decision = 'PENDING'
   RETURNING${APPROVAL_PROJECTION}`;
+/** Persist one authenticated decision event without consuming the PENDING approval. */
+const QUEUE_APPROVAL_RESUME_EVENT = `UPDATE ${PLATFORM_DURABLE_TASKS}
+  SET state_payload = $3::jsonb,
+      task_version = task_version + 1,
+      updated_at = CURRENT_TIMESTAMP
+  WHERE tenant_id = $1
+    AND run_id = $2
+    AND state = 'awaiting_human'
+    AND paused_for_approval_id = $5::uuid
+    AND task_version = $4
+  RETURNING${TASK_PROJECTION}`;
 
 /**
  * A terminal decision, written once: `decided_at` is set with the decision (the
@@ -960,6 +1008,20 @@ interface PreparedClaim {
   readonly operator_id: string;
   readonly review_comment: string | null;
   readonly authorized: ApprovalActionDraft | null;
+  readonly expected_task_version?: number;
+  readonly lease_owner?: string;
+  readonly expected_resume_event?: Record<string, unknown>;
+}
+interface PreparedQueueDecision {
+  readonly tenant_id: string;
+  readonly run_id: string;
+  readonly approval_id: string;
+  readonly effect_key: string;
+  readonly reviewed_digest: string;
+  readonly decision: QueuedApprovalDecision;
+  readonly operator_id: string;
+  readonly reason: string;
+  readonly resume_event: Record<string, unknown>;
 }
 
 /**
@@ -1111,6 +1173,20 @@ function prepareClaim(input: ClaimApprovalAndResumeInput): PreparedClaim {
         'audited decision records what the human actually wrote (implement/08 §7.2).',
     );
   }
+  if (input.lease_owner !== undefined) {
+    assertIdentifier(input.lease_owner, 'lease_owner', 128, 'APPROVAL_LEASE_OWNER_REQUIRED');
+    assertPositiveInteger(
+      input.expected_task_version,
+      'task_version',
+      'APPROVAL_TASK_VERSION_INVALID',
+    );
+    if (!isPlainObject(input.expected_resume_event)) {
+      throw new Error(
+        'APPROVAL_RESUME_EVENT_REQUIRED: a worker-fenced approval claim must restate the exact ' +
+          'durable resume event it is consuming.',
+      );
+    }
+  }
 
   const authorized =
     input.authorized_action === null
@@ -1143,6 +1219,82 @@ function prepareClaim(input: ClaimApprovalAndResumeInput): PreparedClaim {
     operator_id: input.operator_id,
     review_comment,
     authorized,
+    ...(input.expected_task_version === undefined ? {} : { expected_task_version: input.expected_task_version }),
+    ...(input.lease_owner === undefined ? {} : { lease_owner: input.lease_owner }),
+    ...(input.expected_resume_event === undefined ? {} : { expected_resume_event: input.expected_resume_event }),
+  };
+}
+function prepareQueueDecision(input: QueueApprovalDecisionInput): PreparedQueueDecision {
+  assertIdentifier(input.tenant_id, 'tenant_id', 36, 'APPROVAL_TENANT_ID_REQUIRED');
+  assertIdentifier(input.run_id, 'run_id', 64, 'APPROVAL_RUN_ID_REQUIRED');
+  const approval_id = assertUuid(input.approval_id, 'approval_id', 'APPROVAL_ID_INVALID');
+  const effect_key = readIdentifier(
+    input.effect_key,
+    'effect_key',
+    128,
+    'APPROVAL_EFFECT_KEY_REQUIRED',
+  );
+  const reviewed_digest = normalizeDigest(
+    input.expected_payload_sha256,
+    'APPROVAL_DIGEST_INVALID',
+    'the operator reviewed',
+  );
+  assertIdentifier(input.operator_id, 'operator_id', 128, 'APPROVAL_OPERATOR_REQUIRED');
+  if (typeof input.reason !== 'string' || input.reason.trim().length === 0) {
+    throw new Error('APPROVAL_REASON_REQUIRED: every queued decision must carry a non-empty reason.');
+  }
+
+  let event_type: string;
+  switch (input.decision) {
+    case 'APPROVE':
+      event_type = 'human.approval';
+      break;
+    case 'REJECT':
+      event_type = 'human.reject';
+      break;
+    case 'MODIFY':
+      event_type = 'human.modify';
+      break;
+    case 'PAUSE':
+      event_type = 'human.pause';
+      break;
+    case 'CANCEL':
+      event_type = 'human.cancel';
+      break;
+    default:
+      throw new Error('APPROVAL_DECISION_INVALID: the queued decision is outside the five-value route.');
+  }
+
+  if (input.decision === 'MODIFY') {
+    if (!isPlainObject(input.modified_payload)) {
+      throw new Error('MODIFICATION_REQUIRED: MODIFY requires a JSON object of payload modifications.');
+    }
+  } else if (input.modified_payload !== undefined) {
+    throw new Error('APPROVAL_DECISION_ACTION_MISMATCH: modified_payload is only valid for MODIFY.');
+  }
+
+  const resume_event: Record<string, unknown> = {
+    tenant_id: input.tenant_id,
+    run_id: input.run_id,
+    effect_key,
+    event_type,
+    approval_id,
+    expected_payload_sha256: reviewed_digest,
+    operator_id: input.operator_id,
+    reason: input.reason,
+    ...(input.modified_payload === undefined ? {} : { modifications: input.modified_payload }),
+  };
+
+  return {
+    tenant_id: input.tenant_id,
+    run_id: input.run_id,
+    approval_id,
+    effect_key,
+    reviewed_digest,
+    decision: input.decision,
+    operator_id: input.operator_id,
+    reason: input.reason,
+    resume_event,
   };
 }
 
@@ -1714,6 +1866,115 @@ export class ApprovalRepository {
       result.rows.map((row): [string, ActionRecord] => [row.id, toActionRecord(row)]),
     );
   }
+  /**
+   * Persists one authenticated approval decision as a durable resume event. The approval remains
+   * PENDING until the worker has acquired the task lease and the core has rechecked policy and
+   * takeover state; this method never consumes human authorization from the API process.
+   */
+  async queueDecision(input: QueueApprovalDecisionInput): Promise<QueueApprovalDecisionResult> {
+    const prepared = prepareQueueDecision(input);
+
+    return this.runInTenantTransaction(prepared.tenant_id, async (client) => {
+      const task = await lockDurableTask(client, prepared.tenant_id, prepared.run_id);
+      if (task === null) {
+        throw new Error('DURABLE_TASK_NOT_FOUND: this tenant holds no durable task for the run.');
+      }
+      if (task.state !== 'awaiting_human') {
+        throw new Error(
+          'APPROVAL_NOT_CLAIMABLE: a decision handoff is accepted only while the task is awaiting_human.',
+        );
+      }
+      if (task.paused_for_approval_id !== prepared.approval_id) {
+        throw new Error(
+          'APPROVAL_BINDING_MISMATCH: run ' + prepared.run_id + ' is not parked on approval ' + prepared.approval_id + '.',
+        );
+      }
+
+      assertCompleteCheckpoint(task.state_payload);
+      const action = await this.lockActionByEffectKey(
+        client,
+        prepared.tenant_id,
+        prepared.effect_key,
+      );
+      if (action === null) {
+        throw new Error('APPROVAL_BINDING_MISMATCH: effect_key ' + prepared.effect_key + ' has no action.');
+      }
+
+      const approval = await this.lockApprovalById(
+        client,
+        prepared.tenant_id,
+        prepared.approval_id,
+      );
+      if (approval === null) {
+        throw new Error('APPROVAL_NOT_FOUND: approval ' + prepared.approval_id + ' does not exist.');
+      }
+      if (
+        approval.run_id !== prepared.run_id ||
+        approval.effect_key !== prepared.effect_key ||
+        approval.action_id !== action.id ||
+        action.effect_key !== prepared.effect_key
+      ) {
+        throw new Error(
+          'APPROVAL_BINDING_MISMATCH: approval ' + approval.id + ' does not match run ' +
+            prepared.run_id + ', action ' + action.id + ' and effect_key ' + prepared.effect_key + '.',
+        );
+      }
+      if (approval.decision !== 'PENDING') {
+        throw new Error(
+          'APPROVAL_NOT_CLAIMABLE: approval ' + approval.id + ' is already ' + approval.decision + '.',
+        );
+      }
+      if (approval.payload_sha256 !== prepared.reviewed_digest) {
+        throw new Error(
+          'APPROVAL_STALE_PAYLOAD: approval ' + approval.id + ' now binds a different reviewed payload.',
+        );
+      }
+
+      const checkpoint = task.state_payload;
+      if (!isPlainObject(checkpoint)) {
+        throw new Error('CHECKPOINT_INCOMPLETE: the approval task checkpoint is not a JSON object.');
+      }
+      const existingEvent = checkpoint['resume_event'];
+      if (existingEvent !== undefined) {
+        if (
+          !isPlainObject(existingEvent) ||
+          canonicalizeJson(existingEvent) !== canonicalizeJson(prepared.resume_event)
+        ) {
+          throw new Error(
+            'APPROVAL_DECISION_CONFLICT: a different authenticated decision is already queued for this approval.',
+          );
+        }
+        return {
+          approval_id: approval.id,
+          task_id: task.task_id,
+          status: 'QUEUED',
+          queued_at: task.updated_at,
+        };
+      }
+
+      const payload = serializeJsonb(
+        { ...checkpoint, resume_event: prepared.resume_event },
+        'APPROVAL_CHECKPOINT_UNSERIALIZABLE',
+      );
+      const queued = assertSingleRow(
+        await client.query<DurableTaskRow>(QUEUE_APPROVAL_RESUME_EVENT, [
+          prepared.tenant_id,
+          prepared.run_id,
+          payload,
+          task.task_version,
+          prepared.approval_id,
+        ]),
+        prepared.run_id,
+      );
+
+      return {
+        approval_id: approval.id,
+        task_id: queued.task_id,
+        status: 'QUEUED',
+        queued_at: queued.updated_at,
+      };
+    });
+  }
 
   /**
    * Decides one parked approval and moves the task it parked (implement/04 §4.2 statement 4).
@@ -1771,6 +2032,23 @@ export class ApprovalRepository {
             `${String(task.paused_for_approval_id)}, not on ${prepared.approval_id}; the decision ` +
             'must name the approval the task waits for (implement/04 §4.2 statement 4).',
         );
+      }
+      if (prepared.lease_owner !== undefined) {
+        assertLeaseHeld(task, prepared.lease_owner);
+        if (task.task_version !== prepared.expected_task_version) {
+          throw new Error('TASK_VERSION_CONFLICT: the approval claim read a stale task version.');
+        }
+        const taskPayload = isPlainObject(task.state_payload) ? task.state_payload : null;
+        const currentEvent = taskPayload?.['resume_event'];
+        if (
+          !isPlainObject(currentEvent) ||
+          prepared.expected_resume_event === undefined ||
+          canonicalizeJson(currentEvent) !== canonicalizeJson(prepared.expected_resume_event)
+        ) {
+          throw new Error(
+            'APPROVAL_RESUME_EVENT_CONFLICT: the worker claim does not match the exact durable decision event.',
+          );
+        }
       }
 
       const action = await this.lockActionByEffectKey(
@@ -1845,11 +2123,7 @@ export class ApprovalRepository {
   }
 
   /**
-   * PAUSE: the row keeps PENDING and the task keeps `awaiting_human`; only `is_paused` and the
-   * version move.
-   *
-   * A repeated PAUSE is refused rather than recorded twice: the flag is a state, not a counter, and
-   * a paused item may still receive one explicit terminal decision through the same route.
+   * PAUSE: keep the PENDING approval and parked task, then consume the worker handoff lease/event.
    */
   private async holdWithin(
     client: PoolClient,
@@ -1860,9 +2134,7 @@ export class ApprovalRepository {
   ): Promise<ClaimApprovalAndResumeResult> {
     if (approval.is_paused) {
       throw new Error(
-        `APPROVAL_NOT_CLAIMABLE: approval ${approval.id} is already paused; the explicit human pause ` +
-          'is recorded once, and a paused item waits for a terminal decision instead of a second ' +
-          'pause (implement/04 §4.2 statement 4).',
+        'APPROVAL_NOT_CLAIMABLE: approval ' + approval.id + ' is already paused; a repeated pause is refused.',
       );
     }
 
@@ -1933,6 +2205,7 @@ export class ApprovalRepository {
       ]),
       prepared.approval_id,
     );
+
     const moved = assertSingleRow(
       await client.query<DurableTaskRow>(decision === 'APPROVED' ? RESUME_TASK : STOP_TASK, [
         prepared.tenant_id,
@@ -2093,11 +2366,20 @@ export class ApprovalRepository {
       );
     }
 
+    const checkpointWithoutEvent = { ...checkpoint };
+    delete checkpointWithoutEvent['resume_event'];
+    const checkpointPayload = serializeJsonb(
+      {
+        ...checkpointWithoutEvent,
+        pending_action: authorized,
+      },
+      'APPROVAL_CHECKPOINT_UNSERIALIZABLE',
+    );
     const moved = assertSingleRow(
       await client.query<DurableTaskRow>(RESUME_TASK_REVISED, [
         prepared.tenant_id,
         prepared.run_id,
-        serializeJsonb({ ...checkpoint, pending_action: authorized }, 'APPROVAL_CHECKPOINT_UNSERIALIZABLE'),
+        checkpointPayload,
         task.task_version,
       ]),
       prepared.run_id,

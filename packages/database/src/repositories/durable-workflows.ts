@@ -211,6 +211,27 @@ export interface RequeueFailedTaskInput {
   readonly expected_task_version?: number;
 }
 
+/** Input of `queueReconciliation()`: tenant, run, operator resolution and proof. */
+export interface QueueReconciliationInput {
+  readonly tenant_id: string;
+  readonly run_id: string;
+  readonly resolution: 'PROVIDER_CONFIRMED_SUCCEEDED' | 'PROVIDER_CONFIRMED_ABSENT' | 'ESCALATE_MANUALLY';
+  readonly reason: string;
+  readonly operator_id: string;
+  readonly receipt?: Record<string, unknown>;
+}
+
+/** Input of `queueHandoffEvidence()`: tenant, run, evidence payload and optional fences. */
+export interface QueueHandoffEvidenceInput {
+  readonly tenant_id: string;
+  readonly run_id: string;
+  readonly evidence_payload: Record<string, unknown>;
+  readonly step_index?: number;
+  readonly effect_key?: string;
+  readonly reason?: string;
+  readonly expected_task_version?: number;
+}
+
 /**
  * `agentos` is not on the connection `search_path`, so every statement is schema-qualified.
  *
@@ -364,26 +385,47 @@ const SELECT_TASK_PAGE = `SELECT${TASK_PROJECTION}
   ORDER BY t.created_at DESC, t.run_id DESC
   LIMIT $8`;
 
-/** Claim the next queued or expired-running task using SELECT FOR UPDATE SKIP LOCKED. */
+/**
+ * Claim the next queued task, expired-running task, or one event-bearing parked task using SELECT
+ * FOR UPDATE SKIP LOCKED. A parked task keeps its lifecycle state while the worker owns the lease;
+ * the resume event is the durable handoff, not a reason to rewrite the FSM state behind the core.
+ */
 const SELECT_CLAIMABLE_TASK = `SELECT${TASK_PROJECTION}
   FROM ${PLATFORM_DURABLE_TASKS}
   WHERE tenant_id = $1
     AND (
       state = 'queued'
       OR (state = 'running' AND lease_expires_at IS NOT NULL AND lease_expires_at < CURRENT_TIMESTAMP)
+      OR (
+        state IN ('waiting', 'awaiting_human')
+        AND state_payload ? 'resume_event'
+        AND (lease_owner IS NULL OR lease_expires_at IS NULL OR lease_expires_at < CURRENT_TIMESTAMP)
+      )
     )
   ORDER BY created_at ASC
   LIMIT 1
   FOR UPDATE SKIP LOCKED`;
 
-/** Atomically acquire lease on a task and advance to running with incremented task_version. */
+/** Atomically acquire a lease without consuming a parked resume event. */
 const UPDATE_CLAIM_TASK = `UPDATE ${PLATFORM_DURABLE_TASKS}
-  SET state = 'running'::agentos.task_lifecycle_state,
+  SET state = CASE
+        WHEN state IN ('waiting', 'awaiting_human') THEN state
+        ELSE 'running'::agentos.task_lifecycle_state
+      END,
       lease_owner = $2,
       lease_expires_at = CURRENT_TIMESTAMP + ($3 * INTERVAL '1 millisecond'),
       task_version = task_version + 1,
       updated_at = CURRENT_TIMESTAMP
   WHERE tenant_id = $1 AND run_id = $4 AND task_version = $5
+    AND (
+      state = 'queued'
+      OR (state = 'running' AND lease_expires_at IS NOT NULL AND lease_expires_at < CURRENT_TIMESTAMP)
+      OR (
+        state IN ('waiting', 'awaiting_human')
+        AND state_payload ? 'resume_event'
+        AND (lease_owner IS NULL OR lease_expires_at IS NULL OR lease_expires_at < CURRENT_TIMESTAMP)
+      )
+    )
   RETURNING${TASK_PROJECTION}`;
 
 /** Renew an active unexpired lease for the owner. */
@@ -456,6 +498,37 @@ const UPDATE_TASK_FAILURE_REQUEUE = `UPDATE ${PLATFORM_DURABLE_TASKS}
   WHERE tenant_id = $1 AND run_id = $2 AND task_version = $5
   RETURNING${TASK_PROJECTION}`;
 
+/** Reconcile transition: keeps a waiting task parked and records the worker handoff event. */
+const UPDATE_RECONCILE_TASK = `UPDATE ${PLATFORM_DURABLE_TASKS}
+  SET state = 'waiting',
+      state_payload = state_payload || $3::jsonb,
+      lease_owner = NULL,
+      lease_expires_at = NULL,
+      task_version = task_version + 1,
+      updated_at = CURRENT_TIMESTAMP
+  WHERE tenant_id = $1 AND run_id = $2 AND task_version = $4
+  RETURNING${TASK_PROJECTION}`;
+
+/** Handoff evidence repair transition: attaches a resume_event to an awaiting_human task while retaining its complete checkpoint. */
+const UPDATE_HANDOFF_EVIDENCE_TASK = `UPDATE ${PLATFORM_DURABLE_TASKS}
+  SET state = 'awaiting_human',
+      state_payload = state_payload || $3::jsonb,
+      lease_owner = NULL,
+      lease_expires_at = NULL,
+      task_version = task_version + 1,
+      updated_at = CURRENT_TIMESTAMP
+  WHERE tenant_id = $1 AND run_id = $2 AND task_version = $4
+  RETURNING${TASK_PROJECTION}`;
+
+const UPDATE_CLEAR_HANDOFF_EVIDENCE_TASK = `UPDATE ${PLATFORM_DURABLE_TASKS}
+  SET state_payload = $3::jsonb,
+      lease_owner = NULL,
+      lease_expires_at = NULL,
+      task_version = task_version + 1,
+      updated_at = CURRENT_TIMESTAMP
+  WHERE tenant_id = $1 AND run_id = $2 AND state = 'awaiting_human'
+    AND task_version = $4 AND lease_owner = $5
+  RETURNING${TASK_PROJECTION}`;
 /**
  * `FATAL` failure, or `RETRYABLE` with the budget spent (§4.4): terminate fail-closed.
  * `retry_count` records the attempts that were made and is left as it is.
@@ -675,6 +748,20 @@ export function isPlainObject(value: unknown): value is Record<string, unknown> 
 
   return prototype === Object.prototype || prototype === null;
 }
+/** Canonical comparison for JSONB event replays; object key order is not event identity. */
+function canonicalizeEvent(value: unknown): string {
+  if (value === null || typeof value !== 'object') {
+    const scalar = JSON.stringify(value);
+    if (scalar === undefined) throw new Error('TASK_PAYLOAD_UNSERIALIZABLE: resume event is not JSON-serializable.');
+    return scalar;
+  }
+  if (Array.isArray(value)) return '[' + value.map(canonicalizeEvent).join(',') + ']';
+  if (!isPlainObject(value)) {
+    throw new Error('TASK_PAYLOAD_UNSERIALIZABLE: resume event must contain plain JSON objects.');
+  }
+  return '{' + Object.keys(value).sort().map((key) =>
+    JSON.stringify(key) + ':' + canonicalizeEvent(value[key])).join(',') + '}';
+}
 
 /** Validates a lifecycle state against the closed enum (`UNKNOWN` is not a member). */
 function assertTaskState(state: unknown): asserts state is DurableTaskState {
@@ -731,10 +818,19 @@ export function assertPositiveInteger(value: unknown, column: string, code: stri
  * Exported so both modules refuse a write by a worker that does not hold the run's lease with one
  * message instead of two slightly different ones.
  */
-export function assertLeaseHeld(row: Pick<DurableTaskRecord, 'state' | 'lease_owner' | 'lease_expires_at'>, lease_owner: string | undefined, now: Date = new Date()): void {
+export function assertLeaseHeld(
+  row: Pick<DurableTaskRecord, 'state' | 'lease_owner' | 'lease_expires_at' | 'state_payload'>,
+  lease_owner: string | undefined,
+  now: Date = new Date(),
+): void {
   if (lease_owner === undefined) return;
   if (lease_owner.trim().length === 0) throw new Error('TASK_LEASE_OWNER_REQUIRED: lease_owner must be a non-empty worker identity.');
-  if (row.state !== 'running' || row.lease_owner !== lease_owner || row.lease_expires_at === null || Date.parse(row.lease_expires_at) <= now.getTime()) {
+  const parkedResume =
+    (row.state === 'waiting' || row.state === 'awaiting_human') &&
+    isPlainObject(row.state_payload) &&
+    Object.prototype.hasOwnProperty.call(row.state_payload, 'resume_event');
+  const leaseState = row.state === 'running' || parkedResume;
+  if (!leaseState || row.lease_owner !== lease_owner || row.lease_expires_at === null || Date.parse(row.lease_expires_at) <= now.getTime()) {
     throw new Error('TASK_LEASE_NOT_HELD: the worker does not hold a live lease for this run.');
   }
 }
@@ -1063,7 +1159,15 @@ export class DurableWorkflowRepository {
       if (row.task_version !== input.task_version) throw new Error('TASK_VERSION_CONFLICT');
       const target = input.target_state ?? 'queued';
       assertTaskState(target);
-      if (target !== 'queued' && target !== 'waiting') throw new Error('TASK_LEASE_RELEASE_STATE_INVALID');
+      if (target !== 'queued' && target !== 'waiting' && target !== 'awaiting_human') {
+        throw new Error('TASK_LEASE_RELEASE_STATE_INVALID');
+      }
+      if (
+        target === 'awaiting_human'
+        && !(isPlainObject(row.state_payload) && Object.prototype.hasOwnProperty.call(row.state_payload, 'resume_event'))
+      ) {
+        throw new Error('TASK_LEASE_RELEASE_STATE_INVALID');
+      }
       return assertSingleRow(await client.query<DurableTaskRow>(UPDATE_RELEASE_LEASE, [input.tenant_id, input.run_id, target, input.task_version, input.lease_owner]), input.run_id);
     });
   }
@@ -1268,14 +1372,6 @@ export class DurableWorkflowRepository {
       );
     }
 
-    if (state === 'awaiting_human') {
-      throw new Error(
-        'TASK_PAUSE_REQUIRES_APPROVAL: awaiting_human is reachable only through ' +
-          'ApprovalRepository.pauseForApproval, which inserts the PENDING AUTH-4 approval row, the ' +
-          `actions row it binds and the task pause in ONE transaction; a bare transition ('${reason}') ` +
-          'would park the run with no row that can resume it (implement/04 §4.2 statement 3).',
-      );
-    }
 
     // `waiting` parks on a COMPLETE checkpoint, so the blob is validated (and serialized) before the
     // transaction opens and REPLACES state_payload; every other transition merges a progress blob.
@@ -1291,6 +1387,11 @@ export class DurableWorkflowRepository {
       );
     }
 
+    if (state === 'awaiting_human') {
+      throw new Error(
+        'TASK_PAUSE_REQUIRES_APPROVAL: awaiting_human is reachable only through ApprovalRepository.pauseForApproval.',
+      );
+    }
     const payload =
       checkpointPayload === undefined
         ? undefined
@@ -1452,6 +1553,212 @@ export class DurableWorkflowRepository {
       );
     });
   }
+
+  /**
+   * Reconciles a waiting task: atomically clears any prior lease, records one resume_event and
+   * leaves the task parked until the worker performs the guarded provider check (R18).
+   */
+  async queueReconciliation(input: QueueReconciliationInput): Promise<DurableTaskRecord> {
+    assertIdentifier(input.tenant_id, 'tenant_id', 36, 'TASK_TENANT_ID_REQUIRED');
+    assertIdentifier(input.run_id, 'run_id', 64, 'TASK_RUN_ID_REQUIRED');
+    assertIdentifier(input.operator_id, 'operator_id', 128, 'OPERATOR_ID_REQUIRED');
+
+    if (typeof input.reason !== 'string' || input.reason.trim().length === 0) {
+      throw new Error(
+        'TASK_TRANSITION_REASON_REQUIRED: reason is mandatory for reconciliation (implement/06 §8.1.2 R18).',
+      );
+    }
+
+    const resolution = input.resolution;
+    if (
+      resolution !== 'PROVIDER_CONFIRMED_SUCCEEDED' &&
+      resolution !== 'PROVIDER_CONFIRMED_ABSENT' &&
+      resolution !== 'ESCALATE_MANUALLY'
+    ) {
+      throw new Error('RECONCILIATION_RESOLUTION_INVALID: invalid reconciliation resolution');
+    }
+
+    const resume_event = {
+      tenant_id: input.tenant_id,
+      event_type: 'human.reconcile',
+      operator_id: input.operator_id,
+      reconciliation_resolution: resolution,
+      ...(input.receipt !== undefined ? { reconciliation_receipt: input.receipt } : {}),
+      reason: input.reason,
+    };
+    const resumeEventCanonical = canonicalizeEvent(resume_event);
+
+    return this.runInTenantTransaction(input.tenant_id, async (client) => {
+      const locked = await this.lockWithin(client, input.tenant_id, input.run_id);
+      if (locked === null) {
+        throw new Error(
+          'DURABLE_TASK_NOT_FOUND: this tenant holds no durable task for the run (implement/04 §4.2).',
+        );
+      }
+
+      if (TERMINAL_STATES.includes(locked.state)) {
+        throw new Error(
+          `TASK_ALREADY_TERMINAL: run ${locked.run_id} is ${locked.state}, and a closed task is never revived.`,
+        );
+      }
+
+      if (locked.state !== 'waiting') {
+        throw new Error(
+          `RUN_NOT_RECONCILABLE: run ${locked.run_id} is in state '${locked.state}', not 'waiting'; only a parked task awaiting reconciliation can be reconciled.`,
+        );
+      }
+
+      assertCompleteCheckpoint(locked.state_payload);
+      const existingPayload = isPlainObject(locked.state_payload) ? locked.state_payload : {};
+      const existingEvent = existingPayload['resume_event'];
+      if (existingEvent !== undefined) {
+        if (canonicalizeEvent(existingEvent) !== resumeEventCanonical) {
+          throw new Error(
+            'RECONCILIATION_EVENT_CONFLICT: a different reconciliation event is already queued for this run.',
+          );
+        }
+        return locked;
+      }
+
+      const newPayload = serializeJsonb(
+        { ...existingPayload, resume_event },
+        'TASK_PAYLOAD_UNSERIALIZABLE',
+      );
+
+      return assertSingleRow(
+        await client.query<DurableTaskRow>(UPDATE_RECONCILE_TASK, [
+          input.tenant_id,
+          input.run_id,
+          newPayload,
+          locked.task_version,
+        ]),
+        input.run_id,
+      );
+    });
+  }
+
+  /**
+   * Attaches a durable handoff evidence repair event ('human.handoff.evidence') to an awaiting_human task
+   * while retaining its complete checkpoint.
+   */
+  async queueHandoffEvidence(input: QueueHandoffEvidenceInput): Promise<{ queued: boolean; task_version?: number }> {
+    assertIdentifier(input.tenant_id, 'tenant_id', 36, 'TASK_TENANT_ID_REQUIRED');
+    assertIdentifier(input.run_id, 'run_id', 64, 'TASK_RUN_ID_REQUIRED');
+    if (!isPlainObject(input.evidence_payload)) {
+      throw new Error('HANDOFF_EVIDENCE_PAYLOAD_INVALID: evidence_payload must be a valid JSON object');
+    }
+
+    const resume_event = {
+      tenant_id: input.tenant_id,
+      run_id: input.run_id,
+      event_type: 'human.handoff.evidence' as const,
+      evidence_payload: input.evidence_payload,
+      ...(input.step_index !== undefined ? { step_index: input.step_index } : {}),
+      ...(input.effect_key !== undefined ? { effect_key: input.effect_key } : {}),
+      ...(input.reason !== undefined ? { reason: input.reason } : {}),
+    };
+    const resumeEventCanonical = canonicalizeEvent(resume_event);
+
+    return this.runInTenantTransaction(input.tenant_id, async (client) => {
+      const locked = await this.lockWithin(client, input.tenant_id, input.run_id);
+      if (locked === null) {
+        throw new Error(
+          'DURABLE_TASK_NOT_FOUND: this tenant holds no durable task for the run (implement/04 §4.2).',
+        );
+      }
+
+      if (TERMINAL_STATES.includes(locked.state)) {
+        throw new Error(
+          `TASK_ALREADY_TERMINAL: run ${locked.run_id} is ${locked.state}, and a closed task is never revived.`,
+        );
+      }
+
+      if (locked.state !== 'awaiting_human') {
+        throw new Error(
+          `TASK_NOT_AWAITING_HUMAN: run ${locked.run_id} is in state '${locked.state}', not 'awaiting_human'.`,
+        );
+      }
+
+      if (input.expected_task_version !== undefined && locked.task_version !== input.expected_task_version) {
+        throw new Error(
+          `TASK_VERSION_CONFLICT: task ${locked.run_id} version ${locked.task_version} does not match expected ${input.expected_task_version}.`,
+        );
+      }
+
+      assertCompleteCheckpoint(locked.state_payload);
+      const existingPayload = isPlainObject(locked.state_payload) ? locked.state_payload : {};
+      const existingEvent = existingPayload['resume_event'];
+      if (existingEvent !== undefined) {
+        if (canonicalizeEvent(existingEvent) !== resumeEventCanonical) {
+          throw new Error(
+            'HANDOFF_EVIDENCE_EVENT_CONFLICT: a different resume event is already queued for this run.',
+          );
+        }
+        return { queued: true, task_version: locked.task_version };
+      }
+
+      const newPayload = serializeJsonb(
+        { ...existingPayload, resume_event },
+        'TASK_PAYLOAD_UNSERIALIZABLE',
+      );
+
+      const repaired = assertSingleRow(
+        await client.query<DurableTaskRow>(UPDATE_HANDOFF_EVIDENCE_TASK, [
+          input.tenant_id,
+          input.run_id,
+          newPayload,
+          locked.task_version,
+        ]),
+        input.run_id,
+      );
+      return { queued: true, task_version: repaired.task_version };
+    });
+  }
+  /** Clears only a consumed handoff evidence repair event while retaining awaiting_human and the worker lease. */
+  async clearHandoffEvidence(input: {
+    tenant_id: string;
+    run_id: string;
+    expected_task_version: number;
+    lease_owner: string;
+    expected_resume_event: Record<string, unknown>;
+  }): Promise<{ cleared: boolean; task_version?: number }> {
+    assertIdentifier(input.tenant_id, 'tenant_id', 36, 'TASK_TENANT_ID_REQUIRED');
+    assertIdentifier(input.run_id, 'run_id', 64, 'TASK_RUN_ID_REQUIRED');
+    assertIdentifier(input.lease_owner, 'lease_owner', 128, 'TASK_LEASE_OWNER_REQUIRED');
+    const expectedEventCanonical = canonicalizeEvent(input.expected_resume_event);
+
+    return this.runInTenantTransaction(input.tenant_id, async (client) => {
+      const locked = await this.lockWithin(client, input.tenant_id, input.run_id);
+      if (locked === null) throw new Error('DURABLE_TASK_NOT_FOUND');
+      if (locked.state !== 'awaiting_human') {
+        throw new Error(`TASK_NOT_AWAITING_HUMAN: run ${locked.run_id} is ${locked.state}.`);
+      }
+      assertLeaseHeld(locked, input.lease_owner);
+      if (locked.task_version !== input.expected_task_version) {
+        throw new Error('TASK_VERSION_CONFLICT');
+      }
+      const payload = isPlainObject(locked.state_payload) ? locked.state_payload : {};
+      const existingEvent = payload['resume_event'];
+      if (!isPlainObject(existingEvent) || canonicalizeEvent(existingEvent) !== expectedEventCanonical) {
+        throw new Error('HANDOFF_EVIDENCE_EVENT_CONFLICT: the repair event changed before clear.');
+      }
+      const nextPayload = { ...payload };
+      delete nextPayload['resume_event'];
+      const serialized = serializeJsonb(nextPayload, 'TASK_PAYLOAD_UNSERIALIZABLE');
+      const cleared = assertSingleRow(
+        await client.query<DurableTaskRow>(UPDATE_CLEAR_HANDOFF_EVIDENCE_TASK, [
+          input.tenant_id,
+          input.run_id,
+          serialized,
+          input.expected_task_version,
+          input.lease_owner,
+        ]),
+        input.run_id,
+      );
+      return { cleared: true, task_version: cleared.task_version };
+    });
+  }
+
 
   /**
    * Locks the run's task inside the caller's transaction — the locking read of `lockDurableTask`.

@@ -138,7 +138,9 @@ export type PolicyDenyCode =
   /** The audit intent could not be persisted, so no permit may stand (BR-010, NFR-002). */
   | 'AUDIT_UNAVAILABLE'
   /** No durable PENDING row could be created/read for an approval route (BR-007). */
-  | 'APPROVAL_QUEUE_UNAVAILABLE';
+  | 'APPROVAL_QUEUE_UNAVAILABLE'
+  /** A claimed AUTH-4 binding was supplied for a non-route or cannot be reused safely. */
+  | 'APPROVAL_BINDING_INVALID';
 
 /** The verdict, the PEP-level decision code and the reason a caller acts on. */
 export interface PolicyDecision {
@@ -165,6 +167,8 @@ export interface PolicyDecision {
   readonly requirementSource: 'REGISTRY' | 'PROPOSAL' | null;
   /** Set exactly when an approval route owns a durable PENDING row. */
   readonly approvalTicketId: string | null;
+  /** Deterministic effect key from proposal payload (BR-005); null for non-mutating actions without one. */
+  readonly effectKey: string | null;
   /** SHA-256 of the canonical payload; the digest an approval row is bound to (§08 §7.2). */
   readonly payloadSha256: string | null;
   readonly evaluatedAt: string;
@@ -368,6 +372,8 @@ export interface PolicyAuditRecord {
   readonly rule_id: PolicyRuleId | null;
   readonly error_code: PolicyDenyCode | null;
   readonly approval_id: string | null;
+  /** Deterministic effect key from proposal payload (BR-005); null for non-mutating actions without one. */
+  readonly effect_key: string | null;
   readonly payload_sha256: string | null;
   readonly occurred_at: string;
 }
@@ -436,6 +442,8 @@ export interface PolicyActionProposal {
   readonly target_agent_id?: string;
   /** `0` or absent for a first attempt; `> 0` marks a retry (BR-006). */
   readonly retry_attempt?: number;
+  /** Durable claim for this exact AUTH-4 action; never a clearance or a general permit. */
+  readonly approval_id?: string;
 }
 
 /** Every edge the PEP is allowed to hold. All of them are injected; the process supplies none. */
@@ -481,11 +489,13 @@ interface EvaluationBase {
   readonly evaluated_at: string;
   /** `null` only before the payload digest was computed; a digest failure is itself a refusal. */
   readonly payload_sha256: string | null;
-  /** Effect key presented by the payload, when it is a usable string (BR-005). */
+  /** Effect key presented by the payload, when it is a usable string. */
   readonly effect_key: string | null;
+  /** One-time approval binding carried only through the resumed action recheck. */
+  readonly claimed_approval_id: string | null;
 }
 
-/** Authority facts resolved for the evaluation; `NO_AUTHORITY` until stage 3 has run. */
+ /** Authority facts resolved for the evaluation; `NO_AUTHORITY` until stage 3 has run. */
 interface AuthorityFacts {
   readonly granted: AssignableAuthority | null;
   readonly requirement: AuthorityLevel | null;
@@ -671,7 +681,24 @@ export class PolicyEnforcementPoint {
       evaluated_at,
       payload_sha256: null,
       effect_key: null,
+      claimed_approval_id: null,
     };
+
+    const claimedApprovalId = proposal.approval_id === undefined ? null : proposal.approval_id.trim();
+
+    if (claimedApprovalId !== null && claimedApprovalId.length === 0) {
+      return this.settle(
+        initial,
+        NO_AUTHORITY,
+        deny(
+          'BR-007',
+          'APPROVAL_BINDING_INVALID',
+          'APPROVAL_BINDING_INVALID: a resumed action must carry a non-empty claimed approval id.',
+        ),
+      );
+    }
+
+    const boundInitial = { ...initial, claimed_approval_id: claimedApprovalId };
 
     // Stage 1: the binding is server-resolved. A missing tenant is refused before anything else, so
     // no private record can be read for an unbound request (NFR-006).
@@ -706,11 +733,11 @@ export class PolicyEnforcementPoint {
       );
     }
 
-    const base: EvaluationBase = {
-      ...initial,
-      payload_sha256,
-      effect_key: stringValue(proposal.payload, EFFECT_KEY_FIELDS),
-    };
+      const base: EvaluationBase = {
+        ...boundInitial,
+        payload_sha256,
+        effect_key: stringValue(proposal.payload, EFFECT_KEY_FIELDS),
+      };
 
     const binding = this.checkBinding(context, proposal);
     if (binding !== null) {
@@ -842,14 +869,42 @@ export class PolicyEnforcementPoint {
       return this.settle(base, facts, checked);
     }
 
-    const route = verdict.verdict === 'AWAITING_HUMAN_APPROVAL'
-      ? {
-        kind: 'ROUTE',
-        decisionCode: 'REQUIRE_HUMAN_APPROVAL',
-        ruleId: 'BR-007',
-        reason: verdict.reason,
-      } as const
-      : checked;
+    if (base.claimed_approval_id !== null && folded !== 'AUTH-4') {
+      return this.settle(
+        base,
+        facts,
+        deny(
+          'BR-007',
+          'APPROVAL_BINDING_INVALID',
+          'APPROVAL_BINDING_INVALID: a claimed approval may satisfy only the exact AUTH-4 route; it '
+            + 'never raises or replaces the run clearance.',
+        ),
+      );
+    }
+
+    if (base.claimed_approval_id !== null && checked?.kind === 'ROUTE') {
+      return this.settle(
+        base,
+        facts,
+        deny(
+          'BR-007',
+          'APPROVAL_BINDING_INVALID',
+          `APPROVAL_BINDING_INVALID: the claimed AUTH-4 decision cannot bypass the current policy `
+            + `route ${checked.ruleId}; the action is refused rather than re-approved implicitly.`,
+        ),
+      );
+    }
+
+    const route = base.claimed_approval_id !== null
+      ? null
+      : verdict.verdict === 'AWAITING_HUMAN_APPROVAL'
+        ? {
+          kind: 'ROUTE',
+          decisionCode: 'REQUIRE_HUMAN_APPROVAL',
+          ruleId: 'BR-007',
+          reason: verdict.reason,
+        } as const
+        : checked;
 
     // Stage 6: BR-010 preconditions. An effect-bearing permit, and every approval row, must be
     // backed by a durable, signed audit intent; otherwise the permit is withheld, not warned about.
@@ -863,8 +918,10 @@ export class PolicyEnforcementPoint {
 
     return this.settle(base, facts, route ?? {
       kind: 'PERMIT',
-      reason: `AUTHORIZED: ${String(facts.granted)} covers ${String(facts.requirement)} for `
-        + `${skill.skill_id}; the orchestrator may reserve the effect and dispatch.`,
+      reason: base.claimed_approval_id !== null
+        ? `AUTHORIZED: claimed approval ${base.claimed_approval_id} covers this exact AUTH-4 action; current policy checks passed.`
+        : `AUTHORIZED: ${String(facts.granted)} covers ${String(facts.requirement)} for `
+          + `${skill.skill_id}; the orchestrator may reserve the effect and dispatch.`,
     });
   }
 
@@ -1312,8 +1369,7 @@ export class PolicyEnforcementPoint {
     outcome: EvaluationOutcome,
   ): Promise<PolicyDecision> {
     let effective = outcome;
-    let approvalTicketId: string | null = null;
-
+    let approvalTicketId: string | null = base.claimed_approval_id;
     if (outcome.kind === 'ROUTE') {
       const queued = await this.createPendingApproval(base, outcome);
 
@@ -1432,6 +1488,7 @@ export class PolicyEnforcementPoint {
         rule_id: decision.ruleId,
         error_code: decision.errorCode,
         approval_id: decision.approvalTicketId,
+        effect_key: decision.effectKey,
         payload_sha256: decision.payloadSha256,
         occurred_at: decision.evaluatedAt,
       });
@@ -1469,6 +1526,7 @@ export class PolicyEnforcementPoint {
       grantedAuthority: authority.granted,
       resolvedRequirement: authority.requirement,
       requirementSource: authority.requirementSource,
+      effectKey: base.effect_key,
       payloadSha256: base.payload_sha256,
       evaluatedAt: base.evaluated_at,
       auditStatus,

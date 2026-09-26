@@ -23,6 +23,7 @@ import {
   type SignalEnvelope,
   type DurableLeaseManager,
   type IStatefulWorkflowEngine,
+  type DurableTaskGuard,
 } from '../contracts/index.js';
 import { computeEffectKey } from '../effects/effect-key.js';
 import { MemoryEffectGuard } from '../effects/memory-effect-guard.js';
@@ -116,7 +117,7 @@ interface HarnessOptions {
   readonly steps?: PlannedStep[];
   readonly agents?: PlatformAgentId[];
   readonly hypothesisRecord?: HypothesisRecord;
-  readonly dispatch?: () => Promise<ExecutionReceipt>;
+  readonly dispatch?: (action?: ActionDraft) => Promise<ExecutionReceipt>;
   readonly effectGuard?: MemoryEffectGuard;
   /** Live SCR-005 lock state, so a case can hold the lock and release it mid-flight. */
   readonly isTakenOver?: () => Promise<boolean>;
@@ -126,6 +127,16 @@ interface HarnessOptions {
   readonly workflowEngine?: IStatefulWorkflowEngine;
   /** Lease manager override, so a case can assert the attempt's release. */
   readonly leaseManager?: DurableLeaseManager;
+  readonly reconcile?: (input: {
+    readonly tenant_id: string;
+    readonly effect_key: string;
+    readonly action_id?: string;
+    readonly adapter_target?: string;
+    readonly skill_id?: string;
+  }) => Promise<{
+    readonly outcome: 'SUCCEEDED' | 'FAILED' | 'INDETERMINATE';
+    readonly receipt?: ExecutionReceipt | unknown;
+  }>;
 }
 
 function harness(options: HarnessOptions = {}) {
@@ -151,7 +162,8 @@ function harness(options: HarnessOptions = {}) {
     const agents = options.agents ?? ['SAL-01'];
     return plan(agents.map((agent_id, index) => step({ step_index: index + 1, agent_id })));
   });
-  const dispatch = vi.fn(options.dispatch ?? (async () => receipt()));
+  const dispatch = vi.fn(options.dispatch ?? (async (_action?: ActionDraft) => receipt()));
+  const reconcile = options.reconcile !== undefined ? vi.fn(options.reconcile) : undefined;
   const orchestrator = new RevenueOrchestrator({
     contextAggregator: { hydrateContext: hydrate },
     agentRuntime: { deriveHypothesis, resolveRouting, formulatePlan },
@@ -177,7 +189,10 @@ function harness(options: HarnessOptions = {}) {
     workflowEngine: workflow,
     evidenceLogger,
     auditTrail: { append: async () => undefined },
-    adapterDispatcher: { dispatch },
+    adapterDispatcher: {
+      dispatch,
+      ...(reconcile !== undefined ? { reconcile } : {}),
+    },
     effectGuard,
     sessionControl: {
       isTakenOver: options.isTakenOver ?? (async () => false),
@@ -186,7 +201,16 @@ function harness(options: HarnessOptions = {}) {
     leaseManager: options.leaseManager ?? new MemoryLeaseManager(),
     workerId: 'worker-test',
   });
-  return { orchestrator, effectGuard, workflow, memoryWorkflow, evidenceLogger, hydrate, deriveHypothesis, resolveRouting, formulatePlan, dispatch };
+  return { orchestrator, effectGuard, workflow, memoryWorkflow, evidenceLogger, hydrate, deriveHypothesis, resolveRouting, formulatePlan, dispatch, reconcile };
+}
+
+function getDispatchedAction(dispatch: { mock: { calls: unknown[] } }, index: number): ActionDraft {
+  const calls = dispatch.mock.calls as unknown[][];
+  const call = calls[index];
+  if (!call || call[0] === undefined) {
+    throw new Error(`Expected dispatch call at index ${index}`);
+  }
+  return call[0] as ActionDraft;
 }
 
 describe('RevenueOrchestrator', () => {
@@ -598,6 +622,770 @@ describe('RevenueOrchestrator', () => {
     });
     expect(dispatch).toHaveBeenCalledTimes(1);
     expect(reconciled.lifecycle_state).toBe('completed');
+    expect(backing.listEvidence(TENANT, result.run_id)).toHaveLength(1);
+  });
+  it('consumes manual escalation without leaving a reclaimable resume event', async () => {
+    const { orchestrator, workflow } = harness({
+      dispatch: async () => {
+        throw new OrchestratorError('DISPATCH_TIMEOUT', 'deadline');
+      },
+    });
+
+    const waiting = await orchestrator.processSignal(signal());
+    const resumed = await orchestrator.resumeTask(waiting.run_id, {
+      tenant_id: TENANT,
+      event_type: 'human.reconcile',
+      operator_id: 'operator-1',
+      reconciliation_resolution: 'ESCALATE_MANUALLY',
+      reason: 'provider outcome needs manual follow-up',
+    });
+
+    expect(resumed.lifecycle_state).toBe('waiting');
+    const task = await workflow.getTask(TENANT, waiting.run_id);
+    expect(task?.state).toBe('waiting');
+    expect(task?.state_payload).not.toHaveProperty('resume_event');
+  });
+  it('rejects operator-only provider proof and retains the reconciliation event on unavailable proof', async () => {
+    const { orchestrator, workflow, dispatch } = harness({
+      dispatch: async () => {
+        throw new OrchestratorError('DISPATCH_TIMEOUT', 'deadline');
+      },
+    });
+
+    const waiting = await orchestrator.processSignal(signal());
+    const resumeEvent = {
+      tenant_id: TENANT,
+      event_type: 'human.reconcile' as const,
+      operator_id: 'operator-1',
+      reconciliation_resolution: 'PROVIDER_CONFIRMED_ABSENT' as const,
+      reconciliation_receipt: { receipt_id: 'operator-receipt-1' },
+      reason: 'operator claimed absence without provider proof',
+    };
+    const taskBefore = await workflow.getTask(TENANT, waiting.run_id);
+    await workflow.transitionTask(
+      TENANT,
+      waiting.run_id,
+      'waiting',
+      'queue reconciliation resume event',
+      {
+        ...(taskBefore?.state_payload as Record<string, unknown>),
+        resume_event: resumeEvent,
+      },
+    );
+
+    await expect(orchestrator.resumeTask(waiting.run_id, resumeEvent)).rejects.toMatchObject({
+      code: 'RECONCILIATION_PROVIDER_UNAVAILABLE',
+    });
+
+    const task = await workflow.getTask(TENANT, waiting.run_id);
+    expect(task?.state).toBe('waiting');
+    expect(task?.state_payload).toHaveProperty('resume_event');
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects operator-only provider proof and retains the reconciliation event on indeterminate proof', async () => {
+    const { orchestrator, workflow, dispatch, reconcile } = harness({
+      dispatch: async () => {
+        throw new OrchestratorError('DISPATCH_TIMEOUT', 'deadline');
+      },
+      reconcile: async () => ({ outcome: 'INDETERMINATE' }),
+    });
+
+    const waiting = await orchestrator.processSignal(signal());
+    const resumeEvent = {
+      tenant_id: TENANT,
+      event_type: 'human.reconcile' as const,
+      operator_id: 'operator-1',
+      reconciliation_resolution: 'PROVIDER_CONFIRMED_SUCCEEDED' as const,
+      reconciliation_receipt: { receipt_id: 'operator-receipt-1' },
+      reason: 'operator claimed success but provider returned indeterminate',
+    };
+    const taskBefore = await workflow.getTask(TENANT, waiting.run_id);
+    await workflow.transitionTask(
+      TENANT,
+      waiting.run_id,
+      'waiting',
+      'queue reconciliation resume event',
+      {
+        ...(taskBefore?.state_payload as Record<string, unknown>),
+        resume_event: resumeEvent,
+      },
+    );
+
+    await expect(orchestrator.resumeTask(waiting.run_id, resumeEvent)).rejects.toMatchObject({
+      code: 'RECONCILIATION_PROVIDER_PROOF_REQUIRED',
+    });
+
+    expect(reconcile).toHaveBeenCalledTimes(1);
+    const task = await workflow.getTask(TENANT, waiting.run_id);
+    expect(task?.state).toBe('waiting');
+    expect(task?.state_payload).toHaveProperty('resume_event');
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('replays provider-confirmed success without second dispatch, ignoring operator receipts and clearing resume event', async () => {
+    const effectGuard = new MemoryEffectGuard();
+    const backing = new MemoryEvidenceLogger('test-hmac-secret');
+    const providerReceipt: ExecutionReceipt = {
+      execution_id: 'provider-proof-1',
+      adapter_status: 'SUCCESS',
+      provider_reference: 'prov-tx-999',
+      response_payload: { verified: true },
+      latency_ms: 42,
+      token_usage: { prompt: 1, completion: 2, total_cost_usd: 0.0001 },
+    };
+
+    const { orchestrator, workflow, dispatch, reconcile } = harness({
+      effectGuard,
+      evidenceLogger: backing,
+      dispatch: async () => {
+        throw new OrchestratorError('DISPATCH_TIMEOUT', 'deadline');
+      },
+      reconcile: async () => ({
+        outcome: 'SUCCEEDED',
+        receipt: providerReceipt,
+      }),
+    });
+
+    const waiting = await orchestrator.processSignal(signal());
+    const key = computeEffectKey({
+      tenant_id: TENANT,
+      skill_id: 'skill.test.dispatch',
+      step_index: 1,
+      action_revision: 0,
+      request_id: SIGNAL_ID,
+    });
+
+    expect(effectGuard.peek(TENANT, key)?.status).toBe('RESERVED');
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    const initialAction = getDispatchedAction(dispatch, 0);
+    expect(initialAction.effect_key).toBe(key);
+
+    const resumeEvent = {
+      tenant_id: TENANT,
+      event_type: 'human.reconcile' as const,
+      operator_id: 'operator-1',
+      reconciliation_resolution: 'PROVIDER_CONFIRMED_ABSENT' as const,
+      reconciliation_receipt: { receipt_id: 'bogus-operator-receipt' },
+      reason: 'verifying provider proof precedence',
+    };
+    const taskBefore = await workflow.getTask(TENANT, waiting.run_id);
+    await workflow.transitionTask(
+      TENANT,
+      waiting.run_id,
+      'waiting',
+      'queue reconciliation resume event',
+      {
+        ...(taskBefore?.state_payload as Record<string, unknown>),
+        resume_event: resumeEvent,
+      },
+    );
+
+    const result = await orchestrator.resumeTask(waiting.run_id, resumeEvent);
+
+    expect(result.lifecycle_state).toBe('completed');
+    expect(reconcile).toHaveBeenCalledWith({
+      tenant_id: TENANT,
+      effect_key: key,
+      action_id: initialAction.action_id,
+      adapter_target: 'web',
+      skill_id: 'skill.test.dispatch',
+    });
+    expect(dispatch).toHaveBeenCalledTimes(1);
+
+    const settled = effectGuard.peek(TENANT, key);
+    expect(settled?.status).toBe('SUCCEEDED');
+    expect(settled?.receipt).toEqual(providerReceipt);
+
+    const task = await workflow.getTask(TENANT, waiting.run_id);
+    expect(task?.state).toBe('completed');
+    expect(task?.state_payload).not.toHaveProperty('resume_event');
+
+    const evidenceList = backing.listEvidence(TENANT, waiting.run_id);
+    expect(evidenceList).toHaveLength(1);
+    const evidencePayload = JSON.parse(evidenceList[0]!.raw_payload) as {
+      action: ActionDraft;
+      receipt: unknown;
+      replayed: boolean;
+    };
+    expect(evidencePayload.receipt).toEqual(providerReceipt);
+    expect(evidencePayload.replayed).toBe(true);
+    expect(evidencePayload.action.action_id).toBe(initialAction.action_id);
+    expect(evidencePayload.action.effect_key).toBe(key);
+    expect(evidencePayload.action.payload).toEqual(initialAction.payload);
+  });
+
+  it('settles FAILED, reopens same effect key and permits exactly one re-dispatch on provider-confirmed absence', async () => {
+    const effectGuard = new MemoryEffectGuard();
+    const backing = new MemoryEvidenceLogger('test-hmac-secret');
+    let dispatchCount = 0;
+    const secondDispatchReceipt: ExecutionReceipt = {
+      execution_id: 'redispatch-exec-2',
+      adapter_status: 'SUCCESS',
+      provider_reference: 'prov-tx-second-try',
+      response_payload: { status: 'created' },
+      latency_ms: 15,
+      token_usage: { prompt: 2, completion: 4, total_cost_usd: 0.0002 },
+    };
+
+    const { orchestrator, workflow, dispatch, reconcile } = harness({
+      effectGuard,
+      evidenceLogger: backing,
+      dispatch: async () => {
+        dispatchCount += 1;
+        if (dispatchCount === 1) {
+          throw new OrchestratorError('DISPATCH_TIMEOUT', 'initial dispatch timed out');
+        }
+        return secondDispatchReceipt;
+      },
+      reconcile: async () => ({
+        outcome: 'FAILED',
+      }),
+    });
+
+    const waiting = await orchestrator.processSignal(signal());
+    const key = computeEffectKey({
+      tenant_id: TENANT,
+      skill_id: 'skill.test.dispatch',
+      step_index: 1,
+      action_revision: 0,
+      request_id: SIGNAL_ID,
+    });
+
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    const initialAction = getDispatchedAction(dispatch, 0);
+    expect(initialAction.effect_key).toBe(key);
+    const resumeEvent = {
+      tenant_id: TENANT,
+      event_type: 'human.reconcile' as const,
+      operator_id: 'operator-1',
+      reconciliation_resolution: 'PROVIDER_CONFIRMED_SUCCEEDED' as const,
+      reconciliation_receipt: { receipt_id: 'bogus-operator-receipt' },
+      reason: 'verifying provider absence triggers reopen and redispatch',
+    };
+    const taskBefore = await workflow.getTask(TENANT, waiting.run_id);
+    await workflow.transitionTask(
+      TENANT,
+      waiting.run_id,
+      'waiting',
+      'queue reconciliation resume event',
+      {
+        ...(taskBefore?.state_payload as Record<string, unknown>),
+        resume_event: resumeEvent,
+      },
+    );
+
+    const result = await orchestrator.resumeTask(waiting.run_id, resumeEvent);
+
+    expect(result.lifecycle_state).toBe('completed');
+    expect(reconcile).toHaveBeenCalledWith({
+      tenant_id: TENANT,
+      effect_key: key,
+      action_id: initialAction.action_id,
+      adapter_target: 'web',
+      skill_id: 'skill.test.dispatch',
+    });
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    const secondAction = getDispatchedAction(dispatch, 1);
+    expect(secondAction.action_id).toBe(initialAction.action_id);
+    expect(secondAction.effect_key).toBe(key);
+    expect(secondAction.payload).toEqual(initialAction.payload);
+    const settled = effectGuard.peek(TENANT, key);
+    expect(settled?.status).toBe('SUCCEEDED');
+    expect(settled?.receipt).toEqual(secondDispatchReceipt);
+
+    const task = await workflow.getTask(TENANT, waiting.run_id);
+    expect(task?.state).toBe('completed');
+    expect(task?.state_payload).not.toHaveProperty('resume_event');
+
+    const evidenceList = backing.listEvidence(TENANT, waiting.run_id);
+    expect(evidenceList).toHaveLength(1);
+    const evidencePayload = JSON.parse(evidenceList[0]!.raw_payload) as {
+      action: ActionDraft;
+      receipt: unknown;
+      replayed: boolean;
+    };
+    expect(evidencePayload.receipt).toEqual(secondDispatchReceipt);
+    expect(evidencePayload.replayed).toBe(false);
+    expect(evidencePayload.action.action_id).toBe(initialAction.action_id);
+    expect(evidencePayload.action.effect_key).toBe(key);
+    expect(evidencePayload.action.payload).toEqual(initialAction.payload);
+  });
+
+  it('enforces task-version and lease fencing during provider-proof reconciliation', async () => {
+    const plannedStep = step({ step_index: 1, mutating: true });
+    const pendingAction: ActionDraft = {
+      action_id: 'action-fenced-1',
+      run_id: 'run-fenced-1',
+      tenant_id: TENANT,
+      agent_id: plannedStep.agent_id,
+      skill_id: plannedStep.skill_id,
+      adapter_target: plannedStep.adapter_target,
+      step_index: 1,
+      mutating: true,
+      price_bearing: plannedStep.price_bearing,
+      request_id: SIGNAL_ID,
+      action_revision: 0,
+      effect_key: computeEffectKey({
+        tenant_id: TENANT,
+        skill_id: plannedStep.skill_id,
+        step_index: 1,
+        action_revision: 0,
+        request_id: SIGNAL_ID,
+      }),
+      payload: plannedStep.input_parameters,
+      required_authority: plannedStep.required_authority,
+    };
+    const resumeEvent = {
+      tenant_id: TENANT,
+      event_type: 'human.reconcile' as const,
+      operator_id: 'operator-1',
+      reconciliation_resolution: 'PROVIDER_CONFIRMED_SUCCEEDED' as const,
+    };
+    const checkpoint = {
+      signal: signal(),
+      plan: plan([plannedStep]),
+      context: context(),
+      current_step: 1,
+      pending_action: pendingAction,
+      previous_evidence_hash: GENESIS_HASH,
+      request_id: SIGNAL_ID,
+      resume_event: resumeEvent,
+    };
+    let currentVersion = 10;
+    const taskRecord = {
+      task_version: currentVersion,
+      state: 'waiting' as const,
+      correlation_id: 'corr-1',
+      state_payload: checkpoint,
+      lease_owner: 'worker-test',
+      lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+    };
+    const transitions: Array<{ state: string; guard?: DurableTaskGuard }> = [];
+    const workflow = {
+      getTask: vi.fn(async () => ({ ...taskRecord, task_version: currentVersion })),
+      updateTaskProgress: vi.fn(async () => undefined),
+      transitionTask: vi.fn(async (_t, _r, state, _reason, cp, guard) => {
+        transitions.push({ state, guard });
+        currentVersion += 1;
+        taskRecord.task_version = currentVersion;
+        if (cp !== undefined) {
+          taskRecord.state_payload = cp as typeof checkpoint;
+        }
+      }),
+      recordFailure: vi.fn(async () => ({ requeued: true })),
+    } as unknown as IStatefulWorkflowEngine;
+    const leaseManager: DurableLeaseManager = {
+      acquireLease: vi.fn(async () => true),
+      releaseLease: vi.fn(async () => undefined),
+    };
+    const effectGuard = new MemoryEffectGuard();
+    await effectGuard.reserve({
+      tenant_id: TENANT,
+      run_id: 'run-fenced-1',
+      request_id: SIGNAL_ID,
+      effect_key: pendingAction.effect_key,
+      request_fingerprint: effectGuard.computeRequestFingerprint(pendingAction.payload),
+      skill_id: plannedStep.skill_id,
+      step_index: 1,
+      action_revision: 0,
+    });
+    const { orchestrator } = harness({
+      workflowEngine: workflow,
+      leaseManager,
+      effectGuard,
+      steps: [plannedStep],
+      reconcile: async () => ({
+        outcome: 'SUCCEEDED',
+        receipt: receipt(),
+      }),
+    });
+
+    const result = await orchestrator.resumeTask('run-fenced-1', resumeEvent);
+    expect(result.lifecycle_state).toBe('completed');
+    expect(transitions[0]).toEqual({
+      state: 'running',
+      guard: { expected_task_version: 10, lease_owner: 'worker-test' },
+    });
+    expect(transitions).toHaveLength(2);
+    const finalTransition = transitions[1];
+    expect(finalTransition).toBeDefined();
+    if (!finalTransition) {
+      throw new Error('Expected final transition');
+    }
+    expect(finalTransition.state).toBe('completed');
+  });
+
+  it('prevents unclaimable waiting row on provider-proof write interruption and replays safely on retry', async () => {
+    const effectGuard = new MemoryEffectGuard();
+    const backing = new MemoryEvidenceLogger('test-hmac-secret');
+    const providerReceipt: ExecutionReceipt = {
+      execution_id: 'provider-proof-replay-1',
+      adapter_status: 'SUCCESS',
+      provider_reference: 'prov-tx-replay-42',
+      response_payload: { settled: true },
+      latency_ms: 30,
+      token_usage: { prompt: 2, completion: 2, total_cost_usd: 0.0001 },
+    };
+
+    const { orchestrator, workflow, dispatch } = harness({
+      effectGuard,
+      evidenceLogger: backing,
+      dispatch: async () => {
+        throw new OrchestratorError('DISPATCH_TIMEOUT', 'initial dispatch timed out');
+      },
+      reconcile: async () => ({
+        outcome: 'SUCCEEDED',
+        receipt: providerReceipt,
+      }),
+    });
+
+    const waiting = await orchestrator.processSignal(signal());
+    const key = computeEffectKey({
+      tenant_id: TENANT,
+      skill_id: 'skill.test.dispatch',
+      step_index: 1,
+      action_revision: 0,
+      request_id: SIGNAL_ID,
+    });
+
+    expect(effectGuard.peek(TENANT, key)?.status).toBe('RESERVED');
+    expect(dispatch).toHaveBeenCalledTimes(1);
+
+    const resumeEvent = {
+      tenant_id: TENANT,
+      event_type: 'human.reconcile' as const,
+      operator_id: 'operator-1',
+      reconciliation_resolution: 'PROVIDER_CONFIRMED_SUCCEEDED' as const,
+      reconciliation_receipt: { receipt_id: 'operator-receipt-1' },
+      reason: 'verifying interruption replay does not leave unclaimable waiting row',
+    };
+    const taskBefore = await workflow.getTask(TENANT, waiting.run_id);
+    await workflow.transitionTask(
+      TENANT,
+      waiting.run_id,
+      'waiting',
+      'queue reconciliation resume event',
+      {
+        ...(taskBefore?.state_payload as Record<string, unknown>),
+        resume_event: resumeEvent,
+      },
+    );
+
+    // Simulate a write interruption on the decisive transition to 'running'
+    const originalTransition = workflow.transitionTask.bind(workflow);
+    let failRunningTransition = true;
+    vi.spyOn(workflow, 'transitionTask').mockImplementation(async (tenant_id, run_id, state, reason, cp?, guard?) => {
+      if (failRunningTransition && state === 'running') {
+        failRunningTransition = false;
+        throw new OrchestratorError('WRITE_INTERRUPTED', 'Simulated network drop during transition to running');
+      }
+      return originalTransition(tenant_id, run_id, state, reason, cp, guard);
+    });
+
+    // 1. The interrupted attempt throws without advancing execution
+    await expect(orchestrator.resumeTask(waiting.run_id, resumeEvent)).rejects.toMatchObject({
+      code: 'WRITE_INTERRUPTED',
+    });
+
+    // 2. The task remains claimable in 'waiting' with resume_event intact (no unclaimable row created)
+    const taskAfterInterruption = await workflow.getTask(TENANT, waiting.run_id);
+    expect(taskAfterInterruption?.state).toBe('waiting');
+    expect(taskAfterInterruption?.state_payload).toHaveProperty('resume_event');
+    expect((taskAfterInterruption?.state_payload as Record<string, unknown>)['resume_event']).toEqual(resumeEvent);
+
+    // 3. Retry after interruption: worker re-claims and resumes idempotently
+    const retried = await orchestrator.resumeTask(waiting.run_id, resumeEvent);
+    expect(retried.lifecycle_state).toBe('completed');
+
+    // 4. Reservation settlement is preserved, no second dispatch occurred, and task is completed without event
+    const settled = effectGuard.peek(TENANT, key);
+    expect(settled?.status).toBe('SUCCEEDED');
+    expect(settled?.receipt).toEqual(providerReceipt);
+    expect(dispatch).toHaveBeenCalledTimes(1);
+
+    const taskFinal = await workflow.getTask(TENANT, waiting.run_id);
+    expect(taskFinal?.state).toBe('completed');
+    expect(taskFinal?.state_payload).not.toHaveProperty('resume_event');
+
+    const evidenceList = backing.listEvidence(TENANT, waiting.run_id);
+    expect(evidenceList).toHaveLength(1);
+    const evidencePayload = JSON.parse(evidenceList[0]!.raw_payload) as {
+      replayed: boolean;
+      receipt: unknown;
+    };
+    expect(evidencePayload.replayed).toBe(true);
+    expect(evidencePayload.receipt).toEqual(providerReceipt);
+  });
+  it('handles post-enqueue evidence failure for skill.care.escalate_to_human without parking or second-settle, and replays safely with one EV_HUMAN_HANDOFF record', async () => {
+    const effectGuard = new MemoryEffectGuard();
+    const backing = new MemoryEvidenceLogger('test-hmac-secret');
+    let evidenceStoreDown = true;
+    const evidenceLogger: IEvidenceLogger = {
+      findImmutableRecord: vi.fn(async (params) => backing.findImmutableRecord(params)),
+      createImmutableRecord: vi.fn(async (params) => {
+        if (evidenceStoreDown) {
+          evidenceStoreDown = false;
+          throw new Error('evidence store unavailable');
+        }
+        return backing.createImmutableRecord(params);
+      }),
+      initializeOutcomeWatch: vi.fn(async (params) => backing.initializeOutcomeWatch(params)),
+      logAgentRun: vi.fn(async (runLog) => backing.logAgentRun(runLog)),
+    };
+
+    const handoffOutput = {
+      handoff_id: 'handoff-uuid-1',
+      queue_position: 1,
+      status: 'ENQUEUED',
+      escalated_at: '2026-09-22T00:00:00.000Z',
+    };
+    const handoffReceipt: ExecutionReceipt = {
+      execution_id: 'handoff-uuid-1',
+      adapter_status: 'SUCCESS',
+      provider_reference: 'handoff-uuid-1',
+      response_payload: handoffOutput,
+      latency_ms: 10,
+      token_usage: { prompt: 0, completion: 0, total_cost_usd: 0 },
+    };
+
+    const careStep: PlannedStep = {
+      step_index: 1,
+      agent_id: 'CS-01',
+      skill_id: 'skill.care.escalate_to_human',
+      adapter_target: 'Orchestrator.HandoffBus',
+      input_parameters: {
+        tenant_id: TENANT,
+        session_id: 'thread-care-1',
+        conversation_id: 'conv-care-1',
+        customer_id: 'cust-care-1',
+        escalation_reason: 'billing dispute',
+        summary_context: 'Customer requests human operator',
+      },
+      required_authority: 'AUTH-3',
+      mutating: true,
+      price_bearing: false,
+      idempotent: true,
+      timeout_ms: 1000,
+    };
+
+    const memoryWorkflow = new MemoryWorkflowEngine();
+    const dispatch = vi.fn(async (actionDraft?: ActionDraft) => {
+      // Simulate CareHandoffRepository.enqueue:
+      // atomically parks task in awaiting_human with state_payload.resume_event='human.handoff.evidence',
+      // clears lease, and settles reservation in the atomic transaction
+      const task = await memoryWorkflow.getTask(TENANT, actionDraft!.run_id);
+      if (task) {
+        await memoryWorkflow.transitionTask(
+          TENANT,
+          actionDraft!.run_id,
+          'awaiting_human',
+          'Enqueued in CareHandoffRepository',
+        );
+        await memoryWorkflow.queueHandoffEvidence({
+          tenant_id: TENANT,
+          run_id: actionDraft!.run_id,
+          step_index: careStep.step_index,
+          effect_key: actionDraft!.effect_key,
+          evidence_payload: {
+            evidence_card: 'EV_HUMAN_HANDOFF',
+            tenant_id: TENANT,
+            run_id: actionDraft!.run_id,
+            customer_id: 'cust-care-1',
+            session_id: 'thread-care-1',
+            conversation_id: 'conv-care-1',
+            effect_key: actionDraft!.effect_key,
+            receipt: handoffReceipt,
+            handoff_receipt: handoffReceipt,
+            action: actionDraft,
+            replayed: false,
+          },
+        });
+      }
+      await effectGuard.resolve({
+        tenant_id: TENANT,
+        effect_key: actionDraft!.effect_key,
+        status: 'SUCCEEDED',
+        receipt: handoffReceipt,
+      });
+      return handoffReceipt;
+    });
+
+    const { orchestrator, workflow } = harness({
+      steps: [careStep],
+      agents: ['CS-01'],
+      effectGuard,
+      evidenceLogger,
+      workflowEngine: memoryWorkflow,
+      dispatch,
+    });
+
+    const transitionSpy = vi.spyOn(memoryWorkflow, 'transitionTask');
+    let postEnqueueProgressCalls = 0;
+    const originalUpdateProgress = memoryWorkflow.updateTaskProgress.bind(memoryWorkflow);
+    const updateProgressSpy = vi.spyOn(memoryWorkflow, 'updateTaskProgress').mockImplementation(
+      async (tenantId, runId, stepIndex, statePayload) => {
+        if (dispatch.mock.calls.some((call) => call[0]?.run_id === runId)) {
+          postEnqueueProgressCalls += 1;
+        }
+        return originalUpdateProgress(tenantId, runId, stepIndex, statePayload);
+      }
+    );
+    const resolveSpy = vi.spyOn(effectGuard, 'resolve');
+
+    const key = computeEffectKey({
+      tenant_id: TENANT,
+      skill_id: 'skill.care.escalate_to_human',
+      step_index: 1,
+      action_revision: 0,
+      request_id: SIGNAL_ID,
+    });
+
+    // 1. Initial processSignal: CareHandoff enqueue atomically leaves awaiting_human with resume_event='human.handoff.evidence'
+    const result = await orchestrator.processSignal(signal({
+      subject: { session_id: 'thread-care-1', channel_type: 'web' },
+    }));
+
+    // Must return awaiting_human, NOT waiting, and must not dispatch evidence or advance progress
+    expect(result.lifecycle_state).toBe('awaiting_human');
+    expect(result.evidence).toBeUndefined();
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(evidenceLogger.createImmutableRecord).not.toHaveBeenCalled();
+    expect(evidenceLogger.logAgentRun).not.toHaveBeenCalled();
+
+    // The task must remain in awaiting_human with persisted human.handoff.evidence repair event
+    const taskState = await workflow.getTask(TENANT, result.run_id);
+    expect(taskState?.state).toBe('awaiting_human');
+    const persistedResumeEvent = (taskState?.state_payload as Record<string, unknown> | undefined)?.['resume_event'] as {
+      tenant_id: string;
+      run_id: string;
+      event_type: 'human.handoff.evidence';
+      evidence_payload: Record<string, unknown>;
+      step_index: number;
+      effect_key: string;
+    } | undefined;
+    expect(persistedResumeEvent).toBeDefined();
+    expect(persistedResumeEvent?.event_type).toBe('human.handoff.evidence');
+    expect(persistedResumeEvent?.tenant_id).toBe(TENANT);
+    expect(persistedResumeEvent?.run_id).toBe(result.run_id);
+    expect(persistedResumeEvent?.effect_key).toBe(key);
+    expect(persistedResumeEvent?.step_index).toBe(careStep.step_index);
+    const waitingTransitions = transitionSpy.mock.calls.filter((call) => call[2] === 'waiting');
+    expect(waitingTransitions).toHaveLength(0);
+
+    // Pre-dispatch checkpoint writes legitimately record task progress before dispatch
+    const preDispatchCalls = updateProgressSpy.mock.calls.filter((call) => call[1] === result.run_id);
+    expect(preDispatchCalls.length).toBeGreaterThan(0);
+    for (const call of preDispatchCalls) {
+      expect(call[2]).toBe(careStep.step_index);
+    }
+    const checkpointWritesWithAction = preDispatchCalls.filter(
+      (call) => (call[3] as Record<string, unknown> | undefined)?.['pending_action'] !== undefined
+    );
+    expect(checkpointWritesWithAction.length).toBeGreaterThan(0);
+
+    // Normal progress update (post-enqueue), second-settlement, and outcome watch must NOT have been called
+    expect(postEnqueueProgressCalls).toBe(0);
+    const advancingStepCalls = updateProgressSpy.mock.calls.filter((call) => call[2] > careStep.step_index);
+    expect(advancingStepCalls).toHaveLength(0);
+    // effectGuard.resolve was called once inside dispatch (simulating atomic enqueue), never second-settled by orchestrator
+    expect(resolveSpy).toHaveBeenCalledTimes(1);
+    expect(evidenceLogger.initializeOutcomeWatch).not.toHaveBeenCalled();
+    expect(backing.listEvidence(TENANT, result.run_id)).toHaveLength(0);
+
+    // 2. First resumeTask with the persisted repair event fails while evidence store is down and leaves the event queued
+    await expect(orchestrator.resumeTask(result.run_id, persistedResumeEvent!)).rejects.toThrow(
+      'evidence store unavailable',
+    );
+    expect(evidenceLogger.findImmutableRecord).toHaveBeenCalledWith({
+      tenant_id: TENANT,
+      run_id: result.run_id,
+      effect_key: key,
+      step_index: careStep.step_index,
+    });
+    expect(evidenceLogger.createImmutableRecord).toHaveBeenCalledTimes(1);
+
+    const taskAfterFailedRepair = await workflow.getTask(TENANT, result.run_id);
+    expect(taskAfterFailedRepair?.state).toBe('awaiting_human');
+    expect(
+      (taskAfterFailedRepair?.state_payload as Record<string, unknown> | undefined)?.['resume_event'],
+    ).toEqual(persistedResumeEvent);
+    expect(backing.listEvidence(TENANT, result.run_id)).toHaveLength(0);
+    expect(backing.listAgentRuns(TENANT, result.run_id)).toHaveLength(0);
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(resolveSpy).toHaveBeenCalledTimes(1);
+
+    // 3. Second resumeTask with the same event uses evidence read/replay, appends one EV_HUMAN_HANDOFF and audit/run log,
+    // clears only the repair event while keeping awaiting_human, and never second-settles/resends
+    const replayResult = await orchestrator.resumeTask(result.run_id, persistedResumeEvent!);
+
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(replayResult.lifecycle_state).toBe('awaiting_human');
+    expect(replayResult.evidence).toBeDefined();
+    expect(evidenceLogger.findImmutableRecord).toHaveBeenCalledTimes(2);
+
+    // Exactly one immutable evidence record and one agent run log are appended
+    const evidenceList = backing.listEvidence(TENANT, replayResult.run_id);
+    expect(evidenceList).toHaveLength(1);
+    const ev = evidenceList[0]!;
+    expect(ev.tenant_id).toBe(TENANT);
+    expect(ev.run_id).toBe(replayResult.run_id);
+    expect(ev.effect_key).toBe(key);
+
+    const payload = JSON.parse(ev.raw_payload);
+    expect(payload).toMatchObject({
+      evidence_card: 'EV_HUMAN_HANDOFF',
+      customer_id: 'cust-care-1',
+      session_id: 'thread-care-1',
+      conversation_id: 'conv-care-1',
+      effect_key: key,
+      tenant_id: TENANT,
+      run_id: replayResult.run_id,
+      receipt: handoffReceipt,
+      handoff_receipt: handoffReceipt,
+    });
+
+    const runLogs = backing.listAgentRuns(TENANT, replayResult.run_id);
+    expect(runLogs).toHaveLength(1);
+    expect(runLogs[0]?.execution_status).toBe('success');
+    expect(runLogs[0]?.skill).toBe('skill.care.escalate_to_human');
+
+    const taskAfterRepair = await workflow.getTask(TENANT, result.run_id);
+    expect(taskAfterRepair?.state).toBe('awaiting_human');
+    expect(
+      (taskAfterRepair?.state_payload as Record<string, unknown> | undefined)?.['resume_event'],
+    ).toBeUndefined();
+    expect(
+      (taskAfterRepair?.state_payload as Record<string, unknown> | undefined)?.['pending_action'],
+    ).toBeDefined();
+
+    const settled = effectGuard.peek(TENANT, key);
+    expect(settled?.status).toBe('SUCCEEDED');
+    expect(settled?.receipt).toEqual(handoffReceipt);
+
+    // Post-enqueue progress, park, second-settle and outcome watch remain absent across repair
+    expect(postEnqueueProgressCalls).toBe(0);
+    expect(updateProgressSpy.mock.calls.filter((call) => call[2] > careStep.step_index)).toHaveLength(0);
+    expect(resolveSpy).toHaveBeenCalledTimes(1);
+    expect(evidenceLogger.initializeOutcomeWatch).not.toHaveBeenCalled();
+    // 4. Re-queue the same persisted repair after evidence exists; a duplicate log is accepted only by its canonical code.
+    const taskForDuplicateRepair = await workflow.getTask(TENANT, result.run_id);
+    await workflow.queueHandoffEvidence({
+      tenant_id: TENANT,
+      run_id: result.run_id,
+      expected_task_version: taskForDuplicateRepair!.task_version,
+      evidence_payload: persistedResumeEvent!.evidence_payload!,
+      step_index: careStep.step_index,
+      effect_key: key,
+    });
+    const queuedDuplicate = await workflow.getTask(TENANT, result.run_id);
+    const duplicateEvent = (queuedDuplicate?.state_payload as Record<string, unknown>)?.['resume_event'] as typeof persistedResumeEvent;
+    evidenceLogger.logAgentRun = vi.fn(async () => {
+      throw new Error('AGENT_RUN_LOG_APPENDED: step already has its agent_run_logs row');
+    });
+    const duplicateRepair = await orchestrator.resumeTask(result.run_id, duplicateEvent!);
+    expect(duplicateRepair.lifecycle_state).toBe('awaiting_human');
+    expect((await workflow.getTask(TENANT, result.run_id))?.state_payload).not.toHaveProperty('resume_event');
     expect(backing.listEvidence(TENANT, result.run_id)).toHaveLength(1);
   });
 });

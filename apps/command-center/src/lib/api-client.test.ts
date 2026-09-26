@@ -283,15 +283,15 @@ describe('R14 Approval Contracts', () => {
     expect(result.approval_id).toBe('app/special:001');
   });
 
-  it('calls POST /api/v1/approvals/{id}/decision with strict decision body and sha256', async () => {
+  it('calls POST /api/v1/approvals/{id}/decision with strict decision body, sha256 and handles HTTP 202 QUEUED response', async () => {
     const mockResponse: ApprovalDecisionResponse = {
       approval_id: 'app-123',
-      task_id: 'run-123',
-      decided_at: '2026-09-23T12:00:00Z',
-      status: 'APPROVED',
+      task_id: 'task-queue-123',
+      status: 'QUEUED',
+      queued_at: '2026-09-23T12:00:00Z',
       correlation_id: 'corr-123',
     };
-    const spy = createFetchSpy(createMockJsonResponse(mockResponse));
+    const spy = createFetchSpy(createMockJsonResponse(mockResponse, 202));
     const client = createApiClient({ baseUrl: 'http://localhost:4000', fetch: spy.mockFetch });
 
     const decisionRequest: ApprovalDecisionRequest = {
@@ -306,7 +306,74 @@ describe('R14 Approval Contracts', () => {
     expect(spy.getLastUrl()).toBe('http://localhost:4000/api/v1/approvals/app-123/decision');
     expect(spy.getLastInit()?.method).toBe('POST');
     expect(spy.getBodyJson()).toEqual(decisionRequest);
-    expect(result.status).toBe('APPROVED');
+    expect(result.status).toBe('QUEUED');
+    expect(result.queued_at).toBe('2026-09-23T12:00:00Z');
+    expect(result.approval_id).toBe('app-123');
+    expect(result.task_id).toBe('task-queue-123');
+    expect(result.correlation_id).toBe('corr-123');
+    expect((result as unknown as Record<string, unknown>).decided_at).toBeUndefined();
+  });
+
+  it('submits MODIFY decision with modified_payload and returns HTTP 202 QUEUED without claiming decided_at', async () => {
+    const mockResponse: ApprovalDecisionResponse = {
+      approval_id: 'app-modify-1',
+      task_id: 'task-queue-456',
+      status: 'QUEUED',
+      queued_at: '2026-09-23T12:05:00Z',
+      correlation_id: 'corr-modify-456',
+    };
+    const spy = createFetchSpy(createMockJsonResponse(mockResponse, 202));
+    const client = createApiClient({ baseUrl: 'http://localhost:4000', fetch: spy.mockFetch });
+
+    const modifyRequest: ApprovalDecisionRequest = {
+      decision: 'MODIFY',
+      operator_id: 'op-alice',
+      expected_payload_sha256: 'sha-original-999',
+      reason: 'OPERATOR_MODIFIED_PAYLOAD',
+      modified_payload: { discount_cents: 500 },
+    };
+
+    const result = await client.submitApprovalDecision('app-modify-1', modifyRequest);
+
+    expect(spy.getLastUrl()).toBe('http://localhost:4000/api/v1/approvals/app-modify-1/decision');
+    expect(spy.getLastInit()?.method).toBe('POST');
+    expect(spy.getBodyJson()).toEqual(modifyRequest);
+    expect(result.status).toBe('QUEUED');
+    expect(result.queued_at).toBe('2026-09-23T12:05:00Z');
+    expect((result as unknown as Record<string, unknown>).decided_at).toBeUndefined();
+  });
+
+  it('preserves HTTP 409 conflict and stale payload error envelope for conflicting or duplicate approvals', async () => {
+    const errorEnvelope: ApiErrorEnvelope = {
+      error_code: 'APPROVAL_STALE_PAYLOAD',
+      message: 'approval app-123 now binds a different reviewed payload.',
+      retryable: false,
+      correlation_id: 'corr-stale-789',
+    };
+    const spy = createFetchSpy(createMockJsonResponse(errorEnvelope, 409));
+    const client = createApiClient({ baseUrl: 'http://localhost:4000', fetch: spy.mockFetch });
+
+    const staleRequest: ApprovalDecisionRequest = {
+      decision: 'APPROVE',
+      operator_id: 'op-charlie',
+      expected_payload_sha256: 'sha-stale-000',
+      reason: 'Attempting approve with stale digest',
+    };
+
+    await expect(client.submitApprovalDecision('app-123', staleRequest)).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 409,
+      errorCode: 'APPROVAL_STALE_PAYLOAD',
+      code: 'APPROVAL_STALE_PAYLOAD',
+      message: 'approval app-123 now binds a different reviewed payload.',
+      retryable: false,
+      correlationId: 'corr-stale-789',
+      envelope: expect.objectContaining({
+        error_code: 'APPROVAL_STALE_PAYLOAD',
+        correlation_id: 'corr-stale-789',
+        retryable: false,
+      }),
+    });
   });
 });
 

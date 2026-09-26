@@ -1642,6 +1642,21 @@ export class EvidenceRepository {
    * @throws Error `EVIDENCE_CHAIN_STALE` when the caller's cursor is not the durable predecessor.
    * @throws Error `EVIDENCE_ALREADY_APPENDED` when this effect already holds its link.
    */
+  async findEvidence(input: { tenant_id: string; run_id: string; effect_key: string; step_index: number }): Promise<ImmutableEvidenceRecord | null> {
+    assertIdentifier(input.tenant_id, 'tenant_id', 36, 'EVIDENCE_INPUT_INVALID');
+    assertIdentifier(input.run_id, 'run_id', 64, 'EVIDENCE_INPUT_INVALID');
+    assertIdentifier(input.effect_key, 'effect_key', 128, 'EVIDENCE_INPUT_INVALID');
+    if (!Number.isInteger(input.step_index) || input.step_index < 1) throw new Error('EVIDENCE_INPUT_INVALID: step_index must be a positive integer');
+    return this.runInTenantTransaction(input.tenant_id, async (client) => {
+      const result = await client.query<EvidenceRecordRow>(
+        `SELECT${EVIDENCE_PROJECTION} FROM ${EVIDENCE_RECORDS}
+           WHERE tenant_id = $1 AND run_id = $2 AND effect_key = $3 AND step_index = $4`,
+        [input.tenant_id, input.run_id, input.effect_key, input.step_index],
+      );
+      return result.rows[0] === undefined ? null : toEvidenceRecord(result.rows[0]);
+    });
+  }
+
   async appendEvidence(input: AppendEvidenceInput): Promise<ImmutableEvidenceRecord> {
     assertIdentifier(input.tenant_id, 'tenant_id', 36, 'EVIDENCE_INPUT_INVALID');
     assertIdentifier(input.run_id, 'run_id', 64, 'EVIDENCE_INPUT_INVALID');

@@ -401,6 +401,7 @@ describe('AUTH-4 approval route', () => {
     expect(decision.resolvedRequirement).toBe('AUTH-4');
     expect(decision.grantedAuthority).toBe('AUTH-3');
     expect(decision.approvalTicketId).toBe('APV-0');
+    expect(decision.effectKey).toBe(EFFECT_KEY);
     expect(harness.queueRequests).toEqual([
       expect.objectContaining({
         tenant_id: TENANT,
@@ -842,11 +843,13 @@ describe('durable decision intent', () => {
       true,
       'RECORDED',
     ]);
+    expect(decision.effectKey).toBe(EFFECT_KEY);
     expect(harness.auditRecords).toEqual([
       expect.objectContaining({
         verdict: 'AUTO_APPROVED',
         decision_code: 'PERMIT',
         authority: 'AUTH-3',
+        effect_key: EFFECT_KEY,
         payload_sha256: decision.payloadSha256,
         occurred_at: FROZEN_INSTANT,
       }),
@@ -910,12 +913,37 @@ describe('durable decision intent', () => {
     });
 
     expect(decision.errorCode).toBe('EFFECT_KEY_REQUIRED');
+    expect(decision.effectKey).toBeNull();
     expect(harness.auditRecords).toEqual([
       expect.objectContaining({
         verdict: 'DENIED',
         rule_id: 'BR-005',
         error_code: 'EFFECT_KEY_REQUIRED',
         approval_id: null,
+        effect_key: null,
+      }),
+    ]);
+  });
+  it('preserves null effect_key for non-mutating action without deriving from digest', async () => {
+    const harness = createHarness();
+
+    const decision = await evaluate(harness, {
+      skill_id: CHECK_PRICE.skill_id,
+      tool_name: 'adapter:pricing',
+      payload: { catalog_ref_id: CATALOG.catalog_ref_id, offered_price: APPROVED_FLOOR.floor_price },
+    });
+
+    expect(decision.verdict).toBe('AUTO_APPROVED');
+    expect(decision.effectKey).toBeNull();
+    expect(decision.payloadSha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(decision.effectKey).not.toBe(decision.payloadSha256);
+    expect(harness.auditRecords).toEqual([
+      expect.objectContaining({
+        verdict: 'AUTO_APPROVED',
+        decision_code: 'PERMIT',
+        effect_key: null,
+        payload_sha256: decision.payloadSha256,
+        occurred_at: FROZEN_INSTANT,
       }),
     ]);
   });

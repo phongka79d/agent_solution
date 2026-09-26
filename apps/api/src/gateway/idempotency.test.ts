@@ -22,6 +22,7 @@ import { GatewayFailureError } from './http.js';
 import { claimIdempotentEffect, settleIdempotentEffect, type IdempotencyOutcome } from './idempotency.js';
 import type {
   ApprovalPort,
+  CareHandoffPort,
   ConversationPort,
   EventPort,
   GatewayAuditPort,
@@ -119,6 +120,7 @@ function refusingPort<T extends object>(name: string): T {
 function testRuntime(guard: MemoryEffectGuard, clock: Clock): GatewayRuntime {
   return {
     conversations: refusingPort<ConversationPort>('conversations'),
+    handoffs: refusingPort<CareHandoffPort>('handoffs'),
     takeover: refusingPort<TakeoverLeasePort>('takeover'),
     runs: refusingPort<RunPort>('runs'),
     approvals: refusingPort<ApprovalPort>('approvals'),

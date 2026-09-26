@@ -4,6 +4,7 @@ import { packageName as coreEnginePackageName, RevenueOrchestrator } from '@agen
 import {
   packageName as databasePackageName,
   DurableWorkflowRepository,
+  assertCompleteCheckpoint,
   type DurableTaskRecord,
 } from '@agentos/database';
 import { packageName as skillsPackageName } from '@agentos/skills';
@@ -26,6 +27,28 @@ export const DEPENDENCIES: readonly string[] = [
   adaptersPackageName,
   databasePackageName,
 ];
+const RESUME_EVENT_TYPES = new Set([
+  'human.approval',
+  'human.modify',
+  'human.reject',
+  'human.pause',
+  'human.cancel',
+  'human.reconcile',
+  'timer.expired',
+  'reconcile.completed',
+  'human.handoff.evidence',
+]);
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function hasResumeEvent(value: unknown): boolean {
+  const record = asRecord(value);
+  return record !== null && asRecord(record['resume_event']) !== null;
+}
 
 export interface WorkerPollerHandle {
   readonly isRunning: boolean;
@@ -69,24 +92,35 @@ export interface WorkerExecutionOptions extends WorkerConnectorOptions {
 }
 
 /**
- * Releases a running task only while this worker still owns the lease. Closed and parked tasks
- * remain untouched; a concurrent change is resolved by the repository's version guard.
+ * Releases a task only while this worker still owns the lease. Event-bearing parked tasks retain
+ * their state and resume event; a consumed resume event may explicitly release its parked lease.
  */
 export async function releaseLeaseIfHeld(
   workflowRepository: Pick<DurableWorkflowRepository, 'getTask' | 'releaseTaskLease'>,
   tenant_id: string,
   run_id: string,
-  worker_id: string
+  worker_id: string,
+  releaseParkedWithoutEvent = false,
 ): Promise<boolean> {
   const task = await workflowRepository.getTask(tenant_id, run_id);
-  if (!task || task.lease_owner !== worker_id || task.state !== 'running') return false;
+  if (!task || task.lease_owner !== worker_id) return false;
+  const eventBearing = hasResumeEvent(task.state_payload);
+  const parked = task.state === 'waiting' || task.state === 'awaiting_human';
+  if (task.state !== 'running' && !(eventBearing && parked) && !(releaseParkedWithoutEvent && parked)) {
+    return false;
+  }
+  const targetState = task.state === 'awaiting_human'
+    ? 'awaiting_human'
+    : task.state === 'waiting'
+      ? 'waiting'
+      : 'queued';
   try {
     await workflowRepository.releaseTaskLease({
       tenant_id,
       run_id,
       lease_owner: worker_id,
       task_version: task.task_version,
-      target_state: 'queued',
+      target_state: targetState,
     });
     return true;
   } catch (error) {
@@ -97,31 +131,10 @@ export async function releaseLeaseIfHeld(
   }
 }
 
-function isCompleteCheckpoint(payload: Record<string, unknown>): boolean {
-  const target: Record<string, unknown> = ('checkpoint' in payload && payload.checkpoint && typeof payload.checkpoint === 'object' && !Array.isArray(payload.checkpoint))
-    ? (payload.checkpoint as Record<string, unknown>)
-    : payload;
-
-  const plan = target.plan;
-  const hasPlan = typeof plan === 'object' && plan !== null && 'steps' in plan && Array.isArray(plan.steps);
-
-  const context = target.context;
-  const hasContext = typeof context === 'object' && context !== null && 'tenant_id' in context && typeof context.tenant_id === 'string';
-
-  const hypothesis = target.hypothesis;
-  const hasHypothesis = typeof hypothesis === 'object' && hypothesis !== null && 'classification' in hypothesis && hypothesis.classification === 'HYPOTHESIS';
-
-  const pendingAction = target.pending_action;
-  const hasPendingAction = typeof pendingAction === 'object' && pendingAction !== null && 'action_id' in pendingAction && typeof pendingAction.action_id === 'string';
-
-  const completedSteps = target.completed_steps;
-  const hasCompletedSteps = Array.isArray(completedSteps);
-
-  return Boolean(hasPlan && hasContext && hasHypothesis && hasPendingAction && hasCompletedSteps);
-}
 /**
  * Executes a single claimed durable task under the worker lease.
- * Fails closed on non-P1 channels, non-support module, or missing authoritative input.
+ * Resume events are consumed before generic mutating-action recovery; the event is the authoritative
+ * handoff that decides whether approval or reconciliation may continue.
  */
 export async function processClaimedTask(params: {
   taskRecord: DurableTaskRecord;
@@ -131,21 +144,37 @@ export async function processClaimedTask(params: {
   orchestratorFactory?: (tenant_id: string) => Promise<RevenueOrchestrator | null> | RevenueOrchestrator | null;
 }): Promise<void> {
   const { taskRecord, tenant_id, worker_id, workflowRepository, orchestratorFactory } = params;
+  const hadResumeEvent = hasResumeEvent(taskRecord.state_payload);
 
   try {
-    const checkpoint = taskRecord.state_payload;
-    const pending = typeof checkpoint === 'object' && checkpoint !== null && !Array.isArray(checkpoint)
-      && 'pending_action' in checkpoint ? checkpoint.pending_action : null;
-    if (typeof pending === 'object' && pending !== null && !Array.isArray(pending)
-      && 'mutating' in pending && pending.mutating === true) {
-      await workflowRepository.transitionTask(tenant_id, taskRecord.run_id, 'waiting',
-        'EFFECT_UNKNOWN: reclaimed mutating action requires provider reconciliation',
-        checkpoint, { expected_task_version: taskRecord.task_version, lease_owner: worker_id });
-      return;
-    }
     const payload = taskRecord.state_payload;
-    if (typeof payload === 'object' && payload !== null && !Array.isArray(payload) && 'resume_event' in payload) {
-      if (!isCompleteCheckpoint(payload as Record<string, unknown>)) {
+    const record = asRecord(payload);
+    const resumeEventValue = record?.['resume_event'];
+    if (resumeEventValue !== undefined) {
+      const resumeEvent = asRecord(resumeEventValue);
+      const eventType = resumeEvent?.['event_type'];
+      if (
+        resumeEvent === null
+        || resumeEvent['tenant_id'] !== tenant_id
+        || typeof eventType !== 'string'
+        || !RESUME_EVENT_TYPES.has(eventType)
+      ) {
+        await workflowRepository.recordFailure({
+          tenant_id,
+          run_id: taskRecord.run_id,
+          error_class: 'FATAL',
+          error_details: { code: 'RESUME_EVENT_INVALID' },
+          expected_task_version: taskRecord.task_version,
+          lease_owner: worker_id,
+        });
+        return;
+      }
+
+      const checkpoint = { ...record };
+      delete checkpoint['resume_event'];
+      try {
+        assertCompleteCheckpoint(checkpoint);
+      } catch {
         await workflowRepository.recordFailure({
           tenant_id,
           run_id: taskRecord.run_id,
@@ -169,20 +198,30 @@ export async function processClaimedTask(params: {
         return;
       }
 
-      await orchestrator.resumeTask(taskRecord.run_id, payload.resume_event as never);
+      await orchestrator.resumeTask(taskRecord.run_id, resumeEvent as never);
       return;
     }
-    const signal = typeof payload === 'object' && payload !== null && !Array.isArray(payload)
-      && 'signal' in payload ? payload.signal : null;
-    const valid = typeof signal === 'object' && signal !== null && !Array.isArray(signal)
-      && 'tenant_id' in signal && signal.tenant_id === tenant_id
-      && 'correlation_id' in signal && signal.correlation_id === taskRecord.correlation_id
-      && 'signal_id' in signal && typeof signal.signal_id === 'string'
-      && 'source_channel' in signal && signal.source_channel === 'WEB_CHAT'
-      && 'event_type' in signal && signal.event_type === 'message.received'
-      && 'payload' in signal && typeof signal.payload === 'object' && signal.payload !== null
-      && !Array.isArray(signal.payload) && 'module' in signal.payload
-      && signal.payload.module === 'support';
+
+    const pending = record?.['pending_action'] ?? null;
+    if (typeof pending === 'object' && pending !== null && !Array.isArray(pending)
+      && 'mutating' in pending && pending.mutating === true) {
+      await workflowRepository.transitionTask(tenant_id, taskRecord.run_id, 'waiting',
+        'EFFECT_UNKNOWN: reclaimed mutating action requires provider reconciliation',
+        payload, { expected_task_version: taskRecord.task_version, lease_owner: worker_id });
+      return;
+    }
+
+    const signal = record?.['signal'];
+    const signalRecord = asRecord(signal);
+    const signalPayload = asRecord(signalRecord?.['payload']);
+    const valid = signalRecord !== null
+      && signalRecord['tenant_id'] === tenant_id
+      && signalRecord['correlation_id'] === taskRecord.correlation_id
+      && typeof signalRecord['signal_id'] === 'string'
+      && signalRecord['source_channel'] === 'WEB_CHAT'
+      && signalRecord['event_type'] === 'message.received'
+      && signalPayload !== null
+      && signalPayload['module'] === 'support';
     if (!valid) {
       await workflowRepository.recordFailure({
         tenant_id,
@@ -210,11 +249,15 @@ export async function processClaimedTask(params: {
     await orchestrator.processQueuedSignal(taskRecord.run_id, signal as SignalEnvelope, { worker_id });
   } finally {
     const current = await workflowRepository.getTask(tenant_id, taskRecord.run_id);
-    const pending = current?.state_payload && typeof current.state_payload === 'object'
-      && !Array.isArray(current.state_payload) && 'pending_action' in current.state_payload
-      ? current.state_payload.pending_action : null;
-    if (!(pending && typeof pending === 'object' && 'mutating' in pending && pending.mutating === true)) {
-      await releaseLeaseIfHeld(workflowRepository, tenant_id, taskRecord.run_id, worker_id);
+    const currentPayload = asRecord(current?.state_payload);
+    const currentPending = currentPayload?.['pending_action'];
+    if (
+      hadResumeEvent
+      || hasResumeEvent(current?.state_payload)
+      || !(currentPending && typeof currentPending === 'object' && !Array.isArray(currentPending)
+        && 'mutating' in currentPending && currentPending.mutating === true)
+    ) {
+      await releaseLeaseIfHeld(workflowRepository, tenant_id, taskRecord.run_id, worker_id, hadResumeEvent);
     }
   }
 }

@@ -6,7 +6,7 @@ import {
   type ErpMutationAuthority,
   type HmacSha256Hex,
 } from '@agentos/adapters';
-import type { IAdapterDispatcher } from '@agentos/core-engine/contracts';
+import type { ExecutionReceipt, IAdapterDispatcher } from '@agentos/core-engine/contracts';
 import { OrchestratorError } from '@agentos/core-engine/contracts';
 
 import { createErpHttpTransport, type ErpFetchLike } from './erp-http-transport.js';
@@ -56,6 +56,16 @@ export interface ErpReadPort {
     readonly resource: string;
     readonly key?: string;
   }): Promise<ConnectorReadResult>;
+  reconcile?(input: {
+    readonly tenant_id: string;
+    readonly effect_key: string;
+    readonly action_id?: string;
+    readonly adapter_target?: string;
+    readonly skill_id?: string;
+  }): Promise<{
+    readonly outcome: 'SUCCEEDED' | 'FAILED' | 'INDETERMINATE';
+    readonly receipt?: ExecutionReceipt;
+  }>;
 }
 
 export interface WorkerConnectorOptions {
@@ -155,6 +165,7 @@ export function createWorkerConnectors(
       },
       dispatch: (draft) => connector.dispatch(draft),
       read: (input) => connector.read(input),
+      reconcile: (input) => connector.reconcile(input),
     });
     bound.push(API_001_CONNECTOR_ID);
     erp_read = connector;

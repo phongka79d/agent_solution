@@ -152,6 +152,126 @@ describe('CarePolicyEngine', () => {
         code: 'IDENTITY_UNVERIFIED',
       });
     });
+
+    it('normalizes valid escalate_to_human action payload against canonical schema', async () => {
+      const action: ActionDraft = {
+        action_id: '00000000-0000-4000-8000-000000000014',
+        run_id: 'run-1',
+        tenant_id,
+        agent_id: 'CS-01',
+        skill_id: 'skill.care.escalate_to_human',
+        adapter_target: 'Orchestrator.HandoffBus',
+        step_index: 1,
+        mutating: true,
+        price_bearing: false,
+        request_id: 'req-1',
+        action_revision: 0,
+        effect_key: 'eff-1',
+        required_authority: 'AUTH-3',
+        payload: {
+          tenant_id,
+          session_id: 'sess-1',
+          conversation_id: 'conv-1',
+          customer_id: 'cust-42',
+          escalation_reason: 'customer_complaint',
+          summary_context: 'Product damaged in transit',
+          effect_key: 'eff-1',
+        },
+      };
+
+      const validated = await engine.validateAction(action, context);
+      expect(validated.skill_id).toBe('skill.care.escalate_to_human');
+      expect(validated.payload).toEqual(action.payload);
+    });
+
+    it('rejects escalate_to_human action with actually unknown fields in payload', async () => {
+      const action: ActionDraft = {
+        action_id: '00000000-0000-4000-8000-000000000015',
+        run_id: 'run-1',
+        tenant_id,
+        agent_id: 'CS-01',
+        skill_id: 'skill.care.escalate_to_human',
+        adapter_target: 'Orchestrator.HandoffBus',
+        step_index: 1,
+        mutating: true,
+        price_bearing: false,
+        request_id: 'req-1',
+        action_revision: 0,
+        effect_key: 'eff-1',
+        required_authority: 'AUTH-3',
+        payload: {
+          tenant_id,
+          session_id: 'sess-1',
+          conversation_id: 'conv-1',
+          escalation_reason: 'customer_complaint',
+          unauthorized_extra_field: 'illegal',
+        },
+      };
+
+      await expect(engine.validateAction(action, context)).rejects.toThrow(OrchestratorError);
+      await expect(engine.validateAction(action, context)).rejects.toMatchObject({
+        code: 'POLICY_INPUT_INVALID',
+      });
+    });
+
+    it('rejects escalate_to_human action with cross-customer assertion', async () => {
+      const action: ActionDraft = {
+        action_id: '00000000-0000-4000-8000-000000000016',
+        run_id: 'run-1',
+        tenant_id,
+        agent_id: 'CS-01',
+        skill_id: 'skill.care.escalate_to_human',
+        adapter_target: 'Orchestrator.HandoffBus',
+        step_index: 1,
+        mutating: true,
+        price_bearing: false,
+        request_id: 'req-1',
+        action_revision: 0,
+        effect_key: 'eff-1',
+        required_authority: 'AUTH-3',
+        payload: {
+          tenant_id,
+          session_id: 'sess-1',
+          conversation_id: 'conv-1',
+          customer_id: 'cust-mismatch-999',
+          escalation_reason: 'customer_complaint',
+        },
+      };
+
+      await expect(engine.validateAction(action, context)).rejects.toThrow(OrchestratorError);
+      await expect(engine.validateAction(action, context)).rejects.toMatchObject({
+        code: 'CROSS_CUSTOMER_ASSERTION',
+      });
+    });
+
+    it('rejects action with payload cross-tenant assertion', async () => {
+      const action: ActionDraft = {
+        action_id: '00000000-0000-4000-8000-000000000017',
+        run_id: 'run-1',
+        tenant_id,
+        agent_id: 'CS-01',
+        skill_id: 'skill.care.escalate_to_human',
+        adapter_target: 'Orchestrator.HandoffBus',
+        step_index: 1,
+        mutating: true,
+        price_bearing: false,
+        request_id: 'req-1',
+        action_revision: 0,
+        effect_key: 'eff-1',
+        required_authority: 'AUTH-3',
+        payload: {
+          tenant_id: '00000000-0000-4000-8000-999999999999',
+          session_id: 'sess-1',
+          conversation_id: 'conv-1',
+          escalation_reason: 'customer_complaint',
+        },
+      };
+
+      await expect(engine.validateAction(action, context)).rejects.toThrow(OrchestratorError);
+      await expect(engine.validateAction(action, context)).rejects.toMatchObject({
+        code: 'CROSS_TENANT_ASSERTION',
+      });
+    });
   });
 
   describe('evaluateAuthority', () => {

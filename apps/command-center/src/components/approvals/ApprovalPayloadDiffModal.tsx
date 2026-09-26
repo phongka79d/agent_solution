@@ -53,6 +53,7 @@ export function ApprovalPayloadDiffModal({
 
   const [decisionReceipt, setDecisionReceipt] = useState<ApprovalDecisionResponse | null>(null);
 
+  const currentItemId = item?.id;
   useEffect(() => {
     if (item) {
       setIsModifying(false);
@@ -63,7 +64,7 @@ export function ApprovalPayloadDiffModal({
       setSubmissionError(null);
       setDecisionReceipt(null);
     }
-  }, [item]);
+  }, [currentItemId]);
 
   if (!item) return null;
 
@@ -100,7 +101,14 @@ export function ApprovalPayloadDiffModal({
       setDecisionReceipt(receipt);
     } catch (err: unknown) {
       const apiErr = err as ApiErrorResponse & { status?: number; isConflict?: boolean };
-      const is409 = apiErr.status === 409 || apiErr.isConflict === true;
+      const is409 =
+        apiErr.status === 409 ||
+        apiErr.isConflict === true ||
+        (typeof apiErr.error_code === 'string' &&
+          (apiErr.error_code.includes('CONFLICT') ||
+            apiErr.error_code.includes('STALE') ||
+            apiErr.error_code.includes('ALREADY') ||
+            apiErr.error_code.includes('NOT_CLAIMABLE')));
       setSubmissionError({
         message: apiErr.message || 'Decision submission failed.',
         isConflict: is409,
@@ -161,12 +169,18 @@ export function ApprovalPayloadDiffModal({
               </h2>
               <span
                 className={`px-2 py-0.5 text-[10px] font-mono rounded border ${
-                  item.isPaused || item.status === 'PAUSED'
+                  item.status === 'QUEUED'
+                    ? 'bg-purple-950 text-purple-300 border-purple-700'
+                    : item.isPaused || item.status === 'PAUSED'
                     ? 'bg-sky-950 text-sky-300 border-sky-700'
                     : 'bg-amber-950 text-amber-300 border-amber-700'
                 }`}
               >
-                {item.isPaused || item.status === 'PAUSED' ? 'PAUSED' : 'AWAITING_HUMAN'}
+                {item.status === 'QUEUED'
+                  ? 'QUEUED'
+                  : item.isPaused || item.status === 'PAUSED'
+                  ? 'PAUSED'
+                  : 'AWAITING_HUMAN'}
               </span>
             </div>
             <p className="text-xs text-slate-400">
@@ -366,18 +380,27 @@ export function ApprovalPayloadDiffModal({
             </div>
           )}
 
-          {/* Decision Success Receipt */}
+          {/* Decision Queued Receipt (R05 queue-first contract) */}
           {decisionReceipt && (
-            <div className="p-3.5 bg-emerald-950/40 border border-emerald-800 rounded-xl text-emerald-200 space-y-1">
+            <div
+              data-testid="approval-decision-receipt"
+              className="p-3.5 bg-sky-950/40 border border-sky-800 rounded-xl text-sky-200 space-y-1"
+            >
               <div className="font-bold text-xs flex items-center gap-2">
-                <span>Server Receipt Received: Status {decisionReceipt.status}</span>
+                <span>Decision Queued: Status {decisionReceipt.status}</span>
+                <span className="text-[10px] font-mono px-1.5 py-0.5 bg-sky-900/60 rounded border border-sky-700">
+                  HTTP 202 Accepted
+                </span>
               </div>
-              <p className="text-[11px] font-mono">
+              <p className="text-[11px] font-mono text-slate-300">
                 Approval ID: {decisionReceipt.approval_id} | Task ID: {decisionReceipt.task_id}
               </p>
-              <p className="text-[10px] font-mono text-emerald-400">
-                Decided At: {decisionReceipt.decided_at} | Correlation ID:{' '}
+              <p className="text-[10px] font-mono text-sky-300">
+                Queued At: {decisionReceipt.queued_at} | Correlation ID:{' '}
                 {decisionReceipt.correlation_id}
+              </p>
+              <p className="text-[10px] text-slate-400 mt-1">
+                Durable worker handoff queued. The approval remains pending until claimed and executed by the worker.
               </p>
             </div>
           )}
@@ -392,7 +415,7 @@ export function ApprovalPayloadDiffModal({
               onClick={() =>
                 handleExecute('PAUSE', 'OPERATOR_PAUSED_FOR_INVESTIGATION')
               }
-              disabled={isSubmitting || !!decisionReceipt}
+              disabled={isSubmitting || !!decisionReceipt || item.status === 'QUEUED'}
               className="px-3.5 py-2 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-sky-400 border border-slate-700 hover:border-sky-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Pause
@@ -402,7 +425,7 @@ export function ApprovalPayloadDiffModal({
             <button
               type="button"
               onClick={() => handleExecute('CANCEL', 'OPERATOR_CANCELLED_RUN')}
-              disabled={isSubmitting || !!decisionReceipt}
+              disabled={isSubmitting || !!decisionReceipt || item.status === 'QUEUED'}
               className="px-3.5 py-2 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 hover:border-slate-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Cancel Run
@@ -415,7 +438,7 @@ export function ApprovalPayloadDiffModal({
               <button
                 type="button"
                 onClick={handleStartModify}
-                disabled={isSubmitting || !!decisionReceipt}
+                disabled={isSubmitting || !!decisionReceipt || item.status === 'QUEUED'}
                 className="px-3.5 py-2 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 hover:border-amber-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Modify Payload
@@ -430,7 +453,7 @@ export function ApprovalPayloadDiffModal({
                   setShowRejectForm(true);
                   setIsModifying(false);
                 }}
-                disabled={isSubmitting || !!decisionReceipt}
+                disabled={isSubmitting || !!decisionReceipt || item.status === 'QUEUED'}
                 className="px-3.5 py-2 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-rose-400 border border-slate-700 hover:border-rose-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Reject…
@@ -441,7 +464,7 @@ export function ApprovalPayloadDiffModal({
             <button
               type="button"
               onClick={() => handleExecute('APPROVE', 'OPERATOR_APPROVED')}
-              disabled={isSubmitting || isModifying || showRejectForm || !!decisionReceipt}
+              disabled={isSubmitting || isModifying || showRejectForm || !!decisionReceipt || item.status === 'QUEUED'}
               className="px-5 py-2 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-950 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
             >
               {isSubmitting ? (

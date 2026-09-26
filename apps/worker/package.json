@@ -8,7 +8,8 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "lint": "node ../../scripts/eslint.mjs",
-    "test:unit": "vitest run"
+    "test:unit": "vitest run",
+    "test:pilots": "vitest run src/runtime/care/pilot-04.test.ts"
   },
   "dependencies": {
     "@agentos/adapters": "workspace:*",

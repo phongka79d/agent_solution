@@ -55,6 +55,7 @@ export const TASK_TRANSITIONS: readonly TaskTransition[] = Object.freeze([
   { from: 'waiting', event: 'event.received', to: 'running' },
   { from: 'waiting', event: 'timer.expired', to: 'running' },
   { from: 'waiting', event: 'reconcile.completed', to: 'running' },
+  { from: 'waiting', event: 'human.reconcile', to: 'waiting' },
   { from: 'waiting', event: 'human.takeover', to: 'stopped' },
 
   // awaiting_human — one PENDING approval is the only resume authority (§4.2).

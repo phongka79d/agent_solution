@@ -33,6 +33,7 @@ import {
   type AgentRunLog,
   type AppendCustomerEventInput,
   type ApprovalRepository,
+  type CareHandoffRepository,
   type ConversationRepository,
   type CustomerEventRepository,
   type DurableTaskRecord,
@@ -56,6 +57,7 @@ import type {
 } from '../gateway/contracts.js';
 import type {
   ApprovalPort,
+  CareHandoffPort,
   ConversationPort,
   ConversationRecord,
   EventPort,
@@ -119,6 +121,11 @@ export function createEffectGuard(repository: EffectReservationRepository): IEff
       // landed, so no receipt exists and no re-dispatch is authorized.
       return { outcome: 'INDETERMINATE' };
     },
+    reopenForRetry: async (input) => repository.reopenReservation({
+      tenant_id: input.tenant_id,
+      effect_key: input.effect_key,
+      expires_at: new Date(Date.now() + EFFECT_RESERVATION_TTL_MS).toISOString(),
+    }),
   };
 }
 
@@ -306,6 +313,9 @@ type DurableRunRepository = Pick<
   'getTask' | 'listTasks' | 'requeueFailed'
 >;
 
+type DurableReconciliationRepository = Pick<DurableWorkflowRepository, 'queueReconciliation'>;
+type ApprovalDecisionRepository = Pick<ApprovalRepository, 'queueDecision'>;
+
 /** Operational-log surface needed by retry classification and R16. */
 type RunEvidenceRepository = Pick<EvidenceRepository, 'readRunLogs' | 'readEvidenceChain'>;
 
@@ -448,17 +458,16 @@ async function toRunProjection(
 }
 
 /**
- * Binds the durable run read model and the narrow operator requeue path.
- *
- * Start and reconciliation are intentionally absent: both require the complete RevenueOrchestrator
- * graph, including current policy, skill execution, evidence and leases. The composition root keeps
- * those two capabilities fail-closed instead of mutating repositories behind the orchestrator.
+ * Binds the durable run projection, safe requeue path and INTERNAL reconciliation event queue.
+ * Provider-confirmed settlement remains fail-closed in the orchestrator until a provider query is
+ * available; this binding records the authenticated operator event without settling a reservation.
  */
 export function createDurableRunPort(
   repository: DurableRunRepository,
   evidence: RunEvidenceRepository,
   reservations: RunReservationRepository,
-): Pick<RunPort, 'read' | 'classifyRetry' | 'retry' | 'list'> {
+  reconciliation?: DurableReconciliationRepository,
+): Pick<RunPort, 'read' | 'classifyRetry' | 'retry' | 'reconcile' | 'list'> {
   const classifyRetry: RunPort['classifyRetry'] = async (tenant_id, run_id) => {
     const task = await repository.getTask(tenant_id, run_id);
     if (task === null) return { retryable: false, reason: 'NOT_FOUND' };
@@ -481,6 +490,22 @@ export function createDurableRunPort(
   };
 
   return {
+    reconcile: async (input) => {
+      if (reconciliation === undefined) {
+        throw new Error(
+          'RUN_RECONCILIATION_UNBOUND: no durable reconciliation repository is bound for INTERNAL handoff',
+        );
+      }
+      const task = await reconciliation.queueReconciliation({
+        tenant_id: input.tenant_id,
+        run_id: input.run_id,
+        resolution: input.resolution,
+        reason: input.reason,
+        operator_id: input.operator_id,
+        ...(input.receipt === undefined ? {} : { receipt: input.receipt }),
+      });
+      return { accepted: true, run_id: task.run_id };
+    },
     read: async ({ tenant_id, run_id }) => {
       const task = await repository.getTask(tenant_id, run_id);
       if (task === null) return null;
@@ -616,10 +641,10 @@ export function createStartRunPort(
 
       const request_fingerprint = guard.computeRequestFingerprint(canonicalPayload);
       const run_id = ids();
-
+      const conversation_id = input.payload['conversation_id'];
       // The canonical `SignalEnvelope`: `signal_id` IS the immutable inbound identity the effect key
-      // is derived from, and the session/channel binding travels nested under `subject` because that
-      // is the only place the context aggregator may read identity from.
+      // is derived from. The API-resolved conversation UUID and the session/channel identity are
+      // nested under `subject`; the context aggregator never derives the UUID from a thread id.
       const signal: Record<string, unknown> = {
         signal_id: input.request_id,
         tenant_id: input.tenant_id,
@@ -630,6 +655,7 @@ export function createStartRunPort(
         payload: input.payload,
         subject: {
           session_id: input.session_id,
+          ...(typeof conversation_id === 'string' && conversation_id.length > 0 ? { conversation_id } : {}),
           channel_type: input.channel_type,
           ...(input.channel_identifier === undefined ? {} : { channel_identifier: input.channel_identifier }),
           ...(input.verified_customer_id === undefined ? {} : { verified_customer_id: input.verified_customer_id }),
@@ -675,6 +701,7 @@ export function createStartRunPort(
           task_version: outcome.task.task_version,
           correlation_id: outcome.task.correlation_id,
           lifecycle_state: outcome.task.state,
+          admission: 'ADMITTED',
         };
       }
 
@@ -690,6 +717,8 @@ export function createStartRunPort(
         task_version: existingTask.task_version,
         correlation_id: existingTask.correlation_id,
         lifecycle_state: existingTask.state,
+        admission: outcome.kind,
+        ...(outcome.kind === 'REPLAY' && outcome.receipt !== null ? { receipt: outcome.receipt } : {}),
       };
     },
   };
@@ -774,6 +803,14 @@ export function createApprovalReadPort(
     },
   };
 }
+/** Queues an authenticated decision; the worker owns policy and lease-fenced consumption. */
+export function createApprovalDecisionPort(
+  repository: ApprovalDecisionRepository,
+): Pick<ApprovalPort, 'decide'> {
+  return {
+    decide: (input) => repository.queueDecision(input),
+  };
+}
 
 /** Binds SCR-005 to the canonical tenant/conversation-scoped Redis lease helpers. */
 export function createTakeoverLeasePort(
@@ -786,6 +823,16 @@ export function createTakeoverLeasePort(
     release: async (input) => releaseSessionTakeover(redis, input),
     holder: async (tenant_id, conversation_id) =>
       readSessionTakeover(redis, tenant_id, conversation_id, now),
+  };
+}
+
+/** Binds durable handoff ownership transitions to the PostgreSQL repository transaction. */
+export function createCareHandoffPort(
+  repository: Pick<CareHandoffRepository, 'claim' | 'complete'>,
+): CareHandoffPort {
+  return {
+    claim: (input) => repository.claim(input),
+    complete: (input) => repository.complete(input),
   };
 }
 

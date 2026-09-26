@@ -413,10 +413,10 @@ describe('createStartRunPort', () => {
     reconcile: async () => ({ outcome: 'INDETERMINATE' as const }),
   };
 
-  function createTestRunner(handler: (sql: string) => Record<string, unknown>[]) {
+  function createTestRunner(handler: (sql: string, values: readonly unknown[]) => Record<string, unknown>[]) {
     const client = {
-      async query<R extends Record<string, unknown>>(sql: string): Promise<{ rows: R[]; rowCount: number; command: string; oid: number; fields: unknown[] }> {
-        const rows = handler(sql) as R[];
+      async query<R extends Record<string, unknown>>(sql: string, values?: readonly unknown[]): Promise<{ rows: R[]; rowCount: number; command: string; oid: number; fields: unknown[] }> {
+        const rows = handler(sql, values ?? []) as R[];
         return { rows, rowCount: rows.length, command: '', oid: 0, fields: [] };
       },
     } as unknown as ScriptedClient;
@@ -426,8 +426,9 @@ describe('createStartRunPort', () => {
     };
   }
 
-  it('admits a new run on first delivery and returns task identity', async () => {
-    const runner = createTestRunner((sql) => {
+  it('admits a new run on first delivery and persists the API-resolved conversation UUID in subject', async () => {
+    let persistedStatePayload: unknown;
+    const runner = createTestRunner((sql, values) => {
       if (sql.includes('INSERT INTO agentos.effect_reservations')) {
         return [
           {
@@ -448,6 +449,7 @@ describe('createStartRunPort', () => {
         ];
       }
       if (sql.includes('INSERT INTO agentos.platform_durable_tasks')) {
+        persistedStatePayload = JSON.parse(String(values[6]));
         return [
           {
             tenant_id: TENANT,
@@ -462,7 +464,7 @@ describe('createStartRunPort', () => {
             last_error_details: null,
             lease_owner: null,
             lease_expires_at: null,
-            state_payload: {},
+            state_payload: persistedStatePayload,
             created_at: new Date(),
             updated_at: new Date(),
           },
@@ -494,6 +496,16 @@ describe('createStartRunPort', () => {
       task_version: 1,
       correlation_id: 'corr-1',
       lifecycle_state: 'queued',
+      admission: 'ADMITTED',
+    });
+    expect(persistedStatePayload).toMatchObject({
+      signal: {
+        subject: {
+          session_id: 'session-1',
+          conversation_id: 'conv-1',
+          channel_type: 'WEB_CHAT',
+        },
+      },
     });
   });
 
@@ -556,6 +568,7 @@ describe('createStartRunPort', () => {
       task_version: 2,
       correlation_id: 'orig-corr',
       lifecycle_state: 'running',
+      admission: 'IN_FLIGHT',
     });
   });
 
