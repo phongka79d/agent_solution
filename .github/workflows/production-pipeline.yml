@@ -179,6 +179,9 @@ jobs:
           # to (services/mock-erp/src/fixtures.mjs); Care keeps its own pilot tenant above, so the
           # two smokes never share fixtures, tenants or effect state.
           SALES_TENANT_IDS: 00000000-0000-4000-8000-000000000001
+          # The P4 smoke is scoped to its own tenant and proves the durable handoff ledger against
+          # the rehearsed schema; it drives no API or worker, so it needs neither provider.
+          P4_TENANT_IDS: 22222222-2222-4222-8222-222222222222
           SESSION_SECRET: ci-session-secret-0000000000
           PLATFORM_SECRET: ci-platform-secret-0000000
           AUDIT_HMAC_SECRET: ci-audit-hmac-secret-000000
