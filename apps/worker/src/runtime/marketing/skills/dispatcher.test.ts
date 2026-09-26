@@ -37,6 +37,8 @@ function createMockSignalReads(): MarketingSignalReadPort {
       ],
       trend_velocity: 'STABLE' as const,
       analyzed_at: '2026-09-26T12:00:00.000Z',
+      source_uri: 'research://skills/signals',
+      source_version: 'v2026-09-26',
     })),
   };
 }
