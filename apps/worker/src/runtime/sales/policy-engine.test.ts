@@ -725,6 +725,7 @@ describe('SalesPolicyEngine', () => {
       const engine = createSalesPolicyEngine({
         resolveGrant: async () => 'AUTH-3',
         auditTrail: mockAuditTrail,
+        auditSecret: 'test-secret',
       });
 
       const action: ActionDraft = {
@@ -848,6 +849,7 @@ describe('SalesPolicyEngine', () => {
       const engine = createSalesPolicyEngine({
         consent: consentPort,
         auditTrail: mockAuditTrail,
+        auditSecret: 'test-secret',
       });
       const result = await engine.evaluateAuthority(sendMessageAction, context);
       expect(result.verdict).toBe('AUTO_APPROVED');

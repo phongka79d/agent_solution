@@ -20,6 +20,7 @@ import {
 } from './runtime/care/index.js';
 import {
   createSalesOrchestratorFactory,
+  getSalesUnboundCapabilities,
   type SalesOrchestratorFactoryOptions,
 } from './runtime/sales/index.js';
 import {
@@ -467,9 +468,18 @@ export function startWorker(
         erp_read: connectors.erp_read,
       };
 
-      const salesFactory = typeof createSalesOrchestratorFactory === 'function'
-        ? createSalesOrchestratorFactory(salesFactoryOptions)
-        : null;
+      // Reported, never used to suppress the domain: a deployment that binds only the read
+      // connectors still serves catalog/stock/customer reads and refuses each mutation at
+      // dispatch. The default factory is built only when no injected factory already covers it,
+      // so a supplied factory never forces construction of a graph the caller replaced.
+      const salesUnboundCapabilities = getSalesUnboundCapabilities(salesFactoryOptions);
+      for (const cap of salesUnboundCapabilities) {
+        blockers.push(`SALES_CAPABILITY_UNBOUND: ${cap}`);
+      }
+
+      const salesFactory = options.salesOrchestratorFactory
+        ? null
+        : createSalesOrchestratorFactory(salesFactoryOptions);
       const salesOrchestratorFactory = options.salesOrchestratorFactory ?? salesFactory;
 
       if (!salesOrchestratorFactory) {
