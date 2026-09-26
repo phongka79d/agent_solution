@@ -1385,7 +1385,6 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
         response_payload: { delivered: true },
         latency_ms: 50,
         token_usage: { prompt: 0, completion: 0, total_cost_usd: 0 },
-        occurred_at: new Date().toISOString(),
       };
       reconcileDispatcher.mockResolvedValueOnce({
         outcome: 'SUCCEEDED' as const,
@@ -1857,7 +1856,6 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       await expect(
         dispatchCampaign(input, CONTEXT, ports, {
           approvalBinding: binding,
-          brandReview: undefined,
         }),
       ).rejects.toMatchObject({
         code: 'BRAND_REVIEW_REQUIRED',
@@ -2059,7 +2057,6 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       await expect(
         dispatchCampaign(input, CONTEXT, ports, {
           brandReview: makeValidBrandReview(),
-          authoritativeValidation: undefined,
         }),
       ).rejects.toMatchObject({
         code: 'P_FLOOR_UNAVAILABLE',
@@ -2093,7 +2090,6 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       await expect(
         dispatchCampaign(makeValidInput({ payload: { discount_percent: 25 } }), CONTEXT, ports, {
           brandReview: makeValidBrandReview(),
-          authoritativeValidation: undefined,
         }),
       ).rejects.toMatchObject({ code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE' });
 
@@ -2109,7 +2105,6 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       await expect(
         dispatchCampaign(makeValidInput({ payload: { discount_amount: 100 } }), CONTEXT, ports, {
           brandReview: makeValidBrandReview(),
-          authoritativeValidation: undefined,
         }),
       ).rejects.toMatchObject({ code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE' });
 
@@ -2133,7 +2128,6 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       await expect(
         dispatchCampaign(makeValidInput({ payload: { offer_id: 'any-offer' } }), CONTEXT, ports, {
           brandReview: makeValidBrandReview(),
-          authoritativeValidation: undefined,
         }),
       ).rejects.toMatchObject({ code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE' });
 
@@ -2247,7 +2241,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
 
   describe('10. End-to-End CampaignLifecycle Seam', () => {
     it('models the complete 8-stage lifecycle from Brief to Optimize', async () => {
-      const { ports, dispatch } = createMockPorts({
+      const { ports, dispatch, claimApprovalAndResume } = createMockPorts({
         research: {
           readMarketSignals: async () => ({
             signals: [],
