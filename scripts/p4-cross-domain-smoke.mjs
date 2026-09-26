@@ -50,6 +50,15 @@ const MANAGED_ENVS = ['staging', 'sandbox', 'production'];
 /** The channel a brokered handoff is admitted on; never a customer-facing channel. */
 const HANDOFF_CHANNEL = 'ORCHESTRATOR_HANDOFF';
 
+/**
+ * The tenant the isolation case owns.
+ *
+ * It exists so the cross-tenant negative addresses a REAL customer of another tenant instead of an
+ * id that merely does not exist: a missing customer is an FK refusal, which is a different claim.
+ * Nothing is ever admitted under this tenant, so it accumulates exactly one fixture row.
+ */
+const SECOND_TENANT_ID = '22222222-2222-4222-8222-22222222222b';
+
 /** Reservation window the ledger expects the caller to own (mirrors EFFECT_RESERVATION_TTL_MS). */
 const RESERVATION_TTL_MS = 259_200_000;
 
@@ -344,12 +353,53 @@ describe('P4 cross-domain handoff ledger (real PostgreSQL)', () => {
     assert.notEqual(refused.kind, 'ADMITTED', 'a repeated lifecycle version must never admit');
   });
 
-  it('6. refuses a hop addressed outside the tenant', async () => {
+  it('6. refuses a hop addressed to a customer of ANOTHER tenant', async () => {
+    // A REAL customer, in a different tenant. An id that simply does not exist would only prove an
+    // FK refusal, which is a weaker claim than the one this case is named for.
+    const foreign_customer_id = randomUUID();
+    await context.db.withTenantContext(SECOND_TENANT_ID, async (client) => {
+      await client.query(
+        `INSERT INTO agentos.customers (id, tenant_id, display_name, verification_status)
+         VALUES ($1, $2, 'P4 smoke foreign-tenant customer', 'verified')
+         ON CONFLICT (id) DO NOTHING`,
+        [foreign_customer_id, SECOND_TENANT_ID],
+      );
+    });
+
+    const input = handoffInput({ customer_id: foreign_customer_id });
+
+    await assert.rejects(
+      () => context.db.admitCrossDomainHandoff(input),
+      'a hop addressing a customer of another tenant must be refused by the tenant-scoped ledger',
+    );
+
+    assert.equal(
+      await countRows(
+        'SELECT COUNT(*)::int AS count FROM agentos.cross_domain_handoffs WHERE tenant_id = $1 AND idempotency_key = $2',
+        [context.tenant_id, input.idempotency_key],
+      ),
+      0,
+      'a refused cross-tenant hop must leave no ledger row in the requesting tenant',
+    );
+    assert.equal(
+      await context.db.withTenantContext(SECOND_TENANT_ID, async (client) => {
+        const result = await client.query(
+          'SELECT COUNT(*)::int AS count FROM agentos.cross_domain_handoffs WHERE tenant_id = $1',
+          [SECOND_TENANT_ID],
+        );
+        return Number(result.rows[0]?.count ?? 0);
+      }),
+      0,
+      'a refused cross-tenant hop must leave nothing in the other tenant either',
+    );
+  });
+
+  it('6b. refuses a hop addressed to a customer that does not exist', async () => {
     const input = handoffInput({ customer_id: randomUUID() });
 
     await assert.rejects(
       () => context.db.admitCrossDomainHandoff(input),
-      'a handoff for a customer of another tenant must be refused by the tenant-scoped read',
+      'a hop for an unknown customer must be refused rather than attached to the tenant',
     );
   });
 
