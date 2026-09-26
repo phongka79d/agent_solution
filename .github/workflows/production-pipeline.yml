@@ -125,6 +125,19 @@ jobs:
             echo "::error title=API unit output::$escaped"
           done < <(tail -n 240 api-unit-output.log)
           exit $status
+      - name: Isolate Worker unit failure
+        if: steps.unit_tests.outcome == 'failure'
+        id: worker_unit_diagnostics
+        continue-on-error: true
+        run: |
+          set +e
+          (cd apps/worker && pnpm test:unit) > worker-unit-output.log 2>&1
+          status=$?
+          while IFS= read -r line; do
+            escaped=$(printf '%s' "$line" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')
+            echo "::error title=Worker unit output::$escaped"
+          done < <(tail -n 300 worker-unit-output.log)
+          exit $status
       - name: Fail unit gate after diagnostics
         if: steps.unit_tests.outcome == 'failure'
         run: exit 1
