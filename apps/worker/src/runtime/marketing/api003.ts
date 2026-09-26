@@ -182,7 +182,7 @@ export class MarketingApi003Connector implements AdapterPort {
   readonly provider: string;
   readonly boundTenantId: string;
   private readonly credentials: Api003Credentials;
-  private readonly transport?: Api003OutboundTransport;
+  private readonly transport: Api003OutboundTransport | undefined;
 
   constructor(config?: Partial<MarketingApi003Config> | null) {
     const hasTenant = typeof config?.tenant_id === 'string' && config.tenant_id.trim().length > 0;
@@ -606,6 +606,6 @@ export function createMarketingApi003Binding(
     isBound: registration.bound,
     status: registration.status,
     connector_id: registration.connector_id,
-    unboundReason: registration.reason,
+    ...(registration.reason === undefined ? {} : { unboundReason: registration.reason }),
   };
 }

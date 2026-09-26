@@ -111,6 +111,7 @@ function createMockPorts(overrides: Partial<MarketingRuntimePorts> = {}) {
     claimApprovalAndResume,
     recordFailure: vi.fn(async () => ({ requeued: false })),
     queueHandoffEvidence: vi.fn(async () => ({ queued: true })),
+    clearHandoffEvidence: vi.fn(async () => ({ cleared: true })),
   };
 
   const reserve = vi.fn(async (): Promise<ReservationOutcome> => ({ kind: 'RESERVED' }));
@@ -172,6 +173,12 @@ function createMockPorts(overrides: Partial<MarketingRuntimePorts> = {}) {
     reconcileDispatcher,
     reopenForRetry,
   };
+}
+
+function withoutWorkflow(ports: MarketingRuntimePorts): MarketingRuntimePorts {
+  return Object.fromEntries(
+    Object.entries(ports).filter(([key]) => key !== 'workflowEngine'),
+  ) as MarketingRuntimePorts;
 }
 
 function makeValidInput(overrides: Partial<CampaignDispatchInput> = {}): CampaignDispatchInput {
@@ -299,7 +306,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       const input = makeValidInput();
 
       await expect(
-        dispatchCampaign(input, CONTEXT, { ...ports, workflowEngine: undefined }, {
+        dispatchCampaign(input, CONTEXT, withoutWorkflow(ports), {
           brandReview: makeValidBrandReview(),
           expected_task_version: 1,
         }),
@@ -2464,7 +2471,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
       const { ports } = createMockPorts();
       const lifecycle = createCampaignLifecycle(
         { tenant_id: TENANT, campaign_id: CAMPAIGN_ID, run_id: RUN_ID, correlation_id: CORRELATION_ID, expected_task_version: 1 },
-        { ...ports, workflowEngine: undefined },
+        withoutWorkflow(ports),
       );
       lifecycle.setStageForTesting('APPROVAL');
       (lifecycle.state as Record<string, unknown>).content = { draft_id: 'draft-camp-01', channel_payload: { channel_type: 'SMS' } };

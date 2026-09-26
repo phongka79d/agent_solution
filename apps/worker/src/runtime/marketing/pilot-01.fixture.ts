@@ -1237,7 +1237,7 @@ export async function executePilot01StagedPipeline(
   // ==========================================
   validateEffectReservation(effect_key, reservedKeys);
 
-  if (options.ports?.providerDispatcher) {
+  if (approvalStage.status === 'APPROVED' && options.ports?.providerDispatcher) {
     const response = await options.ports.providerDispatcher(dispatchPayload);
     validateProviderResponse(response);
   }

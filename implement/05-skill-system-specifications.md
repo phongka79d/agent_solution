@@ -1004,14 +1004,13 @@ export interface OutputMktAuditBrand {
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
-  "required": ["tenant_id", "campaign_id", "segment_id", "channel", "approved_content_id", "approval_signature"],
+  "required": ["tenant_id", "campaign_id", "segment_id", "channel", "approved_content_id"],
   "properties": {
     "tenant_id": { "type": "string" },
     "campaign_id": { "type": "string" },
     "segment_id": { "type": "string" },
     "channel": { "type": "string", "enum": ["LINE", "WHATSAPP", "EMAIL", "SMS", "ZALO", "TIKTOK", "MESSENGER", "INSTAGRAM"] },
     "approved_content_id": { "type": "string" },
-    "approval_signature": { "type": "string" },
     "offer_id": { "type": "string" },
     "discount_amount": { "type": "number", "minimum": 0 },
     "discount_percent": { "type": "number", "minimum": 0, "maximum": 100 },
@@ -1037,12 +1036,12 @@ export interface OutputMktAuditBrand {
 - **5. Allowed Agents**: `["MKT-05"]`
 - **6. Required Authority**: `AUTH-4` (approval route — prepared, not executed: the run pauses at the SCR-003 human gate and this skill may run only under the `approval_id` bound to its own `(tenant_id, run_id, effect_key)`; never rank-compared, never a clearance)
 - **7. Tool Binding**: `API-003.CommunicationConnector`
-- **8. Validation Rules**: `["approval_signature must be verified against the approvals gate (SCR-003): the approval must exist, be bound to this run's effect_key, and authorize exactly one dispatch (BR-007)", "an approval is never treated as a clearance grant and never raises the caller's authority", "channel quota must be available"]`
+- **8. Validation Rules**: `["approval_id and approval_payload_digest must be verified against the canonical approvals gate (SCR-003): the approval must exist, be bound to this run's effect_key, and authorize exactly one dispatch (BR-007)", "an approval is never treated as a clearance grant and never raises the caller's authority", "channel quota must be available"]`
 - **9. Retry Policy**: `{"max_retries": 0, "initial_interval_ms": 0, "backoff_multiplier": 1.0, "retry_on_timeout": false, "non_retryable_errors": ["AUTH_DENIED", "CAMPAIGN_ALREADY_SENT"]}`
 - **10. Timeout**: `5000ms`
 - **11. Audit Spec (SRS §11 field 10)**: `{"log_level": "INFO", "mask_pii_fields": [], "evidence_card": "EV_CAMPAIGN_DISPATCH", "record_latency": true}`
 - **12. Test Cases & Acceptance Criteria (SRS §11 field 11)**: `test_cases` = `TC-SKILL-01`..`TC-SKILL-05` (§5, baseline) instantiated for this skill, plus:
-  - `TC-SKILL-06-06` (**AUTHORITY**) — Invocation with no bound `approval_id`, an unverifiable `approval_signature`, or an approval bound to a different `effect_key`. Expected: `APPROVAL_REQUIRED`: exactly one PENDING approval row exists for the run and zero recipients are contacted; no rank comparison takes place.
+  - `TC-SKILL-06-06` (**AUTHORITY**) — Invocation with no bound `approval_id`, or an approval bound to a different `effect_key`. Expected: `APPROVAL_REQUIRED`: exactly one PENDING approval row exists for the run and zero recipients are contacted; no rank comparison takes place.
   - `TC-SKILL-06-07` (**IDEMPOTENCY**) — The same campaign/segment dispatch is submitted twice. Expected: `CAMPAIGN_ALREADY_SENT` (non-retryable, `max_retries: 0`); the recipient count is unchanged by the second call.
 
 ```typescript
@@ -1052,7 +1051,6 @@ export interface InputMktDispatchCampaign {
   segment_id: string;
   channel: 'LINE' | 'WHATSAPP' | 'EMAIL' | 'SMS' | 'ZALO' | 'TIKTOK' | 'MESSENGER' | 'INSTAGRAM';
   approved_content_id: string;
-  approval_signature: string;
 }
 export interface OutputMktDispatchCampaign {
   dispatch_id: string;
@@ -2489,7 +2487,7 @@ Each row instantiates the five baseline cases of §5 with this skill's own schem
 | `skill.mkt.check_consent` | Consented `(channel, consent_type)` → `allowed=true` + timestamp | Opt-out, expired, or wildcard row → `allowed=false` + `suppression_reason`; downstream send refused (`CONSENT_REQUIRED`) | Unknown channel → `SCHEMA_VALIDATION_ERROR` before the store read | Store error ≤3; exhaustion fails closed — never default-allow | Read-only: same verdict, no consent row mutated |
 | `skill.mkt.generate_content` | `MKT-03` at `AUTH-2` → one draft with channel payload; nothing dispatched | Unlisted agent → `UNAUTHORIZED_AGENT`; `AUTH-1` → `INSUFFICIENT_AUTHORITY`; no draft | 250+ char theme or unsupported locale → validation failure before the LLM call | Engine timeout retried once; no partial draft persisted | Replay of the stored draft id returns the stored payload; no second billed generation |
 | `skill.mkt.audit_brand_compliance` | Approved copy → `compliant=true`, empty violations | Prohibited claim → `compliant=false` with a `BLOCKING` violation; dispatch refuses the draft | Empty or ≥10000-char text → `MALFORMED_INPUT` before the guard | Guard error ≤2; exhaustion never reports "compliant" | Identical text → identical verdict; nothing written |
-| `skill.mkt.dispatch_campaign` | Bound `approval_id` + matching digest → dispatch accepted, status `ENQUEUED`, `EV_CAMPAIGN_DISPATCH` | No approval → `REQUIRE_HUMAN_APPROVAL`/`APPROVAL_REQUIRED`; digest mismatch → `APPROVAL_PAYLOAD_MISMATCH`; `AUTH-5` attempt → `PROHIBITED_ACTION` with no queued row; 0 recipients contacted | Missing `approved_content_id` or `approval_signature` → `SCHEMA_VALIDATION_ERROR`; 0 recipients | `EFFECT_UNKNOWN` (never re-dispatched); the approval is consumed once; reconcile by `effect_key` | Second submission of the same campaign/segment → `CAMPAIGN_ALREADY_SENT`; recipient count unchanged |
+| `skill.mkt.dispatch_campaign` | Bound `approval_id` + matching digest → dispatch accepted, status `ENQUEUED`, `EV_CAMPAIGN_DISPATCH` | No approval → `REQUIRE_HUMAN_APPROVAL`/`APPROVAL_REQUIRED`; digest mismatch → `APPROVAL_PAYLOAD_MISMATCH`; `AUTH-5` attempt → `PROHIBITED_ACTION` with no queued row; 0 recipients contacted | Missing `approved_content_id` → `SCHEMA_VALIDATION_ERROR`; 0 recipients | `EFFECT_UNKNOWN` (never re-dispatched); the approval is consumed once; reconcile by `effect_key` | Second submission of the same campaign/segment → `CAMPAIGN_ALREADY_SENT`; recipient count unchanged |
 | `skill.mkt.evaluate_attribution` | Existing tenant campaign → ROAS/CAC figures | `AUTH-0` → `INSUFFICIENT_AUTHORITY`; other-tenant campaign → `CAMPAIGN_NOT_FOUND` with 0 rows | Unknown `attribution_model` → `SCHEMA_VALIDATION_ERROR` pre-query | Query error ≤2; exhaustion returns no partial metrics | Read-only: identical figures; no duplicated metric row |
 | `skill.sales.search_product` | ≤20 catalog matches with list price and stock flag from API-001 | Unlisted agent → `UNAUTHORIZED_AGENT`; cross-tenant catalog → 0 rows | `limit=21` or injection tokens → `MALFORMED_QUERY` pre-adapter | Read-only ≤3; exhaustion → `SKILL_EXECUTION_FAILED`; no cached price presented as live | Repeat returns the same result set for the same catalog version; no side effect |
 | `skill.sales.check_stock` | `available_quantity` + `in_stock` from the WMS | SKU absent → `SKU_NOT_FOUND`; never a fabricated availability of 0 | Missing `sku_id` → `SCHEMA_VALIDATION_ERROR` | WMS down → `AUTHORITATIVE_SOURCE_UNAVAILABLE` after ≤3; stale cache never served as FACT | Repeat read returns one latest snapshot; no reservation created |

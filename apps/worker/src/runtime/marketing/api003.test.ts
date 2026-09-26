@@ -568,7 +568,7 @@ describe('Marketing API-003 Outbound Connector Binding', () => {
 
     it('returns outcome INDETERMINATE when transport does not implement reconcile', async () => {
       const transport: Api003OutboundTransport = {
-        dispatch: vi.fn(async () => ({ ok: true, receipt: createDefaultReceipt() })),
+        dispatch: vi.fn(async () => ({ ok: true as const, receipt: createDefaultReceipt() })),
       };
       const connector = new MarketingApi003Connector(createValidConfig(transport));
 

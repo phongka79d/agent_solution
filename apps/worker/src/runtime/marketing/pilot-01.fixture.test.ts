@@ -288,6 +288,7 @@ describe('PILOT-01 Offline Fixture & Harness Interface', () => {
             claimApprovalAndResume: async () => ({
               claimed: true,
               approval_id: 'appr-pilot01-gate',
+              decision: 'APPROVED' as const,
               operator_id: 'op-compliance-leader-01',
             }),
           },

@@ -123,7 +123,7 @@ export async function checkRecipientConsents(
  * Refuses price-bearing dispatches with missing or breached floor price.
  */
 export function validateAuthoritativeInputs(
-  input: CampaignDispatchInput | Record<string, unknown>,
+  input: unknown,
   authoritativeValidation?: MarketingAuthoritativeValidation,
 ): void {
   if (input === null || typeof input !== 'object' || Array.isArray(input)) {
