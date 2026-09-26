@@ -70,6 +70,17 @@ interface EvidenceChain {
   previous: string;
 }
 
+/**
+ * The plan-step cursor a resume must continue from: the ordinal AFTER the last planned step.
+ *
+ * `executeSteps` skips only the steps whose `step_index` is below `from_step`, so a cursor equal to
+ * the last step's index would re-enter that step. Parking a completed plan therefore records one
+ * past its highest step ordinal, whatever the ordinals are.
+ */
+function nextStepCursor(plan: ExecutionPlan): number {
+  return plan.steps.reduce((highest, step) => Math.max(highest, step.step_index), 0) + 1;
+}
+
 /** Disposition of the guarded step loop, consumed by `processSignal` and `resumeTask`. */
 interface StepLoopOutcome {
   readonly lifecycle_state: TaskLifecycleState;
@@ -2042,7 +2053,10 @@ export class RevenueOrchestrator {
         reason: 'HANDOFF_ADMISSION_UNRESOLVED: the durable handoff could not be admitted; the same '
           + 'idempotency key is retried before the journey leg is reported complete (§4.4).',
         plan: params.plan,
-        current_step: params.plan.steps.length,
+        // The cursor is the NEXT step ordinal, not the array length: a resume skips only the steps
+        // whose `step_index` is below it, so parking at `steps.length` would re-enter the last step
+        // (and re-draft its evidence) instead of continuing past it.
+        current_step: nextStepCursor(params.plan),
         pending_action: null,
         context: params.context,
         previous_evidence_hash: params.previous_evidence_hash,

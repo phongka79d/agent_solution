@@ -289,6 +289,31 @@ describe('assertHandoffAdmissible', () => {
     );
   });
 
+  it('refuses malformed input with its own codes rather than a raw TypeError', () => {
+    const pkg = createCrossDomainHandoffPackage(draft());
+
+    expectRefusal(
+      () => assertHandoffAdmissible({ ...pkg, lifecycle: null } as never, context()),
+      'HANDOFF_PACKAGE_INVALID',
+    );
+    expectRefusal(
+      () => assertHandoffAdmissible({ ...pkg, lifecycle: { version: 1 } } as never, context()),
+      'HANDOFF_PACKAGE_INVALID',
+    );
+    expectRefusal(
+      () => assertHandoffAdmissible({ ...pkg, visited_domains: 'marketing' } as never, context()),
+      'HANDOFF_PACKAGE_INVALID',
+    );
+    expectRefusal(
+      () => assertHandoffAdmissible({ ...pkg, occurred_at: '2026-09-26' }, context()),
+      'HANDOFF_PACKAGE_INVALID',
+    );
+    expectRefusal(
+      () => assertHandoffAdmissible({ ...pkg, evidence: ['not-a-ref'] } as never, context()),
+      'HANDOFF_EVIDENCE_INVALID',
+    );
+  });
+
   it('refuses a package whose classification its own evidence does not support', () => {
     const pkg = createCrossDomainHandoffPackage(draft());
     const promoted = { ...pkg, classification: 'FACT' as const };

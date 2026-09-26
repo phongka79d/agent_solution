@@ -481,15 +481,25 @@ export function startWorker(
         })
       : undefined);
 
-  const careFactoryOptions: CareOrchestratorFactoryOptions = options.careFactoryOptions ?? {
-    workerId,
-    workflowRepository: workflowRepository as DurableWorkflowRepository,
-    // The connector's own read surface, or `null` when no system of record is bound — in which
-    // case the order skill refuses at dispatch instead of the worker substituting a cached value.
-    erp_read: connectors.erp_read,
-    env,
-    ...(crossDomainHandoff === undefined ? {} : { crossDomainHandoff }),
-  };
+  const careFactoryOptions: CareOrchestratorFactoryOptions = options.careFactoryOptions === undefined
+    ? {
+        workerId,
+        workflowRepository: workflowRepository as DurableWorkflowRepository,
+        // The connector's own read surface, or `null` when no system of record is bound — in which
+        // case the order skill refuses at dispatch instead of the worker substituting a cached value.
+        erp_read: connectors.erp_read,
+        env,
+        ...(crossDomainHandoff === undefined ? {} : { crossDomainHandoff }),
+      }
+    : {
+        // A caller-supplied options object is the documented injection seam, so the broker is
+        // merged into it unless the caller bound one itself — otherwise enabling the journey would
+        // silently do nothing on that path.
+        ...options.careFactoryOptions,
+        ...(options.careFactoryOptions.crossDomainHandoff !== undefined || crossDomainHandoff === undefined
+          ? {}
+          : { crossDomainHandoff }),
+      };
 
   const enabledModules = parseEnabledAgentModules(env.ENABLED_AGENT_MODULES);
   const bindings: DomainRuntimeBinding[] = [];
@@ -526,12 +536,19 @@ export function startWorker(
     if (salesChannels.length === 0 || salesEventTypes.length === 0) {
       blockers.push('SALES_CAPABILITY_UNBOUND: SALES_SIGNAL_SOURCE_CHANNELS and SALES_SIGNAL_EVENT_TYPES must be configured and non-empty');
     } else {
-      const salesFactoryOptions: SalesOrchestratorFactoryOptions = options.salesFactoryOptions ?? {
-        workerId,
-        workflowRepository: workflowRepository as DurableWorkflowRepository,
-        erp_read: connectors.erp_read,
-        ...(crossDomainHandoff === undefined ? {} : { crossDomainHandoff }),
-      };
+      const salesFactoryOptions: SalesOrchestratorFactoryOptions = options.salesFactoryOptions === undefined
+        ? {
+            workerId,
+            workflowRepository: workflowRepository as DurableWorkflowRepository,
+            erp_read: connectors.erp_read,
+            ...(crossDomainHandoff === undefined ? {} : { crossDomainHandoff }),
+          }
+        : {
+            ...options.salesFactoryOptions,
+            ...(options.salesFactoryOptions.crossDomainHandoff !== undefined || crossDomainHandoff === undefined
+              ? {}
+              : { crossDomainHandoff }),
+          };
 
       // Reported, never used to suppress the domain: a deployment that binds only the read
       // connectors still serves catalog/stock/customer reads and refuses each mutation at

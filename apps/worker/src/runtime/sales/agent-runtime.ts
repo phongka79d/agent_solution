@@ -164,6 +164,9 @@ function lookupRegistryRow(
  */
 /** Reads only the admitted package reason for the canonical marketing → sales edge. */
 function extractSalesHandoffReason(signal: SignalEnvelope): string | undefined {
+  // Only the orchestrator writes this channel: a customer-facing delivery that carries a handoff
+  // payload is not a brokered handoff, and reading one would let a caller route itself onward.
+  if (signal.source_channel !== 'ORCHESTRATOR_HANDOFF') return undefined;
   const raw = signal.payload.handoff;
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
   const handoff = raw as Record<string, unknown>;

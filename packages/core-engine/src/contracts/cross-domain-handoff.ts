@@ -448,6 +448,17 @@ export function highestAuthority(levels: readonly AuthorityLevel[]): AuthorityLe
   );
 }
 
+/**
+ * Whether a value is a canonical ISO-8601 UTC instant.
+ *
+ * `Date.parse` alone is not enough: it accepts `2026-09-26`, `2026-09-26T10:00` and free-form
+ * variants, none of which keep a durable ordering key comparable. The instant must round-trip.
+ */
+function isCanonicalInstant(value: string): boolean {
+  const parsed = new Date(value);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value;
+}
+
 /** @throws OrchestratorError `HANDOFF_PACKAGE_INVALID` when `value` is not a usable free-text field. */
 function assertText(value: unknown, field: string, maxLength: number): string {
   if (typeof value !== 'string' || value.trim().length === 0 || value.length > maxLength) {
@@ -461,20 +472,30 @@ function assertText(value: unknown, field: string, maxLength: number): string {
   return value;
 }
 
-/** @throws OrchestratorError `HANDOFF_PACKAGE_INVALID` when the evidence reference is unusable. */
-function assertEvidenceRefShape(ref: HandoffEvidenceRef, index: number): void {
-  if (!EPISTEMIC_CLASSIFICATIONS.includes(ref.classification)) {
+/** @throws OrchestratorError `HANDOFF_EVIDENCE_INVALID` when the evidence reference is unusable. */
+function assertEvidenceRefShape(ref: unknown, index: number): void {
+  if (typeof ref !== 'object' || ref === null || Array.isArray(ref)) {
     throw new OrchestratorError(
       'HANDOFF_EVIDENCE_INVALID',
-      `Evidence reference ${index} carries unknown classification '${String(ref.classification)}'; `
+      `Evidence reference ${index} is not an object; a reference names a classification, a claim, `
+        + 'its source, its version and its verifier (implement/04 §1.1).',
+    );
+  }
+
+  const candidate = ref as HandoffEvidenceRef;
+
+  if (!EPISTEMIC_CLASSIFICATIONS.includes(candidate.classification)) {
+    throw new OrchestratorError(
+      'HANDOFF_EVIDENCE_INVALID',
+      `Evidence reference ${index} carries unknown classification '${String(candidate.classification)}'; `
         + 'the vocabulary is FACT, SIGNAL, HYPOTHESIS, DECISION, ACTION (implement/04 §1.1).',
     );
   }
 
-  assertText(ref.claim, `evidence[${index}].claim`, 2048);
-  assertText(ref.source_uri, `evidence[${index}].source_uri`, 255);
-  assertText(ref.source_version, `evidence[${index}].source_version`, 64);
-  assertText(ref.verified_by, `evidence[${index}].verified_by`, 128);
+  assertText(candidate.claim, `evidence[${index}].claim`, 2048);
+  assertText(candidate.source_uri, `evidence[${index}].source_uri`, 255);
+  assertText(candidate.source_version, `evidence[${index}].source_version`, 64);
+  assertText(candidate.verified_by, `evidence[${index}].verified_by`, 128);
 }
 
 /**
@@ -518,7 +539,7 @@ export function assertHandoffAdmissible(
     );
   }
 
-  if (typeof pkg.occurred_at !== 'string' || Number.isNaN(Date.parse(pkg.occurred_at))) {
+  if (typeof pkg.occurred_at !== 'string' || !isCanonicalInstant(pkg.occurred_at)) {
     throw new OrchestratorError(
       'HANDOFF_PACKAGE_INVALID',
       'occurred_at must be an ISO-8601 instant so the handoff keeps a comparable durable '
@@ -526,15 +547,40 @@ export function assertHandoffAdmissible(
     );
   }
 
-  if (
-    typeof pkg.lifecycle.version !== 'number'
-    || !Number.isInteger(pkg.lifecycle.version)
-    || pkg.lifecycle.version < 1
-  ) {
+  // The package may arrive from durable storage, so its shape is validated before any field is
+  // dereferenced: malformed input is refused with these codes, never with a raw TypeError.
+  const lifecycle: unknown = pkg.lifecycle;
+  if (typeof lifecycle !== 'object' || lifecycle === null || Array.isArray(lifecycle)) {
+    throw new OrchestratorError(
+      'HANDOFF_PACKAGE_INVALID',
+      'lifecycle must be an object carrying the journey version and state.',
+    );
+  }
+  const { version, state } = lifecycle as { version?: unknown; state?: unknown };
+  if (typeof version !== 'number' || !Number.isInteger(version) || version < 1) {
     throw new OrchestratorError(
       'HANDOFF_PACKAGE_INVALID',
       'lifecycle.version must be a positive integer; a handoff always advances the journey by '
         + 'exactly one version.',
+    );
+  }
+  if (
+    state !== 'ENTERED'
+    && state !== 'IN_PROGRESS'
+    && state !== 'HANDED_OFF'
+    && state !== 'COMPLETED'
+  ) {
+    throw new OrchestratorError(
+      'HANDOFF_PACKAGE_INVALID',
+      `lifecycle.state '${String(state)}' is not a journey state (ENTERED, IN_PROGRESS, `
+        + 'HANDED_OFF, COMPLETED).',
+    );
+  }
+
+  if (!Array.isArray(pkg.visited_domains) || !Array.isArray(pkg.evidence)) {
+    throw new OrchestratorError(
+      'HANDOFF_PACKAGE_INVALID',
+      'visited_domains and evidence must both be arrays.',
     );
   }
 

@@ -185,6 +185,10 @@ type CareIntent =
  * ordinary Care turn it then is.
  */
 function readHandoffTargetDomain(signal: SignalEnvelope): string | null {
+  // Only the orchestrator writes this channel. A delivery that merely carries a `handoff` payload
+  // over a customer-facing channel is not a brokered handoff, and honouring one would let a caller
+  // declare its own journey leg.
+  if (signal.source_channel !== 'ORCHESTRATOR_HANDOFF') return null;
   const handoff = signal.payload['handoff'];
   if (typeof handoff !== 'object' || handoff === null || Array.isArray(handoff)) return null;
   const target = (handoff as Record<string, unknown>)['target_domain'];
