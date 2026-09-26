@@ -291,11 +291,33 @@ class SharedMarketingPolicyEngine implements IPolicyEngine {
   ) {}
 
   async validateAction(action: ActionDraft, context: HydratedContext): Promise<ActionDraft> {
+    // MKT-06 is refused here, before any schema or approval work: the shared route has no
+    // evidence-bound analytics contract, and only matched authoritative downstream order/payment
+    // evidence may count as revenue. The offline/fixture path (`runtime.ts` `evaluateAttribution`
+    // plus the PILOT-01 harness) keeps the evidence-bound validator until such a contract exists.
+    if (action.skill_id === 'skill.mkt.evaluate_attribution') {
+      throw new OrchestratorError(
+        'MKT06_EVIDENCE_BINDING_REQUIRED',
+        'the shared route has no evidence-bound analytics contract: MKT-06 counts revenue only from matched authoritative downstream order/payment evidence, which this runtime cannot verify yet',
+      );
+    }
     const validated = await this.base.validateAction(action, context);
     if (action.skill_id !== 'skill.mkt.dispatch_campaign') {
       return validated;
     }
     const payload = validated.payload;
+    // Required dispatch identity is refused BEFORE the shared AUTH-4 pause, so a malformed action
+    // never creates an approval row and never reaches the provider seam.
+    const segment_id = payload['segment_id'];
+    if (typeof segment_id !== 'string' || segment_id.trim().length === 0) {
+      throw new OrchestratorError('SEGMENT_REQUIRED', 'segment_id is required for campaign dispatch; no fallback segment is allowed');
+    }
+    for (const field of ['campaign_id', 'approved_content_id', 'channel'] as const) {
+      const value = payload[field];
+      if (typeof value !== 'string' || value.trim().length === 0) {
+        throw new OrchestratorError('SCHEMA_VALIDATION_ERROR', field + ' is required for campaign dispatch');
+      }
+    }
     const proposedPrice = payload['proposed_price'];
     const hasPromotionClaim = payload['offer_id'] !== undefined
       || payload['discount_percent'] !== undefined

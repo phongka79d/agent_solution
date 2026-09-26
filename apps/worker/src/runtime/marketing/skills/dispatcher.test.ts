@@ -4,8 +4,6 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { MarketingAudienceResolver } from './types.js';
 import {
-  MARKETING_DISPATCH_INTEGRATION,
-  MARKETING_DISPATCH_INTEGRATION_STATUS,
   createMarketingSkillServices,
   type InputMktDispatchCampaign,
   type OutputMktDispatchCampaign,
@@ -723,12 +721,6 @@ describe('Marketing Skill Services and Dispatcher', () => {
       expect(result).toEqual({ outcome: 'INDETERMINATE' });
     });
 
-    it('marks dispatch integration status as SHARED_P2_RUNTIME', () => {
-      const services = createServices();
-      expect(services.dispatch_integration).toBe('SHARED_P2_RUNTIME');
-      expect(MARKETING_DISPATCH_INTEGRATION).toBe('SHARED_P2_RUNTIME');
-      expect(MARKETING_DISPATCH_INTEGRATION_STATUS).toBe('SHARED_P2_RUNTIME');
-    });
   });
 
   describe('6. Canonical Server-Side Audience Resolution (skill.mkt.dispatch_campaign)', () => {

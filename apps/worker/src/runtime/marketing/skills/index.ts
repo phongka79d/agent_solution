@@ -10,10 +10,9 @@ import {
   type PlatformSkillEnablement,
 } from '@agentos/skills';
 
-import { createMarketingSkillDispatcher, MARKETING_DISPATCH_INTEGRATION } from './dispatcher.js';
+import { createSkillAdapterDispatcher } from '../../shared/skill-dispatcher.js';
 import { createMarketingSkillToolPort } from './tool-port.js';
 import {
-  MARKETING_DISPATCH_INTEGRATION_STATUS,
   type MarketingSkillOptions,
   type MarketingSkillServices,
 } from './types.js';
@@ -56,12 +55,7 @@ export type {
 
 export { MarketingSkillToolError } from './tool-port.js';
 
-export {
-  MARKETING_DISPATCH_INTEGRATION,
-  MARKETING_DISPATCH_INTEGRATION_STATUS,
-  createMarketingSkillDispatcher,
-  createMarketingSkillToolPort,
-};
+export { createMarketingSkillToolPort };
 
 /**
  * Default explicit enablement for all 7 canonical Marketing skill rows.
@@ -110,11 +104,25 @@ export function createMarketingSkillServices(
     ...(options.now !== undefined ? { now: () => options.now!().getTime() } : {}),
   });
 
-  const dispatcher = createMarketingSkillDispatcher({
+  const dispatcher = createSkillAdapterDispatcher({
     engine,
     resolve_correlation_id: options.resolve_correlation_id,
     resolve_grant: options.resolve_grant,
-    ...(options.reconcile !== undefined ? { reconcile: options.reconcile } : {}),
+    ...(options.reconcile !== undefined ? { provider_reconcile: options.reconcile } : {}),
+    special_receipt: ({ output }) => {
+      const dispatch_id = output.dispatch_id;
+      if (typeof dispatch_id !== 'string' || dispatch_id.length === 0) {
+        return null;
+      }
+      return {
+        execution_id: dispatch_id,
+        adapter_status: 'SUCCESS',
+        provider_reference: dispatch_id,
+        response_payload: output,
+        latency_ms: 0,
+        token_usage: { prompt: 0, completion: 0, total_cost_usd: 0 },
+      };
+    },
   });
 
   const unbound: string[] = [];
@@ -145,6 +153,5 @@ export function createMarketingSkillServices(
     tool_port,
     dispatcher,
     unbound,
-    dispatch_integration: MARKETING_DISPATCH_INTEGRATION_STATUS,
   };
 }

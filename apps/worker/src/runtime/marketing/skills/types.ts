@@ -325,11 +325,6 @@ export interface MarketingSkillToolPortOptions {
 }
 
 /**
- * Dispatch integration status marker: routing via apps/worker/src/worker.ts is deferred.
- */
-export const MARKETING_DISPATCH_INTEGRATION_STATUS = 'SHARED_P2_RUNTIME' as const;
-
-/**
  * Input dependencies for createMarketingSkillServices.
  */
 export interface MarketingSkillOptions extends MarketingSkillToolPortOptions {
@@ -348,5 +343,4 @@ export interface MarketingSkillServices {
   readonly tool_port: SkillToolPort;
   readonly dispatcher: IAdapterDispatcher;
   readonly unbound: readonly string[];
-  readonly dispatch_integration: typeof MARKETING_DISPATCH_INTEGRATION_STATUS;
 }

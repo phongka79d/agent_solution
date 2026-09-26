@@ -27,7 +27,41 @@ describe('PILOT-01 through the shared P2 runtime', () => {
   const SHARED_TENANT_ID = '11111111-1111-4111-8111-111111111111';
   const NOW = new Date('2026-03-01T09:00:00.000Z');
 
-  const createScenario = (inputOverrides: Record<string, unknown> = {}) => {
+  /** Builds the marketing plan payload, applying the omission/override switches the guards need. */
+  const buildMarketingPayload = (
+    overrides: Record<string, unknown>,
+    options: { readonly omit_skill_id?: boolean; readonly omit_segment?: boolean; readonly skill_id?: string },
+  ): Record<string, unknown> => {
+    const input: Record<string, unknown> = {
+      tenant_id: SHARED_TENANT_ID,
+      campaign_id: PILOT_01_CAMPAIGN_ID,
+      segment_id: 'seg-champions-pilot01',
+      channel: 'LINE',
+      approved_content_id: 'draft-pilot01-tw-01',
+      ...overrides,
+    };
+    if (options.omit_segment === true) {
+      delete input['segment_id'];
+    }
+    const payload: Record<string, unknown> = {
+      module: 'marketing',
+      skill_id: options.skill_id ?? 'skill.mkt.dispatch_campaign',
+      input,
+    };
+    if (options.omit_skill_id === true) {
+      delete payload['skill_id'];
+    }
+    return payload;
+  };
+
+  const createScenario = (
+    inputOverrides: Record<string, unknown> = {},
+    scenarioOptions: {
+      readonly omit_skill_id?: boolean;
+      readonly omit_segment?: boolean;
+      readonly skill_id?: string;
+    } = {},
+  ) => {
     let state_payload: unknown = {};
     let task_version = 1;
 
@@ -169,18 +203,7 @@ describe('PILOT-01 through the shared P2 runtime', () => {
         session_id: 'sess-pilot01-shared-1',
         channel_type: 'LINE',
       },
-      payload: {
-        module: 'marketing',
-        skill_id: 'skill.mkt.dispatch_campaign',
-        input: {
-          tenant_id: SHARED_TENANT_ID,
-          campaign_id: PILOT_01_CAMPAIGN_ID,
-          segment_id: 'seg-champions-pilot01',
-          channel: 'LINE',
-          approved_content_id: 'draft-pilot01-tw-01',
-          ...inputOverrides,
-        },
-      },
+      payload: buildMarketingPayload(inputOverrides, scenarioOptions),
     };
     const taskRecord = {
       tenant_id: SHARED_TENANT_ID,
@@ -277,6 +300,63 @@ describe('PILOT-01 through the shared P2 runtime', () => {
     expect(scenario.recordFailure.mock.calls[0]![0].error_details.code).toBe('PROMOTION_PROVENANCE_REQUIRED');
     expect(scenario.dispatchCampaign).not.toHaveBeenCalled();
 
+
+  it('refuses a segment-less campaign before the AUTH-4 gate', async () => {
+    const scenario = createScenario({}, { omit_segment: true });
+
+    await expect(processClaimedTask({
+      taskRecord: scenario.taskRecord,
+      tenant_id: SHARED_TENANT_ID,
+      worker_id: 'worker-1',
+      workflowRepository: scenario.workflowRepository,
+      registry: scenario.worker.registry,
+    })).rejects.toThrow('SEGMENT_REQUIRED');
+
+    expect(scenario.pauseForApproval).not.toHaveBeenCalled();
+    expect(scenario.recordFailure).toHaveBeenCalledTimes(1);
+    expect(scenario.recordFailure.mock.calls[0]![0].error_details.code).toBe('SEGMENT_REQUIRED');
+    expect(scenario.dispatchCampaign).not.toHaveBeenCalled();
+
+    await scenario.worker.close();
+  });
+
+  it('fails closed when the marketing signal names no canonical skill', async () => {
+    const scenario = createScenario({}, { omit_skill_id: true });
+
+    await expect(processClaimedTask({
+      taskRecord: scenario.taskRecord,
+      tenant_id: SHARED_TENANT_ID,
+      worker_id: 'worker-1',
+      workflowRepository: scenario.workflowRepository,
+      registry: scenario.worker.registry,
+    })).rejects.toThrow('MARKETING_SIGNAL_INVALID');
+
+    expect(scenario.recordFailure).toHaveBeenCalledTimes(1);
+    expect(scenario.recordFailure.mock.calls[0]![0].error_details.code).toBe('MARKETING_SIGNAL_INVALID');
+    expect(scenario.pauseForApproval).not.toHaveBeenCalled();
+    expect(scenario.dispatchCampaign).not.toHaveBeenCalled();
+
+    await scenario.worker.close();
+  });
+
+  it('refuses the shared MKT-06 route without an evidence-bound analytics contract', async () => {
+    const scenario = createScenario({}, { skill_id: 'skill.mkt.evaluate_attribution' });
+
+    await expect(processClaimedTask({
+      taskRecord: scenario.taskRecord,
+      tenant_id: SHARED_TENANT_ID,
+      worker_id: 'worker-1',
+      workflowRepository: scenario.workflowRepository,
+      registry: scenario.worker.registry,
+    })).rejects.toThrow('MKT06_EVIDENCE_BINDING_REQUIRED');
+
+    expect(scenario.recordFailure).toHaveBeenCalledTimes(1);
+    expect(scenario.recordFailure.mock.calls[0]![0].error_details.code).toBe('MKT06_EVIDENCE_BINDING_REQUIRED');
+    expect(scenario.pauseForApproval).not.toHaveBeenCalled();
+    expect(scenario.dispatchCampaign).not.toHaveBeenCalled();
+
+    await scenario.worker.close();
+  });
     await scenario.worker.close();
   });
 });
