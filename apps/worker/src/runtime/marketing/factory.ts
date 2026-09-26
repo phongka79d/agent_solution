@@ -16,6 +16,7 @@ import {
 import type {
   ActionDraft,
   AssignableAuthority,
+  AuthorityLevel,
   HydratedContext,
   IAgentRuntime,
   IContextAggregator,
@@ -81,7 +82,7 @@ const MARKETING_ADAPTER_BY_SKILL: Readonly<Record<string, string>> = Object.free
   'skill.mkt.evaluate_attribution': 'PostgreSQL.AnalyticsStore',
 });
 
-const MARKETING_AUTHORITY_BY_SKILL: Readonly<Record<string, PolicyRegistrySkill['required_authority']>> = Object.freeze({
+const MARKETING_AUTHORITY_BY_SKILL: Readonly<Record<string, AuthorityLevel>> = Object.freeze({
   'skill.mkt.analyze_market_signal': 'AUTH-1',
   'skill.mkt.segment_audience': 'AUTH-1',
   'skill.mkt.check_consent': 'AUTH-3',
@@ -157,11 +158,14 @@ class MarketingContextAggregator implements IContextAggregator {
 }
 
 class MarketingAgentRuntime implements IAgentRuntime {
+  private readonly signals = new Map<string, SignalEnvelope>();
+
   async deriveHypothesis(signal: SignalEnvelope, _context: HydratedContext): Promise<HypothesisRecord> {
     const id = skillId(signal);
+    this.signals.set(signal.signal_id, signal);
     return {
       classification: 'HYPOTHESIS',
-      intent: `marketing:${id}`,
+      intent: 'marketing:' + id,
       confidence: 1,
       churn_risk_score: 0,
       purchase_propensity: 0,
@@ -179,20 +183,26 @@ class MarketingAgentRuntime implements IAgentRuntime {
     return {
       target_agent: MARKETING_AGENT_BY_SKILL[id]!,
       requires_clarification: false,
-      rationalization: `Shared Marketing runtime route for ${id}.`,
+      rationalization: 'Shared Marketing runtime route for ' + id + '.',
     };
   }
 
   async formulatePlan(
-    signal: SignalEnvelope,
+    _routing: RoutingDecision,
     context: HydratedContext,
-    _hypothesis: HypothesisRecord,
+    hypothesis: HypothesisRecord,
   ): Promise<ExecutionPlan> {
+    const signalId = hypothesis.derived_from_signals[0];
+    const signal = typeof signalId === 'string' ? this.signals.get(signalId) : undefined;
+    if (!signal) {
+      throw new Error('MARKETING_SIGNAL_CONTEXT_LOST: signal was not retained across shared planning stages');
+    }
+    this.signals.delete(signal.signal_id);
     const id = skillId(signal);
     const agent_id = MARKETING_AGENT_BY_SKILL[id]!;
     const input_parameters = signalInput(signal, context.tenant_id);
     return {
-      plan_id: `plan_${signal.signal_id}`,
+      plan_id: 'plan_' + signal.signal_id,
       steps: [{
         step_index: 1,
         agent_id,
