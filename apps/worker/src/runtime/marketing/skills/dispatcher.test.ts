@@ -64,7 +64,7 @@ function createMockConsent(): MarketingConsentPort {
 
 function createMockContentEngine(): MarketingContentEnginePort {
   return {
-    generateContent: vi.fn(async () => ({
+    generateContent: vi.fn(async (input: { channel: string }) => ({
       draft_id: 'draft-test-1',
       headline: 'Fresh Tea Offers',
       body_content: 'Discover our seasonal tea selections.',

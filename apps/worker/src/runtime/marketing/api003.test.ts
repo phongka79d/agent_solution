@@ -22,7 +22,6 @@ import {
   API003_CONNECTOR_ID,
   type Api003OutboundDispatchInput,
   type Api003OutboundTransport,
-  type Api003ReconcileInput,
   type Api003TransportDispatchResult,
   Api003RefusalError,
   createMarketingApi003Binding,
