@@ -24,7 +24,9 @@ function buildHarness() {
   };
   const receipts = new Map<string, Record<string, unknown>>();
   const appendMessage = vi.fn(async (_input: unknown) => undefined);
-  const start = vi.fn(async (input: { correlation_id: string }) => ({
+  // The real `runs.start` port carries the server-resolved channel, so the fixture names it too:
+  // a case can then assert what the admission path actually passed.
+  const start = vi.fn(async (input: { correlation_id: string; source_channel?: string }) => ({
     run_id: 'run-a',
     task_version: 1,
     correlation_id: input.correlation_id,
@@ -417,8 +419,8 @@ describe('POST /conversations/:conversation_id/messages shared Care admission', 
     }
   });
 
-  it('admits a turn on the CONVERSATION channel even when the body claims the internal handoff channel', async () => {
-    // The internal channel is server-derived: a caller cannot make an ordinary conversation turn
+  it('refuses a turn whose body claims the internal handoff channel, and derives the real one', async () => {
+    // The internal channel is server-derived, so a caller cannot make an ordinary conversation turn
     // look like an orchestrator-brokered leg by naming ORCHESTRATOR_HANDOFF in the request body.
     const { app, appendMessage, start, conversation } = buildHarness();
     const url = `/conversations/${CONVERSATION_ID}/messages`;
@@ -438,7 +440,19 @@ describe('POST /conversations/:conversation_id/messages shared Care admission', 
       expect(response.statusCode).toBe(400);
       expect(start).not.toHaveBeenCalled();
       expect(appendMessage).not.toHaveBeenCalled();
-      expect(conversation.channel).toBe('WEB_CHAT');
+
+      // The same conversation DOES admit an ordinary turn, and the run carries the conversation's
+      // own channel rather than anything the caller supplied.
+      const accepted = await app.inject({
+        method: 'POST',
+        url,
+        headers,
+        payload: { message: 'hello', idempotency_key: 'turn-plain-channel' },
+      });
+
+      expect(accepted.statusCode).toBe(202);
+      expect(start).toHaveBeenCalledTimes(1);
+      expect(start.mock.calls[0]?.[0]?.source_channel).toBe(conversation.channel);
     } finally {
       await app.close();
     }
