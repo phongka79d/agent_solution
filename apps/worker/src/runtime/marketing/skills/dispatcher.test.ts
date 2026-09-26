@@ -948,8 +948,7 @@ describe('Marketing Skill Services and Dispatcher', () => {
       expect(dispatchCampaign).toHaveBeenCalledTimes(1);
       const passedCall = dispatchCampaign.mock.calls[0]!;
       expect(passedCall).toBeDefined();
-      const passedInput = passedCall[0]!;
-      expect(passedInput.recipients).toEqual(['cust-opted-in']);
+      expect(passedCall[0]).toEqual(expect.objectContaining({ recipients: ['cust-opted-in'] }));
       expect(result.dispatch_id).toBe('disp-resolved-1');
     });
 

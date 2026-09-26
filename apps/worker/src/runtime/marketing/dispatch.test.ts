@@ -29,6 +29,7 @@ import {
   type MarketingAuthoritativeValidation,
   type MarketingBrandAuditOutput,
   type MarketingConsentDecision,
+  type MarketingSignalInput,
   type MarketingEvidence,
   type MarketingInvocationContext,
   type MarketingRuntimePorts,
@@ -2243,7 +2244,7 @@ describe('Marketing Campaign Dispatch Seam & Lifecycle', () => {
     it('models the complete 8-stage lifecycle from Brief to Optimize', async () => {
       const { ports, dispatch, claimApprovalAndResume } = createMockPorts({
         research: {
-          readMarketSignals: async () => ({
+          readMarketSignals: async (_input: MarketingSignalInput) => ({
             signals: [],
             trend_velocity: 'STABLE',
             analyzed_at: '2026-01-01T00:00:00.000Z',

@@ -4,6 +4,7 @@ import type {
   MarketingInvocationContext,
   MarketingRuntimePorts,
   MarketingKnowledgeDocument,
+  MarketingSignalInput,
 } from './contracts.js';
 import { MARKETING_SKILL_CATALOG, createMarketingRuntime } from './runtime.js';
 
@@ -25,7 +26,7 @@ function makePorts(
   withoutContentGenerator = false,
 ) {
   const append = vi.fn(async () => undefined);
-  const readMarketSignals = vi.fn(async () => ({
+  const readMarketSignals = vi.fn(async (_input: MarketingSignalInput) => ({
     signals: [],
     trend_velocity: 'STABLE' as const,
     analyzed_at: '2026-01-01T00:00:00.000Z',
