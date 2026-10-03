@@ -876,6 +876,7 @@ describe('P4 cross-domain handoff ledger (real PostgreSQL)', () => {
     // restart, not an in-memory receipt. Its cursor is already past its one completed step.
     const sourcePlan = {
       plan_id: 'plan_p4_resume_source',
+      domain: 'marketing',
       steps: [
         {
           step_index: 1,

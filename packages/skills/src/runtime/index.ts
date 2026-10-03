@@ -6,6 +6,7 @@
 export * from './approval.js';
 export * from './attempt.js';
 export * from './authority.js';
+export * from './availability.js';
 export * from './circuit-breaker.js';
 export * from './effect.js';
 export * from './engine.js';

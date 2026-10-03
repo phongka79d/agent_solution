@@ -397,6 +397,35 @@ describe('SalesAgentRuntime', () => {
       });
     });
 
+    it.each([
+      ['Is SKU-LOCAL-1 in stock?', ['skill.sales.check_stock']],
+      ['SKU-LOCAL-1 còn hàng không?', ['skill.sales.check_stock']],
+      ['What is the price of SKU-LOCAL-1?', ['skill.sales.check_stock', 'skill.sales.check_price']],
+      ['How much does SKU-LOCAL-1 cost?', ['skill.sales.check_stock', 'skill.sales.check_price']],
+      ['SKU-LOCAL-1 giá bao nhiêu?', ['skill.sales.check_stock', 'skill.sales.check_price']],
+      ['SKU-LOCAL-1 bao nhiêu tiền?', ['skill.sales.check_stock', 'skill.sales.check_price']],
+    ] as const)('plans only the requested reads with pricing enabled: %s', async (message, skills) => {
+      const runtime = new SalesAgentRuntime({
+        registry: createRegistryPort({
+          'skill.sales.check_price': { ...canonicalSalesRegistry['skill.sales.check_price']!, enabled: true },
+        }),
+      });
+      const signal: SignalEnvelope = {
+        signal_id: 'sig-inventory-pricing-enabled',
+        tenant_id,
+        correlation_id: 'corr-sales-1',
+        source_channel: 'WEB_CHAT',
+        event_type: 'message.received',
+        timestamp: '2026-09-01T00:00:00Z',
+        subject: { session_id: 'sess-1', channel_type: 'web' },
+        payload: { message },
+      };
+      const hypothesis = await runtime.deriveHypothesis(signal, verifiedContext);
+      const routing = await runtime.resolveRouting(signal, verifiedContext, hypothesis);
+      const plan = await runtime.formulatePlan(routing, verifiedContext, hypothesis);
+      expect(plan.steps.map((step) => step.skill_id)).toEqual(skills);
+    });
+
     it('formulates valid PlannedStep for product recommendation with canonical parameters', async () => {
       const runtime = new SalesAgentRuntime({ registry: createRegistryPort() });
       const signal: SignalEnvelope = {
@@ -460,7 +489,7 @@ describe('SalesAgentRuntime', () => {
       expect(plan.fallback_strategy).toBe('FAIL_CLOSED');
     });
 
-    it('fails closed with no plan if recommendation has unverified context, ignoring untrusted payload', async () => {
+    it('allows anonymous recommendations without trusting a caller-supplied customer id', async () => {
       const runtime = new SalesAgentRuntime({ registry: createRegistryPort() });
       const signal: SignalEnvelope = {
         signal_id: 'sig-rec-fake',
@@ -480,12 +509,139 @@ describe('SalesAgentRuntime', () => {
       const routing = await runtime.resolveRouting(signal, unverifiedContext, hypothesis);
       const plan = await runtime.formulatePlan(routing, unverifiedContext, hypothesis);
 
-      expect(plan.steps).toHaveLength(0);
+      expect(hypothesis.intent).toBe('recommend');
+      expect(routing.target_agent).toBe('SAL-03');
+      expect(plan.steps).toHaveLength(1);
+      expect(plan.steps[0]).toMatchObject({
+        skill_id: 'skill.sales.recommend_product',
+        input_parameters: {
+          tenant_id,
+          current_cart_skus: [],
+          recommendation_type: 'CROSS_SELL',
+        },
+      });
+      expect((plan.steps[0]?.input_parameters as Record<string, unknown>).customer_id).toBeUndefined();
       expect(plan.fallback_strategy).toBe('FAIL_CLOSED');
     });
   });
 
   describe('Unknown and Ambiguous Intent Handling', () => {
+    it('emits a typed refusal for an invalid API-stamped intent proposal', async () => {
+      const runtime = new SalesAgentRuntime({ registry: createRegistryPort() });
+      const signal: SignalEnvelope = {
+        signal_id: 'sig-invalid-intent',
+        tenant_id,
+        correlation_id: 'corr-sales-1',
+        source_channel: 'WEB_CHAT',
+        event_type: 'message.received',
+        timestamp: '2026-09-01T00:00:00Z',
+        subject: { session_id: 'sess-1', channel_type: 'web' },
+        payload: {
+          module: 'sales',
+          message: 'I need a laptop for graphic design',
+          sales_proposal_source: 'API_GATEWAY',
+          sales_intent_failure: 'LLM_INVALID_RESPONSE',
+        },
+      };
+
+      const hypothesis = await runtime.deriveHypothesis(signal, verifiedContext);
+      expect(hypothesis.reasoning).toContain('LLM_INVALID_RESPONSE');
+      const routing = await runtime.resolveRouting(signal, verifiedContext, hypothesis);
+
+      expect(routing.requires_clarification).toBe(false);
+
+      const plan = await runtime.formulatePlan(routing, verifiedContext, hypothesis);
+
+      expect(plan.steps).toEqual([]);
+      expect(plan.terminal_response).toMatchObject({
+        response_kind: 'REFUSAL',
+        template_key: 'core.cannot_help',
+        reason_code: 'LLM_INVALID_RESPONSE',
+      });
+      expect(plan.terminal_response?.text).toBeTruthy();
+    });
+
+    it('refuses a requested stock-and-price answer when check_price is unavailable', async () => {
+      const runtime = new SalesAgentRuntime({
+        registry: createRegistryPort({
+          'skill.sales.check_price': {
+            ...canonicalSalesRegistry['skill.sales.check_price']!,
+            enabled: true,
+          },
+        }),
+        gate: {
+          async available(_tenantId, skillId) {
+            return skillId === 'skill.sales.check_price'
+              ? { available: false, reason: 'DISABLED_BY_TENANT' }
+              : { available: true, reason: 'OK' };
+          },
+        },
+      });
+      const signal: SignalEnvelope = {
+        signal_id: 'sig-disabled-check-price',
+        tenant_id,
+        correlation_id: 'corr-sales-1',
+        source_channel: 'WEB_CHAT',
+        event_type: 'message.received',
+        timestamp: '2026-09-01T00:00:00Z',
+        subject: { session_id: 'sess-1', channel_type: 'web' },
+        payload: { message: 'NM-L01-BLK còn hàng không, giá bao nhiêu?' },
+      };
+
+      const hypothesis = await runtime.deriveHypothesis(signal, verifiedContext);
+      expect(hypothesis.intent).toBe('sku_stock_price');
+      const routing = await runtime.resolveRouting(signal, verifiedContext, hypothesis);
+      const plan = await runtime.formulatePlan(routing, verifiedContext, hypothesis);
+
+      expect(plan.steps).toEqual([]);
+      expect(plan.terminal_response).toMatchObject({
+        response_kind: 'REFUSAL',
+        template_key: 'core.skill_unavailable',
+        reason_code: 'DISABLED_BY_TENANT',
+      });
+    });
+
+    it.each([true, false])('refuses disconnected SKU reads when the pricing row enabled flag is %s', async (enabled) => {
+      const runtime = new SalesAgentRuntime({
+        registry: createRegistryPort({
+          'skill.sales.check_price': {
+            ...canonicalSalesRegistry['skill.sales.check_price']!,
+            enabled,
+          },
+        }),
+        gate: {
+          async available(_tenantId, skillId) {
+            return skillId === 'skill.sales.check_stock' || skillId === 'skill.sales.check_price'
+              ? { available: false, reason: 'CONNECTOR_UNBOUND' }
+              : { available: true, reason: 'OK' };
+          },
+        },
+      });
+      const signal: SignalEnvelope = {
+        signal_id: 'sig-disconnected-sku',
+        tenant_id,
+        correlation_id: 'corr-disconnected-sku',
+        source_channel: 'WEB_CHAT',
+        event_type: 'message.received',
+        timestamp: '2026-09-01T00:00:00Z',
+        subject: { session_id: 'sess-disconnected-sku', channel_type: 'web' },
+        payload: { message: 'NM-L01-BLK còn hàng không, giá bao nhiêu?' },
+      };
+
+      const hypothesis = await runtime.deriveHypothesis(signal, unverifiedContext);
+      expect(hypothesis.intent).toBe('sku_stock_price');
+      const routing = await runtime.resolveRouting(signal, unverifiedContext, hypothesis);
+      expect(routing.requires_clarification).toBe(false);
+      const plan = await runtime.formulatePlan(routing, unverifiedContext, hypothesis);
+      expect(plan.steps).toEqual([]);
+      expect(plan.terminal_response).toMatchObject({
+        response_kind: 'REFUSAL',
+        template_key: 'core.skill_unavailable',
+        reason_code: 'CONNECTOR_UNBOUND',
+      });
+    });
+
+
     it('clarifies and emits empty plan for unrecognized message content', async () => {
       const runtime = new SalesAgentRuntime({ registry: createRegistryPort() });
       const signal: SignalEnvelope = {
@@ -672,15 +828,16 @@ describe('SalesAgentRuntime', () => {
       };
 
       const hypothesis = await runtime.deriveHypothesis(signal, verifiedContext);
-      expect(hypothesis.intent).toBe('price');
+      expect(hypothesis.intent).toBe('sku_stock_price');
 
       const routing = await runtime.resolveRouting(signal, verifiedContext, hypothesis);
       expect(routing.target_agent).toBe('SAL-02');
       expect(routing.requires_clarification).toBe(false);
 
       const plan = await runtime.formulatePlan(routing, verifiedContext, hypothesis);
-      expect(plan.steps).toHaveLength(1);
-      const step = plan.steps[0]!;
+      expect(plan.steps).toHaveLength(2);
+      expect(plan.steps[0]!.skill_id).toBe('skill.sales.check_stock');
+      const step = plan.steps[1]!;
       expect(step.skill_id).toBe('skill.sales.check_price');
       expect(step.adapter_target).toBe('API-001.PricingEngine');
       expect(step.agent_id).toBe('SAL-02');
@@ -696,6 +853,36 @@ describe('SalesAgentRuntime', () => {
       // Never emits a price value itself
       expect((step.input_parameters as Record<string, unknown>).price).toBeUndefined();
       expect((step.input_parameters as Record<string, unknown>).final_price).toBeUndefined();
+    });
+
+    it.each([
+      'What is the price of SKU NM-L01-BLK? Quote the full numeric price in VND.',
+      'NM-L01-BLK giá bao nhiêu?',
+    ])('includes an authoritative price read for anonymous SKU inquiry: %s', async (message) => {
+      const runtime = new SalesAgentRuntime({ registry: createRegistryPort({
+        'skill.sales.check_price': {
+          ...canonicalSalesRegistry['skill.sales.check_price']!,
+          enabled: true,
+        },
+      }) });
+      const signal: SignalEnvelope = {
+        signal_id: 'sig-anonymous-sku-price', tenant_id, correlation_id: 'corr-sales-1',
+        source_channel: 'WEB_CHAT', event_type: 'message.received',
+        timestamp: '2026-09-01T00:00:00Z',
+        subject: { session_id: 'sess-1', channel_type: 'web' },
+        payload: { message },
+      };
+      const hypothesis = await runtime.deriveHypothesis(signal, unverifiedContext);
+      expect(hypothesis.intent).toBe('sku_stock_price');
+      const routing = await runtime.resolveRouting(signal, unverifiedContext, hypothesis);
+      const plan = await runtime.formulatePlan(routing, unverifiedContext, hypothesis);
+      const price = plan.steps.find((step) => step.skill_id === 'skill.sales.check_price');
+      expect(price).toMatchObject({
+        adapter_target: 'API-001.PricingEngine', mutating: false,
+        input_parameters: { tenant_id, sku_id: 'NM-L01-BLK' },
+      });
+      expect(price?.input_parameters).not.toHaveProperty('customer_id');
+      expect(price?.input_parameters).not.toHaveProperty('list_price');
     });
 
     it('requires clarification when price is enabled but SKU is missing', async () => {
@@ -731,7 +918,105 @@ describe('SalesAgentRuntime', () => {
   });
 
   describe('API-stamped advisor proposals', () => {
-    it('plans generic-currency read and quote steps while keeping proposed SKU unverified', async () => {
+    it('plans budget and use-case advice when the gateway omitted the message category', async () => {
+      const runtime = new SalesAgentRuntime({
+        registry: createRegistryPort({
+          'skill.sales.check_price': {
+            ...canonicalSalesRegistry['skill.sales.check_price']!,
+            enabled: true,
+          },
+        }),
+        advisor_state: new SalesAdvisorExecutionState(),
+        advisor_price_floor_bound: true,
+      });
+      const signal: SignalEnvelope = {
+        signal_id: 'sig-advisor-message-category',
+        tenant_id,
+        correlation_id: 'corr-advisor-message-category',
+        source_channel: 'WEB_CHAT',
+        event_type: 'message.received',
+        timestamp: '2026-09-01T00:00:00Z',
+        subject: { session_id: 'sess-advisor-message-category', channel_type: 'web' },
+        payload: {
+          module: 'sales',
+          message: 'Recommend a laptop under 20 million VND for graphic design.',
+          sales_proposal_source: 'API_GATEWAY',
+          sales_intent: 'advisor',
+          sales_requirements: {
+            budget: { amount: 20_000_000, currency: 'VND' },
+            use_case: 'graphic design',
+          },
+        },
+      };
+
+      const hypothesis = await runtime.deriveHypothesis(signal, unverifiedContext);
+      const routing = await runtime.resolveRouting(signal, unverifiedContext, hypothesis);
+      expect(routing.requires_clarification).toBe(false);
+      const plan = await runtime.formulatePlan(routing, unverifiedContext, hypothesis);
+      expect(plan.steps.map((step) => step.skill_id)).toEqual([
+        'skill.sales.search_product',
+        'skill.sales.check_stock',
+        'skill.sales.check_price',
+        'skill.sales.recommend_product',
+      ]);
+      expect(plan.steps[0]?.input_parameters).toEqual({ tenant_id, query: 'graphic design', limit: 20 });
+      expect(plan.terminal_response).toBeUndefined();
+    });
+
+    it.each([
+      { skill_id: 'skill.sales.check_price', enabled: true },
+      { skill_id: 'skill.sales.check_price', enabled: false },
+      { skill_id: 'skill.sales.check_stock', enabled: true },
+    ])('refuses advisor reads when $skill_id is unbound (pricing enabled: $enabled)', async ({ skill_id, enabled }) => {
+      const runtime = new SalesAgentRuntime({
+        registry: createRegistryPort({
+          'skill.sales.check_price': {
+            ...canonicalSalesRegistry['skill.sales.check_price']!,
+            enabled,
+          },
+        }),
+        advisor_state: new SalesAdvisorExecutionState(),
+        advisor_price_floor_bound: true,
+        gate: {
+          async available(_tenantId, requestedSkillId) {
+            return requestedSkillId === skill_id
+              ? { available: false, reason: 'CONNECTOR_UNBOUND' }
+              : { available: true, reason: 'OK' };
+          },
+        },
+      });
+      const signal: SignalEnvelope = {
+        signal_id: 'sig-advisor-unbound',
+        tenant_id,
+        correlation_id: 'corr-advisor-unbound',
+        source_channel: 'WEB_CHAT',
+        event_type: 'message.received',
+        timestamp: '2026-09-01T00:00:00Z',
+        subject: { session_id: 'sess-advisor-unbound', channel_type: 'web' },
+        payload: {
+          message: 'Recommend a laptop under 20 million VND for graphic design.',
+          sales_proposal_source: 'API_GATEWAY',
+          sales_intent: 'advisor',
+          sales_requirements: {
+            budget: { amount: 20_000_000, currency: 'VND' },
+            use_case: 'graphic design',
+          },
+        },
+      };
+
+      const hypothesis = await runtime.deriveHypothesis(signal, unverifiedContext);
+      const routing = await runtime.resolveRouting(signal, unverifiedContext, hypothesis);
+      expect(routing.requires_clarification).toBe(false);
+      const plan = await runtime.formulatePlan(routing, unverifiedContext, hypothesis);
+      expect(plan.steps).toEqual([]);
+      expect(plan.terminal_response).toMatchObject({
+        response_kind: 'REFUSAL',
+        template_key: 'core.skill_unavailable',
+        reason_code: 'CONNECTOR_UNBOUND',
+      });
+    });
+
+    it('plans generic-currency read steps without requiring quote signing while keeping proposed SKU unverified', async () => {
       const advisor_state = new SalesAdvisorExecutionState();
       const runtime = new SalesAgentRuntime({
         registry: createRegistryPort({
@@ -742,7 +1027,6 @@ describe('SalesAgentRuntime', () => {
         }),
         advisor_state,
         advisor_price_floor_bound: true,
-        advisor_quote_signing_bound: true,
       });
       const signal: SignalEnvelope = {
         signal_id: 'sig-advisor-usd',
@@ -789,6 +1073,95 @@ describe('SalesAgentRuntime', () => {
       });
       expect(plan.steps[2]?.input_bindings).toEqual({
         sku_id: { source_step_index: 2, response_path: 'sku_id' },
+      });
+    });
+    it('plans anonymous laptop advice through catalog, stock, price, and recommendation reads', async () => {
+      const advisor_state = new SalesAdvisorExecutionState();
+      const runtime = new SalesAgentRuntime({
+        registry: createRegistryPort({
+          'skill.sales.check_price': {
+            ...canonicalSalesRegistry['skill.sales.check_price']!,
+            enabled: true,
+          },
+        }),
+        advisor_state,
+        advisor_price_floor_bound: true,
+      });
+      const message = 'laptop dưới 20 triệu cho thiết kế đồ họa';
+      const signal: SignalEnvelope = {
+        signal_id: 'sig-anonymous-laptop-advisor',
+        tenant_id,
+        correlation_id: 'corr-anonymous-laptop-advisor',
+        source_channel: 'WEB_CHAT',
+        event_type: 'message.received',
+        timestamp: '2026-09-01T00:00:00Z',
+        subject: { session_id: 'sess-anonymous-laptop-advisor', channel_type: 'web' },
+        payload: {
+          message,
+          sales_proposal_source: 'API_GATEWAY',
+          sales_intent: 'advisor',
+          sales_requirements: {
+            category: 'laptops',
+            budget: { amount: 20_000_000, currency: 'VND' },
+            use_case: message,
+            product_eligibility: { category: 'laptops' },
+          },
+        },
+      };
+
+      const hypothesis = await runtime.deriveHypothesis(signal, unverifiedContext);
+      const routing = await runtime.resolveRouting(signal, unverifiedContext, hypothesis);
+      expect(routing.requires_clarification).toBe(false);
+      const plan = await runtime.formulatePlan(routing, unverifiedContext, hypothesis);
+
+      expect(plan.steps.map((step) => step.skill_id)).toEqual([
+        'skill.sales.search_product',
+        'skill.sales.check_stock',
+        'skill.sales.check_price',
+        'skill.sales.recommend_product',
+      ]);
+      expect(plan.steps[0]?.input_parameters).toMatchObject({
+        tenant_id,
+        query: message,
+        category_id: 'laptops',
+      });
+      expect(plan.steps[2]?.input_parameters).not.toHaveProperty('customer_id');
+      expect(plan.steps[3]?.input_parameters).not.toHaveProperty('customer_id');
+      expect(plan.steps[1]?.input_bindings).toEqual({
+        sku_id: { source_step_index: 1, response_path: 'products.0.sku' },
+      });
+      expect(plan.steps[2]?.input_bindings).toEqual({
+        sku_id: { source_step_index: 2, response_path: 'sku_id' },
+      });
+      expect(plan.steps[3]?.depends_on_steps).toEqual([1, 2, 3]);
+      expect(plan.steps.every((step) => !step.mutating)).toBe(true);
+
+      const unavailableRuntime = new SalesAgentRuntime({
+        registry: createRegistryPort({
+          'skill.sales.check_price': {
+            ...canonicalSalesRegistry['skill.sales.check_price']!,
+            enabled: true,
+          },
+        }),
+        advisor_state: new SalesAdvisorExecutionState(),
+        advisor_price_floor_bound: true,
+        gate: {
+          async available(_tenantId, skillId) {
+            return skillId === 'skill.sales.check_price'
+              ? { available: false, reason: 'DISABLED_BY_TENANT' }
+              : { available: true, reason: 'OK' };
+          },
+        },
+      });
+      const unavailableHypothesis = await unavailableRuntime.deriveHypothesis(signal, unverifiedContext);
+      const unavailableRouting = await unavailableRuntime.resolveRouting(signal, unverifiedContext, unavailableHypothesis);
+      const unavailablePlan = await unavailableRuntime.formulatePlan(
+        unavailableRouting, unverifiedContext, unavailableHypothesis,
+      );
+      expect(unavailablePlan.steps).toEqual([]);
+      expect(unavailablePlan.terminal_response).toMatchObject({
+        response_kind: 'REFUSAL',
+        reason_code: 'DISABLED_BY_TENANT',
       });
     });
 

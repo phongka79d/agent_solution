@@ -12,6 +12,7 @@
  * never fall back to an invented answer or an unregistered skill.
  */
 
+import { renderResponseTemplate } from '@agentos/core-engine';
 import { randomUUID } from 'node:crypto';
 import { OrchestratorError } from '@agentos/core-engine/contracts';
 import type {
@@ -25,7 +26,7 @@ import type {
   RoutingDecision,
   SignalEnvelope,
 } from '@agentos/core-engine/contracts';
-import type { SkillEffectClass } from '@agentos/skills';
+import { effectPolicyOf, plannedSkillMetadata, type SkillEffectClass, type SkillGate } from '@agentos/skills';
 
 /**
  * Effect policy derivation matrix transcribed from implement/05-skill-system-specifications.md §6.5:
@@ -57,18 +58,7 @@ export interface DerivedEffectPolicy {
 }
 
 export function deriveEffectPolicy(effectClass: SkillEffectClass): DerivedEffectPolicy {
-  switch (effectClass) {
-    case 'READ':
-      return { mutating: false, idempotent: true, price_bearing: false };
-    case 'INTERNAL':
-      return { mutating: true, idempotent: false, price_bearing: false };
-    case 'EFFECT':
-      return { mutating: true, idempotent: false, price_bearing: false };
-    case 'APPROVAL':
-      return { mutating: true, idempotent: false, price_bearing: false };
-    default:
-      return { mutating: false, idempotent: true, price_bearing: false };
-  }
+  return effectPolicyOf({ effect_class: effectClass, tool_binding: '' });
 }
 
 /**
@@ -80,6 +70,8 @@ export interface SkillRegistryRowMetadata {
   readonly guarded_dependency: string;
   readonly required_authority: AuthorityLevel;
   readonly timeout_ms: number;
+  readonly tool_binding?: string | undefined;
+  readonly audit_spec?: { readonly mask_pii_fields?: readonly string[] } | undefined;
 }
 
 export interface SkillRegistryPort {
@@ -120,32 +112,32 @@ function lookupRegistryRow(
  * Injected resolver for server-resolved customer verification references (implement/04 §3.2, implement/06 §8.1).
  *
  * Resolves the id of the verified `customer_identities` row the context aggregator bound during
- * `hydrateContext`. Canonical HydratedContext has no slot for verification_reference, so the
- * aggregator hands it over by tenant and correlation id (e.g. CareContextAggregator.verificationReferenceFor(tenant_id, correlation_id)).
+ * `hydrateContext`. The reference is carried by the checkpointed `HydratedContext`, not a local cache.
  */
 export interface VerificationReferenceResolver {
-  verificationReference?(correlation_id: string, tenant_id?: string): string | null | undefined;
-  verificationReferenceFor?(tenant_id: string, correlation_id: string): string | null | undefined;
+  verificationReference?(correlation_id: string, tenant_id: string, context: HydratedContext): string | null | undefined;
+  verificationReferenceFor?(tenant_id: string, correlation_id: string, context: HydratedContext): string | null | undefined;
 }
 
 export type VerificationReferencePort =
   | VerificationReferenceResolver
-  | ((correlation_id: string, tenant_id?: string) => string | null | undefined);
+  | ((correlation_id: string, tenant_id: string, context: HydratedContext) => string | null | undefined);
 
 function resolveVerificationReference(
   resolver: VerificationReferencePort | undefined,
   correlation_id: string,
   tenant_id: string,
+  context: HydratedContext,
 ): string | null {
   if (!resolver) return null;
   if (typeof resolver === 'function') {
-    return resolver(correlation_id, tenant_id) ?? null;
+    return resolver(correlation_id, tenant_id, context) ?? null;
   }
   if (typeof resolver.verificationReference === 'function') {
-    return resolver.verificationReference(correlation_id, tenant_id) ?? null;
+    return resolver.verificationReference(correlation_id, tenant_id, context) ?? null;
   }
   if (typeof resolver.verificationReferenceFor === 'function') {
-    return resolver.verificationReferenceFor(tenant_id, correlation_id) ?? null;
+    return resolver.verificationReferenceFor(tenant_id, correlation_id, context) ?? null;
   }
   return null;
 }
@@ -170,6 +162,11 @@ function normalizeIntentText(text: string): string {
     .replace(/[đĐ]/g, 'd')
     .toLowerCase();
 }
+
+
+const BARE_GREETING = /^(?:hi(?: there)?|hello(?: there)?|hey(?: there)?|good morning|good afternoon|good evening|xin chao|chao|alo)[.!?,\s]*$/;
+
+
 
 type CareIntent =
   | 'product_info'
@@ -412,6 +409,7 @@ export interface ParsedRationale {
 
 export interface CareAgentRuntimeOptions {
   readonly registry?: SkillRegistryResolver | undefined;
+  readonly gate?: SkillGate | undefined;
   readonly verificationResolver?: VerificationReferencePort | undefined;
   readonly verificationReference?: VerificationReferencePort | undefined;
   readonly now?: (() => Date) | undefined;
@@ -421,11 +419,13 @@ export class CareAgentRuntime implements IAgentRuntime {
   public readonly now?: (() => Date) | undefined;
   private readonly registry?: SkillRegistryResolver | undefined;
   private readonly verificationResolver?: VerificationReferencePort | undefined;
+  private readonly gate?: SkillGate | undefined;
   private readonly retainedRationales = new WeakMap<HypothesisRecord, ParsedRationale>();
 
   constructor(options: CareAgentRuntimeOptions = {}) {
     this.registry = options.registry;
     this.verificationResolver = options.verificationResolver ?? options.verificationReference;
+    this.gate = options.gate;
     this.now = options.now;
   }
 
@@ -451,7 +451,10 @@ export class CareAgentRuntime implements IAgentRuntime {
     const structured = readStructuredProposal(signal);
     const text = extractMessageContent(signal);
     const deterministicIntent = classifyCareIntent(text);
-    const careIntent: ParsedCareIntent = structured?.intent ?? deterministicIntent;
+    const bareGreeting = BARE_GREETING.test(normalizeIntentText(text).trim());
+    const careIntent: ParsedCareIntent = bareGreeting
+      ? 'requires_clarification'
+      : structured?.intent ?? deterministicIntent;
     const structuredOrderRef =
       careIntent === 'order_status' || careIntent === 'shipping' || careIntent === 'order_lookup'
         ? structured?.requirements.order_reference
@@ -470,9 +473,11 @@ export class CareAgentRuntime implements IAgentRuntime {
       intent = 'faq_search';
     }
     let confidence = careIntent === 'requires_clarification' ? 0.3 : 0.9;
-    let reason = structured
-      ? `Server-stamped Customer Care intent: ${careIntent}.`
-      : `Deterministic Customer Care classification: ${careIntent}.`;
+    let reason = bareGreeting
+      ? 'Bare greeting requires an open-ended clarification.'
+      : structured
+        ? `Server-stamped Customer Care intent: ${careIntent}.`
+        : `Deterministic Customer Care classification: ${careIntent}.`;
     const rationaleData: ParsedRationale = {
       reason,
       careIntent,
@@ -488,13 +493,13 @@ export class CareAgentRuntime implements IAgentRuntime {
       ...(handoffTarget === null ? {} : { handoffTarget }),
     };
 
-    if ((careIntent === 'order_status' || careIntent === 'order_lookup') && !orderRef) {
-      reason = 'Order status request without an extractable order reference requires clarification.';
-      confidence = 0.3;
-    } else if ((careIntent === 'order_status' || careIntent === 'order_lookup') && !context.customer) {
+    if ((careIntent === 'order_status' || careIntent === 'order_lookup') && !context.customer) {
       intent = 'order_lookup_unverified';
       reason = 'Order status request requires a server-verified customer binding.';
       confidence = 0.5;
+    } else if ((careIntent === 'order_status' || careIntent === 'order_lookup') && !orderRef) {
+      reason = 'Order status request without an extractable order reference requires clarification.';
+      confidence = 0.3;
     } else if ((careIntent === 'order_status' || careIntent === 'order_lookup') && orderRef) {
       intent = 'order_lookup';
       reason = structured
@@ -535,6 +540,7 @@ export class CareAgentRuntime implements IAgentRuntime {
     if (intent === 'human_escalation' || intent === 'complaint') {
       return {
         target_agent: 'HUMAN_HANDOFF',
+        domain: 'support',
         requires_clarification: false,
         rationalization: hypothesis.reasoning,
       };
@@ -543,6 +549,7 @@ export class CareAgentRuntime implements IAgentRuntime {
     if (intent === 'care:care') {
       return {
         target_agent: 'CS-01',
+        domain: 'support',
         requires_clarification: false,
         rationalization: hypothesis.reasoning,
       };
@@ -551,6 +558,7 @@ export class CareAgentRuntime implements IAgentRuntime {
     if (intent === 'care:retention') {
       return {
         target_agent: 'CS-02',
+        domain: 'support',
         requires_clarification: false,
         rationalization: hypothesis.reasoning,
       };
@@ -559,6 +567,7 @@ export class CareAgentRuntime implements IAgentRuntime {
     if (intent === 'order_status' && hypothesis.intent === 'order_lookup' && context.customer) {
       return {
         target_agent: 'CS-01',
+        domain: 'support',
         requires_clarification: false,
         rationalization: hypothesis.reasoning,
       };
@@ -567,29 +576,39 @@ export class CareAgentRuntime implements IAgentRuntime {
     if (intent === 'order_lookup_unverified' || hypothesis.intent === 'order_lookup_unverified') {
       return {
         target_agent: 'CS-01',
-        // An anonymous identity request is a typed refusal, not a clarification. Setting this
-        // flag would make the core orchestrator synthesize an unregistered Sales send_message step.
+        domain: 'support',
         requires_clarification: false,
-        rationalization: 'IDENTITY_UNVERIFIED: order status requires a server-verified customer binding.',
+        clarification_template_key: 'care.identity_required',
+        clarification_reason_code: 'IDENTITY_UNVERIFIED',
+        rationalization: 'Order status requires a server-verified customer binding.',
       };
     }
 
     if (intent === 'order_status') {
       return {
         target_agent: 'CS-01',
+        domain: 'support',
         requires_clarification: true,
+        clarification_template_key: 'care.need_order_reference',
+        clarification_reason_code: 'CARE_ORDER_REFERENCE_MISSING',
         clarification_prompt: 'Please provide your order reference number (for example, ORD-12345).',
         rationalization: hypothesis.reasoning,
       };
     }
 
     if (intent === 'order_lookup' && context.customer) {
-      return { target_agent: 'CS-01', requires_clarification: false, rationalization: hypothesis.reasoning };
+      return {
+        target_agent: 'CS-01',
+        requires_clarification: false,
+        domain: 'support',
+        rationalization: hypothesis.reasoning,
+      };
     }
     if (intent === 'faq_search' || intent === 'product_info' || intent === 'price' || intent === 'stock'
       || intent === 'shipping' || intent === 'return_refund' || intent === 'payment' || intent === 'usage') {
       return {
         target_agent: 'CS-01',
+        domain: 'support',
         requires_clarification: false,
         rationalization: `${hypothesis.reasoning} Route only to approved Care knowledge; related live data and actions remain unavailable unless explicitly bound.`,
       };
@@ -597,6 +616,13 @@ export class CareAgentRuntime implements IAgentRuntime {
 
     return {
       target_agent: 'CS-01',
+      domain: 'support',
+      clarification_template_key: intent === 'requires_clarification'
+        ? 'care.need_more_detail'
+        : context.customer === null
+          ? 'care.identity_required'
+          : 'care.need_order_reference',
+      ...(intent === 'requires_clarification' ? { clarification_reason_code: 'CARE_INTENT_UNCLEAR' } : {}),
       requires_clarification: true,
       clarification_prompt: 'How can I assist you with your order or questions today?',
       rationalization: hypothesis.reasoning,
@@ -609,8 +635,68 @@ export class CareAgentRuntime implements IAgentRuntime {
     hypothesis: HypothesisRecord,
   ): Promise<ExecutionPlan> {
     const plan = await this.composePlan(routing, context, hypothesis);
+    const withIntent = this.withRetentionIntent(plan, context, hypothesis);
+    const gated = await this.applyAvailabilityGate(withIntent, context);
+    return { ...gated, domain: 'support' };
+  }
 
-    return this.withRetentionIntent(plan, context, hypothesis);
+  private async applyAvailabilityGate(
+    plan: ExecutionPlan,
+    context: HydratedContext,
+  ): Promise<ExecutionPlan> {
+    const gate = this.gate;
+    if (gate === undefined || plan.steps.length === 0) return plan;
+
+    const verdicts = await Promise.all(
+      plan.steps.map(async (step) => ({
+        step,
+        verdict: await gate.available(context.tenant_id, step.skill_id),
+      })),
+    );
+    const refused = new Set(
+      verdicts.filter((entry) => !entry.verdict.available).map((entry) => entry.step.step_index),
+    );
+    if (refused.size === 0) return plan;
+
+    let kept = plan.steps.filter((step) => !refused.has(step.step_index));
+    for (;;) {
+      const keptIndexes = new Set(kept.map((step) => step.step_index));
+      const next = kept.filter((step) =>
+        (step.depends_on_steps ?? []).every((dependency) => keptIndexes.has(dependency)));
+      if (next.length === kept.length) break;
+      kept = next;
+    }
+
+    if (kept.length === 0) {
+      const unavailable = verdicts.find((entry) => !entry.verdict.available);
+      if (unavailable === undefined) return plan;
+      const rendered = renderResponseTemplate('core.skill_unavailable');
+      const refusal: ExecutionPlan = {
+        ...plan,
+        steps: [],
+        terminal_response: {
+          response_kind: 'REFUSAL',
+          ...rendered,
+          reason_code: unavailable.verdict.reason,
+          sources: [],
+        },
+      };
+      Reflect.deleteProperty(refusal, 'handoff_intent');
+      return refusal;
+    }
+
+    const indexMap = new Map<number, number>();
+    kept.forEach((step, index) => indexMap.set(step.step_index, index + 1));
+    return {
+      ...plan,
+      steps: kept.map((step, index) => ({
+        ...step,
+        step_index: index + 1,
+        depends_on_steps: (step.depends_on_steps ?? [])
+          .map((dependency) => indexMap.get(dependency))
+          .filter((dependency): dependency is number => dependency !== undefined),
+      })),
+    };
   }
 
   /**
@@ -673,7 +759,11 @@ export class CareAgentRuntime implements IAgentRuntime {
     if (hypothesis.intent === 'care:retention') {
       const row = lookupRegistryRow(this.registry, 'skill.care.analyze_churn_risk');
       if (!row) return { plan_id, steps: [], fallback_strategy: 'FAIL_CLOSED' };
-      const policy = deriveEffectPolicy(row.effect_class);
+      const policy = effectPolicyOf({
+        effect_class: row.effect_class,
+        tool_binding: row.tool_binding ?? '',
+      });
+      const metadata = plannedSkillMetadata(row.skill_id);
       const customer_id = context.customer?.customer_id;
 
       return {
@@ -692,19 +782,33 @@ export class CareAgentRuntime implements IAgentRuntime {
           price_bearing: policy.price_bearing,
           idempotent: policy.idempotent,
           timeout_ms: row.timeout_ms,
+          ...(metadata === undefined ? {} : { dispatch_timeout_ms: metadata.dispatch_timeout_ms }),
+          completion: metadata?.completion ?? 'SYNC',
+          ...(metadata?.idempotency_input_field === undefined
+            ? {}
+            : { idempotency_input_field: metadata.idempotency_input_field }),
+          ...(row.audit_spec === undefined ? {} : { audit_spec: row.audit_spec }),
           depends_on_steps: [],
         }],
         fallback_strategy: 'FAIL_CLOSED',
       };
     }
-
     if (hypothesis.intent === 'order_lookup_unverified') {
-      throw new OrchestratorError(
-        'IDENTITY_UNVERIFIED',
-        'Order status is unavailable until this session has a server-verified customer binding; '
-          + 'no order record was read or disclosed.',
-      );
+      const rendered = renderResponseTemplate('care.identity_required');
+      return {
+        plan_id,
+        steps: [],
+        fallback_strategy: 'FAIL_CLOSED',
+        response_agent_id: 'CS-01',
+        terminal_response: {
+          response_kind: 'CLARIFICATION',
+          ...rendered,
+          reason_code: 'IDENTITY_UNVERIFIED',
+          sources: [],
+        },
+      };
     }
+
 
     if (routing.requires_clarification) {
       return { plan_id, steps: [], fallback_strategy: 'FAIL_CLOSED' };
@@ -721,7 +825,11 @@ export class CareAgentRuntime implements IAgentRuntime {
       }
       const row = lookupRegistryRow(this.registry, 'skill.care.escalate_to_human');
       if (!row) return { plan_id, steps: [], fallback_strategy: 'FAIL_CLOSED' };
-      const policy = deriveEffectPolicy(row.effect_class);
+      const policy = effectPolicyOf({
+        effect_class: row.effect_class,
+        tool_binding: row.tool_binding ?? '',
+      });
+      const metadata = plannedSkillMetadata(row.skill_id);
       const step: PlannedStep = {
         step_index: 1,
         agent_id: 'CS-01',
@@ -740,6 +848,12 @@ export class CareAgentRuntime implements IAgentRuntime {
         price_bearing: policy.price_bearing,
         idempotent: policy.idempotent,
         timeout_ms: row.timeout_ms,
+        ...(metadata === undefined ? {} : { dispatch_timeout_ms: metadata.dispatch_timeout_ms }),
+        completion: metadata?.completion ?? 'SYNC',
+        ...(metadata?.idempotency_input_field === undefined
+          ? {}
+          : { idempotency_input_field: metadata.idempotency_input_field }),
+        ...(row.audit_spec === undefined ? {} : { audit_spec: row.audit_spec }),
         depends_on_steps: [],
       };
       return { plan_id, steps: [step], fallback_strategy: 'ESCALATE_HUMAN' };
@@ -755,13 +869,18 @@ export class CareAgentRuntime implements IAgentRuntime {
         this.verificationResolver,
         context.correlation_id,
         context.tenant_id,
+        context,
       );
       if (!orderRef || !customer_id || !verification_reference) {
         return { plan_id, steps: [], fallback_strategy: 'FAIL_CLOSED' };
       }
       const row = lookupRegistryRow(this.registry, 'skill.care.lookup_order');
       if (!row) return { plan_id, steps: [], fallback_strategy: 'FAIL_CLOSED' };
-      const policy = deriveEffectPolicy(row.effect_class);
+      const policy = effectPolicyOf({
+        effect_class: row.effect_class,
+        tool_binding: row.tool_binding ?? '',
+      });
+      const metadata = plannedSkillMetadata(row.skill_id);
       const step: PlannedStep = {
         step_index: 1,
         agent_id: 'CS-01',
@@ -778,6 +897,12 @@ export class CareAgentRuntime implements IAgentRuntime {
         price_bearing: policy.price_bearing,
         idempotent: policy.idempotent,
         timeout_ms: row.timeout_ms,
+        ...(metadata === undefined ? {} : { dispatch_timeout_ms: metadata.dispatch_timeout_ms }),
+        completion: metadata?.completion ?? 'SYNC',
+        ...(metadata?.idempotency_input_field === undefined
+          ? {}
+          : { idempotency_input_field: metadata.idempotency_input_field }),
+        ...(row.audit_spec === undefined ? {} : { audit_spec: row.audit_spec }),
         depends_on_steps: [],
       };
       return { plan_id, steps: [step], fallback_strategy: 'FAIL_CLOSED' };
@@ -788,7 +913,11 @@ export class CareAgentRuntime implements IAgentRuntime {
       const query = this.extractFaqQuery(hypothesis);
       const row = lookupRegistryRow(this.registry, 'skill.care.search_faq');
       if (!row) return { plan_id, steps: [], fallback_strategy: 'FAIL_CLOSED' };
-      const policy = deriveEffectPolicy(row.effect_class);
+      const policy = effectPolicyOf({
+        effect_class: row.effect_class,
+        tool_binding: row.tool_binding ?? '',
+      });
+      const metadata = plannedSkillMetadata(row.skill_id);
       const step: PlannedStep = {
         step_index: 1,
         agent_id: 'CS-01',
@@ -799,7 +928,13 @@ export class CareAgentRuntime implements IAgentRuntime {
         mutating: policy.mutating,
         price_bearing: policy.price_bearing,
         idempotent: policy.idempotent,
+        completion: metadata?.completion ?? 'SYNC',
+        ...(metadata?.idempotency_input_field === undefined
+          ? {}
+          : { idempotency_input_field: metadata.idempotency_input_field }),
         timeout_ms: row.timeout_ms,
+        ...(metadata === undefined ? {} : { dispatch_timeout_ms: metadata.dispatch_timeout_ms }),
+        ...(row.audit_spec === undefined ? {} : { audit_spec: row.audit_spec }),
         depends_on_steps: [],
       };
       return { plan_id, steps: [step], fallback_strategy: 'FAIL_CLOSED' };

@@ -1,4 +1,4 @@
-import type { Customer360Fact } from '@agentos/core-engine/contracts';
+import type { Customer360Fact, HydratedContext } from '@agentos/core-engine/contracts';
 import type { CustomerEventTimeline } from '@agentos/database';
 import type { SkillToolInvocation, SkillToolPort } from '@agentos/skills';
 import type { ErpReadPort } from '../../connectors.js';
@@ -47,17 +47,15 @@ export type {
 
 export interface SalesContextAggregatorLike {
   verifiedCustomerFor(
-    tenant_id: string,
-    correlation_id: string,
+    context: HydratedContext,
   ): Customer360Fact | SalesCustomer360Fact | Promise<Customer360Fact | SalesCustomer360Fact | null> | null;
   verifiedTimelineFor(
-    tenant_id: string,
-    correlation_id: string,
+    context: HydratedContext,
   ): CustomerEventTimeline | Promise<CustomerEventTimeline | null> | null;
-  takeoverActiveFor?(tenant_id: string, correlation_id: string): Promise<boolean> | boolean;
+  takeoverActiveFor?(context: HydratedContext): Promise<boolean> | boolean;
 }
 
-/** Owner-approved revenue evidence required before recommendation execution can succeed. */
+/** Optional owner-approved revenue evidence for a personalized recommendation's economic outcome. */
 export interface SalesRecommendationRevenueEvidence {
   readonly conversion_probability: number;
   readonly expected_revenue: number;
@@ -68,7 +66,7 @@ export interface SalesRecommendationRevenueEvidence {
 
 /**
  * Host-provided boundary for the recommendation contract's economic outcome.
- * No default implementation exists: without this owner-approved source, recommendations refuse.
+ * Without an owner-approved source, advice still succeeds with no expected outcome.
  */
 export interface SalesRecommendationRevenueEvidencePort {
   read(input: {
@@ -84,8 +82,8 @@ export interface SalesRecommendationRevenueEvidencePort {
 
 export interface SalesSkillToolPortOptions {
   readonly erp_read: ErpReadPort | null;
-  readonly context: Pick<SalesContextAggregatorLike, 'verifiedCustomerFor' | 'verifiedTimelineFor'> & Partial<SalesContextAggregatorLike>;
-  /** Owner-approved revenue evidence source; absent means recommendation execution refuses. */
+  readonly context: SalesContextAggregatorLike;
+  /** Optional owner-approved revenue evidence; absence means no expected outcome is stated. */
   readonly revenue_evidence?: SalesRecommendationRevenueEvidencePort | undefined;
   /** Retained as an injection seam for callers; this port never invents provider timestamps. */
   readonly now?: (() => Date) | undefined;
@@ -110,7 +108,7 @@ export function hasTakeoverAuthority(options: {
   readonly takeover_active?: boolean | undefined;
   readonly is_takeover_active?: ((tenant_id: string, correlation_id: string) => Promise<boolean> | boolean) | undefined;
   readonly context?: {
-    readonly takeoverActiveFor?: ((tenant_id: string, correlation_id: string) => Promise<boolean> | boolean) | undefined;
+    readonly takeoverActiveFor?: ((context: HydratedContext) => Promise<boolean> | boolean) | undefined;
   } | undefined;
 }): boolean {
   return (
@@ -139,7 +137,7 @@ interface RetrieveCustomerInput {
 
 interface RecommendProductInput {
   readonly tenant_id: string;
-  readonly customer_id: string;
+  readonly customer_id?: string;
   readonly current_cart_skus: readonly string[];
   readonly recommendation_type?: string;
 }
@@ -147,7 +145,7 @@ interface RecommendProductInput {
 interface CheckPriceInput {
   readonly tenant_id: string;
   readonly sku_id: string;
-  readonly customer_id: string;
+  readonly customer_id?: string;
   readonly requested_discount_percent?: number;
 }
 

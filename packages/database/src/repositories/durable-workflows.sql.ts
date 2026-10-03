@@ -13,6 +13,7 @@ export const PLATFORM_DURABLE_TASKS = 'agentos.platform_durable_tasks';
  * row itself is appended by `EvidenceRepository.logAgentRun()`.
  */
 const AGENT_RUN_LOGS = 'agentos.agent_run_logs';
+const EFFECT_RESERVATIONS = 'agentos.effect_reservations';
 
 /**
  * The columns every read publishes, in the order `toDurableTaskRecord` expects them.
@@ -64,6 +65,84 @@ const SELECT_TASK = `SELECT${TASK_PROJECTION}
 const SELECT_TASK_FOR_UPDATE = `${SELECT_TASK}
   FOR UPDATE`;
 
+const SELECT_RECONCILIATION_TASK_FOR_UPDATE = `SELECT${TASK_PROJECTION},
+    (lease_owner IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= CURRENT_TIMESTAMP) AS lease_available
+  FROM ${PLATFORM_DURABLE_TASKS}
+  WHERE tenant_id = $1 AND run_id = $2
+  FOR UPDATE`;
+
+/** Old, still-parked effect reservations whose checkpoint still names the same mutating action. */
+const SELECT_RECONCILIATION_CANDIDATES = `SELECT t.tenant_id, t.run_id, r.effect_key, r.skill_id, r.step_index,
+    r.reserved_at, r.expires_at, r.expires_at <= CURRENT_TIMESTAMP AS max_age_reached,
+    t.state_payload
+  FROM ${PLATFORM_DURABLE_TASKS} AS t
+  JOIN ${EFFECT_RESERVATIONS} AS r ON r.tenant_id = t.tenant_id AND r.run_id = t.run_id
+  WHERE t.tenant_id = $1
+    AND t.state = 'waiting'
+    AND t.state_payload->>'wait_reason' = 'RECONCILE'
+    AND r.status = 'RESERVED'
+    AND r.reserved_at <= CURRENT_TIMESTAMP - ($2 * INTERVAL '1 minute')
+    AND t.state_payload->'pending_action'->>'mutating' = 'true'
+    AND t.state_payload->'pending_action'->>'effect_key' = r.effect_key
+    AND (t.lease_owner IS NULL OR t.lease_expires_at IS NULL OR t.lease_expires_at <= CURRENT_TIMESTAMP)
+  ORDER BY r.reserved_at ASC, t.run_id ASC, r.step_index ASC
+  LIMIT $3`;
+
+/** Only retry waits with a due schedule and no competing resume event can receive a timer. */
+const SELECT_RETRY_TIMER_CANDIDATES = `SELECT tenant_id, run_id, retry_count,
+    state_payload->>'wait_reason' AS wait_reason, state_payload ? 'resume_event' AS has_resume_event
+  FROM ${PLATFORM_DURABLE_TASKS}
+  WHERE tenant_id = $1
+    AND state = 'waiting'
+    AND state_payload->>'wait_reason' = 'RETRY'
+    AND state_payload->>'retry_not_before' IS NOT NULL
+    AND (state_payload->>'retry_not_before')::timestamptz <= CURRENT_TIMESTAMP
+    AND NOT (state_payload ? 'resume_event')
+    AND (lease_owner IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= CURRENT_TIMESTAMP)
+  ORDER BY updated_at ASC, run_id ASC
+  LIMIT $2`;
+
+const SELECT_RECONCILIATION_RESERVATION_FOR_UPDATE = `SELECT status, expires_at <= CURRENT_TIMESTAMP AS max_age_reached
+  FROM ${EFFECT_RESERVATIONS}
+  WHERE tenant_id = $1 AND run_id = $2 AND effect_key = $3 AND status = 'RESERVED'
+  FOR UPDATE`;
+
+const UPDATE_RECONCILED_RESERVATION = `UPDATE ${EFFECT_RESERVATIONS}
+  SET status = $4,
+      response_receipt = $5::jsonb,
+      resolved_at = CURRENT_TIMESTAMP
+  WHERE tenant_id = $1 AND run_id = $2 AND effect_key = $3 AND status = 'RESERVED'
+  RETURNING effect_key`;
+
+const UPDATE_RECONCILIATION_COMPLETED_TASK = `UPDATE ${PLATFORM_DURABLE_TASKS}
+  SET state_payload = state_payload || $3::jsonb,
+      lease_owner = NULL,
+      lease_expires_at = NULL,
+      task_version = task_version + 1,
+      updated_at = CURRENT_TIMESTAMP
+  WHERE tenant_id = $1 AND run_id = $2 AND state = 'waiting' AND task_version = $4
+  RETURNING${TASK_PROJECTION}`;
+
+const UPDATE_RECONCILIATION_FAILED_TASK = `UPDATE ${PLATFORM_DURABLE_TASKS}
+  SET state = 'failed',
+      last_error_class = 'FATAL',
+      error_details = $3::jsonb,
+      lease_owner = NULL,
+      lease_expires_at = NULL,
+      task_version = task_version + 1,
+      updated_at = CURRENT_TIMESTAMP
+  WHERE tenant_id = $1 AND run_id = $2 AND state = 'waiting' AND task_version = $4
+  RETURNING${TASK_PROJECTION}`;
+
+const UPDATE_RECONCILIATION_ESCALATED_TASK = `UPDATE ${PLATFORM_DURABLE_TASKS}
+  SET state_payload = state_payload || $3::jsonb,
+      lease_owner = NULL,
+      lease_expires_at = NULL,
+      task_version = task_version + 1,
+      updated_at = CURRENT_TIMESTAMP
+  WHERE tenant_id = $1 AND run_id = $2 AND state = 'waiting' AND task_version = $4
+  RETURNING${TASK_PROJECTION}`;
+
 /**
  * One page of the tenant's durable tasks, newest first (implement/04 §4.1, the R16 read model).
  *
@@ -108,7 +187,14 @@ const SELECT_CLAIMABLE_TASK = `SELECT${TASK_PROJECTION}
   FROM ${PLATFORM_DURABLE_TASKS}
   WHERE tenant_id = $1
     AND (
-      state = 'queued'
+      (
+        state = 'queued'
+        AND (
+          state_payload->>'wait_reason' IS DISTINCT FROM 'RETRY'
+          OR state_payload->>'retry_not_before' IS NULL
+          OR (state_payload->>'retry_not_before')::timestamptz <= CURRENT_TIMESTAMP
+        )
+      )
       OR (state = 'running' AND lease_expires_at IS NOT NULL AND lease_expires_at < CURRENT_TIMESTAMP)
       OR (
         state IN ('waiting', 'awaiting_human')
@@ -142,12 +228,12 @@ const UPDATE_CLAIM_TASK = `UPDATE ${PLATFORM_DURABLE_TASKS}
     )
   RETURNING${TASK_PROJECTION}`;
 
-/** Renew an active unexpired lease for the owner. */
+/** Renew a live, non-terminal lease for the owner without advancing the task's optimistic version. */
 const UPDATE_RENEW_LEASE = `UPDATE ${PLATFORM_DURABLE_TASKS}
   SET lease_expires_at = CURRENT_TIMESTAMP + ($3 * INTERVAL '1 millisecond'),
-      task_version = task_version + 1,
       updated_at = CURRENT_TIMESTAMP
-  WHERE tenant_id = $1 AND run_id = $2 AND task_version = $4 AND lease_owner = $5
+  WHERE tenant_id = $1 AND run_id = $2 AND lease_owner = $4
+    AND state IN ('running', 'waiting', 'awaiting_human')
   RETURNING${TASK_PROJECTION}`;
 
 /** Release an active lease, clearing owner and expiry and setting target state. */
@@ -201,11 +287,23 @@ const UPDATE_TASK_STATE_MERGE_PAYLOAD = `UPDATE ${PLATFORM_DURABLE_TASKS}
   WHERE tenant_id = $1 AND run_id = $2 AND task_version = $5
   RETURNING${TASK_PROJECTION}`;
 
-/** `RETRYABLE` failure inside the retry budget (§4.4): re-queue with `retry_count + 1` and release
- * the lease, because the worker that failed is done with the task and a dead lease must not hold the
- * next attempt back for its full TTL. */
+/** `RETRYABLE` failure inside the retry budget: persist a capped backoff, park a complete checkpoint
+ * for its timer event, or delay an incomplete first-pass task in `queued` until the same deadline. */
 const UPDATE_TASK_FAILURE_REQUEUE = `UPDATE ${PLATFORM_DURABLE_TASKS}
-  SET state = 'queued',
+  SET state = CASE WHEN $6::boolean
+        THEN 'waiting'::agentos.task_lifecycle_state
+        ELSE 'queued'::agentos.task_lifecycle_state
+      END,
+      state_payload = jsonb_set(
+        jsonb_set(COALESCE(state_payload, '{}'::jsonb) - 'resume_event',
+          '{wait_reason}', '"RETRY"'::jsonb, true),
+        '{retry_not_before}',
+        to_jsonb(CURRENT_TIMESTAMP + (
+          LEAST(60000::double precision, 1000::double precision * power(2::double precision, LEAST(retry_count, 6)))
+          * INTERVAL '1 millisecond'
+        )),
+        true
+      ),
       retry_count = retry_count + 1,
       last_error_class = $3,
       error_details = $4::jsonb,
@@ -215,7 +313,6 @@ const UPDATE_TASK_FAILURE_REQUEUE = `UPDATE ${PLATFORM_DURABLE_TASKS}
       updated_at = CURRENT_TIMESTAMP
   WHERE tenant_id = $1 AND run_id = $2 AND task_version = $5
   RETURNING${TASK_PROJECTION}`;
-
 /** Reconcile transition: keeps a waiting task parked and records the worker handoff event. */
 const UPDATE_RECONCILE_TASK = `UPDATE ${PLATFORM_DURABLE_TASKS}
   SET state = 'waiting',
@@ -225,6 +322,20 @@ const UPDATE_RECONCILE_TASK = `UPDATE ${PLATFORM_DURABLE_TASKS}
       task_version = task_version + 1,
       updated_at = CURRENT_TIMESTAMP
   WHERE tenant_id = $1 AND run_id = $2 AND task_version = $4
+  RETURNING${TASK_PROJECTION}`;
+/** Records one idempotent `timer.expired` resume event for its exact retry generation. */
+const UPDATE_RETRY_TIMER_TASK = `UPDATE ${PLATFORM_DURABLE_TASKS}
+  SET state_payload = state_payload || $3::jsonb,
+      lease_owner = NULL,
+      lease_expires_at = NULL,
+      task_version = task_version + 1,
+      updated_at = CURRENT_TIMESTAMP
+  WHERE tenant_id = $1 AND run_id = $2 AND task_version = $4
+    AND retry_count = $5
+    AND state = 'waiting'
+    AND state_payload->>'wait_reason' = 'RETRY'
+    AND (state_payload->>'retry_not_before')::timestamptz <= CURRENT_TIMESTAMP
+    AND NOT (state_payload ? 'resume_event')
   RETURNING${TASK_PROJECTION}`;
 
 /** Handoff evidence repair transition: attaches a resume_event to an awaiting_human task while retaining its complete checkpoint. */
@@ -287,6 +398,15 @@ const UPDATE_TASK_OPERATOR_REQUEUE = `UPDATE ${PLATFORM_DURABLE_TASKS}
   WHERE tenant_id = $1 AND run_id = $2 AND task_version = $3
   RETURNING${TASK_PROJECTION}`;
 export {
+  SELECT_RECONCILIATION_CANDIDATES,
+  SELECT_RETRY_TIMER_CANDIDATES,
+  UPDATE_RETRY_TIMER_TASK,
+  SELECT_RECONCILIATION_RESERVATION_FOR_UPDATE,
+  UPDATE_RECONCILED_RESERVATION,
+  UPDATE_RECONCILIATION_COMPLETED_TASK,
+  UPDATE_RECONCILIATION_FAILED_TASK,
+  UPDATE_RECONCILIATION_ESCALATED_TASK,
+  SELECT_RECONCILIATION_TASK_FOR_UPDATE,
   INSERT_TASK,
   SELECT_TASK,
   SELECT_TASK_FOR_UPDATE,

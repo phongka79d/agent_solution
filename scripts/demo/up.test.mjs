@@ -13,9 +13,12 @@ import {
 import { buildPlan as buildDownPlan, parseArgs as parseDownArgs } from './down.mjs';
 describe('demo:up argument parsing', () => {
   it('uses .env by default and accepts a separate env file', () => {
-    assert.deepEqual(parseArgs([]), { envFile: '.env', help: false });
-    assert.deepEqual(parseArgs(['--env-file', 'demo.env']), { envFile: 'demo.env', help: false });
-    assert.deepEqual(parseArgs(['--', '--env-file', 'demo.env', '--help']), { envFile: 'demo.env', help: true });
+    assert.deepEqual(parseArgs([]), { envFile: '.env', help: false, live: false });
+    assert.deepEqual(parseArgs(['--env-file', 'demo.env']), { envFile: 'demo.env', help: false, live: false });
+    assert.deepEqual(parseArgs(['--', '--env-file', 'demo.env', '--help']), { envFile: 'demo.env', help: true, live: false });
+    assert.equal(parseArgs(['--', '--env-file', 'demo.env', '--live']).live, true);
+    assert.deepEqual(parseArgs(['--profile', 'live']), { envFile: '.env', help: false, live: true });
+    assert.deepEqual(parseArgs(['--profile=offline']), { envFile: '.env', help: false, live: false });
   });
 
   it('rejects unknown arguments and missing env-file values', () => {
@@ -42,16 +45,22 @@ describe('demo:up plan', () => {
     assert.deepEqual(plan.map((step) => step.name), [
       'env-file',
       'docker',
-      'compose-up',
+      'compose-infra',
       'migrate',
+      'compose-up',
       'preflight',
       'seed',
       'smoke',
     ]);
-    assert.deepEqual(plan[2].args, ['compose', '--env-file', 'demo.env', 'up', '-d', '--build', '--wait']);
-    assert.equal(plan[4].args.at(-1), 'scripts/demo/preflight.mjs');
-    assert.equal(plan[5].args.at(-1), 'scripts/demo/seed.mjs');
+    // The API refuses an unmigrated schema: data services start, migrate runs, then the apps start.
+    assert.deepEqual(plan[2].args, [
+      'compose', '--env-file', 'demo.env', 'up', '-d', '--build', '--wait', 'postgres', 'redis', 'qdrant', 'mock-erp',
+    ]);
+    assert.deepEqual(plan[2].expectedServices, ['postgres', 'redis', 'qdrant', 'mock-erp']);
     assert.deepEqual(plan[3].args, ['packages/database/scripts/rehearse-migrations.mjs']);
+    assert.deepEqual(plan[4].args, ['compose', '--env-file', 'demo.env', 'up', '-d', '--build', '--wait']);
+    assert.equal(plan[5].args.at(-1), 'scripts/demo/preflight.mjs');
+    assert.equal(plan[6].args.at(-1), 'scripts/demo/seed.mjs');
     assert.equal(
       buildBootstrapDatabaseUrl({
         POSTGRES_USER: 'postgres',
@@ -61,7 +70,16 @@ describe('demo:up plan', () => {
       }),
       'postgresql://postgres:secret%40word@127.0.0.1:5432/agentos_dev?schema=agentos',
     );
-    assert.equal(plan[6].args.at(-1), 'scripts/demo/smoke.mjs');
+    assert.equal(plan[7].args.at(-1), 'scripts/demo/smoke.mjs');
+  });
+
+  it('runs preflight and smoke with the live profile only when selected', () => {
+    const offline = buildPlan({ envFile: 'demo.env' });
+    assert.ok(!offline[5].args.includes('--live') && !offline[7].args.includes('--live'));
+    const live = buildPlan(parseArgs(['--profile', 'live']));
+    assert.equal(live[5].args.at(-1), '--live');
+    assert.equal(live[7].args.at(-1), '--live');
+    assert.ok(!live[6].args.includes('--live'));
   });
 });
 
@@ -122,6 +140,6 @@ describe('demo:up failure propagation', () => {
       /DEMO_UP_FAILED: step seed failed: seed failed/,
     );
 
-    assert.deepEqual(calls, ['env-file', 'docker', 'compose-up', 'migrate', 'preflight', 'seed']);
+    assert.deepEqual(calls, ['env-file', 'docker', 'compose-infra', 'migrate', 'compose-up', 'preflight', 'seed']);
   });
 });

@@ -2,50 +2,27 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
 import { authenticate, requirePrincipal } from '../../gateway/principal.js';
 import type { GatewayPrincipal } from '../../gateway/contracts.js';
-import type { ConversationRecord, GatewayRuntime } from '../../gateway/ports.js';
+import type { GatewayRuntime } from '../../gateway/ports.js';
 import { correlationIdOf, fail, replyFailure } from '../../gateway/http.js';
 import type { CredentialStore } from '../../gateway/principal.js';
-import { toConversationSummary } from '../../projections/conversation-summary.js';
+import { toConversationListItem, toConversationSummary } from '../../projections/conversation-summary.js';
+import {
+  conversationListRouteSchema,
+  conversationMessagesRouteSchema,
+  conversationOperatorMessageRouteSchema,
+  conversationSummaryRouteSchema,
+  registerOpenApiSchemas,
+} from './openapi-schemas.js';
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 const MESSAGE_MAX_LENGTH = 4000;
 const IDEMPOTENCY_KEY_MAX_LENGTH = 128;
 
-type ConversationMessage = {
-  readonly message_id: string;
-  readonly sender_type: 'customer' | 'agent' | 'operator' | 'system';
-  readonly sender_id: string;
-  readonly content: string;
-  readonly created_at: string;
-};
-
-type OperatorConversationPort = {
-  list(tenant_id: string, limit?: number): Promise<readonly ConversationRecord[]>;
-  listMessages(input: {
-    readonly tenant_id: string;
-    readonly conversation_id: string;
-    readonly limit?: number;
-  }): Promise<readonly ConversationMessage[]>;
-  appendMessage(input: {
-    readonly tenant_id: string;
-    readonly conversation_id: string;
-    readonly sender_type: 'operator';
-    readonly sender_id: string;
-    readonly content: string;
-  }): Promise<string>;
-};
 
 export interface OperatorConversationRouteDeps {
   readonly runtime: GatewayRuntime;
   readonly credentials: CredentialStore;
-}
-
-function conversationsPort(runtime: GatewayRuntime): OperatorConversationPort {
-  // These methods are deliberately supplied by the composition binding. Keeping this narrow local
-  // view lets this route depend only on the operator-conversation capability while the shared
-  // ConversationPort remains owned by the gateway contract.
-  return runtime.conversations as GatewayRuntime['conversations'] & OperatorConversationPort;
 }
 
 function refuse(
@@ -61,7 +38,7 @@ function readLimit(query: unknown): number {
   if (query === undefined || query === null || typeof query !== 'object' || Array.isArray(query)) {
     return DEFAULT_LIMIT;
   }
-  const raw = (query as Record<string, unknown>)['limit'];
+  const raw: unknown = Reflect.get(query, 'limit');
   if (raw === undefined) return DEFAULT_LIMIT;
   const value = typeof raw === 'number' ? raw : typeof raw === 'string' && /^\d+$/.test(raw) ? Number(raw) : NaN;
   if (!Number.isInteger(value) || value < 1 || value > MAX_LIMIT) {
@@ -76,7 +53,7 @@ function requiredMessage(body: unknown): string {
   }
   // Any other field is ignored rather than refused: an `operator_id` in the body is a spoof attempt
   // that the route already answers by deriving attribution from the principal alone.
-  const message = (body as Record<string, unknown>)['message'];
+  const message: unknown = Reflect.get(body, 'message');
   if (typeof message !== 'string' || message.trim().length === 0 || message.length > MESSAGE_MAX_LENGTH) {
     fail('VALIDATION_FAILED', `message must be a non-empty string of at most ${MESSAGE_MAX_LENGTH} characters`);
   }
@@ -89,7 +66,10 @@ function requiredMessage(body: unknown): string {
  * authority and is never derived from the message text.
  */
 function optionalIdempotencyKey(body: unknown): string | undefined {
-  const value = (body as Record<string, unknown>)['idempotency_key'];
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    fail('VALIDATION_FAILED', 'message is required');
+  }
+  const value: unknown = Reflect.get(body, 'idempotency_key');
   if (value === undefined) return undefined;
   if (typeof value !== 'string' || value.trim().length === 0 || value.length > IDEMPOTENCY_KEY_MAX_LENGTH) {
     fail('VALIDATION_FAILED', `idempotency_key must be a non-empty string of at most ${IDEMPOTENCY_KEY_MAX_LENGTH} characters`);
@@ -135,8 +115,8 @@ async function handleConversationSummary(
     if (runtime.companyCrm === undefined) {
       fail('CAPABILITY_NOT_ENABLED', 'the company CRM projection is not configured');
     }
-    const conversation_id = typeof request.params === 'object' && request.params !== null
-      ? (request.params as Record<string, unknown>)['id']
+    const conversation_id = typeof request.params === 'object' && request.params !== null && 'id' in request.params
+      ? request.params.id
       : undefined;
     if (typeof conversation_id !== 'string' || conversation_id.length === 0) {
       fail('VALIDATION_FAILED', 'conversation id is required in the path');
@@ -153,7 +133,11 @@ async function handleConversationSummary(
       ...(principal.operator_id === undefined ? {} : { operator_id: principal.operator_id }),
       detail: { conversation_id },
     });
-    return reply.code(200).send(toConversationSummary(summary, lease));
+    return reply.code(200).send(toConversationSummary(summary, {
+      lease,
+      requesting_operator_id: requireOperatorId(principal),
+      now: runtime.clock(),
+    }));
   } catch (error) {
     return replyFailure(reply, error, correlationIdOf(request, runtime));
   }
@@ -164,22 +148,34 @@ export function registerOperatorConversationRoutes(
   app: FastifyInstance,
   deps: OperatorConversationRouteDeps,
 ): void {
-
+  registerOpenApiSchemas(app);
   const preHandler = authenticate(deps);
   app.get<{ Params: { id: string } }>(
     '/conversations/:id/summary',
-    { preHandler },
+    { preHandler, schema: conversationSummaryRouteSchema },
     (request, reply) => handleConversationSummary(request, reply, deps),
   );
 
-  app.get('/conversations', { preHandler }, async (request, reply) => {
+  app.get('/conversations', { preHandler, schema: conversationListRouteSchema }, async (request, reply) => {
     const runtime = deps.runtime;
     const correlation_id = correlationIdOf(request, runtime);
     try {
       const principal = requireConversationReader(request);
       const limit = readLimit(request.query);
-      const items = await conversationsPort(runtime).list(principal.tenant_id, limit);
-
+      const operator_id = requireOperatorId(principal);
+      const conversations = await runtime.conversations.list(principal.tenant_id, limit);
+      const items = await Promise.all(conversations.map(async (conversation) => {
+        const [lease, handoffs] = await Promise.all([
+          runtime.takeover.holder(principal.tenant_id, conversation.conversation_id),
+          runtime.conversations.handoffState(principal.tenant_id, conversation.conversation_id),
+        ]);
+        return toConversationListItem(conversation, {
+          lease,
+          requesting_operator_id: operator_id,
+          now: runtime.clock(),
+          ...handoffs,
+        }, conversation.customer_display_name ?? null);
+      }));
       await runtime.audit.record({
         tenant_id: principal.tenant_id,
         correlation_id,
@@ -197,7 +193,7 @@ export function registerOperatorConversationRoutes(
 
   app.get<{ Params: { conversation_id: string } }>(
     '/conversations/:conversation_id/messages',
-    { preHandler },
+    { preHandler, schema: conversationMessagesRouteSchema },
     async (request, reply) => {
       const runtime = deps.runtime;
       const correlation_id = correlationIdOf(request, runtime);
@@ -209,7 +205,7 @@ export function registerOperatorConversationRoutes(
           fail('CONVERSATION_NOT_FOUND', 'this tenant holds no conversation with that identifier');
         }
         const limit = readLimit(request.query);
-        const items = await conversationsPort(runtime).listMessages({
+        const items = await runtime.conversations.listMessages({
           tenant_id: principal.tenant_id,
           conversation_id,
           limit,
@@ -233,7 +229,7 @@ export function registerOperatorConversationRoutes(
 
   app.post<{ Params: { conversation_id: string } }>(
     '/conversations/:conversation_id/operator-messages',
-    { preHandler },
+    { preHandler, schema: conversationOperatorMessageRouteSchema },
     async (request, reply) => {
       const runtime = deps.runtime;
       const correlation_id = correlationIdOf(request, runtime);
@@ -270,7 +266,7 @@ export function registerOperatorConversationRoutes(
         // operator_id in the body is intentionally ignored and can never spoof attribution.
         let message_id: string;
         try {
-          message_id = await conversationsPort(runtime).appendMessage({
+          message_id = await runtime.conversations.appendMessage({
             tenant_id: principal.tenant_id,
             conversation_id,
             sender_type: 'operator',

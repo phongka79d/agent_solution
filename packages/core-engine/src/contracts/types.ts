@@ -13,6 +13,7 @@
 // vocabulary for real (it builds `OrchestratorError`s), while this module only names the two
 // handoff shapes its plans and results carry. There is no runtime cycle.
 import type { HandoffAdmission, HandoffIntent } from './cross-domain-handoff.js';
+import type { ResponseKind, TemplateKey } from '../responses/templates.js';
 
 export type EpistemicClassification = 'FACT' | 'SIGNAL' | 'HYPOTHESIS' | 'DECISION' | 'ACTION';
 
@@ -142,6 +143,18 @@ export interface Customer360Fact {
   readonly created_at: string;
 }
 
+/** Tenant-verified default destination stored in a customer's profile. */
+export interface DefaultShippingAddress {
+  readonly recipient_name: string;
+  readonly phone: string;
+  readonly postal_code: string;
+  readonly city: string;
+  readonly district: string;
+  readonly address_line1: string;
+  readonly cvs_store_id?: string;
+  readonly cvs_store_name?: string;
+}
+
 export interface WorkingMemoryContext {
   /** Server-issued unique session id. Anonymous sessions are isolated per `session_id`. */
   readonly session_id: string;
@@ -166,6 +179,28 @@ export interface HydratedContext {
   readonly working_memory: WorkingMemoryContext;
   readonly knowledge_citations: Array<{ document_id: string; path: string; score: number }>;
   readonly hydrated_at: string;
+  /**
+   * JSON-safe worker-owned facts derived for this run. This object is carried verbatim inside the
+   * durable task checkpoint's `context`; workers may populate it as later stages derive state.
+   */
+  run_state?: {
+    sales?: {
+      advisor_requirements?: unknown;
+      advisor_stock?: Record<string, number>;
+      advisor_candidate_sku?: string;
+      lexicon?: unknown;
+      lexicon_metadata?: unknown;
+      timeline?: unknown;
+      /** Tenant-scoped default address, copied only from a verified customer profile. */
+      default_shipping_address?: DefaultShippingAddress;
+    };
+    care?: {
+      verification_reference?: string | null;
+    };
+    marketing?: {
+      source_signal?: SignalEnvelope;
+    };
+  };
 }
 
 export interface HypothesisRecord {
@@ -218,11 +253,16 @@ export type PlatformAgentId =
   | 'SAL-01' | 'SAL-02' | 'SAL-03' | 'SAL-04' | 'SAL-05'
   | 'CS-01'  | 'CS-02'
   | 'HUMAN_HANDOFF';
+export type ExecutionDomain = 'sales' | 'support' | 'marketing';
 
 export interface RoutingDecision {
   readonly target_agent: PlatformAgentId;
   readonly requires_clarification: boolean;
+  readonly domain?: ExecutionDomain;
   readonly clarification_prompt?: string;
+  /** Allowlisted template selection; caller/model-authored prompt text is never sent directly. */
+  readonly clarification_template_key?: TemplateKey;
+  readonly clarification_reason_code?: string;
   readonly rationalization: string;
 }
 
@@ -247,12 +287,26 @@ export interface RunResponseSource {
   readonly source_file: string;
 }
 
-/** A response assembled solely from verified, immutable step evidence. */
+/** A typed terminal reply; ANSWER additionally requires verified source citations. */
 export interface FinalResponse {
-  readonly answer: string;
+  readonly response_kind: ResponseKind;
+  readonly text: string;
+  readonly source: string;
+  readonly template_key?: TemplateKey;
+  readonly reason_code?: string;
   readonly sources: readonly RunResponseSource[];
-  readonly model?: string;
-  readonly usage?: Readonly<Record<string, unknown>> | null;
+}
+
+export type ResponseOutcome = 'ANSWERED' | 'CLARIFIED' | 'REFUSED' | 'NO_ANSWER' | 'HANDOFF_ACK';
+
+export function responseOutcome(response: Pick<FinalResponse, 'response_kind'>): ResponseOutcome {
+  switch (response.response_kind) {
+    case 'ANSWER': return 'ANSWERED';
+    case 'CLARIFICATION': return 'CLARIFIED';
+    case 'REFUSAL': return 'REFUSED';
+    case 'NO_ANSWER': return 'NO_ANSWER';
+    case 'HANDOFF_ACK': return 'HANDOFF_ACK';
+  }
 }
 
 /** Trusted inputs supplied to the response assembler; caller text is intentionally absent. */
@@ -263,6 +317,8 @@ export interface ResponseFinalizationInput {
   readonly domain: string;
   readonly context: HydratedContext;
   readonly successful_receipts: readonly VerifiedStepReceipt[];
+  /** Trusted pre-rendered template reply carried by a clarification/empty plan. */
+  readonly terminal_response?: FinalResponse;
 }
 
 /** One verified immutable evidence record and the successful adapter receipt it contains. */
@@ -288,8 +344,16 @@ export interface PlannedStep {
   readonly price_bearing: boolean;
   /** Registry-declared: true ⇒ replaying the same key is safe (BR-006, §05 retry policy). */
   readonly idempotent: boolean;
-  /** Registry-declared hard deadline (§05 field 10) enforced by the dispatch guard (`dispatchWithDeadline()`). */
+  /** Registry-declared hard per-attempt deadline (§05 field 10). */
   readonly timeout_ms: number;
+  /** Total deadline for the complete bounded skill invocation, including retries and backoff. */
+  readonly dispatch_timeout_ms?: number;
+  /** Row-declared terminal behavior copied by the planner. */
+  readonly completion?: 'AWAITS_HUMAN' | 'SYNC';
+  /** Input field which receives the server-generated effect key when dispatching this step. */
+  readonly idempotency_input_field?: string;
+  /** Audit privacy policy copied from the registered skill row when a plan is composed. */
+  readonly audit_spec?: { readonly mask_pii_fields?: readonly string[] };
   /** Predecessor step indexes. Absent or empty means the step follows sequential index order. */
   readonly depends_on_steps?: number[];
   /** Server-authored receipt substitutions applied immediately before this step is drafted. */
@@ -303,6 +367,7 @@ export interface ExecutionPlan {
   readonly plan_id: string;
   readonly steps: PlannedStep[];
   readonly fallback_strategy: 'FAIL_CLOSED' | 'ESCALATE_HUMAN';
+  readonly domain?: ExecutionDomain;
   /**
    * The next leg of the customer journey this run asks the orchestrator to broker, when the plan
    * has one (implement/04 §8, plans/customer-lifecycle.md §3). It is an intent, not an admission:
@@ -310,7 +375,12 @@ export interface ExecutionPlan {
    * intent simply finishes; a plan is never required to hand off and never hands off implicitly.
    */
   readonly handoff_intent?: HandoffIntent;
+  /** Sender for a terminal template response on a plan with no executable steps. */
+  readonly response_agent_id?: PlatformAgentId;
+  /** Pre-rendered, allowlisted response for a terminal clarification/refusal plan. */
+  readonly terminal_response?: FinalResponse;
 }
+
 
 export interface ActionDraft {
   /** Primary key of the `agentos.actions` row. The column is `UUID`, so this is a real UUID. */
@@ -341,6 +411,10 @@ export interface ActionDraft {
   readonly computed_price_floor?: number;
   readonly floor_source?: string;
   readonly proposed_price?: number;
+  /** Normalized skill input bound by the AUTH-4 approval; distinct from the action envelope. */
+  readonly approval_payload?: Record<string, unknown>;
+  /** Digest algorithm version bound with `approval_payload`. */
+  readonly approval_digest_version?: number;
   /** Canonical digest reviewed by SCR-003; required by the skill runtime for AUTH-4 dispatch. */
   readonly approval_payload_digest?: string;
   /** Set only when an AUTH-4 approval authorized this exact action. */
@@ -434,6 +508,7 @@ export interface OrchestratorRunResult {
    * present as a fabricated success: a handoff that could not be admitted parks the run instead.
    */
   readonly handoff?: HandoffAdmission;
+  readonly outcome?: ResponseOutcome;
 }
 
 export interface ResolvedSubject {
@@ -464,6 +539,12 @@ export interface DurableTaskCheckpoint {
   readonly context: HydratedContext;
   readonly previous_evidence_hash: string;
   readonly request_id: string;
+  /**
+   * The durable wait category and schedule. Retry waits are resumed only by a timer event carrying
+   * the same retry_count; reconciliation waits require provider proof instead.
+   */
+  readonly wait_reason?: 'RETRY' | 'RECONCILE' | 'OTHER';
+  readonly retry_not_before?: string;
   /**
    * The admitted signal the run was queued with. The orchestrator writes it into the checkpoint so a
    * resumed or recovered run replays the exact signal it was admitted for; a queued task refuses to
@@ -749,7 +830,14 @@ export interface IStatefulWorkflowEngine {
     run_id: string;
     expected_task_version: number;
     checkpoint: unknown;
-    approval: { action_id: string; effect_key: string; payload: unknown; reason: string };
+    approval: {
+      action_id: string;
+      effect_key: string;
+      payload: unknown;
+      payload_sha256: string;
+      digest_version: number;
+      reason: string;
+    };
   }): Promise<{ approval_id: string }>;
   /** One transaction: decide and resume/stop, or retain PENDING + awaiting_human for PAUSE (§4.2). */
   claimApprovalAndResume(params: {

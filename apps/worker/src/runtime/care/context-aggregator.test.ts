@@ -17,7 +17,7 @@ describe('CareContextAggregator', () => {
     const verifiedIdentity: CustomerIdentityRow = {
       id: 'ident-1',
       tenant_id,
-      customer_id: 'cust-100',
+      customer_id: 'aaaaaaaa-0000-4000-8000-00000000000a',
       channel_type: 'web',
       channel_identifier: 'session-user-1',
       identifier_hash: 'hash-1',
@@ -27,7 +27,7 @@ describe('CareContextAggregator', () => {
     };
 
     const customerProfile: CustomerProfileRow = {
-      customer_id: 'cust-100',
+      customer_id: 'aaaaaaaa-0000-4000-8000-00000000000a',
       tenant_id,
       verified_phone: '+1234567890',
       verified_email: 'user@example.com',
@@ -53,19 +53,20 @@ describe('CareContextAggregator', () => {
       session_id: 'sess-1',
       channel_type: 'web',
       channel_identifier: 'session-user-1',
+      verified_customer_id: 'aaaaaaaa-0000-4000-8000-00000000000a',
     };
 
     const context = await aggregator.hydrateContext(tenant_id, subject, correlation_id);
 
     expect(context.customer).not.toBeNull();
-    expect(context.customer?.customer_id).toBe('cust-100');
+    expect(context.customer?.customer_id).toBe('aaaaaaaa-0000-4000-8000-00000000000a');
     expect(context.customer?.total_spent).toBe(150.50);
     expect(context.customer?.order_count).toBe(3);
     expect(context.customer?.rfm_segment_hypothesis).toBe('CHAMPION');
     expect(context.customer?.consent_marketing).toBe(true);
 
     // verificationReferenceFor returns the verified identity row id
-    expect(aggregator.verificationReferenceFor(tenant_id, correlation_id)).toBe('ident-1');
+    expect(aggregator.verificationReferenceFor(context)).toBe('ident-1');
   });
  
   it('isolates verification references by tenant when correlation ids collide', async () => {
@@ -75,7 +76,7 @@ describe('CareContextAggregator', () => {
         findIdentity: async (resolvedTenantId) => ({
           id: `ident-${resolvedTenantId.slice(-1)}`,
           tenant_id: resolvedTenantId,
-          customer_id: 'cust-100',
+          customer_id: 'aaaaaaaa-0000-4000-8000-00000000000a',
           channel_type: 'web',
           channel_identifier: 'session-user-1',
           identifier_hash: 'hash-1',
@@ -84,7 +85,7 @@ describe('CareContextAggregator', () => {
           created_at: new Date('2026-09-01T00:00:00Z'),
         }),
         getProfile: async (resolvedTenantId) => ({
-          customer_id: 'cust-100',
+          customer_id: 'aaaaaaaa-0000-4000-8000-00000000000a',
           tenant_id: resolvedTenantId,
           verified_phone: null,
           verified_email: null,
@@ -104,32 +105,41 @@ describe('CareContextAggregator', () => {
       session_id: 'sess-1',
       channel_type: 'web',
       channel_identifier: 'session-user-1',
+      verified_customer_id: 'aaaaaaaa-0000-4000-8000-00000000000a',
     };
 
-    await aggregator.hydrateContext(tenant_id, subject, correlation_id);
-    await aggregator.hydrateContext(otherTenantId, subject, correlation_id);
+    const firstContext = await aggregator.hydrateContext(tenant_id, subject, correlation_id);
+    const secondContext = await aggregator.hydrateContext(otherTenantId, subject, correlation_id);
 
-    expect(aggregator.verificationReferenceFor(tenant_id, correlation_id)).toBe('ident-1');
-    expect(aggregator.verificationReferenceFor(otherTenantId, correlation_id)).toBe('ident-2');
+    expect(aggregator.verificationReferenceFor(firstContext)).toBe('ident-1');
+    expect(aggregator.verificationReferenceFor(secondContext)).toBe('ident-2');
   });
 
-  it('leaves customer = null when identity is unverified or missing', async () => {
-    const unverifiedIdentity: CustomerIdentityRow = {
+  it('does not resolve identity from a channel handle without gateway verified_customer_id', async () => {
+    const verifiedChannelIdentity: CustomerIdentityRow = {
       id: 'ident-2',
       tenant_id,
       customer_id: 'cust-200',
       channel_type: 'web',
       channel_identifier: 'anon-user',
       identifier_hash: 'hash-2',
-      is_primary: false,
-      verified_at: null,
+      is_primary: true,
+      verified_at: new Date('2026-09-01T00:00:00Z'),
       created_at: new Date('2026-09-01T00:00:00Z'),
     };
+    let identityReads = 0;
+    let profileReads = 0;
 
     const aggregator = new CareContextAggregator({
       repositories: {
-        findIdentity: async () => unverifiedIdentity,
-        getProfile: async () => null,
+        findIdentity: async () => {
+          identityReads += 1;
+          return verifiedChannelIdentity;
+        },
+        getProfile: async () => {
+          profileReads += 1;
+          return null;
+        },
         getConversation: async () => null,
       },
     });
@@ -143,8 +153,10 @@ describe('CareContextAggregator', () => {
     const context = await aggregator.hydrateContext(tenant_id, subject, correlation_id);
 
     expect(context.customer).toBeNull();
+    expect(identityReads).toBe(0);
+    expect(profileReads).toBe(0);
     // verificationReferenceFor returns null for unverified session
-    expect(aggregator.verificationReferenceFor(tenant_id, correlation_id)).toBeNull();
+    expect(aggregator.verificationReferenceFor(context)).toBeNull();
   });
 
   it('verificationReferenceFor returns null when identity lookup fails or throws', async () => {
@@ -166,54 +178,60 @@ describe('CareContextAggregator', () => {
 
     const context = await aggregator.hydrateContext(tenant_id, subject, 'corr-fail');
     expect(context.customer).toBeNull();
-    expect(aggregator.verificationReferenceFor(tenant_id, 'corr-fail')).toBeNull();
+    expect(aggregator.verificationReferenceFor(context)).toBeNull();
   });
 
-  it('evicts oldest entries in bounded memory when max capacity is reached', async () => {
-    const verifiedIdentity: CustomerIdentityRow = {
-      id: 'ident-bound',
-      tenant_id,
-      customer_id: 'cust-bound',
-      channel_type: 'web',
-      channel_identifier: 'user',
-      identifier_hash: 'hash',
-      is_primary: true,
-      verified_at: new Date('2026-09-01T00:00:00Z'),
-      created_at: new Date('2026-09-01T00:00:00Z'),
-    };
-
+  it('rehydrates the verified identity reference from checkpoint context in a fresh instance', async () => {
+    const customer_id = 'aaaaaaaa-0000-4000-8000-00000000000a';
     const aggregator = new CareContextAggregator({
       repositories: {
-        findIdentity: async () => verifiedIdentity,
-        getProfile: async () => null,
+        findIdentity: async () => ({
+          id: 'ident-bound',
+          tenant_id,
+          customer_id,
+          channel_type: 'web',
+          channel_identifier: 'user',
+          identifier_hash: 'hash',
+          is_primary: true,
+          verified_at: new Date('2026-09-01T00:00:00Z'),
+          created_at: new Date('2026-09-01T00:00:00Z'),
+        }),
+        getProfile: async () => ({
+          customer_id,
+          tenant_id,
+          verified_phone: null,
+          verified_email: null,
+          total_spent: '0',
+          order_count: 0,
+          rfm_segment_hypothesis: 'UNKNOWN',
+          consent_marketing: false,
+          consent_updated_at: null,
+          suppression_active: false,
+          line_user_id: null,
+          created_at: new Date('2026-09-01T00:00:00Z'),
+        }),
         getConversation: async () => null,
       },
-      maxMemoryEntries: 2,
     });
-
     const subject: SignalSubject = {
       session_id: 'sess-b',
       channel_type: 'web',
       channel_identifier: 'user',
+      verified_customer_id: customer_id,
     };
+    const context = await aggregator.hydrateContext(tenant_id, subject, 'corr-reclaim');
+    const checkpointContext = JSON.parse(JSON.stringify(context)) as typeof context;
+    const reclaimed = new CareContextAggregator();
 
-    await aggregator.hydrateContext(tenant_id, subject, 'corr-1');
-    await aggregator.hydrateContext(tenant_id, subject, 'corr-2');
-    expect(aggregator.verificationReferenceFor(tenant_id, 'corr-1')).toBe('ident-bound');
-    expect(aggregator.verificationReferenceFor(tenant_id, 'corr-2')).toBe('ident-bound');
-
-    // Third insertion evicts oldest ('corr-1')
-    await aggregator.hydrateContext(tenant_id, subject, 'corr-3');
-    expect(aggregator.verificationReferenceFor(tenant_id, 'corr-1')).toBeNull();
-    expect(aggregator.verificationReferenceFor(tenant_id, 'corr-2')).toBe('ident-bound');
-    expect(aggregator.verificationReferenceFor(tenant_id, 'corr-3')).toBe('ident-bound');
+    expect(reclaimed.verificationReferenceFor(checkpointContext)).toBe('ident-bound');
+    expect(checkpointContext.customer?.customer_id).toBe(customer_id);
   });
 
   it('hydrates takeover and message history only through the canonical tenant-bound conversation UUID', async () => {
     const pausedConversation: ConversationRecord = {
       conversation_id: '22222222-2222-4222-8222-222222222222',
       tenant_id,
-      customer_id: 'cust-100',
+      customer_id: null,
       channel: 'web',
       external_thread_id: 'thread-1',
       active_agent: 'CS-01',
@@ -279,7 +297,7 @@ describe('CareContextAggregator', () => {
     expect(context.working_memory.turn_count).toBe(3);
   });
 
-  it('fails closed to human takeover when the conversation lookup throws', async () => {
+  it('propagates a conversation lookup failure without reading history', async () => {
     const aggregator = new CareContextAggregator({
       repositories: {
         findIdentity: async () => null,
@@ -299,18 +317,15 @@ describe('CareContextAggregator', () => {
       channel_identifier: 'thread-error',
     };
 
-    const context = await aggregator.hydrateContext(tenant_id, subject, 'corr-lookup-error');
-
-    expect(context.working_memory.takeover_active).toBe(true);
-    expect(context.working_memory.conversation_id).toBeUndefined();
-    expect(context.working_memory.turn_count).toBe(1);
+    await expect(aggregator.hydrateContext(tenant_id, subject, 'corr-lookup-error'))
+      .rejects.toThrow('conversation database unavailable');
   });
 
   it.each([
     ['tenant', { tenant_id: 'different-tenant' }],
     ['channel', { channel: 'LINE' }],
     ['thread', { external_thread_id: 'different-thread' }],
-  ] as const)('does not expose history or handoff identity when the persisted %s binding differs', async (_kind, mismatch) => {
+  ] as const)('rejects a persisted %s binding mismatch', async (_kind, mismatch) => {
     const conversation: ConversationRecord = {
       conversation_id: '22222222-2222-4222-8222-222222222222',
       tenant_id,
@@ -343,11 +358,8 @@ describe('CareContextAggregator', () => {
       channel_identifier: 'thread-1',
     };
 
-    const context = await aggregator.hydrateContext(tenant_id, subject, correlation_id);
-
-    expect(context.working_memory.conversation_id).toBeUndefined();
-    expect(context.working_memory.takeover_active).toBe(false);
-    expect(context.working_memory.turn_count).toBe(1);
+    await expect(aggregator.hydrateContext(tenant_id, subject, correlation_id))
+      .rejects.toMatchObject({ code: 'SUBJECT_BINDING_MISMATCH' });
     expect(historyReads).toBe(0);
   });
 });

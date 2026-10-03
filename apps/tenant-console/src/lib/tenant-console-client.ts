@@ -7,8 +7,6 @@ import type {
   CompanyActivityResponse,
   CompanyAiTeamResponse,
   CompanyAttentionResponse,
-  CompanyGovernanceResponse,
-  CompanyIntegrationsResponse,
   CompanyOverviewResponse,
   GetApprovalsParams,
   GetApprovalsResponse,
@@ -23,37 +21,151 @@ import type {
   ConversationTakeoverHeartbeatRequest,
   ConversationTakeoverHeartbeatResponse,
   ConversationTakeoverRequest,
+  CompanyConnectorsResponse,
+  CompanyGovernanceSettings,
+  CompanyGovernanceUpdateRequest,
+  CompanyLlmResponse,
+  CompanyLlmUpdateRequest,
+  CompanyProfileResponse,
+  CompanyProfileUpdateRequest,
+  ConnectorTestResponse,
+  LlmProbeResult,
+  ConnectorUpdateRequest,
+  ConnectorUpdateResponse,
   ConversationTakeoverResponse,
   CustomerListParams,
   CustomerListResponse,
   CustomerProfileResponse,
   CustomerTimelineParams,
   CustomerTimelineResponse,
-  EventIngestionResponse,
-  GetKpiSnapshotParams,
-  KpiSnapshotResponse,
-  PlatformEventEnvelope,
   PostMessageRequest,
-  StorefrontStreamRequest,
-  TaskAcceptedResponse,
+  ConversationOperatorMessageResponse,
+  AiTeamActivationAction,
+  AiTeamDomain,
+  AiTeamDomainResponse,
+  CompanySkill,
+  CompanyAnalyticsResponse,
+  CompanyAnalyticsWindow,
+  SkillHealthResponse,
+  SkillSettingsUpdateRequest,
+  SkillTestResponse,
+  SkillsResponse,
 } from './types/tenant-console';
 
 const CSRF_COOKIE = 'agentos_tenant_csrf';
 const CSRF_HEADER = 'x-csrf-token';
 const DISALLOWED_BROWSER_HEADERS = ['authorization', 'x-tenant-id', 'x-operator-id'];
 
+/** One redacted configuration-audit row as returned by `GET /api/v1/company/audit`. */
+export interface CompanyAuditEvent {
+  readonly event_id: string;
+  readonly chain_seq: string;
+  readonly actor_kind: string;
+  readonly actor_id: string;
+  readonly scope: string;
+  readonly action: string;
+  readonly tenant_id: string | null;
+  readonly target: string | null;
+  readonly outcome: string;
+  readonly reason: string | null;
+  readonly before_state?: unknown;
+  readonly after_state?: unknown;
+  readonly correlation_id: string;
+  readonly created_at: string;
+}
+export interface CompanyOwnerInput {
+  readonly input_id: string;
+  readonly status: 'UNRESOLVED' | 'RESOLVED';
+  readonly version: number;
+  readonly resolved_at: string | null;
+}
+
+export type CompanyOwnerInputResolution =
+  | { readonly value: Readonly<Record<string, unknown>> }
+  | { readonly value_ref: string };
+
+
+/** Environment probe returned by `GET /api/v1/testing/status`. */
+export interface TestingStatusResponse {
+  readonly tenant_id: string;
+  readonly data_class: string;
+  readonly enabled: boolean;
+}
+
+export interface CompanyAuditPage {
+  readonly items?: readonly CompanyAuditEvent[];
+  readonly next_cursor?: string | null;
+  readonly chain_verified?: boolean;
+  readonly chain_verification?: string;
+  readonly verified?: boolean | string;
+}
+
+/** A still-usable invitation link as the accept page inspects it (T9.3). */
+export interface InvitationInspection {
+  readonly email: string;
+  readonly tenant_id: string;
+  readonly role_bundle: 'COMPANY_ADMIN' | 'OPERATOR' | 'VIEWER';
+  readonly expires_at: string;
+}
+export type CompanyUserRole = 'COMPANY_ADMIN' | 'OPERATOR' | 'VIEWER';
+export type CompanyUserStatus = 'INVITED' | 'ACTIVE' | 'DEACTIVATED';
+
+export interface CompanyUserRecord {
+  readonly user_id: string;
+  readonly display_name: string | null;
+  readonly email: string;
+  readonly role_bundle: CompanyUserRole;
+  readonly status: CompanyUserStatus;
+  readonly last_sign_in_at: string | null;
+  readonly created_at: string;
+  readonly updated_at: string;
+}
+
+export interface CompanyInvitationRecord {
+  readonly invitation_id: string;
+  readonly email: string;
+  readonly role_bundle: CompanyUserRole;
+  readonly expires_at: string;
+}
+
+export interface CompanyUsersResponse {
+  readonly items: readonly CompanyUserRecord[];
+}
+
+export interface CompanyUserUpdate {
+  readonly user_id: string;
+  readonly role_bundle?: CompanyUserRole;
+  readonly status?: CompanyUserStatus;
+}
+
+
 export type { AuthSession };
 
 export class AuthRequestError extends Error {
   readonly status: number;
   readonly payload: Record<string, unknown>;
+  /** Seconds to wait before retrying, parsed from the `Retry-After` header when the server sends it. */
+  readonly retryAfter: number | null;
 
-  constructor(status: number, payload: Record<string, unknown>) {
+  constructor(status: number, payload: Record<string, unknown>, retryAfter: number | null = null) {
     super(typeof payload.message === 'string' ? payload.message : `Authentication request failed (${status})`);
     this.name = 'AuthRequestError';
     this.status = status;
     this.payload = payload;
+    this.retryAfter = retryAfter;
   }
+}
+
+function parseRetryAfter(value: string | null): number | null {
+  if (!value) return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds > 0) return Math.ceil(seconds);
+  const date = Date.parse(value);
+  if (Number.isFinite(date)) {
+    const delta = Math.ceil((date - Date.now()) / 1000);
+    return delta > 0 ? delta : null;
+  }
+  return null;
 }
 
 function browserCsrfToken(): string | undefined {
@@ -72,7 +184,8 @@ function isMutation(method: string | undefined): boolean {
   return method !== undefined && !['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase());
 }
 
-function secureBrowserFetch(fetchImpl: typeof fetch): typeof fetch {
+/** Browser fetch for BFF calls: CSRF on mutations, no caller-forged auth headers, 401 → sign-in. */
+export function secureBrowserFetch(fetchImpl: typeof fetch): typeof fetch {
   return async (input, init = {}) => {
     const headers = new Headers(init.headers);
     for (const header of DISALLOWED_BROWSER_HEADERS) headers.delete(header);
@@ -126,7 +239,7 @@ export class TenantConsoleClient extends HttpClient {
       } catch {
         // Preserve the HTTP status when the BFF has no JSON body.
       }
-      throw new AuthRequestError(response.status, payload);
+      throw new AuthRequestError(response.status, payload, parseRetryAfter(response.headers.get('retry-after')));
     }
     if (response.status === 204) return undefined as T;
     return await response.json() as T;
@@ -168,6 +281,42 @@ export class TenantConsoleClient extends HttpClient {
     });
   }
 
+  async renewSession(): Promise<AuthSession> {
+    return this.authRequest<AuthSession>('/api/auth/renew', {
+      method: 'POST',
+      headers: { Accept: 'application/json' },
+      credentials: 'same-origin',
+    });
+  }
+
+  /** Inspects an invitation link before the invitee chooses a password (T9.3, public). */
+  async inspectInvitation(token: string): Promise<InvitationInspection> {
+    return this.authRequest<InvitationInspection>('/api/auth/invitations/inspect', {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+      credentials: 'same-origin',
+    });
+  }
+
+  /** Redeems an invitation: sets the password and activates the membership (T9.3, public). */
+  async acceptInvitation(
+    token: string,
+    password: string,
+    display_name?: string,
+  ): Promise<{ readonly accepted: true }> {
+    return this.authRequest<{ accepted: true }>('/api/auth/invitations/accept', {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token,
+        password,
+        ...(display_name === undefined || display_name.trim().length === 0 ? {} : { display_name: display_name.trim() }),
+      }),
+      credentials: 'same-origin',
+    });
+  }
+
   async getCompanyOverview(options?: RequestOptions | undefined): Promise<CompanyOverviewResponse> {
     return this.request<CompanyOverviewResponse>('/company/overview', { method: 'GET' }, undefined, options);
   }
@@ -176,8 +325,98 @@ export class TenantConsoleClient extends HttpClient {
     return this.request<CompanyAttentionResponse>('/company/attention', { method: 'GET' }, undefined, options);
   }
 
+  /** Environment probe backing the workspace data-class chip and the Test lab entry. */
+  async getTestingStatus(options?: RequestOptions | undefined): Promise<TestingStatusResponse> {
+    return this.request<TestingStatusResponse>('/testing/status', { method: 'GET' }, undefined, options);
+  }
+
   async getCompanyAiTeam(options?: RequestOptions | undefined): Promise<CompanyAiTeamResponse> {
     return this.request<CompanyAiTeamResponse>('/company/ai-team', { method: 'GET' }, undefined, options);
+  }
+
+  /** Per-domain activation snapshot with the unmet prerequisite reasons that block activation. */
+  async getAiTeamDomain(domain: AiTeamDomain, options?: RequestOptions | undefined): Promise<AiTeamDomainResponse> {
+    return this.request<AiTeamDomainResponse>(
+      `/company/ai-team/${encodeURIComponent(domain)}`,
+      { method: 'GET' },
+      undefined,
+      options,
+    );
+  }
+
+  /** Activate, pause or resume one AI Team domain; a 409 carries the unmet prerequisites. */
+  async changeAiTeamDomain(
+    domain: AiTeamDomain,
+    action: AiTeamActivationAction,
+    options?: RequestOptions | undefined,
+  ): Promise<AiTeamDomainResponse> {
+    return this.request<AiTeamDomainResponse>(
+      `/company/ai-team/${encodeURIComponent(domain)}/${action}`,
+      { method: 'POST' },
+      undefined,
+      options,
+    );
+  }
+
+  async getSkills(options?: RequestOptions | undefined): Promise<SkillsResponse> {
+    return this.request<SkillsResponse>('/skills', { method: 'GET' }, undefined, options);
+  }
+
+  async getSkill(skillId: string, options?: RequestOptions | undefined): Promise<CompanySkill> {
+    const response = await this.request<{ readonly skill: CompanySkill }>(
+      `/skills/${encodeURIComponent(skillId)}`,
+      { method: 'GET' },
+      undefined,
+      options,
+    );
+    return response.skill;
+  }
+
+  /** Narrows a skill binding; the immutable contract fields are never sent. */
+  async updateSkillSettings(
+    skillId: string,
+    body: SkillSettingsUpdateRequest,
+    options?: RequestOptions | undefined,
+  ): Promise<CompanySkill> {
+    const response = await this.request<{ readonly skill: CompanySkill }>(
+      `/skills/${encodeURIComponent(skillId)}/settings`,
+      { method: 'PATCH', body: JSON.stringify(body) },
+      undefined,
+      options,
+    );
+    return response.skill;
+  }
+
+  async setSkillAgents(
+    skillId: string,
+    agents: readonly string[],
+    options?: RequestOptions | undefined,
+  ): Promise<readonly string[]> {
+    const response = await this.request<{ readonly assigned_agents: readonly string[] }>(
+      `/skills/${encodeURIComponent(skillId)}/agents`,
+      { method: 'PUT', body: JSON.stringify({ agents }) },
+      undefined,
+      options,
+    );
+    return response.assigned_agents;
+  }
+
+  async testSkill(skillId: string, options?: RequestOptions | undefined): Promise<SkillTestResponse> {
+    return this.request<SkillTestResponse>(
+      `/skills/${encodeURIComponent(skillId)}/test`,
+      { method: 'POST', body: JSON.stringify({ input: {} }) },
+      undefined,
+      options,
+    );
+  }
+
+  async getSkillHealth(skillId: string, options?: RequestOptions | undefined): Promise<SkillHealthResponse> {
+    return this.request<SkillHealthResponse>(
+      `/skills/${encodeURIComponent(skillId)}/health`,
+      { method: 'GET' },
+      undefined,
+      options,
+    );
   }
 
   async getCompanyActivity(
@@ -192,13 +431,168 @@ export class TenantConsoleClient extends HttpClient {
     );
   }
 
-  async getCompanyIntegrations(options?: RequestOptions | undefined): Promise<CompanyIntegrationsResponse> {
-    return this.request<CompanyIntegrationsResponse>('/company/integrations', { method: 'GET' }, undefined, options);
+  async getCompanyIntegrations(options?: RequestOptions | undefined): Promise<CompanyConnectorsResponse> {
+    return this.request<CompanyConnectorsResponse>('/company/integrations', { method: 'GET' }, undefined, options);
   }
 
-  async getCompanyGovernance(options?: RequestOptions | undefined): Promise<CompanyGovernanceResponse> {
-    return this.request<CompanyGovernanceResponse>('/company/settings/governance', { method: 'GET' }, undefined, options);
+  /** Saves catalog config and an optional write-only secret; the response never echoes the secret. */
+  async updateCompanyIntegration(
+    connectorId: string,
+    body: ConnectorUpdateRequest,
+    version: number,
+    options?: RequestOptions | undefined,
+  ): Promise<ConnectorUpdateResponse> {
+    return this.request<ConnectorUpdateResponse>(
+      `/company/integrations/${encodeURIComponent(connectorId)}`,
+      { method: 'PUT', body: JSON.stringify(body) },
+      undefined,
+      { ...options, headers: { ...options?.headers, 'If-Match': `"${version}"` } },
+    );
   }
+
+  async testCompanyIntegration(
+    connectorId: string,
+    options?: RequestOptions | undefined,
+  ): Promise<ConnectorTestResponse> {
+    return this.request<ConnectorTestResponse>(
+      `/company/integrations/${encodeURIComponent(connectorId)}/test`,
+      { method: 'POST' },
+      undefined,
+      options,
+    );
+  }
+
+  async disconnectCompanyIntegration(
+    connectorId: string,
+    version: number,
+    options?: RequestOptions | undefined,
+  ): Promise<ConnectorUpdateResponse> {
+    return this.request<ConnectorUpdateResponse>(
+      `/company/integrations/${encodeURIComponent(connectorId)}/disconnect`,
+      { method: 'POST' },
+      undefined,
+      { ...options, headers: { ...options?.headers, 'If-Match': `"${version}"` } },
+    );
+  }
+
+  async getCompanyGovernance(options?: RequestOptions | undefined): Promise<CompanyGovernanceSettings> {
+    return this.request<CompanyGovernanceSettings>('/company/settings/governance', { method: 'GET' }, undefined, options);
+  }
+
+  /** Saves governance with `If-Match`; a stale version is rejected by the server with `VERSION_CONFLICT`. */
+  async updateCompanyGovernance(
+    body: CompanyGovernanceUpdateRequest,
+    version: number,
+    options?: RequestOptions | undefined,
+  ): Promise<CompanyGovernanceSettings> {
+    return this.request<CompanyGovernanceSettings>(
+      '/company/settings/governance',
+      { method: 'PUT', body: JSON.stringify(body) },
+      undefined,
+      { ...options, headers: { ...options?.headers, 'If-Match': `"${version}"` } },
+    );
+  }
+
+  async getCompanyProfile(options?: RequestOptions | undefined): Promise<CompanyProfileResponse> {
+    return this.request<CompanyProfileResponse>('/company/settings/profile', { method: 'GET' }, undefined, options);
+  }
+
+  async updateCompanyProfile(
+    body: CompanyProfileUpdateRequest,
+    version: number,
+    options?: RequestOptions | undefined,
+  ): Promise<CompanyProfileResponse> {
+    return this.request<CompanyProfileResponse>(
+      '/company/settings/profile',
+      { method: 'PUT', body: JSON.stringify(body) },
+      undefined,
+      { ...options, headers: { ...options?.headers, 'If-Match': `"${version}"` } },
+    );
+  }
+
+  async getCompanyUsers(options?: RequestOptions | undefined): Promise<CompanyUsersResponse> {
+    return this.request<CompanyUsersResponse>('/company/users', { method: 'GET' }, undefined, options);
+  }
+
+  async inviteCompanyUser(
+    email: string,
+    role_bundle: CompanyUserRole,
+    options?: RequestOptions | undefined,
+  ): Promise<CompanyInvitationRecord> {
+    return this.request<CompanyInvitationRecord>(
+      '/company/users',
+      { method: 'POST', body: JSON.stringify({ email, role_bundle }) },
+      undefined,
+      options,
+    );
+  }
+
+  async updateCompanyUser(
+    update: CompanyUserUpdate,
+    options?: RequestOptions | undefined,
+  ): Promise<CompanyUserRecord> {
+    return this.request<CompanyUserRecord>(
+      '/company/users',
+      { method: 'PATCH', body: JSON.stringify(update) },
+      undefined,
+      options,
+    );
+  }
+
+  async getCompanyLlm(options?: RequestOptions | undefined): Promise<CompanyLlmResponse> {
+    return this.request<CompanyLlmResponse>('/company/settings/llm', { method: 'GET' }, undefined, options);
+  }
+
+  /**
+   * Saves the LLM configuration. `api_key` is write-only: it is sent only when the operator sets a
+   * new key, and the response never echoes it. `config_version` seeds `If-Match` when present.
+   */
+  async updateCompanyLlm(
+    body: CompanyLlmUpdateRequest,
+    version: string | null,
+    options?: RequestOptions | undefined,
+  ): Promise<CompanyLlmResponse> {
+    return this.request<CompanyLlmResponse>(
+      '/company/settings/llm',
+      { method: 'PUT', body: JSON.stringify(body) },
+      undefined,
+      version === null ? options : { ...options, headers: { ...options?.headers, 'If-Match': `"${version}"` } },
+    );
+  }
+
+  async testCompanyLlm(options?: RequestOptions | undefined): Promise<LlmProbeResult> {
+    return this.request<LlmProbeResult>('/company/settings/llm/test', { method: 'POST' }, undefined, options);
+  }
+  async getCompanyOwnerInputs(options?: RequestOptions | undefined): Promise<{ readonly items: readonly CompanyOwnerInput[] }> {
+    return this.request<{ readonly items: readonly CompanyOwnerInput[] }>('/company/owner-inputs', { method: 'GET' }, undefined, options);
+  }
+
+  async resolveCompanyOwnerInput(
+    input_id: string,
+    body: CompanyOwnerInputResolution,
+    version: number,
+    options?: RequestOptions | undefined,
+  ): Promise<{ readonly input: CompanyOwnerInput }> {
+    return this.request<{ readonly input: CompanyOwnerInput }>(
+      `/company/owner-inputs/${encodeURIComponent(input_id)}/resolve`,
+      { method: 'POST', body: JSON.stringify(body) },
+      undefined,
+      { ...options, headers: { ...options?.headers, 'If-Match': `"${version}"` } },
+    );
+  }
+
+  async getCompanyAudit(
+    params: { readonly limit?: number | undefined; readonly cursor?: string | undefined; readonly scope?: string | undefined } = {},
+    options?: RequestOptions | undefined,
+  ): Promise<CompanyAuditPage> {
+    return this.request<CompanyAuditPage>(
+      '/company/audit',
+      { method: 'GET' },
+      { limit: params.limit, cursor: params.cursor, scope: params.scope },
+      options,
+    );
+  }
+
 
   async getApprovals(
     params: GetApprovalsParams = { status: 'PENDING' },
@@ -316,30 +710,19 @@ export class TenantConsoleClient extends HttpClient {
     );
   }
 
-  async getKpiSnapshot(
-    params?: GetKpiSnapshotParams | undefined,
+  /** T6.10 truthful company analytics; the window stays inside 24h | 7d | 30d. */
+  async getCompanyAnalytics(
+    window: CompanyAnalyticsWindow,
     options?: RequestOptions | undefined,
-  ): Promise<KpiSnapshotResponse> {
-    return this.request<KpiSnapshotResponse>(
-      '/telemetry/kpi-snapshot',
+  ): Promise<CompanyAnalyticsResponse> {
+    return this.request<CompanyAnalyticsResponse>(
+      '/company/analytics',
       { method: 'GET' },
-      {
-        window: params?.window,
-        timezone: params?.timezone,
-        cursor: params?.cursor,
-        limit: params?.limit,
-      },
+      { window },
       options,
     );
   }
 
-  getTelemetryStreamUrl(params?: {
-    readonly metric?: string | undefined;
-    readonly channel?: string | undefined;
-    readonly cursor?: string | undefined;
-  }): string {
-    return this.url('/telemetry/stream', params);
-  }
 
   async takeoverConversation(
     conversationId: string,
@@ -384,40 +767,9 @@ export class TenantConsoleClient extends HttpClient {
     conversationId: string,
     body: PostMessageRequest,
     options?: RequestOptions | undefined,
-  ): Promise<TaskAcceptedResponse> {
-    return this.request<TaskAcceptedResponse>(
+  ): Promise<ConversationOperatorMessageResponse> {
+    return this.request<ConversationOperatorMessageResponse>(
       `/conversations/${encodeURIComponent(conversationId)}/operator-messages`,
-      { method: 'POST', body: JSON.stringify(body) },
-      undefined,
-      options,
-    );
-  }
-
-  async postStorefrontStream(
-    body: StorefrontStreamRequest,
-    options?: RequestOptions | undefined,
-  ): Promise<Response> {
-    return this.requestRaw(
-      '/storefront/stream',
-      { method: 'POST', body: JSON.stringify(body) },
-      undefined,
-      {
-        ...options,
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'text/event-stream, application/json',
-          ...options?.headers,
-        },
-      },
-    );
-  }
-
-  async postStorefrontEvent(
-    body: PlatformEventEnvelope & { readonly session_id?: string | undefined },
-    options?: RequestOptions | undefined,
-  ): Promise<EventIngestionResponse> {
-    return this.request<EventIngestionResponse>(
-      '/storefront/events',
       { method: 'POST', body: JSON.stringify(body) },
       undefined,
       options,

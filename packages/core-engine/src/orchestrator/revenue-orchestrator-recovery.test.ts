@@ -36,10 +36,12 @@ import {
   type DurableLeaseManager,
   type DurableTaskGuard,
   type DurableTaskCheckpoint,
+  type IRunResponseStore,
   type IRunStageRecorder,
   type IStatefulWorkflowEngine,
 } from '../contracts/index.js';
 import { computeEffectKey } from '../effects/effect-key.js';
+import { approvalPayloadDigest, approvalPayloadInput } from '../durability/approval-digest.js';
 import { sha256CanonicalJson } from '../durability/canonical-json.js';
 import { MemoryEffectGuard } from '../effects/memory-effect-guard.js';
 import { MemoryEvidenceLogger } from '../evidence/evidence-logger.js';
@@ -110,8 +112,8 @@ function step(overrides: Partial<PlannedStep> = {}): PlannedStep {
   };
 }
 
-function plan(steps: PlannedStep[]): ExecutionPlan {
-  return { plan_id: 'plan-1', steps, fallback_strategy: 'FAIL_CLOSED' };
+function plan(steps: PlannedStep[], domain: ExecutionPlan['domain'] = 'sales'): ExecutionPlan {
+  return { plan_id: 'plan-1', steps, fallback_strategy: 'FAIL_CLOSED', domain };
 }
 
 function receipt(): ExecutionReceipt {
@@ -127,6 +129,7 @@ function receipt(): ExecutionReceipt {
 
 interface HarnessOptions {
   readonly steps?: PlannedStep[];
+  readonly domain?: ExecutionPlan['domain'];
   /** The next journey leg this run's plan declares, when the case exercises the handoff path. */
   readonly handoff_intent?: HandoffIntent;
   /** The brokered handoff binding; absent means this deployment brokers nothing. */
@@ -144,6 +147,8 @@ interface HarnessOptions {
   readonly evidenceLogger?: IEvidenceLogger;
   /** Durable engine override, so the claimed-queue reattempt path can be driven with a spy. */
   readonly workflowEngine?: IStatefulWorkflowEngine;
+  /** Response persistence override for terminal response outcomes. */
+  readonly responseStore?: IRunResponseStore;
   /** Lease manager override, so a case can assert the attempt's release. */
   readonly leaseManager?: DurableLeaseManager;
   readonly runStageRecorder?: IRunStageRecorder;
@@ -166,7 +171,7 @@ function harness(options: HarnessOptions = {}) {
   const memoryWorkflow = options.workflowEngine instanceof MemoryWorkflowEngine
     ? options.workflowEngine
     : new MemoryWorkflowEngine();
-  const workflow = options.workflowEngine ?? memoryWorkflow;
+  const workflow: IStatefulWorkflowEngine = options.workflowEngine ?? memoryWorkflow;
   const evidenceLogger = options.evidenceLogger ?? new MemoryEvidenceLogger('test-hmac-secret');
   const hydrate = vi.fn(async () => (
     options.customer === undefined ? context() : { ...context(), customer: options.customer }
@@ -179,8 +184,8 @@ function harness(options: HarnessOptions = {}) {
   }));
   const formulatePlan = vi.fn(async () => {
     const base = options.steps !== undefined
-      ? plan(options.steps)
-      : plan((options.agents ?? ['SAL-01']).map((agent_id, index) => step({ step_index: index + 1, agent_id })));
+      ? plan(options.steps, options.domain)
+      : plan((options.agents ?? ['SAL-01']).map((agent_id, index) => step({ step_index: index + 1, agent_id })), options.domain);
     return options.handoff_intent === undefined
       ? base
       : { ...base, handoff_intent: options.handoff_intent };
@@ -213,6 +218,7 @@ function harness(options: HarnessOptions = {}) {
       },
     },
     workflowEngine: workflow,
+    ...(options.responseStore === undefined ? {} : { responseStore: options.responseStore }),
     evidenceLogger,
     auditTrail: { append: async () => undefined },
     adapterDispatcher: {
@@ -251,6 +257,8 @@ describe('RevenueOrchestrator', () => {
     readonly step?: PlannedStep;
     readonly pendingAction?: ActionDraft | null;
     readonly dispatch?: () => Promise<ExecutionReceipt>;
+    readonly effectGuard?: MemoryEffectGuard;
+    readonly reconcile?: HarnessOptions['reconcile'];
   } = {}) {
     const run_id = 'run-requeued-1';
     const plannedStep = options.step ?? step({ skill_id: 'skill.test.read', mutating: false });
@@ -285,6 +293,8 @@ describe('RevenueOrchestrator', () => {
       leaseManager,
       dispatch: options.dispatch ?? (async () => receipt()),
       steps: [plannedStep],
+      ...(options.effectGuard === undefined ? {} : { effectGuard: options.effectGuard }),
+      ...(options.reconcile === undefined ? {} : { reconcile: options.reconcile }),
     });
 
     return { orchestrator, run_id, workflow, leaseManager, checkpoint, dispatch };
@@ -324,9 +334,52 @@ describe('RevenueOrchestrator', () => {
       run_id,
       'waiting',
       expect.stringContaining('reconciliation'),
-      checkpoint,
+      { ...checkpoint, wait_reason: 'RECONCILE' },
     );
     expect(workflow.recordFailure).not.toHaveBeenCalled();
+  });
+
+  it('re-dispatches a restarted mutating step once when its reservation is confirmed absent', async () => {
+    const effectGuard = new MemoryEffectGuard();
+    const effect_key = effectGuard.computeEffectKey({
+      tenant_id: TENANT, skill_id: 'skill.test.mutate', step_index: 1, action_revision: 0, request_id: SIGNAL_ID,
+    });
+    const pendingAction = {
+      action_id: 'action-1',
+      run_id: 'run-requeued-1',
+      tenant_id: TENANT,
+      agent_id: 'SAL-01' as PlatformAgentId,
+      skill_id: 'skill.test.mutate',
+      adapter_target: 'web',
+      step_index: 1,
+      mutating: true,
+      price_bearing: false,
+      request_id: SIGNAL_ID,
+      action_revision: 0,
+      effect_key,
+      required_authority: 'AUTH-1' as AuthorityLevel,
+      payload: { text: 'hello' },
+    };
+    await effectGuard.reserve({
+      tenant_id: TENANT, run_id: 'run-requeued-1', request_id: SIGNAL_ID, effect_key,
+      request_fingerprint: effectGuard.computeRequestFingerprint({ ...pendingAction.payload, tenant_id: TENANT, effect_key }),
+      skill_id: 'skill.test.mutate', step_index: 1, action_revision: 0,
+    });
+    await effectGuard.resolve({ tenant_id: TENANT, effect_key, status: 'FAILED' });
+    const { orchestrator, run_id, workflow, dispatch } = reattemptHarness({
+      step: step({ skill_id: 'skill.test.mutate', mutating: true }),
+      pendingAction,
+      effectGuard,
+      reconcile: async () => ({ outcome: 'FAILED' }),
+    });
+
+    const result = await orchestrator.processQueuedSignal(run_id, signal(), { worker_id: 'worker-test' });
+
+    expect(result.lifecycle_state).toBe('completed');
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(workflow.transitionTask).not.toHaveBeenCalledWith(
+      TENANT, run_id, 'waiting', expect.anything(), expect.anything(),
+    );
   });
 
   it('refuses an AUTH-4 release while an operator holds the SCR-005 lock and leaves the approval claimable', async () => {
@@ -378,6 +431,74 @@ describe('RevenueOrchestrator', () => {
   });
 
 
+  it('binds pause and dispatch to normalized skill input, not effect key or PEP annotations', async () => {
+    const normalizeInput = (_skill_id: string, input: Record<string, unknown>) => ({
+      tenant_id: input.tenant_id,
+      text: input.text,
+      channel: input.channel ?? 'web',
+    });
+    const policyEngine: IPolicyEngine = {
+      validateAction: async (action) => ({
+        ...action,
+        computed_price_floor: 800,
+        floor_source: 'owner-policy://test',
+        proposed_price: 800,
+      }),
+      normalizeActionInput: normalizeInput,
+      evaluateAuthority: async (action) => {
+        const verdict = evaluateAuthorityVerdict('AUTH-3', action.required_authority);
+        if (verdict.verdict === 'AWAITING_HUMAN_APPROVAL' && action.approval_id) {
+          return {
+            verdict: 'AUTO_APPROVED',
+            approval_id: action.approval_id,
+            reason: 'A claimed approval bound to this action satisfies the AUTH-4 pause.',
+          };
+        }
+        return { verdict: verdict.verdict, reason: verdict.reason };
+      },
+    };
+    const { orchestrator, dispatch, workflow, memoryWorkflow } = harness({
+      steps: [step({ required_authority: 'AUTH-4' satisfies AuthorityLevel })],
+      policyEngine,
+      dispatch: async (action) => {
+        if (action === undefined) throw new Error('approved action must reach dispatch');
+        const input = approvalPayloadInput(action);
+        const normalized = normalizeInput(action.skill_id, input as Record<string, unknown>);
+        expect(approvalPayloadDigest({ skill_id: action.skill_id, payload: normalized }))
+          .toBe(action.approval_payload_digest);
+        return receipt();
+      },
+    });
+
+    const paused = await orchestrator.processSignal(signal());
+    const approval = memoryWorkflow.listApprovals(TENANT, paused.run_id)[0];
+    if (approval === undefined) throw new Error('the AUTH-4 pause must leave one PENDING approval row');
+    expect(approval.digest_version).toBe(1);
+    const checkpoint = (await workflow.getTask(TENANT, paused.run_id))?.state_payload as DurableTaskCheckpoint | undefined;
+    const pendingAction = checkpoint?.pending_action;
+    expect(pendingAction?.approval_digest_version).toBe(approval.digest_version);
+    expect(approval.payload).toEqual(pendingAction?.approval_payload);
+    expect(pendingAction?.payload).toHaveProperty('effect_key');
+    expect(pendingAction?.computed_price_floor).toBe(800);
+    expect(pendingAction?.floor_source).toBe('owner-policy://test');
+
+    const resumed = await orchestrator.resumeTask(paused.run_id, {
+      tenant_id: TENANT,
+      event_type: 'human.approval',
+      approval_id: approval.approval_id,
+      operator_id: 'operator-1',
+      expected_payload_sha256: approval.payload_sha256,
+    });
+
+    expect(resumed.lifecycle_state).toBe('completed');
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    const dispatched = getDispatchedAction(dispatch, 0);
+    expect(dispatched.payload).toHaveProperty('effect_key');
+    expect(dispatched.approval_payload_digest).toBe(approval.payload_sha256);
+    expect(approvalPayloadDigest(dispatched, normalizeInput)).toBe(approval.payload_sha256);
+  });
+
+  
   it('resumes a MODIFY with the revised payload and binds its new digest', async () => {
     const { orchestrator, dispatch, memoryWorkflow } = harness({
       steps: [step({ required_authority: 'AUTH-4' satisfies AuthorityLevel, mutating: false })],
@@ -407,6 +528,67 @@ describe('RevenueOrchestrator', () => {
     expect(dispatched.approval_payload_digest).not.toBe(approval.payload_sha256);
     expect(memoryWorkflow.listApprovals(TENANT, paused.run_id)[0]?.payload_sha256).toBe(modifiedDigest);
   });
+
+  it.each(['human.approval', 'human.modify'] satisfies ('human.approval' | 'human.modify')[])(
+    'completes a campaign %s with a truthful not-integrated refusal',
+    async (event_type) => {
+      const { orchestrator, dispatch, memoryWorkflow, workflow, effectGuard } = harness({
+        domain: 'marketing',
+        responseStore: { read: async () => null, save: vi.fn(async () => undefined) },
+        steps: [step({
+          agent_id: 'MKT-05',
+          skill_id: 'skill.mkt.dispatch_campaign',
+          adapter_target: 'API-003.CommunicationConnector',
+          required_authority: 'AUTH-4',
+          input_parameters: { channel: 'EMAIL' },
+        })],
+        dispatch: async (action) => {
+          if (action === undefined) throw new Error('approved campaign must reach dispatch');
+          // Match the shared dispatcher boundary: a stale payload echo is refused before the
+          // skill availability gate can report that API-003 is unbound.
+          if (action.payload['effect_key'] !== action.effect_key) {
+            throw Object.assign(new Error('payload key differs from the dispatch envelope'), {
+              code: 'EFFECT_KEY_NOT_DETERMINISTIC',
+            });
+          }
+          throw new OrchestratorError('CAMPAIGN_DISPATCH_NOT_INTEGRATED', 'CONNECTOR_UNBOUND');
+        },
+      });
+      const paused = await orchestrator.processSignal(signal());
+      expect(paused.lifecycle_state).toBe('awaiting_human');
+      const approval = memoryWorkflow.listApprovals(TENANT, paused.run_id)[0];
+      if (approval === undefined) throw new Error('campaign must leave one PENDING approval');
+
+      const modified = event_type === 'human.modify';
+      const resumed = await orchestrator.resumeTask(paused.run_id, {
+        tenant_id: TENANT,
+        event_type,
+        approval_id: approval.approval_id,
+        operator_id: 'operator-1',
+        expected_payload_sha256: approval.payload_sha256,
+        ...(modified ? { modifications: { channel: 'ZALO' } } : {}),
+      });
+
+      expect(resumed.lifecycle_state).toBe('completed');
+      expect((await workflow.getTask(TENANT, paused.run_id))?.state).toBe('completed');
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      const dispatched = getDispatchedAction(dispatch, 0);
+      expect(dispatched.payload['channel']).toBe(modified ? 'ZALO' : 'EMAIL');
+      expect(dispatched.payload['effect_key']).toBe(dispatched.effect_key);
+      expect(dispatched.action_revision).toBe(modified ? 1 : 0);
+      expect(dispatched.approval_payload_digest).toBe(approvalPayloadDigest(dispatched));
+      if (modified) {
+        expect(dispatched.effect_key).not.toBe(approval.effect_key);
+        expect(dispatched.approval_payload_digest).not.toBe(approval.payload_sha256);
+      } else {
+        expect(dispatched.approval_payload_digest).toBe(approval.payload_sha256);
+      }
+      expect(memoryWorkflow.listApprovals(TENANT, paused.run_id)[0]?.payload_sha256)
+        .toBe(dispatched.approval_payload_digest);
+      expect(effectGuard.peek(TENANT, dispatched.effect_key)?.status).toBe('FAILED');
+      expect(effectGuard.peek(TENANT, dispatched.effect_key)?.receipt).toBeUndefined();
+    },
+  );
 
   it('automatic recovery dispatches a persisted modified revision instead of re-drafting revision zero', async () => {
     const modifiedPayload = { text: 'operator-edited' };
@@ -477,6 +659,7 @@ describe('RevenueOrchestrator', () => {
       append: async ({ stage }) => {
         events.push(stage);
       },
+      complete: async () => undefined,
     };
     const { orchestrator } = harness({
       workflowEngine: workflow,
@@ -539,6 +722,41 @@ describe('RevenueOrchestrator', () => {
     expect((await workflow.getTask(TENANT, result.run_id))?.state).toBe('stopped');
   });
 
+  it.each([
+    { skill_id: 'skill.mkt.segment_audience', adapter_target: 'PostgreSQL.Customer360Store' },
+    { skill_id: 'skill.mkt.generate_content', adapter_target: 'Core.LLMContentEngine' },
+  ])('parks draft-gated $skill_id before reserving or dispatching its effect', async ({ skill_id, adapter_target }) => {
+    const effectGuard = new MemoryEffectGuard();
+    const reserve = vi.spyOn(effectGuard, 'reserve');
+    const fingerprint = vi.spyOn(effectGuard, 'computeRequestFingerprint');
+    const { orchestrator, dispatch, workflow } = harness({
+      domain: 'marketing',
+      steps: [step({ skill_id, adapter_target })],
+      effectGuard,
+      policyEngine: {
+        validateAction: async (action) => action,
+        evaluateAuthority: async () => ({
+          verdict: 'AUTO_APPROVED',
+          reason: 'Authority is sufficient, but autonomy is not promoted.',
+          autonomyWorkflow: 'PARKED_DRAFT',
+        }),
+      },
+    });
+
+    const result = await orchestrator.processSignal(signal());
+
+    expect(result.lifecycle_state).toBe('waiting');
+    expect(result.message).toContain('PARKED_DRAFT');
+    expect(reserve).not.toHaveBeenCalled();
+    expect(fingerprint).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+    expect((await workflow.getTask(TENANT, result.run_id))?.state_payload).toMatchObject({
+      wait_reason: 'OTHER',
+      current_step: 1,
+      pending_action: { skill_id, adapter_target, mutating: true },
+    });
+  });
+
   it('parks a dispatched mutating step when its evidence write fails, without claiming success or re-dispatching', async () => {
     const effectGuard = new MemoryEffectGuard();
     const backing = new MemoryEvidenceLogger('test-hmac-secret');
@@ -575,15 +793,176 @@ describe('RevenueOrchestrator', () => {
     expect(backing.listEvidence(TENANT, result.run_id)).toHaveLength(0);
     expect(backing.listAgentRuns(TENANT, result.run_id)).toHaveLength(0);
 
-    // Reconciled by effect_key: the reserved success replays its stored receipt and the adapter is
-    // never called a second time.
-    const reconciled = await orchestrator.resumeTask(result.run_id, {
+    // A generic timer cannot blind-retry an indeterminate mutation.
+    await expect(orchestrator.resumeTask(result.run_id, {
       tenant_id: TENANT,
       event_type: 'timer.expired',
+    })).rejects.toMatchObject({ code: 'INVALID_TIMER_RESUME' });
+    // Reconciliation replays the provider-confirmed reservation without calling the adapter twice.
+    const reconciled = await orchestrator.resumeTask(result.run_id, {
+      tenant_id: TENANT,
+      event_type: 'reconcile.completed',
     });
     expect(dispatch).toHaveBeenCalledTimes(1);
     expect(reconciled.lifecycle_state).toBe('completed');
     expect(backing.listEvidence(TENANT, result.run_id)).toHaveLength(1);
+  });
+  it.each(['AUTH-1', 'AUTH-4'] satisfies AuthorityLevel[])(
+    'replays a sweeper-settled UNKNOWN %s action with its persisted identity and receipt',
+    async (required_authority) => {
+      const backing = new MemoryEvidenceLogger('test-hmac-secret');
+      const { orchestrator, workflow, memoryWorkflow, effectGuard, dispatch, reconcile } = harness({
+        steps: [step({ required_authority, adapter_target: 'API-001', skill_id: 'skill.sales.create_order' })],
+        evidenceLogger: backing,
+        dispatch: async () => {
+          throw new OrchestratorError('PROVIDER_INDETERMINATE', 'ERP accepted the write but swallowed its response');
+        },
+        reconcile: async () => ({ outcome: 'INDETERMINATE' }),
+      });
+      const initial = await orchestrator.processSignal(signal());
+      let waiting = initial;
+      if (required_authority === 'AUTH-4') {
+        expect(initial.lifecycle_state).toBe('awaiting_human');
+        const approval = memoryWorkflow.listApprovals(TENANT, initial.run_id)[0];
+        if (!approval) throw new Error('order requires one pending approval');
+        waiting = await orchestrator.resumeTask(initial.run_id, {
+          tenant_id: TENANT,
+          event_type: 'human.modify',
+          approval_id: approval.approval_id,
+          operator_id: 'operator-1',
+          expected_payload_sha256: approval.payload_sha256,
+          modifications: { text: 'operator-edited' },
+        });
+      }
+      expect(waiting.lifecycle_state).toBe('waiting');
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      const pendingAction = getDispatchedAction(dispatch, 0);
+      expect(pendingAction.action_revision).toBe(required_authority === 'AUTH-4' ? 1 : 0);
+      const parkedTask = await workflow.getTask(TENANT, waiting.run_id);
+      expect(parkedTask?.state_payload).toMatchObject({
+        wait_reason: 'RECONCILE',
+        pending_action: pendingAction,
+      });
+
+      // The sweeper settles the durable reservation before it queues this wake-up event.
+      const providerReceipt: ExecutionReceipt = {
+        ...receipt(),
+        execution_id: 'erp-order-execution',
+        provider_reference: 'erp-order-1',
+        response_payload: { order_id: 'erp-order-1' },
+      };
+      await effectGuard.resolve({
+        tenant_id: TENANT,
+        effect_key: pendingAction.effect_key,
+        status: 'SUCCEEDED',
+        receipt: providerReceipt,
+      });
+      const progress = vi.spyOn(workflow, 'updateTaskProgress');
+      const resumed = await orchestrator.resumeTask(waiting.run_id, {
+        tenant_id: TENANT,
+        event_type: 'reconcile.completed',
+        effect_key: pendingAction.effect_key,
+      });
+
+      expect(resumed.lifecycle_state).toBe('completed');
+      expect((await workflow.getTask(TENANT, waiting.run_id))?.state).toBe('completed');
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      expect(reconcile).not.toHaveBeenCalled();
+      expect(progress).toHaveBeenCalledWith(TENANT, waiting.run_id, pendingAction.step_index,
+        expect.objectContaining({ pending_action: pendingAction }));
+      const evidence = backing.listEvidence(TENANT, waiting.run_id);
+      expect(evidence).toHaveLength(1);
+      if (!evidence[0]) throw new Error('reconciled order requires immutable evidence');
+      expect(JSON.parse(evidence[0].raw_payload)).toMatchObject({
+        action: pendingAction,
+        receipt: providerReceipt,
+        replayed: true,
+      });
+      expect(memoryWorkflow.listApprovals(TENANT, waiting.run_id)).toHaveLength(required_authority === 'AUTH-4' ? 1 : 0);
+    },
+  );
+
+  it.each(['unsettled', 'wrong-effect'])(
+    'keeps an UNKNOWN order parked when an automatic wake-up has %s proof',
+    async (proof) => {
+      const { orchestrator, workflow, dispatch, reconcile } = harness({
+        dispatch: async () => {
+          throw new OrchestratorError('PROVIDER_INDETERMINATE', 'ERP response was swallowed');
+        },
+        reconcile: async () => ({ outcome: 'FAILED' }),
+      });
+      const waiting = await orchestrator.processSignal(signal());
+      const pendingAction = getDispatchedAction(dispatch, 0);
+
+      await expect(orchestrator.resumeTask(waiting.run_id, {
+        tenant_id: TENANT,
+        event_type: 'reconcile.completed',
+        effect_key: proof === 'wrong-effect' ? 'another-effect' : pendingAction.effect_key,
+      })).rejects.toMatchObject({
+        code: proof === 'wrong-effect'
+          ? 'RECONCILIATION_BINDING_REQUIRED'
+          : 'RECONCILIATION_PROVIDER_PROOF_REQUIRED',
+      });
+
+      const task = await workflow.getTask(TENANT, waiting.run_id);
+      expect(task?.state).toBe('waiting');
+      expect(task?.state_payload).toMatchObject({ pending_action: pendingAction });
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      expect(reconcile).not.toHaveBeenCalled();
+    },
+  );
+
+  it('resumes a retry timer only for the exact persisted retry generation', async () => {
+    const run_id = 'run_retry_timer';
+    const workflowEngine = new MemoryWorkflowEngine();
+    await workflowEngine.createTask({
+      tenant_id: TENANT,
+      run_id,
+      correlation_id: 'corr-1',
+      current_step: 1,
+      state: 'running',
+    });
+    const retryCheckpoint: DurableTaskCheckpoint = {
+      plan: plan([step({ mutating: false })]),
+      current_step: 1,
+      pending_action: null,
+      context: context(),
+      previous_evidence_hash: GENESIS_HASH,
+      request_id: SIGNAL_ID,
+    };
+    await workflowEngine.updateTaskProgress(TENANT, run_id, 1, retryCheckpoint);
+    await expect(workflowEngine.recordFailure({
+      tenant_id: TENANT,
+      run_id,
+      error_class: 'RETRYABLE',
+      error_details: { code: 'LLM_UNAVAILABLE' },
+    })).resolves.toEqual({ requeued: true });
+
+    const waiting = await workflowEngine.getTask(TENANT, run_id);
+    if (waiting === null || waiting.state_payload === null
+      || typeof waiting.state_payload !== 'object' || Array.isArray(waiting.state_payload)) {
+      throw new Error('retry wait checkpoint was not persisted');
+    }
+    await workflowEngine.transitionTask(TENANT, run_id, 'waiting', 'retry timer queued', {
+      ...waiting.state_payload,
+      resume_event: { tenant_id: TENANT, event_type: 'timer.expired', retry_count: 1 },
+    });
+    const { orchestrator, dispatch } = harness({ workflowEngine });
+
+    await expect(orchestrator.resumeTask(run_id, {
+      tenant_id: TENANT,
+      event_type: 'timer.expired',
+      retry_count: 0,
+    })).rejects.toMatchObject({ code: 'INVALID_TIMER_RESUME' });
+    expect((await workflowEngine.getTask(TENANT, run_id))?.state).toBe('waiting');
+
+    const result = await orchestrator.resumeTask(run_id, {
+      tenant_id: TENANT,
+      event_type: 'timer.expired',
+      retry_count: 1,
+    });
+    expect(result.lifecycle_state).toBe('completed');
+    expect(dispatch).toHaveBeenCalledTimes(1);
   });
   it('consumes manual escalation without leaving a reclaimable resume event', async () => {
     const { orchestrator, workflow } = harness({
@@ -1128,6 +1507,7 @@ describe('RevenueOrchestrator', () => {
       price_bearing: false,
       idempotent: true,
       timeout_ms: 1000,
+      completion: 'AWAITS_HUMAN',
     };
 
     const memoryWorkflow = new MemoryWorkflowEngine();
@@ -1356,6 +1736,7 @@ describe('RevenueOrchestrator', () => {
       skill_id: 'skill.sales.create_cart',
       mutating: true,
       input_parameters: { items: [{ sku: 'SKU-1', quantity: 2 }] },
+      idempotency_input_field: 'idempotency_key',
     });
     const readOnlyStep = step({
       step_index: 2,
@@ -1381,6 +1762,8 @@ describe('RevenueOrchestrator', () => {
       items: [{ sku: 'SKU-1', quantity: 2 }],
       tenant_id: TENANT,
       effect_key: mutatingAction.effect_key,
+      // The cart connector's idempotency key is the server effect key, never caller-chosen.
+      idempotency_key: mutatingAction.effect_key,
     });
 
     const reservedRow = effectGuard.peek(TENANT, mutatingAction.effect_key);
@@ -1397,6 +1780,82 @@ describe('RevenueOrchestrator', () => {
       tenant_id: TENANT,
     });
     expect(effectGuard.peek(TENANT, readOnlyAction.effect_key)).toBeNull();
+  });
+  it('preserves the original failure when recording a durable recovery failure also fails', async () => {
+    const originalFailure = new Error('source failed for buyer@example.test');
+    const recordingFailure = new OrchestratorError(
+      'STAGE_RESULT_WRITE_FAILED',
+      'database error included phone +1 555 010 1234',
+    );
+    const { orchestrator, workflow, deriveHypothesis } = harness();
+    deriveHypothesis.mockRejectedValue(originalFailure);
+    const recordFailure = vi.spyOn(workflow, 'recordFailure').mockRejectedValue(recordingFailure);
+    const diagnosticLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      await expect(orchestrator.processSignal(signal())).rejects.toBe(originalFailure);
+      expect(recordFailure).toHaveBeenCalledTimes(1);
+      expect(diagnosticLog).toHaveBeenCalledWith('ORCHESTRATOR_FAILURE_RECORDING_FAILED', {
+        operation: 'withDurableRecovery',
+        error_type: 'ERROR',
+        error_code: 'STAGE_RESULT_WRITE_FAILED',
+      });
+      const serializedLog = JSON.stringify(diagnosticLog.mock.calls);
+      expect(serializedLog).not.toContain('buyer@example.test');
+      expect(serializedLog).not.toContain('+1 555 010 1234');
+    } finally {
+      diagnosticLog.mockRestore();
+    }
+  });
+
+  it('preserves the original resume failure when recording it also fails', async () => {
+    const { orchestrator, workflow, memoryWorkflow } = harness({
+      steps: [step({ required_authority: 'AUTH-4' satisfies AuthorityLevel })],
+    });
+    const paused = await orchestrator.processSignal(signal());
+    const approval = memoryWorkflow.listApprovals(TENANT, paused.run_id)[0];
+    if (approval === undefined) throw new Error('the AUTH-4 pause must leave one PENDING approval row');
+
+    const originalFailure = new Error('completion failed for buyer@example.test');
+    const recordingFailure = new OrchestratorError(
+      'RESUME_RESULT_WRITE_FAILED',
+      'database error included phone +1 555 010 1234',
+    );
+    const persistTransition = workflow.transitionTask.bind(workflow);
+    vi.spyOn(workflow, 'transitionTask').mockImplementation(async (
+      tenant_id,
+      run_id,
+      state,
+      reason,
+      checkpointPayload,
+      guard,
+    ) => {
+      if (state === 'completed') throw originalFailure;
+      return persistTransition(tenant_id, run_id, state, reason, checkpointPayload, guard);
+    });
+    const recordFailure = vi.spyOn(workflow, 'recordFailure').mockRejectedValue(recordingFailure);
+    const diagnosticLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      await expect(orchestrator.resumeTask(paused.run_id, {
+        tenant_id: TENANT,
+        event_type: 'human.approval',
+        approval_id: approval.approval_id,
+        operator_id: 'operator-1',
+        expected_payload_sha256: approval.payload_sha256,
+      })).rejects.toBe(originalFailure);
+      expect(recordFailure).toHaveBeenCalledTimes(1);
+      expect(diagnosticLog).toHaveBeenCalledWith('ORCHESTRATOR_FAILURE_RECORDING_FAILED', {
+        operation: 'resumeTask',
+        error_type: 'ERROR',
+        error_code: 'RESUME_RESULT_WRITE_FAILED',
+      });
+      const serializedLog = JSON.stringify(diagnosticLog.mock.calls);
+      expect(serializedLog).not.toContain('buyer@example.test');
+      expect(serializedLog).not.toContain('+1 555 010 1234');
+    } finally {
+      diagnosticLog.mockRestore();
+    }
   });
 });
 

@@ -16,6 +16,11 @@ interface ResponseRow extends QueryResultRow {
   run_id: string;
   answer: string;
   sources: unknown;
+  response_kind: SaveRunResponseInput['response_kind'];
+  outcome: SaveRunResponseInput['outcome'];
+  source: string;
+  template_key: string | null;
+  reason_code: string | null;
   conversation_id: string | null;
   message_id: string | null;
   created_at: Date;
@@ -36,6 +41,11 @@ function responseRow(overrides: Partial<ResponseRow> = {}): ResponseRow {
     run_id: RUN_ID,
     answer: 'Nova Studio 14 is available.',
     sources: [{ evidence_id: 'evidence-1' }],
+    response_kind: 'ANSWER',
+    outcome: 'ANSWERED',
+    source: 'Core.Evidence@1',
+    template_key: null,
+    reason_code: null,
     conversation_id: null,
     message_id: null,
     created_at: CREATED_AT,
@@ -49,6 +59,9 @@ function saveInput(overrides: Partial<SaveRunResponseInput> = {}): SaveRunRespon
     run_id: RUN_ID,
     answer: 'Nova Studio 14 is available.',
     sources: [{ evidence_id: 'evidence-1' }],
+    response_kind: 'ANSWER',
+    outcome: 'ANSWERED',
+    source: 'Core.Evidence@1',
     sender_id: 'SAL-01',
     ...overrides,
   };
@@ -74,17 +87,27 @@ class ScriptedClient {
         return { rows: [], rowCount: 0 } as unknown as QueryResult<R>;
       }
 
-      const [tenant_id, run_id, answer, rawSources, conversation_id, message_id] = params;
+      const [
+        tenant_id, run_id, answer, rawSources, response_kind, outcome, source,
+        template_key, reason_code, conversation_id, message_id,
+      ] = params;
       const sources = JSON.parse(String(rawSources));
       this.response = responseRow({
         tenant_id: String(tenant_id),
         run_id: String(run_id),
         answer: String(answer),
         sources,
+        response_kind: response_kind as ResponseRow['response_kind'],
+        outcome: outcome as ResponseRow['outcome'],
+        source: String(source),
+        template_key: template_key === null ? null : String(template_key),
+        reason_code: reason_code === null ? null : String(reason_code),
         conversation_id: conversation_id === null ? null : String(conversation_id),
         message_id: message_id === null ? null : String(message_id),
       });
-      return { rows: [this.response] as unknown as R[], rowCount: 1 } as unknown as QueryResult<R>;
+      const inserted = this.response;
+      if (inserted === null) throw new Error('SCRIPTED_INSERT_RESPONSE_MISSING');
+      return { rows: [inserted], rowCount: 1 } as unknown as QueryResult<R>;
     }
 
     if (sql.includes('FROM agentos.run_responses')) {
@@ -150,7 +173,7 @@ describe('RunResponseRepository', () => {
     expect(boundTenants).toEqual([TENANT, TENANT]);
   });
 
-  it('writes the agent message and links it in the same transaction, then serializes replay by row lock', async () => {
+  it('writes the agent message and links it in the same transaction, then replays under the durable task lock', async () => {
     const { repository, client } = harness();
 
     const first = await repository.save(saveInput({ conversation_id: CONVERSATION_ID }));
@@ -167,10 +190,58 @@ describe('RunResponseRepository', () => {
       'SELECT run_id',
       'SELECT',
     ]);
-    const messageWrites = client.statements.filter(({ sql }) => sql.startsWith('INSERT INTO agentos.conversation_messages'));
+    const messageWrites = client.statements.filter(({ sql }) =>
+      sql.startsWith('INSERT INTO agentos.conversation_messages'),
+    );
     expect(messageWrites).toHaveLength(1);
-    expect(messageWrites[0]?.params).toEqual([TENANT, CONVERSATION_ID, 'SAL-01', 'Nova Studio 14 is available.']);
-    expect(client.statements.find(({ sql }) => sql.includes('FOR UPDATE'))?.sql).toContain('FOR UPDATE');
+    expect(messageWrites[0]?.params).toEqual([
+      TENANT,
+      CONVERSATION_ID,
+      'SAL-01',
+      'Nova Studio 14 is available.',
+    ]);
+    const durableRunLocks = client.statements.filter(({ sql }) => sql.startsWith('SELECT run_id'));
+    expect(durableRunLocks.every(({ sql }) => sql.includes('FOR UPDATE'))).toBe(true);
+    const responseReads = client.statements.filter(({ sql }) =>
+      sql.includes('FROM agentos.run_responses'),
+    );
+    expect(responseReads).toHaveLength(2);
+    expect(responseReads.every(({ sql }) => !sql.includes('FOR UPDATE'))).toBe(true);
+  });
+  it('persists the typed template kind and outcome with the conversation message', async () => {
+    const { repository, client } = harness();
+    const input = saveInput({
+      answer: 'Please share the product SKU or name you would like me to check.',
+      sources: [],
+      response_kind: 'CLARIFICATION',
+      outcome: 'CLARIFIED',
+      source: 'Core.Template@1',
+      template_key: 'sales.need_sku',
+      reason_code: 'SKU_REQUIRED',
+      conversation_id: CONVERSATION_ID,
+    });
+
+    const persisted = await repository.save(input);
+
+    expect(persisted).toMatchObject({
+      answer: input.answer,
+      response_kind: 'CLARIFICATION',
+      outcome: 'CLARIFIED',
+      source: 'Core.Template@1',
+      template_key: 'sales.need_sku',
+      reason_code: 'SKU_REQUIRED',
+      message_id: MESSAGE_ID,
+    });
+    const insert = client.statements.find(({ sql }) => sql.startsWith('INSERT INTO agentos.run_responses'));
+    expect(insert?.params.slice(4)).toEqual([
+      'CLARIFICATION',
+      'CLARIFIED',
+      'Core.Template@1',
+      'sales.need_sku',
+      'SKU_REQUIRED',
+      CONVERSATION_ID,
+      MESSAGE_ID,
+    ]);
   });
 
   it('refuses a conflicting replay before attempting any message write', async () => {
@@ -183,6 +254,15 @@ describe('RunResponseRepository', () => {
     ).rejects.toThrow('RUN_RESPONSE_CONFLICT');
     await expect(
       repository.save(saveInput({ sources: [{ evidence_id: 'different' }] })),
+    ).rejects.toThrow('RUN_RESPONSE_CONFLICT');
+    await expect(
+      repository.save(saveInput({
+        response_kind: 'REFUSAL',
+        outcome: 'REFUSED',
+        source: 'Core.Template@1',
+        template_key: 'core.cannot_help',
+        sources: [],
+      })),
     ).rejects.toThrow('RUN_RESPONSE_CONFLICT');
     expect(client.statements.filter(({ sql }) => sql.startsWith('INSERT INTO agentos.conversation_messages'))).toHaveLength(0);
   });

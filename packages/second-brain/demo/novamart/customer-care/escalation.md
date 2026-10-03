@@ -9,20 +9,20 @@ synthetic: true
 
 # NovaMart Human Escalation and Takeover Policy
 
-## Immediate Human Escalation (`skill.care.escalate_to_human`)
+## Immediate Human Escalation
 
-When a customer requests human assistance (for example, *"I want to speak with a person"* or *"I want a human agent"*), or when a dispute exceeds automated Customer Care authority:
+When a customer requests human assistance (for example, *"I want to speak with a person"* or *"I want a human agent"*), or when a dispute exceeds the automated Customer Care mandate:
 
-1. **Transition to `awaiting_human`:** `CareAgentRuntime` executes `skill.care.escalate_to_human`, creates an auditable support handoff record, and transitions the conversation to `awaiting_human` under a takeover lock.
-2. **Cessation of Autonomous Replies:** Once the takeover lock is engaged, the automated LLM response finalizer must **never** append an autonomous agent reply or continue automated turn generation. Subsequent automated turns while locked are refused with `CONVERSATION_LOCKED`.
+1. **Transition to Human Handling:** The automated Care assistant records an auditable support handoff and pauses automated replies while a person takes over.
+2. **Cessation of Autonomous Replies:** Once a human operator has taken over the conversation, the automated assistant must **never** append another reply or continue generating turns; any automated turn attempted while the takeover is active is refused.
 
-## Operator Lease and Takeover Lifecycle (`R06` / `R07` / `R08`)
+## Operator Takeover Lifecycle
 
-- **Claim Lease (`R06`):** An authenticated NovaMart tenant operator with `conversation:takeover` permission claims the active takeover lease in Tenant Console.
-- **Heartbeat Renewal (`R07`):** The lease owner maintains exclusive control via periodic heartbeats; expired or non-owner lease calls are rejected.
-- **Operator Reply (`POST /api/v1/conversations/:id/operator-messages`):** The lease-owning operator with `conversation:reply` permission sends a human response (`sender_type = 'operator'`) backed by an idempotent `conversation.operator_reply` effect reservation and local channel outbox receipt.
-- **Optional Resume (`R08`):** Only the authorized operator may release the takeover lock and return the conversation to automated handling.
+- **Claiming a Conversation:** An authenticated NovaMart support operator claims the active takeover in the Tenant Console.
+- **Heartbeat Renewal:** The operator retains exclusive control through periodic heartbeats; expired or non-owner takeover calls are rejected.
+- **Operator Reply:** The takeover-owning operator sends the human response, recorded idempotently and delivered through the local channel outbox.
+- **Optional Resume:** Only the authorized operator may release the takeover and return the conversation to automated handling.
 
-## Cross-Domain Onboarding Boundary (`CARE_ONBOARDING_ITINERARY_UNBOUND`)
+## Cross-Domain Onboarding Boundary
 
-Automated Sales-to-Care post-purchase onboarding itineraries (`handoff.sales_to_care`) remain explicitly unbound (`CARE_ONBOARDING_ITINERARY_UNBOUND`) pending a formal merchant owner decision. Customer Care handles independent customer-initiated support, FAQ, order status, and human takeover interactions on the shared Customer360 timeline without fabricating an automated onboarding itinerary.
+Automated Sales-to-Care post-purchase onboarding itineraries remain explicitly unbound pending a formal merchant owner decision. Customer Care handles independent customer-initiated support, FAQ, order status, and human takeover interactions on the shared customer timeline without fabricating an automated onboarding itinerary.

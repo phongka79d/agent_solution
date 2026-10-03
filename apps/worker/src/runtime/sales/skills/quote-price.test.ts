@@ -486,17 +486,18 @@ describe('SalesSkillServices - quote, price floor and payment-policy skills', ()
     expect(JSON.stringify(quoteRecord)).not.toContain(TEST_QUOTE_SECRET);
   });
 
-  it('check_price: refuses with P_FLOOR_UNAVAILABLE and returns no token when signing secret is unbound', async () => {
+  it('check_price: returns grounded price without quote fields when signing secret is unbound', async () => {
     const services = createServices({
       price_floor: createPriceFloorPort(),
       quote_signing_secret: '',
     });
 
     expect(services.unbound).toContain(
-      'QuoteSigningSecret: no quote signing secret is bound; skill.sales.check_price refuses',
+      'QuoteSigningSecret: no quote signing secret is bound; skill.sales.create_order refuses',
     );
+    expect(services.registry.resolve('skill.sales.check_price').enabled).toBe(true);
 
-    await expect(services.tool_port.invoke({
+    const output = await services.tool_port.invoke({
       skill_id: 'skill.sales.check_price',
       tool_binding: 'API-001.PricingEngine',
       input: {
@@ -512,10 +513,17 @@ describe('SalesSkillServices - quote, price floor and payment-policy skills', ()
         granted_authority: 'AUTH-3',
         effect_key: 'effect-price-unbound',
       },
-    })).rejects.toMatchObject({
-      code: 'P_FLOOR_UNAVAILABLE',
-      message: expect.stringContaining('Quote signing secret is not bound'),
     });
+
+    expect(output).toMatchObject({
+      sku_id: 'SKU-1',
+      list_price: 100,
+      final_price: 100,
+      p_floor: 80,
+      currency: 'TWD',
+    });
+    expect(output).not.toHaveProperty('quote_token');
+    expect(output).not.toHaveProperty('quote_expires_at');
   });
 
   it('create_order: PRE-DISPATCH refuses with AUTHORITATIVE_SOURCE_UNAVAILABLE when signing secret is unbound with zero ERP calls', async () => {
@@ -752,6 +760,8 @@ describe('SalesSkillServices - quote, price floor and payment-policy skills', ()
         correlation_id: CORRELATION_ID,
         granted_authority: 'AUTH-3',
         effect_key: 'effect-order-valid-token',
+        approval_id: 'approval-00000000-0000-4000-8000-000000000001',
+        approval_payload_digest: 'a'.repeat(64),
       },
     });
 

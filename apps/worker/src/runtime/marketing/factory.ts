@@ -9,15 +9,20 @@
 import {
   EffectGuard,
   OrchestratorError,
+  renderResponseTemplate,
   RevenueOrchestrator,
   type PolicyEnforcementOptions,
   type AutonomyAdmissionPort,
-  type PolicyRegistrySkill,
 } from '@agentos/core-engine';
+import { effectPolicyOf, plannedSkillMetadata, type SkillGate } from '@agentos/skills';
+import {
+  MARKETING_ALLOWED_PAYLOAD_FIELDS,
+  MARKETING_SKILL_ROWS,
+  MARKETING_SKILLS,
+} from './policy-registry.js';
 import type {
   ActionDraft,
   AssignableAuthority,
-  AuthorityLevel,
   Customer360Fact,
   HydratedContext,
   IAgentRuntime,
@@ -79,57 +84,19 @@ import {
   type MarketingSkillOptions,
   type MarketingSkillServices,
 } from './skills/index.js';
+import type { KnowledgeStore } from '../shared/knowledge-store.js';
 import { createMarketingKnowledgePort } from './knowledge-adapter.js';
 import type { MarketingPolicyPort } from './contracts.js';
 type MarketingFactoryEnv = WorkerConnectorEnv & {
   readonly AUDIT_HMAC_SECRET?: string;
 };
 
-const MARKETING_AGENT_BY_SKILL: Readonly<Record<string, PlatformAgentId>> = Object.freeze({
-  'skill.mkt.analyze_market_signal': 'MKT-01',
-  'skill.mkt.segment_audience': 'MKT-02',
-  'skill.mkt.check_consent': 'MKT-02',
-  'skill.mkt.generate_content': 'MKT-03',
-  'skill.mkt.audit_brand_compliance': 'MKT-04',
-  'skill.mkt.dispatch_campaign': 'MKT-05',
-  'skill.mkt.evaluate_attribution': 'MKT-06',
-});
-
-const MARKETING_ADAPTER_BY_SKILL: Readonly<Record<string, string>> = Object.freeze({
-  'skill.mkt.analyze_market_signal': 'API-002.EventIngestion',
-  'skill.mkt.segment_audience': 'PostgreSQL.Customer360Store',
-  'skill.mkt.check_consent': 'API-002.ConsentStore',
-  'skill.mkt.generate_content': 'Core.LLMContentEngine',
-  'skill.mkt.audit_brand_compliance': 'SecondBrain.BrandGuard',
-  'skill.mkt.dispatch_campaign': 'API-003.CommunicationConnector',
-  'skill.mkt.evaluate_attribution': 'PostgreSQL.AnalyticsStore',
-});
-
-const MARKETING_AUTHORITY_BY_SKILL: Readonly<Record<string, AuthorityLevel>> = Object.freeze({
-  'skill.mkt.analyze_market_signal': 'AUTH-1',
-  'skill.mkt.segment_audience': 'AUTH-1',
-  'skill.mkt.check_consent': 'AUTH-3',
-  'skill.mkt.generate_content': 'AUTH-2',
-  'skill.mkt.audit_brand_compliance': 'AUTH-1',
-  'skill.mkt.dispatch_campaign': 'AUTH-4',
-  'skill.mkt.evaluate_attribution': 'AUTH-1',
-});
-
-const MARKETING_MUTATING: Readonly<Record<string, boolean>> = Object.freeze({
-  'skill.mkt.dispatch_campaign': true,
-});
-
-const MARKETING_TIMEOUT_MS: Readonly<Record<string, number>> = Object.freeze({
-  'skill.mkt.analyze_market_signal': 3000,
-  'skill.mkt.segment_audience': 2500,
-  'skill.mkt.check_consent': 1000,
-  'skill.mkt.generate_content': 18000,
-  'skill.mkt.audit_brand_compliance': 2000,
-  'skill.mkt.dispatch_campaign': 5000,
-  'skill.mkt.evaluate_attribution': 4000,
-});
+const MARKETING_ROWS_BY_SKILL = Object.freeze(
+  Object.fromEntries(MARKETING_SKILL_ROWS.map((row) => [row.skill_id, row])),
+);
 
 const DEFAULT_CAMPAIGN_THEME = 'Customer reactivation campaign';
+
 /**
  * Safe fallback when no tenant owner policy is available. This is intentionally conservative;
  * callers requesting more recipients must supply an owner-approved policy value.
@@ -196,7 +163,7 @@ function signalInput(signal: SignalEnvelope, tenant_id: string): Record<string, 
 
 function skillId(signal: SignalEnvelope): string {
   const value = signal.payload['skill_id'];
-  if (typeof value !== 'string' || !Object.hasOwn(MARKETING_AGENT_BY_SKILL, value)) {
+  if (typeof value !== 'string' || !Object.hasOwn(MARKETING_ROWS_BY_SKILL, value)) {
     throw new OrchestratorError('MARKETING_SIGNAL_INVALID', 'payload.skill_id must name a canonical Marketing skill');
   }
   return value;
@@ -345,14 +312,27 @@ async function campaignPlan(
   const requestedAudienceSize = campaign.max_segment_size ?? audienceLimit;
   const channel = campaign.content_channel;
   const dispatchChannel = DISPATCH_CHANNEL_BY_CONTENT_CHANNEL[campaign.content_channel];
+  const segmentRow = MARKETING_ROWS_BY_SKILL['skill.mkt.segment_audience']!;
+  const contentRow = MARKETING_ROWS_BY_SKILL['skill.mkt.generate_content']!;
+  const brandRow = MARKETING_ROWS_BY_SKILL['skill.mkt.audit_brand_compliance']!;
+  const dispatchRow = MARKETING_ROWS_BY_SKILL['skill.mkt.dispatch_campaign']!;
+  const segmentEffect = effectPolicyOf(segmentRow);
+  const contentEffect = effectPolicyOf(contentRow);
+  const brandEffect = effectPolicyOf(brandRow);
+  const dispatchEffect = effectPolicyOf(dispatchRow);
+  const segmentMetadata = plannedSkillMetadata(segmentRow.skill_id);
+  const contentMetadata = plannedSkillMetadata(contentRow.skill_id);
+  const brandMetadata = plannedSkillMetadata(brandRow.skill_id);
+  const dispatchMetadata = plannedSkillMetadata(dispatchRow.skill_id);
   return {
     plan_id: 'plan_' + signal.signal_id,
+    domain: segmentMetadata?.domain ?? 'marketing',
     steps: [
       {
         step_index: 1,
-        agent_id: 'MKT-02',
-        skill_id: 'skill.mkt.segment_audience',
-        adapter_target: 'PostgreSQL.Customer360Store',
+        agent_id: segmentRow.allowed_agents[0] as PlatformAgentId,
+        skill_id: segmentRow.skill_id,
+        adapter_target: segmentRow.guarded_dependency,
         input_parameters: {
           tenant_id: context.tenant_id,
           rfm_criteria: 'HIBERNATING',
@@ -360,45 +340,60 @@ async function campaignPlan(
           max_segment_size: requestedAudienceSize,
           channel: dispatchChannel,
         },
-        required_authority: 'AUTH-1',
-        mutating: false,
-        price_bearing: false,
-        idempotent: true,
-        timeout_ms: MARKETING_TIMEOUT_MS['skill.mkt.segment_audience']!,
+        required_authority: segmentRow.required_authority,
+        mutating: segmentEffect.mutating,
+        price_bearing: segmentEffect.price_bearing,
+        idempotent: segmentEffect.idempotent,
+        timeout_ms: segmentRow.timeout_ms,
+        ...(segmentMetadata === undefined ? {} : { dispatch_timeout_ms: segmentMetadata.dispatch_timeout_ms }),
+        completion: segmentMetadata?.completion ?? 'SYNC',
+        ...(segmentMetadata?.idempotency_input_field === undefined
+          ? {}
+          : { idempotency_input_field: segmentMetadata.idempotency_input_field }),
       },
       {
         step_index: 2,
-        agent_id: 'MKT-03',
-        skill_id: 'skill.mkt.generate_content',
-        adapter_target: 'Core.LLMContentEngine',
+        agent_id: contentRow.allowed_agents[0] as PlatformAgentId,
+        skill_id: contentRow.skill_id,
+        adapter_target: contentRow.guarded_dependency,
         input_parameters: {
           tenant_id: context.tenant_id,
           campaign_theme: campaign.instruction,
           channel,
           locale: campaign.content_locale,
         },
-        required_authority: 'AUTH-2',
-        mutating: false,
-        price_bearing: false,
-        idempotent: true,
-        timeout_ms: MARKETING_TIMEOUT_MS['skill.mkt.generate_content']!,
+        required_authority: contentRow.required_authority,
+        mutating: contentEffect.mutating,
+        price_bearing: contentEffect.price_bearing,
+        idempotent: contentEffect.idempotent,
+        timeout_ms: contentRow.timeout_ms,
+        ...(contentMetadata === undefined ? {} : { dispatch_timeout_ms: contentMetadata.dispatch_timeout_ms }),
+        completion: contentMetadata?.completion ?? 'SYNC',
+        ...(contentMetadata?.idempotency_input_field === undefined
+          ? {}
+          : { idempotency_input_field: contentMetadata.idempotency_input_field }),
         depends_on_steps: [1],
       },
       {
         step_index: 3,
-        agent_id: 'MKT-04',
-        skill_id: 'skill.mkt.audit_brand_compliance',
-        adapter_target: 'SecondBrain.BrandGuard',
+        agent_id: brandRow.allowed_agents[0] as PlatformAgentId,
+        skill_id: brandRow.skill_id,
+        adapter_target: brandRow.guarded_dependency,
         input_parameters: {
           tenant_id: context.tenant_id,
           draft_text: '',
           channel,
         },
-        required_authority: 'AUTH-1',
-        mutating: false,
-        price_bearing: false,
-        idempotent: true,
-        timeout_ms: MARKETING_TIMEOUT_MS['skill.mkt.audit_brand_compliance']!,
+        required_authority: brandRow.required_authority,
+        mutating: brandEffect.mutating,
+        price_bearing: brandEffect.price_bearing,
+        idempotent: brandEffect.idempotent,
+        timeout_ms: brandRow.timeout_ms,
+        ...(brandMetadata === undefined ? {} : { dispatch_timeout_ms: brandMetadata.dispatch_timeout_ms }),
+        completion: brandMetadata?.completion ?? 'SYNC',
+        ...(brandMetadata?.idempotency_input_field === undefined
+          ? {}
+          : { idempotency_input_field: brandMetadata.idempotency_input_field }),
         depends_on_steps: [2],
         input_bindings: {
           draft_text: { source_step_index: 2, response_path: 'brand_audit_text' },
@@ -406,9 +401,9 @@ async function campaignPlan(
       },
       {
         step_index: 4,
-        agent_id: 'MKT-05',
-        skill_id: 'skill.mkt.dispatch_campaign',
-        adapter_target: 'API-003.CommunicationConnector',
+        agent_id: dispatchRow.allowed_agents[0] as PlatformAgentId,
+        skill_id: dispatchRow.skill_id,
+        adapter_target: dispatchRow.guarded_dependency,
         input_parameters: {
           tenant_id: context.tenant_id,
           campaign_id: campaign.campaign_id,
@@ -416,11 +411,16 @@ async function campaignPlan(
           channel: dispatchChannel,
           approved_content_id: '',
         },
-        required_authority: 'AUTH-4',
-        mutating: true,
-        price_bearing: false,
-        idempotent: false,
-        timeout_ms: MARKETING_TIMEOUT_MS['skill.mkt.dispatch_campaign']!,
+        required_authority: dispatchRow.required_authority,
+        mutating: dispatchEffect.mutating,
+        price_bearing: dispatchEffect.price_bearing,
+        idempotent: dispatchEffect.idempotent,
+        timeout_ms: dispatchRow.timeout_ms,
+        ...(dispatchMetadata === undefined ? {} : { dispatch_timeout_ms: dispatchMetadata.dispatch_timeout_ms }),
+        completion: dispatchMetadata?.completion ?? 'SYNC',
+        ...(dispatchMetadata?.idempotency_input_field === undefined
+          ? {}
+          : { idempotency_input_field: dispatchMetadata.idempotency_input_field }),
         depends_on_steps: [1, 2, 3],
         input_bindings: {
           segment_id: { source_step_index: 1, response_path: 'segment_id' },
@@ -487,12 +487,6 @@ export class MarketingContextAggregator implements IContextAggregator {
 }
 
 class MarketingAgentRuntime implements IAgentRuntime {
-  private readonly signals = new Map<string, SignalEnvelope>();
-
-  private static signalKey(tenant_id: string, signal_id: string): string {
-    return `${tenant_id}\u0000${signal_id}`;
-  }
-
   /**
    * @param journeyEntry Whether this deployment brokered the cross-domain journey. When false the
    * planner is exactly what it was before P4: it plans its own leg and hands off to nobody.
@@ -500,11 +494,18 @@ class MarketingAgentRuntime implements IAgentRuntime {
   constructor(
     private readonly journeyEntry: boolean = false,
     private readonly audiencePolicy?: MarketingPolicyPort,
+    private readonly gate?: SkillGate,
   ) {}
-
-  async deriveHypothesis(signal: SignalEnvelope, _context: HydratedContext): Promise<HypothesisRecord> {
+  async deriveHypothesis(signal: SignalEnvelope, context: HydratedContext): Promise<HypothesisRecord> {
     const id = isCampaignRequest(signal) ? 'campaign.requested' : skillId(signal);
-    this.signals.set(MarketingAgentRuntime.signalKey(signal.tenant_id, signal.signal_id), signal);
+    const run_state = context.run_state ?? {};
+    context.run_state = {
+      ...run_state,
+      marketing: {
+        ...run_state.marketing,
+        source_signal: signal,
+      },
+    };
     return {
       classification: 'HYPOTHESIS',
       intent: 'marketing:' + id,
@@ -532,7 +533,7 @@ class MarketingAgentRuntime implements IAgentRuntime {
     }
     const id = skillId(signal);
     return {
-      target_agent: MARKETING_AGENT_BY_SKILL[id]!,
+      target_agent: MARKETING_ROWS_BY_SKILL[id]!.allowed_agents[0] as PlatformAgentId,
       requires_clarification: false,
       rationalization: 'Shared Marketing runtime route for ' + id + '.',
     };
@@ -543,43 +544,120 @@ class MarketingAgentRuntime implements IAgentRuntime {
     context: HydratedContext,
     hypothesis: HypothesisRecord,
   ): Promise<ExecutionPlan> {
+    const signal = context.run_state?.marketing?.source_signal;
     const signalId = hypothesis.derived_from_signals[0];
-    const signal = typeof signalId === 'string'
-      ? this.signals.get(MarketingAgentRuntime.signalKey(context.tenant_id, signalId))
-      : undefined;
-    if (!signal) {
+    if (
+      signal === undefined ||
+      signal.tenant_id !== context.tenant_id ||
+      signal.signal_id !== signalId
+    ) {
       throw new OrchestratorError('MARKETING_SIGNAL_CONTEXT_LOST', 'signal was not retained across shared planning stages');
     }
-    this.signals.delete(MarketingAgentRuntime.signalKey(context.tenant_id, signal.signal_id));
     if (isCampaignRequest(signal)) {
-      return campaignPlan(signal, context, this.audiencePolicy);
+      return this.applyAvailabilityGate(await campaignPlan(signal, context, this.audiencePolicy), context, true);
     }
     const id = skillId(signal);
-    const agent_id = MARKETING_AGENT_BY_SKILL[id]!;
+    const row = MARKETING_ROWS_BY_SKILL[id]!;
+    const effect = effectPolicyOf(row);
+    const metadata = plannedSkillMetadata(row.skill_id);
+    const agent_id = row.allowed_agents[0] as PlatformAgentId;
     const input_parameters = signalInput(signal, context.tenant_id);
     const handoff_intent = this.journeyEntryIntent(signal, context);
 
-    return {
+    const plan: ExecutionPlan = {
       plan_id: 'plan_' + signal.signal_id,
+      domain: metadata?.domain ?? 'marketing',
       steps: [{
         step_index: 1,
         agent_id,
         skill_id: id,
-        adapter_target: MARKETING_ADAPTER_BY_SKILL[id]!,
+        adapter_target: row.guarded_dependency,
         input_parameters,
-        required_authority: MARKETING_AUTHORITY_BY_SKILL[id]!,
-        mutating: MARKETING_MUTATING[id] === true,
-        price_bearing: id === 'skill.mkt.dispatch_campaign' && (
+        required_authority: row.required_authority,
+        mutating: effect.mutating,
+        price_bearing: effect.price_bearing || (id === 'skill.mkt.dispatch_campaign' && (
           typeof input_parameters['proposed_price'] === 'number'
           || typeof input_parameters['discount_percent'] === 'number'
           || typeof input_parameters['discount_amount'] === 'number'
           || typeof input_parameters['offer_id'] === 'string'
-        ),
-        idempotent: id !== 'skill.mkt.dispatch_campaign',
-        timeout_ms: MARKETING_TIMEOUT_MS[id]!,
+        )),
+        idempotent: effect.idempotent,
+        timeout_ms: row.timeout_ms,
+        ...(metadata === undefined ? {} : { dispatch_timeout_ms: metadata.dispatch_timeout_ms }),
+        completion: metadata?.completion ?? 'SYNC',
+        ...(metadata?.idempotency_input_field === undefined
+          ? {}
+          : { idempotency_input_field: metadata.idempotency_input_field }),
       }],
       fallback_strategy: 'FAIL_CLOSED',
       ...(handoff_intent === undefined ? {} : { handoff_intent }),
+    };
+    return this.applyAvailabilityGate(plan, context);
+  }
+
+  private async applyAvailabilityGate(
+    plan: ExecutionPlan,
+    context: HydratedContext,
+    preserveCampaignApprovalStep = false,
+  ): Promise<ExecutionPlan> {
+    const gate = this.gate;
+    if (gate === undefined || plan.steps.length === 0) return plan;
+
+    const verdicts = await Promise.all(
+      plan.steps.map(async (step) => ({
+        step,
+        verdict: await gate.available(context.tenant_id, step.skill_id),
+      })),
+    );
+    const refused = new Set(
+      verdicts.filter((entry) =>
+        !entry.verdict.available
+        && !(preserveCampaignApprovalStep
+          && entry.step.skill_id === 'skill.mkt.dispatch_campaign'
+          && entry.step.required_authority === 'AUTH-4'
+          && entry.verdict.reason === 'CONNECTOR_UNBOUND'))
+        .map((entry) => entry.step.step_index),
+    );
+    if (refused.size === 0) return plan;
+
+    let kept = plan.steps.filter((step) => !refused.has(step.step_index));
+    for (;;) {
+      const keptIndexes = new Set(kept.map((step) => step.step_index));
+      const next = kept.filter((step) =>
+        (step.depends_on_steps ?? []).every((dependency) => keptIndexes.has(dependency)));
+      if (next.length === kept.length) break;
+      kept = next;
+    }
+
+    if (kept.length === 0) {
+      const unavailable = verdicts.find((entry) => !entry.verdict.available);
+      if (unavailable === undefined) return plan;
+      const rendered = renderResponseTemplate('core.skill_unavailable');
+      const refusal: ExecutionPlan = {
+        ...plan,
+        steps: [],
+        terminal_response: {
+          response_kind: 'REFUSAL',
+          ...rendered,
+          reason_code: unavailable.verdict.reason,
+          sources: [],
+        },
+      };
+      Reflect.deleteProperty(refusal, 'handoff_intent');
+      return refusal;
+    }
+
+    const indexMap = new Map<number, number>();
+    kept.forEach((step, index) => indexMap.set(step.step_index, index + 1));
+    return {
+      ...plan,
+      steps: kept.map((step, index) => ({
+        ...step,
+        step_index: index + 1,
+        depends_on_steps: (step.depends_on_steps ?? [])
+          .map((dependency) => indexMap.get(dependency))
+          .filter((dependency): dependency is number => dependency !== undefined),
+      })),
     };
   }
 
@@ -609,53 +687,7 @@ class MarketingAgentRuntime implements IAgentRuntime {
   }
 }
 
-/**
- * Epistemic classification per row, mirroring the Care/Sales convention: a read or a real external
- * write produces `FACT` into a derived (`HYPOTHESIS`) projection, while a mutating dispatch is a
- * `FACT` write to `FACT`. A non-`FACT` source targeting `FACT` is rejected by the shared
- * promotion guard before AUTH-4, so the two columns must agree with that contract.
- */
-const MARKETING_EPISTEMIC_CLASS: Readonly<Record<string, PolicyRegistrySkill['epistemic_class']>> = Object.freeze({
-  'skill.mkt.analyze_market_signal': 'FACT',
-  'skill.mkt.segment_audience': 'HYPOTHESIS',
-  'skill.mkt.check_consent': 'FACT',
-  'skill.mkt.generate_content': 'HYPOTHESIS',
-  'skill.mkt.audit_brand_compliance': 'DECISION',
-  'skill.mkt.dispatch_campaign': 'FACT',
-  'skill.mkt.evaluate_attribution': 'FACT',
-});
 
-const MARKETING_WRITE_TARGET: Readonly<Record<string, PolicyRegistrySkill['write_target']>> = Object.freeze({
-  'skill.mkt.analyze_market_signal': 'HYPOTHESIS',
-  'skill.mkt.segment_audience': 'HYPOTHESIS',
-  'skill.mkt.check_consent': 'HYPOTHESIS',
-  'skill.mkt.generate_content': 'HYPOTHESIS',
-  'skill.mkt.audit_brand_compliance': 'HYPOTHESIS',
-  'skill.mkt.dispatch_campaign': 'FACT',
-  'skill.mkt.evaluate_attribution': 'HYPOTHESIS',
-});
-
-function policySkills(): Readonly<Record<string, PolicyRegistrySkill>> {
-  const result: Record<string, PolicyRegistrySkill> = {};
-  for (const skill_id of Object.keys(MARKETING_AGENT_BY_SKILL)) {
-    result[skill_id] = {
-      skill_id,
-      allowed_agents: Object.freeze([MARKETING_AGENT_BY_SKILL[skill_id]!]),
-      required_authority: MARKETING_AUTHORITY_BY_SKILL[skill_id]!,
-      mutating: MARKETING_MUTATING[skill_id] === true,
-      // Price-bearing is an action-level property; a dispatch row may carry no price at all.
-      price_bearing: false,
-      idempotent: skill_id !== 'skill.mkt.dispatch_campaign',
-      epistemic_class: MARKETING_EPISTEMIC_CLASS[skill_id]!,
-      write_target: MARKETING_WRITE_TARGET[skill_id]!,
-      // Consent is rechecked by the canonical Marketing communication tool immediately before provider dispatch.
-      requires_consent: false,
-      requires_verified_identity: false,
-      timeout_ms: MARKETING_TIMEOUT_MS[skill_id]!,
-    };
-  }
-  return Object.freeze(result);
-}
 
 export interface MarketingAuthoritativeValidationResult {
   readonly computed_price_floor?: number;
@@ -673,6 +705,11 @@ class SharedMarketingPolicyEngine implements IPolicyEngine {
     private readonly base: IPolicyEngine,
     private readonly validateAuthoritative?: MarketingAuthoritativeValidation,
   ) {}
+  normalizeActionInput(skill_id: string, input: Record<string, unknown>): unknown {
+    return this.base.normalizeActionInput === undefined
+      ? input
+      : this.base.normalizeActionInput(skill_id, input);
+  }
 
   async validateAction(action: ActionDraft, context: HydratedContext): Promise<ActionDraft> {
     // MKT-06 is refused here, before any schema or approval work: the shared route has no
@@ -755,26 +792,6 @@ class SharedMarketingPolicyEngine implements IPolicyEngine {
   }
 }
 
-function allowedPayloadFields(
-  services: MarketingSkillServices,
-): Readonly<Record<string, Readonly<Record<string, true>>>> {
-  const result: Record<string, Readonly<Record<string, true>>> = {};
-  for (const skill_id of Object.keys(MARKETING_AGENT_BY_SKILL)) {
-    const row = services.registry.resolve(skill_id);
-    const rowRecord = asRecord(row);
-    const schema = asRecord(rowRecord?.['input_schema']);
-    const properties = asRecord(schema?.['properties']);
-    if (!properties) {
-      throw new Error(`MARKETING_SCHEMA_UNBOUND: canonical input schema missing for ${skill_id}`);
-    }
-    const fields = Object.fromEntries(Object.keys(properties).map((key) => [key, true as const]));
-    if (skill_id === 'skill.mkt.dispatch_campaign') {
-      fields['effect_key'] = true;
-    }
-    result[skill_id] = Object.freeze(fields);
-  }
-  return Object.freeze(result);
-}
 
 export interface MarketingOrchestratorFactoryOptions {
   readonly workerId?: string;
@@ -804,11 +821,8 @@ export interface MarketingOrchestratorFactoryOptions {
   readonly adapterDispatcher?: IAdapterDispatcher;
   readonly skillServices?: MarketingSkillServices;
   readonly skillOptions?: Partial<MarketingSkillOptions>;
-  readonly knowledge_root_dir?: string;
-  /** Alias retained for callers that name the configured root `knowledge_root`. */
-  readonly knowledge_root?: string;
-  readonly knowledge_tenant_ids?: readonly string[];
-  readonly knowledge_tenant_id?: string;
+  readonly gate?: SkillGate;
+  readonly knowledge_store?: Pick<KnowledgeStore, 'listAvailable'>;
   /** Owner-approved audience cap used by campaign planning; absent uses the documented safe default. */
   readonly audiencePolicy?: MarketingPolicyPort;
   /**
@@ -898,30 +912,20 @@ export function createMarketingOrchestratorFactory(
   const effectGuard = options.effectGuard ?? new EffectGuard({
     repository: options.effectReservationRepository ?? new EffectReservationRepository(),
   });
-  const configuredKnowledgeRoot = options.knowledge_root_dir ?? options.knowledge_root;
-  if (
-    options.knowledge_root_dir !== undefined
-    && options.knowledge_root !== undefined
-    && options.knowledge_root_dir !== options.knowledge_root
-  ) {
-    throw new Error('MARKETING_KNOWLEDGE_ROOT_CONFLICT: knowledge_root_dir and knowledge_root differ');
-  }
   const configuredKnowledge = options.skillOptions?.knowledge;
-  const knowledgePort = configuredKnowledge === undefined
-    && configuredKnowledgeRoot !== undefined
-    && options.skillServices === undefined
+  const knowledgePort = configuredKnowledge === undefined && options.skillServices === undefined
     ? createMarketingKnowledgePort({
-        root_dir: configuredKnowledgeRoot,
-        ...(options.knowledge_tenant_ids === undefined ? {} : { tenant_ids: options.knowledge_tenant_ids }),
-        ...(options.knowledge_tenant_id === undefined ? {} : { tenant_id: options.knowledge_tenant_id }),
+        ...(options.knowledge_store === undefined ? {} : { knowledge_store: options.knowledge_store }),
       })
     : configuredKnowledge;
   const resolveGrant = options.resolve_grant ?? defaultResolveGrant;
   const resolveCorrelationId = options.resolve_correlation_id
     ?? ((tenant_id: string, run_id: string) => defaultResolveCorrelationId(tenant_id, run_id, workflowRepository));
 
+  const gate = options.gate ?? options.skillOptions?.gate;
   const skillOptions: MarketingSkillOptions = {
     ...(options.skillOptions ?? {}),
+    ...(gate === undefined ? {} : { gate }),
     ...(knowledgePort === undefined ? {} : { knowledge: knowledgePort }),
     resolve_correlation_id: resolveCorrelationId,
     resolve_grant: resolveGrant,
@@ -930,13 +934,14 @@ export function createMarketingOrchestratorFactory(
   const services = options.skillServices ?? createMarketingSkillServices(skillOptions);
   const contextAggregator = options.contextAggregator ?? new MarketingContextAggregator();
   const agentRuntime = options.agentRuntime
-    ?? new MarketingAgentRuntime(options.crossDomainHandoff !== undefined, options.audiencePolicy);
+    ?? new MarketingAgentRuntime(options.crossDomainHandoff !== undefined, options.audiencePolicy, skillOptions.gate);
   const policyAudit = options.audit === null
     ? undefined
     : options.audit ?? (auditTrail ? createPolicyAuditSink(auditTrail) : undefined);
   const basePolicyEngine = options.policyEngine ?? new DomainPolicyEngine({
-    skills: policySkills(),
-    allowed_payload_fields: allowedPayloadFields(services),
+    skills: MARKETING_SKILLS,
+    allowed_payload_fields: MARKETING_ALLOWED_PAYLOAD_FIELDS,
+    normalizeActionInput: (skill_id, input) => services.registry.resolve(skill_id).validateInput(input),
     resolveGrant,
     ...(options.autonomy ? { autonomy: options.autonomy } : {}),
     ...(policyAudit ? { audit: policyAudit } : {}),

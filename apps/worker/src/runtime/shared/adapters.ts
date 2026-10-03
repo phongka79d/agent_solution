@@ -15,6 +15,7 @@
  *    releaseLease refuses when the worker does not hold it.
  */
 
+import { appendTerminalRunNotice } from '@agentos/core-engine';
 import {
   OrchestratorError,
   type ActionDraft,
@@ -89,15 +90,6 @@ interface OutcomeWatchWriter {
   }): Promise<void>;
 }
 
-interface PendingOutcomeWriter {
-  appendPendingOutcomeAttribution(params: {
-    tenant_id: string;
-    run_id: string;
-    effect_key: string;
-    skill_id: string;
-  }): Promise<void>;
-}
-
 function hasOutcomeWatchWriter(repo: unknown): repo is OutcomeWatchWriter {
   return (
     typeof repo === 'object' &&
@@ -107,14 +99,6 @@ function hasOutcomeWatchWriter(repo: unknown): repo is OutcomeWatchWriter {
   );
 }
 
-function hasPendingOutcomeWriter(repo: unknown): repo is PendingOutcomeWriter {
-  return (
-    typeof repo === 'object' &&
-    repo !== null &&
-    'appendPendingOutcomeAttribution' in repo &&
-    typeof repo.appendPendingOutcomeAttribution === 'function'
-  );
-}
 
 interface OwnerCheckedReturnToAgent {
   returnToAgent(tenant_id: string, session_id: string, operator_id: string): Promise<void>;
@@ -523,6 +507,8 @@ export function createDurableAdapters(options: {
         state: record.state,
         correlation_id: record.correlation_id,
         state_payload: record.state_payload,
+        // Timer resumes are bound to this durable retry generation (T5.5).
+        retry_count: record.retry_count,
         lease_owner: record.lease_owner,
         lease_expires_at: record.lease_expires_at,
       };
@@ -533,7 +519,14 @@ export function createDurableAdapters(options: {
       run_id: string;
       expected_task_version: number;
       checkpoint: unknown;
-      approval: { action_id: string; effect_key: string; payload: unknown; reason: string };
+      approval: {
+        action_id: string;
+        effect_key: string;
+        payload: unknown;
+        payload_sha256: string;
+        digest_version: number;
+        reason: string;
+      };
     }): Promise<{ approval_id: string }> {
       const result = await options.approvalRepository.pauseForApproval({
         tenant_id: params.tenant_id,
@@ -544,6 +537,8 @@ export function createDurableAdapters(options: {
           action_id: params.approval.action_id,
           effect_key: params.approval.effect_key,
           payload: params.approval.payload,
+          payload_sha256: params.approval.payload_sha256,
+          digest_version: params.approval.digest_version,
           reason: params.approval.reason,
         },
       });
@@ -578,6 +573,9 @@ export function createDurableAdapters(options: {
         ...(params.lease_owner === undefined ? {} : { lease_owner: params.lease_owner }),
         ...(params.expected_resume_event === undefined ? {} : { expected_resume_event: params.expected_resume_event }),
       });
+      if (result.claimed) {
+        await appendTerminalRunNotice(result.task, options.conversationRepository);
+      }
       return { claimed: result.claimed };
     },
 
@@ -700,18 +698,13 @@ export function createDurableAdapters(options: {
       effect_key: string;
       skill_id: string;
     }): Promise<void> {
-      if (hasOutcomeWatchWriter(options.evidenceRepository)) {
-        await options.evidenceRepository.initializeOutcomeWatch(params);
-        return;
+      if (!hasOutcomeWatchWriter(options.evidenceRepository)) {
+        throw new OrchestratorError(
+          'CAPABILITY_NOT_ENABLED',
+          `initializeOutcomeWatch is unbound: pending_outcome_attributions writer is not available for effect '${params.effect_key}' on skill '${params.skill_id}'`,
+        );
       }
-      if (hasPendingOutcomeWriter(options.evidenceRepository)) {
-        await options.evidenceRepository.appendPendingOutcomeAttribution(params);
-        return;
-      }
-      throw new OrchestratorError(
-        'CAPABILITY_NOT_ENABLED',
-        `initializeOutcomeWatch is unbound: pending_outcome_attributions writer is not available for effect '${params.effect_key}' on skill '${params.skill_id}'`,
-      );
+      await options.evidenceRepository.initializeOutcomeWatch(params);
     },
   };
 
@@ -787,7 +780,6 @@ export function createDurableAdapters(options: {
           tenant_id,
           run_id,
           lease_owner: worker_id,
-          task_version: task.task_version,
         });
         return true;
       } catch {

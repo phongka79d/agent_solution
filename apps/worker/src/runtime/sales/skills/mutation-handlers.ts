@@ -1,11 +1,13 @@
-import type { SkillToolInvocation } from '@agentos/skills';
+import { INDETERMINATE_TRANSPORT_ERRORS, type SkillToolInvocation } from '@agentos/skills';
 import type {
   SalesCartInput,
   SalesCartOutput,
   SalesCommunicationInput,
   SalesCommunicationOutput,
   SalesConsentDecision,
+  SalesOrderAuthorization,
   SalesOrderInput,
+  SalesOrderLine,
   SalesOrderOutput,
   SalesPriceFloorDecision,
 } from './types.js';
@@ -23,6 +25,49 @@ import { isValidIsoDate, readInventoryFromSor } from './sor-readers.js';
 type CreateCartInput = SalesCartInput;
 type CreateOrderInput = SalesOrderInput;
 type SendMessageInput = SalesCommunicationInput;
+
+function readQuotedOrderLines(
+  quote: Readonly<Record<string, unknown>>,
+  sku_id: string,
+): readonly SalesOrderLine[] {
+  const quotedItems = quote['items'];
+  if (quotedItems !== undefined) {
+    if (!Array.isArray(quotedItems) || quotedItems.length !== 1) {
+      throw new SalesSkillToolError('PRICE_MISMATCH', 'Verified order quotes must identify exactly one priced SKU line');
+    }
+    const item = quotedItems[0];
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+      throw new SalesSkillToolError('PRICE_MISMATCH', 'Authoritative cart quote contains an invalid order line');
+    }
+    const quotedSku = 'sku_id' in item ? item.sku_id : undefined;
+    const quantity = 'quantity' in item ? item.quantity : undefined;
+    if (
+      typeof quotedSku !== 'string'
+      || quotedSku.trim().length === 0
+      || quotedSku !== sku_id
+      || typeof quantity !== 'number'
+      || !Number.isSafeInteger(quantity)
+      || quantity < 1
+    ) {
+      throw new SalesSkillToolError('PRICE_MISMATCH', 'Authoritative cart quote SKU or quantity does not match the verified price');
+    }
+    return [{ sku_id: quotedSku, quantity }];
+  }
+
+  const quotedSku = quote['sku_id'];
+  const quantity = quote['item_count'];
+  if (
+    typeof quotedSku !== 'string'
+    || quotedSku.trim().length === 0
+    || quotedSku !== sku_id
+    || typeof quantity !== 'number'
+    || !Number.isSafeInteger(quantity)
+    || quantity < 1
+  ) {
+    throw new SalesSkillToolError('PRICE_MISMATCH', 'Authoritative cart quote does not identify its order SKU and quantity');
+  }
+  return [{ sku_id: quotedSku, quantity }];
+}
 
 function resolveServerEffectKey(
   input: unknown,
@@ -191,6 +236,7 @@ export async function handleCreateOrder(
     );
   }
 
+
   const orderPort = options.order;
   if (!orderPort) {
     throw new SalesSkillToolError(
@@ -317,12 +363,28 @@ export async function handleCreateOrder(
       'Price quote token signature verification failed',
     );
   }
+  const approval_id = invocation.context.approval_id;
+  const approval_payload_digest = invocation.context.approval_payload_digest;
+  if (
+    typeof approval_id !== 'string'
+    || approval_id.trim().length === 0
+    || typeof approval_payload_digest !== 'string'
+    || !/^[a-f0-9]{64}$/i.test(approval_payload_digest)
+  ) {
+    throw new SalesSkillToolError('AUTHORITY_ABSENT', 'Order creation requires verified AUTH-4 approval bound to this payload');
+  }
+  const authorization: SalesOrderAuthorization = {
+    approval_id,
+    approval_payload_digest,
+    ...(invocation.context.signal === undefined ? {} : { signal: invocation.context.signal }),
+  };
 
-  // 2. Dispatch using only the server-derived effect identity.
-  const authoritativeInput: SalesOrderInput = { ...input, effect_key };
+  const items = readQuotedOrderLines(quoteRecord, skuId);
+  // 2. Dispatch only the server-derived cart lines, effect identity and verified AUTH-4 proof.
+  const authoritativeInput: SalesOrderInput = { ...input, effect_key, items };
   let result: unknown;
   try {
-    result = await createOrderFn.call(orderPort, authoritativeInput);
+    result = await createOrderFn.call(orderPort, authoritativeInput, authorization);
   } catch (err) {
     if (err instanceof SalesSkillToolError) throw err;
     throw new SalesSkillToolError(
@@ -440,8 +502,12 @@ export async function handleSendMessage(
   if (typeof options.takeover_active === 'boolean') {
     takeoverActive = options.takeover_active;
   } else if (options.context && typeof options.context.takeoverActiveFor === 'function') {
+    const hydrated = invocation.context.hydrated_context;
     try {
-      takeoverActive = Boolean(await options.context.takeoverActiveFor(tenant_id, correlation_id));
+      // Without the checkpointed context the takeover state is unknown: fail closed.
+      takeoverActive = hydrated === undefined
+        ? true
+        : Boolean(await options.context.takeoverActiveFor(hydrated));
     } catch {
       takeoverActive = true;
     }
@@ -535,8 +601,16 @@ export async function handleSendMessage(
     result = await sendMessageFn.call(commPort, authoritativeInput);
   } catch (err) {
     if (err instanceof SalesSkillToolError) throw err;
+    const causeCode = typeof err === 'object'
+      && err !== null
+      && 'code' in err
+      && typeof err.code === 'string'
+      ? err.code
+      : undefined;
     throw new SalesSkillToolError(
-      'AUTHORITATIVE_SOURCE_UNAVAILABLE',
+      causeCode !== undefined && INDETERMINATE_TRANSPORT_ERRORS.includes(causeCode)
+        ? causeCode
+        : 'AUTHORITATIVE_SOURCE_UNAVAILABLE',
       err instanceof Error ? err.message : 'Communication connector send failed',
     );
   }

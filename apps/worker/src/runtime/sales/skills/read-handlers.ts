@@ -1,3 +1,4 @@
+import type { HydratedContext } from '@agentos/core-engine/contracts';
 import type { CustomerEventTimeline } from '@agentos/database';
 import type { SkillToolInvocation } from '@agentos/skills';
 import type {
@@ -41,7 +42,7 @@ interface RetrieveCustomerInput {
 
 interface RecommendProductInput {
   readonly tenant_id: string;
-  readonly customer_id: string;
+  readonly customer_id?: string;
   readonly current_cart_skus: readonly string[];
   readonly recommendation_type?: string;
 }
@@ -49,7 +50,7 @@ interface RecommendProductInput {
 interface CheckPriceInput {
   readonly tenant_id: string;
   readonly sku_id: string;
-  readonly customer_id: string;
+  readonly customer_id?: string;
   readonly requested_discount_percent?: number;
   readonly proposed_price?: number;
 }
@@ -58,6 +59,20 @@ const INJECTION_MARKERS =
   /(?:<script\b[^>]*>|<\/script>|\bignore\s+(?:all\s+)?previous\s+instructions\b|\b(?:reveal|disclose|show|print)\s+(?:the\s+)?(?:system|developer)\s+(?:prompt|instructions)\b|(?:^|\n)\s*(?:system|assistant|developer)\s*:\s*(?:you\s+are|ignore|follow|do\s+not|reveal|disclose|show|print)\b)/i;
 const RECOMMENDATION_TYPES = ['CROSS_SELL', 'UPSELL', 'SUBSTITUTE', 'BUNDLE', 'REPLENISHMENT'] as const;
 const RECOMMENDATION_THRESHOLD = 0.65;
+function requireHydratedContext(invocation: SkillToolInvocation<unknown>): HydratedContext {
+  const hydrated = invocation.context.hydrated_context;
+  if (
+    hydrated === undefined
+    || hydrated.tenant_id !== invocation.context.tenant_id
+    || hydrated.correlation_id !== invocation.context.correlation_id
+  ) {
+    throw new SalesSkillToolError(
+      'IDENTITY_UNVERIFIED',
+      'Verified Sales context is not bound to this read invocation',
+    );
+  }
+  return hydrated;
+}
 function normalizedProductText(product: {
   readonly use_case?: string;
   readonly key_attribute?: string;
@@ -132,7 +147,8 @@ export async function handleSearchProduct(
   }
 
   const catalog = await readCatalogFromSor(options, tenant_id);
-  const advisorRequirements = options.advisor_state?.requirementsFor(tenant_id, invocation.context.correlation_id);
+  const hydratedContext = options.advisor_state === undefined ? undefined : requireHydratedContext(invocation);
+  const advisorRequirements = options.advisor_state?.requirementsFor(hydratedContext!);
   const matched = catalog.items
     .filter((product) => {
       if (
@@ -231,7 +247,7 @@ export async function handleSearchProduct(
       continue;
     }
     if (advisorRequirements !== undefined && products.length === 0) {
-      options.advisor_state?.recordCandidateSku(tenant_id, invocation.context.correlation_id, product.sku);
+      options.advisor_state?.recordCandidateSku(hydratedContext!, product.sku);
     }
     products.push({
       ...product,
@@ -259,9 +275,11 @@ export async function handleCheckStock(
     );
   }
 
-  const inventory = await readInventoryFromSor(options, tenant_id, input.sku_id);
+  const inventory = await readInventoryFromSor(options, tenant_id, input.sku_id, invocation.context.signal);
   const available_quantity = inventory.item.total_available_to_promise!;
-  options.advisor_state?.recordStock(tenant_id, invocation.context.correlation_id, input.sku_id, available_quantity);
+  if (options.advisor_state !== undefined) {
+    options.advisor_state.recordStock(requireHydratedContext(invocation), input.sku_id, available_quantity);
+  }
   return {
     sku_id: input.sku_id,
     available_quantity,
@@ -274,7 +292,7 @@ export async function handleRetrieveCustomer(
   options: SalesSkillToolPortOptions,
   invocation: SkillToolInvocation<RetrieveCustomerInput>,
 ): Promise<Record<string, unknown>> {
-  const { tenant_id, correlation_id } = invocation.context;
+  const { tenant_id } = invocation.context;
   const input = invocation.input;
   if (input.tenant_id !== tenant_id) {
     throw new SalesSkillToolError(
@@ -283,7 +301,7 @@ export async function handleRetrieveCustomer(
     );
   }
 
-  const customer = await options.context.verifiedCustomerFor(tenant_id, correlation_id);
+  const customer = await options.context.verifiedCustomerFor(requireHydratedContext(invocation));
   if (
     customer === null
     || customer.tenant_id !== tenant_id
@@ -329,7 +347,7 @@ export async function handleRecommendProduct(
   options: SalesSkillToolPortOptions,
   invocation: SkillToolInvocation<RecommendProductInput>,
 ): Promise<Record<string, unknown>> {
-  const { tenant_id, correlation_id } = invocation.context;
+  const { tenant_id } = invocation.context;
   const input = invocation.input;
   const recommendation_type = input.recommendation_type ?? 'CROSS_SELL';
 
@@ -343,47 +361,42 @@ export async function handleRecommendProduct(
     );
   }
 
-  const customer = await options.context.verifiedCustomerFor(tenant_id, correlation_id);
+  const customerId = input.customer_id;
+  if (customerId !== undefined && customerId.trim().length === 0) {
+    throw new SalesSkillToolError('IDENTITY_UNVERIFIED', 'Recommendation customer identity is empty');
+  }
+  const hydratedContext = options.advisor_state !== undefined || customerId !== undefined
+    ? requireHydratedContext(invocation)
+    : undefined;
+  const customer = customerId === undefined
+    ? null
+    : await options.context.verifiedCustomerFor(hydratedContext!);
   if (
-    customer === null
-    || customer.tenant_id !== tenant_id
-    || customer.customer_id !== input.customer_id
+    customerId !== undefined
+    && (
+      customer === null
+      || customer.tenant_id !== tenant_id
+      || customer.customer_id !== customerId
+    )
   ) {
     throw new SalesSkillToolError(
       'IDENTITY_UNVERIFIED',
       'Recommendation customer is not verified for this session',
     );
   }
-  if (!customer.consent_marketing || customer.suppression_active) {
-    throw new SalesSkillToolError(
-      'CONSENT_REQUIRED',
-      'Recommendation is unavailable without current marketing consent',
-    );
-  }
 
-  const timeline = await options.context.verifiedTimelineFor(tenant_id, correlation_id);
+  const timeline = customerId === undefined
+    ? null
+    : await options.context.verifiedTimelineFor(hydratedContext!);
   const eventIds = timeline?.items
     .map((event) => event.event_id)
     .filter((event_id) => event_id.trim().length > 0) ?? [];
-  if (eventIds.length === 0) {
-    throw new SalesSkillToolError(
-      'EVIDENCE_REQUIRED',
-      'Recommendation requires a verified Customer360 timeline event',
-    );
-  }
-
-  if (options.revenue_evidence === undefined) {
-    throw new SalesSkillToolError(
-      'AUTHORITATIVE_SOURCE_UNAVAILABLE',
-      'Owner-approved revenue evidence is unavailable; recommendation execution is refused',
-    );
-  }
 
   const catalog = await readCatalogFromSor(options, tenant_id);
-  const advisorRequirements = options.advisor_state?.requirementsFor(tenant_id, correlation_id);
+  const advisorRequirements = options.advisor_state?.requirementsFor(hydratedContext!);
   const advisorSku = advisorRequirements === undefined
     ? undefined
-    : options.advisor_state?.candidateSkuFor(tenant_id, correlation_id);
+    : options.advisor_state?.candidateSkuFor(hydratedContext!);
   if (advisorRequirements !== undefined && (advisorSku === undefined || advisorSku.trim().length === 0)) {
     throw new SalesSkillToolError(
       'EVIDENCE_REQUIRED',
@@ -442,10 +455,9 @@ export async function handleRecommendProduct(
     }
     const available = inventory.item.total_available_to_promise!;
     if (available <= 0) continue;
-    options.advisor_state?.recordStock(tenant_id, correlation_id, sku, available);
-    // SAL-03 must ground the customer-visible price in the same authoritative check_price path
-    // used by direct price inquiries before exposing a recommendation.
-    if (invocation.context.caller_agent === 'SAL-03' || (options.price_floor !== undefined && options.price_floor !== null)) {
+    options.advisor_state?.recordStock(hydratedContext!, sku, available);
+    // Catalog list price is authoritative ERP data; a bound pricing engine can refine it.
+    if (options.price_floor !== undefined && options.price_floor !== null) {
       let priceCheck: Record<string, unknown>;
       try {
         priceCheck = await handleCheckPrice(options, {
@@ -453,7 +465,7 @@ export async function handleRecommendProduct(
           input: {
             tenant_id,
             sku_id: sku,
-            customer_id: customer.customer_id,
+            ...(customerId === undefined ? {} : { customer_id: customerId }),
           },
         });
       } catch {
@@ -480,62 +492,72 @@ export async function handleRecommendProduct(
       RECOMMENDATION_THRESHOLD + (categoryAffinity ? 0.15 : 0),
     );
 
-    let revenue: SalesRecommendationRevenueEvidence;
-    try {
-      revenue = await options.revenue_evidence.read({
-        tenant_id,
-        customer_id: customer.customer_id,
-        sku,
-        recommendation_type,
-        confidence,
-        list_price,
-        currency,
-      });
-    } catch {
-      continue;
+    let revenue: SalesRecommendationRevenueEvidence | undefined;
+    if (customerId !== undefined && customer !== null && options.revenue_evidence !== undefined) {
+      try {
+        revenue = await options.revenue_evidence.read({
+          tenant_id,
+          customer_id: customerId,
+          sku,
+          recommendation_type,
+          confidence,
+          list_price,
+          currency,
+        });
+      } catch {
+        revenue = undefined;
+      }
     }
 
     if (
-      !Number.isFinite(revenue.conversion_probability)
-      || revenue.conversion_probability < 0
-      || revenue.conversion_probability > 1
-      || !Number.isFinite(revenue.expected_revenue)
-      || revenue.expected_revenue < 0
-      || revenue.currency !== currency
-      || revenue.model_id.trim().length === 0
-      || revenue.provenance_reference.trim().length === 0
+      revenue !== undefined
+      && (
+        !Number.isFinite(revenue.conversion_probability)
+        || revenue.conversion_probability < 0
+        || revenue.conversion_probability > 1
+        || !Number.isFinite(revenue.expected_revenue)
+        || revenue.expected_revenue < 0
+        || revenue.currency !== currency
+        || revenue.model_id.trim().length === 0
+        || revenue.provenance_reference.trim().length === 0
+      )
     ) {
-      continue;
+      revenue = undefined;
     }
 
     return {
-      customer: customer.customer_id,
-      product: { sku, name, price: list_price },
-      reason: `Available product selected from verified Customer360 event ${eventIds[0]}.`,
+      customer: customerId ?? null,
+      product: { sku, name, price: list_price, currency },
+      reason: eventIds.length > 0
+        ? `Available product selected from verified Customer360 event ${eventIds[0]}.`
+        : 'Available product selected from the authoritative ERP catalog and in-stock inventory.',
       evidence: {
         verified_timeline_event_ids: eventIds,
-        verified_model: revenue.model_id,
-        historical_spend: customer.total_spent,
+        verified_model: revenue?.model_id ?? null,
+        ...(customer === null ? {} : { historical_spend: customer.total_spent }),
         ...(categoryAffinity ? { category_affinity: 'verified timeline overlap' } : {}),
+        ...(revenue === undefined ? { revenue_data_status: 'Chưa có dữ liệu doanh thu' } : {}),
       },
       eligibility: {
         stock_available: true,
-        consent_verified: true,
-        suppression_cleared: true,
+        consent_verified: null,
+        suppression_cleared: null,
       },
       confidence,
       ranking_method: 'authoritative_catalog_order',
-      expected_outcome: {
-        conversion_probability: revenue.conversion_probability,
-        expected_revenue: revenue.expected_revenue,
-        currency: revenue.currency,
-      },
+      expected_outcome: revenue === undefined
+        ? null
+        : {
+            conversion_probability: revenue.conversion_probability,
+            expected_revenue: revenue.expected_revenue,
+            currency: revenue.currency,
+          },
     };
   }
 
   throw new SalesSkillToolError(
     'AUTHORITATIVE_SOURCE_UNAVAILABLE',
-    'No candidate has complete authoritative inventory and revenue evidence',
+    'No candidate has complete authoritative inventory evidence',
   );
 }
 
@@ -543,7 +565,7 @@ export async function handleCheckPrice(
   options: SalesSkillToolPortOptions,
   invocation: SkillToolInvocation<CheckPriceInput>,
 ): Promise<Record<string, unknown>> {
-  const { tenant_id, correlation_id } = invocation.context;
+  const { tenant_id } = invocation.context;
   const input = invocation.input;
 
   if (input.tenant_id !== tenant_id) {
@@ -553,30 +575,27 @@ export async function handleCheckPrice(
     );
   }
 
-  const advisorRequirements = options.advisor_state?.requirementsFor(tenant_id, correlation_id);
+  const hydratedContext = options.advisor_state === undefined ? undefined : requireHydratedContext(invocation);
+  const advisorRequirements = options.advisor_state?.requirementsFor(hydratedContext!);
   if (advisorRequirements !== undefined) {
-    const verifiedCustomer = await options.context.verifiedCustomerFor(tenant_id, correlation_id);
-    if (
-      verifiedCustomer === null
-      || verifiedCustomer.tenant_id !== tenant_id
-      || verifiedCustomer.customer_id !== input.customer_id
-    ) {
-      throw new SalesSkillToolError(
-        'IDENTITY_UNVERIFIED',
-        'Price quote requires the server-verified customer for this session',
-      );
+    if (input.customer_id !== undefined) {
+      const verifiedCustomer = await options.context.verifiedCustomerFor(hydratedContext!);
+      if (
+        verifiedCustomer === null
+        || verifiedCustomer.tenant_id !== tenant_id
+        || verifiedCustomer.customer_id !== input.customer_id
+      ) {
+        throw new SalesSkillToolError(
+          'IDENTITY_UNVERIFIED',
+          'Price request customer is not verified for this session',
+        );
+      }
     }
-    if (verifiedCustomer.consent_marketing !== true || verifiedCustomer.suppression_active) {
-      throw new SalesSkillToolError(
-        'CONSENT_REQUIRED',
-        'Price quote is unavailable without current customer consent',
-      );
-    }
-    const available = options.advisor_state?.stockFor(tenant_id, correlation_id, input.sku_id);
+    const available = options.advisor_state?.stockFor(hydratedContext!, input.sku_id);
     if (available === undefined || available <= 0) {
       throw new SalesSkillToolError(
         'OUT_OF_STOCK',
-        `Price quote requires a successful in-stock check for SKU ${input.sku_id}`,
+        `Price read requires a successful in-stock check for SKU ${input.sku_id}`,
       );
     }
   }
@@ -604,40 +623,17 @@ export async function handleCheckPrice(
   }
 
   if (!decision || typeof decision !== 'object') {
-    throw new SalesSkillToolError(
-      'P_FLOOR_UNAVAILABLE',
-      'Authoritative floor decision is missing',
-    );
+    throw new SalesSkillToolError('P_FLOOR_UNAVAILABLE', 'Authoritative floor decision is missing');
   }
-
   if (decision.owner_approved !== true) {
     throw new SalesSkillToolError(
       'P_FLOOR_UNAVAILABLE',
       decision.reason ?? 'Floor decision is not owner-approved',
     );
   }
-
-  if (
-    typeof decision.floor_source !== 'string'
-    || decision.floor_source.trim().length === 0
-  ) {
-    throw new SalesSkillToolError(
-      'P_FLOOR_UNAVAILABLE',
-      'Floor provenance is absent or empty',
-    );
+  if (typeof decision.floor_source !== 'string' || decision.floor_source.trim().length === 0) {
+    throw new SalesSkillToolError('P_FLOOR_UNAVAILABLE', 'Floor provenance is absent or empty');
   }
-
-  if (
-    typeof decision.quote_ttl_seconds !== 'number'
-    || !Number.isFinite(decision.quote_ttl_seconds)
-    || decision.quote_ttl_seconds <= 0
-  ) {
-    throw new SalesSkillToolError(
-      'P_FLOOR_UNAVAILABLE',
-      'Quote TTL seconds is missing or non-positive',
-    );
-  }
-
   if (
     typeof decision.list_price !== 'number'
     || !Number.isFinite(decision.list_price)
@@ -668,12 +664,9 @@ export async function handleCheckPrice(
       `Verified API-001 quote exceeds the server-stamped ${advisorBudget.currency} budget for SKU ${input.sku_id}`,
     );
   }
-  const clock = options.now ?? (() => new Date());
-  const quote_expires_at = new Date(clock().getTime() + decision.quote_ttl_seconds * 1000).toISOString();
 
   let final_price = decision.list_price;
   let discount_allowed = true;
-
   if (
     typeof input.requested_discount_percent === 'number'
     && Number.isFinite(input.requested_discount_percent)
@@ -682,29 +675,38 @@ export async function handleCheckPrice(
     const discounted = Number((decision.list_price * (1 - input.requested_discount_percent / 100)).toFixed(2));
     if (discounted >= decision.p_floor) {
       final_price = discounted;
-      discount_allowed = true;
     } else {
-      final_price = decision.list_price;
       discount_allowed = false;
     }
   }
 
-  if (!hasQuoteSigningSecret(options)) {
-    throw new SalesSkillToolError(
-      'P_FLOOR_UNAVAILABLE',
-      'Quote signing secret is not bound',
-    );
+  let quote: { readonly quote_token: string; readonly quote_expires_at: string } | undefined;
+  if (hasQuoteSigningSecret(options) && input.customer_id !== undefined) {
+    if (
+      typeof decision.quote_ttl_seconds !== 'number'
+      || !Number.isFinite(decision.quote_ttl_seconds)
+      || decision.quote_ttl_seconds <= 0
+    ) {
+      throw new SalesSkillToolError(
+        'P_FLOOR_UNAVAILABLE',
+        'Quote TTL seconds is missing or non-positive',
+      );
+    }
+    const clock = options.now ?? (() => new Date());
+    const quote_expires_at = new Date(clock().getTime() + decision.quote_ttl_seconds * 1000).toISOString();
+    quote = {
+      quote_token: computeQuoteToken(options.quote_signing_secret!, {
+        tenant_id,
+        sku_id: input.sku_id,
+        customer_id: input.customer_id,
+        final_price,
+        p_floor: decision.p_floor,
+        currency: decision.currency,
+        quote_expires_at,
+      }),
+      quote_expires_at,
+    };
   }
-
-  const quote_token = computeQuoteToken(options.quote_signing_secret!, {
-    tenant_id,
-    sku_id: input.sku_id,
-    customer_id: input.customer_id,
-    final_price,
-    p_floor: decision.p_floor,
-    currency: decision.currency,
-    quote_expires_at,
-  });
   return {
     sku_id: input.sku_id,
     list_price: decision.list_price,
@@ -712,7 +714,6 @@ export async function handleCheckPrice(
     p_floor: decision.p_floor,
     discount_allowed,
     currency: decision.currency,
-    quote_token,
-    quote_expires_at,
+    ...(quote ?? {}),
   };
 }

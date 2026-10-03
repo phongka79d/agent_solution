@@ -4,7 +4,7 @@ import type { CompanyCrmPort } from '../../gateway/ports.js';
 
 type CompanyCrmRepository = Pick<
   CompanyCrmProjectionRepository,
-  'listCustomers' | 'getCustomerProfile' | 'listCampaigns' | 'getCampaign' | 'getConversationSummary'
+  'listCustomers' | 'getCustomerProfile' | 'listCampaignSegments' | 'listCampaigns' | 'getCampaign' | 'getConversationSummary'
 >;
 
 /** Binds the read-only company CRM projections to the gateway port. */

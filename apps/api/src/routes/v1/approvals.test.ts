@@ -33,6 +33,8 @@ function buildHarness(options?: {
   governanceFailure?: boolean;
   runSessionId?: string;
   runReadFailure?: boolean;
+  runMissing?: boolean;
+  runOwnerMissing?: boolean;
   decideImpl?: (input: {
     tenant_id: string;
     approval_id: string;
@@ -64,6 +66,18 @@ function buildHarness(options?: {
           created_at: '2026-09-23T00:00:00.000Z',
           payload_sha256: PAYLOAD_SHA256,
           expires_at: '2026-09-26T00:00:00.000Z',
+          summary: {
+            title_key: 'approvals.title.action',
+            params: {},
+            requesting_agent_key: 'refunds.agent',
+            domain: 'sales',
+            campaign_id: null,
+            customer_id: null,
+            risk: 'high',
+            evidence_count: 0,
+            modification: null,
+            expires_at: '2026-09-26T00:00:00.000Z',
+          },
         };
 
   const decide = vi.fn(
@@ -94,12 +108,15 @@ function buildHarness(options?: {
     if (options?.runReadFailure === true) {
       throw new Error('run lookup failed');
     }
+    if (options?.runMissing === true) return null;
+    if (options?.runOwnerMissing === true) return {};
     return { session_id: options?.runSessionId ?? 'different-drafter' };
   });
 
+  const listApprovals = vi.fn(async () => ({ items: [], next_cursor: null }));
   const runtime = {
     approvals: {
-      list: vi.fn(),
+      list: listApprovals,
       detail: detailFn,
       decide,
     },
@@ -148,7 +165,7 @@ function buildHarness(options?: {
     }),
   });
 
-  return { app, auditRecord, decide, detail, detailFn, runtime };
+  return { app, auditRecord, decide, detail, detailFn, listApprovals, runtime };
 }
 
 describe('POST /approvals/:approval_id/decision (R05 approvals.decide)', () => {
@@ -330,6 +347,52 @@ describe('POST /approvals/:approval_id/decision (R05 approvals.decide)', () => {
 
       expect(response.statusCode).toBe(503);
       expect(response.json()).toMatchObject({ error_code: 'PROVIDER_TIMEOUT' });
+      expect(decide).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it.each([
+    { name: 'missing run', options: { runMissing: true } },
+    { name: 'missing owner', options: { runOwnerMissing: true } },
+    { name: 'empty owner', options: { runSessionId: '' } },
+  ])('refuses a $name without treating absent ownership as a provider outage', async ({ options }) => {
+    const { app, decide } = buildHarness({ ...options, governanceSetting: true });
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/approvals/${APPROVAL_ID}/decision`,
+        headers: { authorization: `Bearer ${OPERATOR_TOKEN}` },
+        payload: {
+          decision: 'APPROVE',
+          reason: 'Ownership must be verifiable before approval',
+          expected_payload_sha256: PAYLOAD_SHA256,
+        },
+      });
+      expect(response.statusCode).toBe(409);
+      expect(response.json()).toMatchObject({ error_code: 'APPROVAL_NOT_CLAIMABLE', retryable: false });
+      expect(decide).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('keeps a failed owner read retryable without authorizing the decision', async () => {
+    const { app, decide } = buildHarness({ governanceSetting: true, runReadFailure: true });
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/approvals/${APPROVAL_ID}/decision`,
+        headers: { authorization: `Bearer ${OPERATOR_TOKEN}` },
+        payload: {
+          decision: 'APPROVE',
+          reason: 'Ownership read must succeed before approval',
+          expected_payload_sha256: PAYLOAD_SHA256,
+        },
+      });
+      expect(response.statusCode).toBe(503);
+      expect(response.json()).toMatchObject({ error_code: 'PROVIDER_TIMEOUT', retryable: true });
       expect(decide).not.toHaveBeenCalled();
     } finally {
       await app.close();
@@ -627,6 +690,44 @@ describe('POST /approvals/:approval_id/decision (R05 approvals.decide)', () => {
         await app.close();
       }
     });
+    it('maps a conflicting REJECT after an APPROVE queue to HTTP 409', async () => {
+      const { app, decide } = buildHarness();
+      const headers = { authorization: `Bearer ${OPERATOR_TOKEN}` };
+      const url = `/approvals/${APPROVAL_ID}/decision`;
+      const reviewed = { reason: 'Verified', expected_payload_sha256: PAYLOAD_SHA256 };
+
+      try {
+        const approved = await app.inject({
+          method: 'POST',
+          url,
+          headers,
+          payload: { ...reviewed, decision: 'APPROVE' },
+        });
+        expect(approved.statusCode).toBe(202);
+
+        decide.mockRejectedValueOnce(
+          new Error('APPROVAL_DECISION_CONFLICT: a different decision is already queued'),
+        );
+        const rejected = await app.inject({
+          method: 'POST',
+          url,
+          headers,
+          payload: { ...reviewed, decision: 'REJECT', reason: 'Conflicting decision' },
+        });
+
+        expect(rejected.statusCode).toBe(409);
+        expect(rejected.json()).toMatchObject({
+          error_code: 'IDEMPOTENCY_CONFLICT',
+          retryable: false,
+        });
+        expect(decide).toHaveBeenNthCalledWith(
+          2,
+          expect.objectContaining({ decision: 'REJECT' }),
+        );
+      } finally {
+        await app.close();
+      }
+    });
   });
 
   describe('refusal mapping', () => {
@@ -758,5 +859,24 @@ describe('POST /approvals/:approval_id/decision (R05 approvals.decide)', () => {
         await app.close();
       }
     });
+  });
+});
+describe('GET /approvals limit validation', () => {
+  it('rejects non-integer and out-of-range limits before listing approvals', async () => {
+    const { app, listApprovals } = buildHarness();
+    try {
+      for (const limit of ['abc', '0', '1000']) {
+        const response = await app.inject({
+          method: 'GET',
+          url: `/approvals?limit=${limit}`,
+          headers: { authorization: `Bearer ${OPERATOR_TOKEN}` },
+        });
+        expect(response.statusCode).toBe(400);
+        expect(response.json().error_code).toBe('VALIDATION_FAILED');
+      }
+      expect(listApprovals).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
   });
 });

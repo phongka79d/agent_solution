@@ -1,6 +1,13 @@
 import type { CompanyCrmCampaignRow } from '@agentos/database';
 
-export type CampaignLifecycleState = 'draft' | 'in_review' | 'brand_audit' | 'awaiting_approval' | 'in_flight' | 'approved';
+export type CampaignLifecycleState =
+  | 'drafting'
+  | 'brand_review'
+  | 'awaiting_approval'
+  | 'approved'
+  | 'rejected'
+  | 'failed'
+  | 'cancelled';
 
 export interface CampaignDispatchProjection {
   readonly status: 'NOT_INTEGRATED';
@@ -12,7 +19,9 @@ export interface CampaignProjection {
   readonly name: string | null;
   readonly objective: string | null;
   readonly channels: unknown;
-  readonly lifecycle_state: CampaignLifecycleState;
+  readonly audience_count: number | null;
+  readonly status: CampaignLifecycleState;
+  readonly failure_reason_key: string | null;
   readonly draft_receipt?: unknown;
   readonly brand_audit?: unknown;
   readonly approval?: {
@@ -53,34 +62,37 @@ export function deriveCampaignLifecycle(row: CompanyCrmCampaignRow): CampaignLif
   const stage = stringValue(payload?.['stage'])?.toLowerCase();
   const taskState = row.task_state?.toLowerCase();
   const campaignStatus = row.campaign_status?.toLowerCase();
-  if (row.approval_decision === 'APPROVED') return 'approved';
+  if (taskState === 'failed') return 'failed';
+  if (taskState === 'stopped' || campaignStatus === 'cancelled') return 'cancelled';
+  if (row.approval_decision === 'REJECTED' || campaignStatus === 'rejected') return 'rejected';
+  if (row.approval_decision === 'APPROVED' || campaignStatus === 'approved') return 'approved';
   if (
     row.approval_decision === 'PENDING' ||
-    taskState === 'awaiting_human'
+    taskState === 'awaiting_human' ||
+    campaignStatus === 'awaiting_approval'
   ) {
     return 'awaiting_approval';
   }
-  if (taskState === 'in_flight' || campaignStatus === 'in_flight') return 'in_flight';
-  if (stage === 'brand_audit' || stage === 'brand-audit' || payload?.['brand_audit'] !== undefined) {
-    return 'brand_audit';
-  }
   if (
-    taskState === 'queued' ||
-    taskState === 'running' ||
-    taskState === 'waiting' ||
-    taskState === 'completed'
+    stage === 'brand_audit' ||
+    stage === 'brand-audit' ||
+    stage === 'brand_review' ||
+    campaignStatus === 'brand_review'
   ) {
-    return 'in_review';
+    return 'brand_review';
   }
-  return 'draft';
+  return 'drafting';
 }
-
 /** Maps a campaign row and always advertises dispatch as not integrated. */
 export function toCampaignProjection(row: CompanyCrmCampaignRow): CampaignProjection {
   const payload = campaignPayload(row.task_payload);
   const input = objectOf(payload?.['input']);
   const receipt = payload?.['draft_receipt'] ?? payload?.['receipt'];
   const brandAudit = payload?.['brand_audit'];
+  const taskError = objectOf(row.task_error);
+  const failure_reason_key = row.task_state?.toLowerCase() === 'failed'
+    ? stringValue(taskError?.['failure_reason_key']) ?? stringValue(taskError?.['code'])
+    : null;
   const approval =
     row.approval_id === null || row.approval_decision === null
       ? undefined
@@ -93,10 +105,12 @@ export function toCampaignProjection(row: CompanyCrmCampaignRow): CampaignProjec
   return {
     campaign_id: row.campaign_id,
     run_id: row.run_id,
-    name: row.name ?? stringValue(payload?.['name']),
+    name: row.name,
     objective: row.objective ?? stringValue(input?.['objective']) ?? stringValue(payload?.['objective']),
     channels: row.channels ?? input?.['channels'] ?? payload?.['channels'] ?? [],
-    lifecycle_state: deriveCampaignLifecycle(row),
+    audience_count: row.audience_count,
+    status: deriveCampaignLifecycle(row),
+    failure_reason_key,
     ...(receipt === undefined ? {} : { draft_receipt: receipt }),
     ...(brandAudit === undefined ? {} : { brand_audit: brandAudit }),
     ...(approval === undefined ? {} : { approval }),

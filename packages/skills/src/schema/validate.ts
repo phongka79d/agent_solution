@@ -8,7 +8,8 @@
  * is no keyword here that would have to be ignored.
  */
 
-import { stableJson } from './canonical.js';
+import { canonicalizeJson } from '@agentos/core-engine/canonical-json';
+
 import { matchesFormat } from './formats.js';
 
 /** One failed constraint, located by path so a caller can point at the payload. */
@@ -24,6 +25,21 @@ export interface SchemaViolation {
 /** Reports whether a value is a JSON object (never `null`, never an array). */
 function isJsonObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Uses the shared canonical bytes for comparisons; an unrepresentable value matches no member.
+ * Only canonical refusals become comparison failures, so unrelated errors are not hidden.
+ */
+function comparisonForm(value: unknown): string | undefined {
+  try {
+    return canonicalizeJson(value);
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'CANONICAL_JSON_INVALID') {
+      return undefined;
+    }
+    throw error;
+  }
 }
 
 /** The declared `type` names of a node, or `undefined` when the keyword is absent. */
@@ -141,7 +157,11 @@ function checkArray(schema: Record<string, unknown>, value: readonly unknown[], 
   if (schema['uniqueItems'] === true) {
     const seen = new Set<string>();
     for (const item of value) {
-      const form = stableJson(item);
+      const form = comparisonForm(item);
+      if (form === undefined) {
+        push(out, path, 'uniqueItems', 'the array contains a member without a canonical JSON representation');
+        break;
+      }
       if (seen.has(form)) {
         push(out, path, 'uniqueItems', 'the array repeats an identical member');
         break;
@@ -269,13 +289,19 @@ function collect(
     return;
   }
 
-  if (Object.hasOwn(schema, 'const') && stableJson(value) !== stableJson(schema['const'])) {
-    push(out, path, 'const', 'the value differs from the declared constant');
-  }
-
+  const hasConstant = Object.hasOwn(schema, 'const');
   const allowed = schema['enum'];
-  if (Array.isArray(allowed) && !allowed.some((member) => stableJson(member) === stableJson(value))) {
-    push(out, path, 'enum', 'the value is not one of the declared members');
+  if (hasConstant || Array.isArray(allowed)) {
+    const form = comparisonForm(value);
+    if (hasConstant && (form === undefined || form !== comparisonForm(schema['const']))) {
+      push(out, path, 'const', 'the value differs from the declared constant');
+    }
+    if (
+      Array.isArray(allowed) &&
+      (form === undefined || !allowed.some((member) => comparisonForm(member) === form))
+    ) {
+      push(out, path, 'enum', 'the value is not one of the declared members');
+    }
   }
 
   if (typeof value === 'number') {

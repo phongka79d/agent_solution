@@ -2,6 +2,7 @@ import type { PoolClient, QueryResult, QueryResultRow } from 'pg';
 import { describe, expect, it } from 'vitest';
 
 import { ApprovalRepository, sha256CanonicalJson } from './approvals.js';
+import { SELECT_APPROVAL, SELECT_DECIDED_APPROVALS } from './approvals.sql.js';
 import type {
   ActionStatus,
   ApprovalActionDraft,
@@ -88,9 +89,14 @@ interface ApprovalRow extends QueryResultRow {
   run_id: string;
   action_id: string;
   campaign_id: string | null;
+  campaign_name?: string | null;
   effect_key: string;
   authority_required: 'AUTH-4';
   payload: unknown;
+  digest_version: number;
+  original_payload?: unknown;
+  original_payload_sha256?: string | null;
+  original_digest_version?: number | null;
   reason: string;
   operator_id: string | null;
   decision: ApprovalStatus;
@@ -129,6 +135,7 @@ type StatementKind =
   | 'lock_approval'
   | 'read_approval'
   | 'list_pending'
+  | 'list_decided'
   | 'lock_approval_by_effect_key'
   | 'pause_task'
   | 'hold_task'
@@ -219,6 +226,10 @@ function classify(sql: string): StatementKind {
     if (sql.includes('ORDER BY created_at ASC')) {
       return 'list_pending';
     }
+    if (sql.includes('ORDER BY decided_at DESC')) {
+      return 'list_decided';
+    }
+
 
     if (sql.includes('effect_key = $2')) {
       return 'lock_approval_by_effect_key';
@@ -360,23 +371,43 @@ async function refusalOf(work: Promise<unknown>): Promise<string> {
   throw new Error('EXPECTED_REFUSAL: the call succeeded, but the approval gate must refuse it.');
 }
 
+/** Projects an action payload onto the normalized skill input bound by an AUTH-4 approval. */
+function normalizedApprovalPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  if (!Object.hasOwn(payload, 'effect_key')) {
+    return payload;
+  }
+
+  const { effect_key: _effectKey, ...input } = payload;
+  void _effectKey;
+  return input;
+}
+
 /** The drafted AUTH-4 action of the paused step, exactly as the checkpoint carries it. */
 function draft(overrides: Partial<ApprovalActionDraft> = {}): ApprovalActionDraft {
-  const action: ApprovalActionDraft = {
-    action_id: ACTION_ID,
-    tenant_id: TENANT,
-    run_id: RUN_ID,
-    skill_id: SKILL_ID,
-    adapter_target: ADAPTER_TARGET,
-    step_index: STEP_INDEX,
-    request_id: REQUEST_ID,
-    action_revision: 0,
-    effect_key: EFFECT_KEY,
-    required_authority: 'AUTH-4',
-    payload: PAYLOAD,
-  };
+  const action = Object.assign(
+    {
+      action_id: ACTION_ID,
+      tenant_id: TENANT,
+      run_id: RUN_ID,
+      skill_id: SKILL_ID,
+      adapter_target: ADAPTER_TARGET,
+      step_index: STEP_INDEX,
+      request_id: REQUEST_ID,
+      action_revision: 0,
+      effect_key: EFFECT_KEY,
+      required_authority: 'AUTH-4',
+      payload: PAYLOAD,
+    },
+    overrides,
+  );
+  const approval_payload = action.approval_payload ?? normalizedApprovalPayload(action.payload);
 
-  return Object.assign(action, overrides);
+  return Object.assign(action, {
+    approval_payload,
+    approval_payload_digest:
+      action.approval_payload_digest ?? sha256CanonicalJson(approval_payload),
+    approval_digest_version: action.approval_digest_version ?? 1,
+  });
 }
 
 /** A COMPLETE `DurableTaskCheckpoint` (implement/04 §3.3), as a parked task must store it. */
@@ -405,7 +436,6 @@ const MODIFIED_DRAFT = draft({
 const PERSISTED_MODIFIED_DRAFT = {
   ...MODIFIED_DRAFT,
   approval_id: APPROVAL_ID,
-  approval_payload_digest: sha256CanonicalJson(AUTHORIZED_PAYLOAD),
 };
 
 /** One approval row carrying the canonical PENDING binding; a case overrides what it is about. */
@@ -419,6 +449,7 @@ function approvalRow(overrides: Partial<ApprovalRow> = {}): ApprovalRow {
     effect_key: EFFECT_KEY,
     authority_required: 'AUTH-4',
     payload: PAYLOAD,
+    digest_version: 1,
     reason: REASON,
     operator_id: null,
     decision: 'PENDING',
@@ -516,14 +547,22 @@ function parkedTaskRow(overrides: Partial<DurableTaskRow> = {}): DurableTaskRow 
 function approvalBinding(
   overrides: Partial<PauseForApprovalInput['approval']> = {},
 ): PauseForApprovalInput['approval'] {
-  const binding: PauseForApprovalInput['approval'] = {
-    action_id: ACTION_ID,
-    effect_key: EFFECT_KEY,
-    payload: PAYLOAD,
-    reason: REASON,
-  };
+  const binding = Object.assign(
+    {
+      action_id: ACTION_ID,
+      effect_key: EFFECT_KEY,
+      payload: PAYLOAD,
+      payload_sha256: PAYLOAD_SHA256,
+      digest_version: 1,
+      reason: REASON,
+    },
+    overrides,
+  );
 
-  return Object.assign(binding, overrides);
+  return Object.assign(binding, {
+    payload_sha256: overrides.payload_sha256 ?? sha256CanonicalJson(binding.payload),
+    digest_version: overrides.digest_version ?? 1,
+  });
 }
 
 /** A pause of the default binding; a case overrides the field it is about. */
@@ -664,6 +703,7 @@ describe('ApprovalRepository.pauseForApproval', () => {
       ACTION_ID,
       EFFECT_KEY,
       JSON.stringify(PAYLOAD),
+      1,
       REASON,
     ]);
     expect(bindingsOf(client, 'pause_task')).toEqual([
@@ -890,6 +930,24 @@ describe('ApprovalRepository.pauseForApproval', () => {
     ]);
   });
 
+  it('reuses the same persisted action identity with canonically equivalent payload bytes', async () => {
+    const { repository, client } = harnessFor({
+      lock_task: { rows: [taskRow()] },
+      insert_action: { rows: [] },
+      lock_action: { rows: [actionRow({ action_payload: REORDERED_PAYLOAD })] },
+      insert_approval: { rows: [approvalRow()] },
+      pause_task: { rows: [parkedTaskRow()] },
+    });
+
+    const result = await repository.pauseForApproval(pauseInput());
+
+    expect(result.action.id).toBe(ACTION_ID);
+    expect(result.action.action_revision).toBe(1);
+    expect(statementsOf(client)).toEqual([
+      'lock_task', 'insert_action', 'lock_action', 'insert_approval', 'pause_task',
+    ]);
+  });
+
   it('refuses a colliding effect key that names another command, and translates a unique violation', async () => {
     const cases: readonly (readonly [
       string,
@@ -971,7 +1029,11 @@ describe('ApprovalRepository.pauseForApproval', () => {
     for (const [code, answers, statements] of cases) {
       const { repository, client } = harnessFor(answers);
 
-      await expect(repository.pauseForApproval(pauseInput())).rejects.toThrow(code);
+      const refusal = repository.pauseForApproval(pauseInput());
+      await expect(refusal).rejects.toThrow(code);
+      if (code === 'ACTION_EFFECT_KEY_CONFLICT') {
+        await expect(refusal).rejects.toMatchObject({ code });
+      }
       expect(statementsOf(client)).toEqual(statements);
       expect(statementsOf(client)).not.toContain('pause_task');
     }
@@ -1020,7 +1082,7 @@ describe('ApprovalRepository.queueDecision', () => {
     ]);
     expect(result).toEqual({
       approval_id: APPROVAL_ID,
-      task_id: TASK_ID,
+      task_id: RUN_ID,
       status: 'QUEUED',
       queued_at: UPDATED_AT.toISOString(),
     });
@@ -1151,6 +1213,9 @@ describe('ApprovalRepository.claimApprovalAndResume', () => {
             decidedApprovalRow('MODIFIED', {
               effect_key: MODIFIED_EFFECT_KEY,
               payload: AUTHORIZED_PAYLOAD,
+              original_payload: PAYLOAD,
+              original_payload_sha256: PAYLOAD_SHA256,
+              original_digest_version: 1,
             }),
           ],
         },
@@ -1195,17 +1260,28 @@ describe('ApprovalRepository.claimApprovalAndResume', () => {
       COMMENT,
       MODIFIED_EFFECT_KEY,
       JSON.stringify(AUTHORIZED_PAYLOAD),
+      1,
+      PAYLOAD_SHA256,
     ]);
-    expect(bindingsOf(client, 'resume_revised')).toEqual([
-      TENANT,
-      RUN_ID,
-      JSON.stringify(revised_checkpoint),
-      PARKED_TASK_VERSION,
-    ]);
+    const modifySql = client.statements.find((statement) => statement.kind === 'modify_approval')?.sql;
+    expect(modifySql).toContain('original_payload = COALESCE(original_payload, payload)');
+    expect(modifySql).toContain(
+      'original_payload_sha256 = CASE WHEN original_payload IS NULL THEN $8 ELSE original_payload_sha256 END',
+    );
+    expect(modifySql).toContain(
+      'original_digest_version = CASE WHEN original_payload IS NULL THEN digest_version ELSE original_digest_version END',
+    );
+    const revised_bindings = bindingsOf(client, 'resume_revised');
+    expect(revised_bindings.slice(0, 2)).toEqual([TENANT, RUN_ID]);
+    expect(JSON.parse(revised_bindings[2] as string)).toEqual(revised_checkpoint);
+    expect(revised_bindings.slice(3)).toEqual([PARKED_TASK_VERSION]);
 
     expect(result.approval.decision).toBe('MODIFIED');
     expect(result.approval.payload_sha256).toBe(sha256CanonicalJson(AUTHORIZED_PAYLOAD));
     expect(result.approval.payload_sha256).not.toBe(PAYLOAD_SHA256);
+    expect(result.approval.original_payload).toEqual(PAYLOAD);
+    expect(result.approval.original_payload_sha256).toBe(PAYLOAD_SHA256);
+    expect(result.approval.original_digest_version).toBe(1);
     expect(result.action.effect_key).toBe(MODIFIED_EFFECT_KEY);
     expect(result.action.action_revision).toBe(2);
     expect(result.task.state).toBe('running');
@@ -1783,7 +1859,7 @@ describe('ApprovalRepository.expireOverdueApprovals', () => {
 describe('ApprovalRepository.listPending', () => {
   it('publishes the queue oldest-first with the action of each item and its reviewed digest', async () => {
     const { repository, client, boundTenants } = harnessFor({
-      list_pending: { rows: [approvalRow(), pendingApprovalRow()] },
+      list_pending: { rows: [approvalRow({ campaign_name: 'Winback tháng 10' }), pendingApprovalRow()] },
       read_actions: { rows: [actionRow(), pendingActionRow()] },
     });
 
@@ -1801,9 +1877,11 @@ describe('ApprovalRepository.listPending', () => {
       action_id: ACTION_ID,
       campaign_id: null,
       effect_key: EFFECT_KEY,
+      campaign_name: 'Winback tháng 10',
       authority_required: 'AUTH-4',
       payload: PAYLOAD,
       payload_sha256: PAYLOAD_SHA256,
+      digest_version: 1,
       reason: REASON,
       operator_id: null,
       decision: 'PENDING',
@@ -2005,6 +2083,50 @@ describe('ApprovalRepository.getDetail', () => {
     expect(detail?.approval.review_comment).toBe(COMMENT);
     expect(detail?.approval.decided_at).toBe(DECIDED_AT.toISOString());
     expect(detail?.action.status).toBe('authorized');
+  });
+
+  it.each([true, false])('reads a modified original snapshot truthfully (persisted: %s)', async (persisted) => {
+    const row = decidedApprovalRow('MODIFIED', {
+      effect_key: MODIFIED_EFFECT_KEY,
+      payload: AUTHORIZED_PAYLOAD,
+      original_payload: persisted ? PAYLOAD : null,
+      original_payload_sha256: persisted ? PAYLOAD_SHA256 : null,
+      original_digest_version: persisted ? 1 : null,
+    });
+    const { repository, client } = harnessFor({
+      read_approval: { rows: [row] },
+      list_decided: { rows: [row] },
+      read_actions: {
+        rows: [actionRow({
+          effect_key: MODIFIED_EFFECT_KEY,
+          action_revision: 2,
+          action_payload: AUTHORIZED_PAYLOAD,
+          status: 'authorized',
+        })],
+      },
+    });
+
+    const detail = await repository.getDetail(TENANT, APPROVAL_ID);
+    const page = await repository.listDecided({ tenant_id: TENANT });
+    for (const approval of [detail?.approval, page.items[0]?.approval]) {
+      expect(approval?.payload).toEqual(AUTHORIZED_PAYLOAD);
+      expect(approval?.payload_sha256).toBe(sha256CanonicalJson(AUTHORIZED_PAYLOAD));
+      if (persisted) {
+        expect(approval?.original_payload).toEqual(PAYLOAD);
+        expect(approval?.original_payload_sha256).toBe(PAYLOAD_SHA256);
+        expect(approval?.original_digest_version).toBe(1);
+      } else {
+        expect(approval).not.toHaveProperty('original_payload');
+        expect(approval).not.toHaveProperty('original_payload_sha256');
+        expect(approval).not.toHaveProperty('original_digest_version');
+      }
+    }
+    for (const sql of [SELECT_APPROVAL, SELECT_DECIDED_APPROVALS]) {
+      expect(client.statements.map((statement) => statement.sql)).toContain(sql);
+      expect(sql).toContain('original_payload,');
+      expect(sql).toContain('original_payload_sha256,');
+      expect(sql).toContain('original_digest_version,');
+    }
   });
 
   it('answers null for a missing and for another tenant id, without reading an action', async () => {

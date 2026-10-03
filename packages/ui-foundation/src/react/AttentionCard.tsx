@@ -1,8 +1,18 @@
 import type { ReactNode } from 'react';
+import { t } from '../i18n/index.js';
 import { statusView, type Tone } from '../status-view.js';
 import { StatusBadge } from './StatusBadge.js';
 
 const tones: readonly Tone[] = ['success', 'warning', 'info', 'neutral', 'danger', 'demo', 'ai'];
+const toneLabelKeys: Record<Tone, string> = {
+  success: 'attention.severity.success',
+  warning: 'attention.severity.warning',
+  info: 'attention.severity.info',
+  neutral: 'attention.severity.neutral',
+  danger: 'attention.severity.danger',
+  demo: 'attention.severity.demo',
+  ai: 'attention.severity.ai',
+};
 
 export interface AttentionCardProps {
   readonly severity: string;
@@ -29,13 +39,11 @@ export function AttentionCard({
   domain,
   className,
 }: AttentionCardProps) {
-  const isTone = tones.includes(severity as Tone);
-  const attentionTone = isTone ? (severity as Tone) : statusView(severity).tone;
-  const status = (
-    <StatusBadge
-      {...(isTone ? { tone: severity as Tone, label: severity } : { code: severity })}
-    />
-  );
+  const tone = tones.find((candidate) => candidate === severity);
+  const attentionTone = tone ?? statusView(severity).tone;
+  const status = tone
+    ? <StatusBadge tone={tone} label={t(toneLabelKeys[tone])} />
+    : <StatusBadge code={severity} />;
   const card = (
     <article
       className={[
@@ -47,12 +55,13 @@ export function AttentionCard({
     >
       <div className="ui-attention-card__body">
         <div className="ui-attention-card__icon" aria-hidden={icon ? undefined : 'true'}>
-          {icon ?? status}
+          {icon}
         </div>
         <div className="ui-attention-card__copy">
           <div className="ui-attention-card__header">
             <h3 className="ui-attention-card__title">{title}</h3>
-            {tag ?? status}
+            {status}
+            {tag}
           </div>
           {description ? <p className="ui-attention-card__description">{description}</p> : null}
           {subline ?? domain ? (

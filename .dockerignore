@@ -32,5 +32,11 @@ logs
 docs
 plans
 scratch
+# Mock ERP needs only this offline fixture from testcases.
 testcases
+testcases/**
+!testcases/
+!testcases/fixtures/
+!testcases/fixtures/offline/
+!testcases/fixtures/offline/orders.json
 implement

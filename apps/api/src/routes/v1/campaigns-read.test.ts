@@ -18,11 +18,13 @@ const campaign: CompanyCrmCampaignRow = {
   name: 'Winback',
   objective: 'retention',
   channels: ['EMAIL_HTML'],
-  campaign_status: 'draft',
+  audience_count: 35,
+  campaign_status: 'DRAFTING',
   campaign_created_at: '2026-01-01T00:00:00.000Z',
   campaign_updated_at: null,
   task_state: 'queued',
   task_payload: { signal: { payload: { module: 'marketing' } } },
+  task_error: null,
   task_created_at: '2026-01-01T00:00:00.000Z',
   approval_id: null,
   approval_decision: null,
@@ -65,6 +67,12 @@ describe('campaign read permissions', () => {
       const list = await app.inject({ method: 'GET', url: '/campaigns', headers });
       const detail = await app.inject({ method: 'GET', url: '/campaigns/run-1', headers });
       expect(list.statusCode).toBe(200);
+      expect(list.json().items[0]).toMatchObject({
+        status: 'drafting',
+        name: 'Winback',
+        audience_count: 35,
+        failure_reason_key: null,
+      });
       expect(list.json().items[0].dispatch).toEqual({ status: 'NOT_INTEGRATED' });
       expect(detail.statusCode).toBe(200);
       expect(detail.json().run_id).toBe('run-1');

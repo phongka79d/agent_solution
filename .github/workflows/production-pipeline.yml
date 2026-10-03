@@ -64,14 +64,13 @@ jobs:
       - name: Install the frozen workspace
         run: pnpm install --frozen-lockfile
       - name: Check migration numbering
-        run: pnpm check:migrations
-      - name: Run repository script tests
-        run: |
-          node --test scripts/*.test.mjs
-          node --test scripts/**/*.test.mjs
+        run: node scripts/check-migration-numbering.mjs
+      - name: Run repository script and LLM stub tests
+        run: node --test "scripts/**/*.test.mjs" "tests/stack/tools/*.test.mjs"
       - name: Check demo boundary
         run: pnpm check:demo-boundary
-      # Every Turborepo task this pipeline invokes is checked in one place, so a
+      - name: Check OpenAPI contract
+        run: pnpm --filter @agentos/api run check:openapi
       # gate whose implementer disappears fails here — before lint, tests or
       # images — instead of reporting "0 total" as a green suite in job 2, 3 or 4.
       - name: Require every gate task this pipeline invokes to be implemented
@@ -104,7 +103,7 @@ jobs:
             apps/platform-admin/.next/**
 
   ui-smoke:
-    name: Browser UI Smoke (desktop and mobile)
+    name: Playwright Stub Suite (desktop and mobile)
     needs: static-analysis
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -133,6 +132,60 @@ jobs:
           name: ui-smoke-screenshots
           if-no-files-found: error
           path: test-results/ui/**
+
+  ui-stack:
+    name: Playwright Real-Stack Consoles
+    needs: static-analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install the frozen workspace
+        run: pnpm install --frozen-lockfile
+      - name: Download static build outputs and Turbo cache
+        uses: actions/download-artifact@v4
+        with:
+          name: static-analysis-build
+          path: .
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Run platform and company console journeys against the isolated stack
+        run: STACK_WITH_CONSOLES=1 STACK_AUTH_PROVIDER=db pnpm test:ui:stack
+      - name: Upload UI stack screenshots on failure
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: ui-stack-screenshots
+          if-no-files-found: ignore
+          path: test-results/ui-stack/**/*.png
+
+  stack-db:
+    name: Real Stack Database Auth
+    needs: static-analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install the frozen workspace
+        run: pnpm install --frozen-lockfile
+      - name: Download static build outputs and Turbo cache
+        uses: actions/download-artifact@v4
+        with:
+          name: static-analysis-build
+          path: .
+      - name: Run the isolated stack suite with database authentication
+        run: pnpm test:stack:db
+
 
 
   unit-core:
@@ -362,6 +415,9 @@ jobs:
       - name: Apply and replay the raw SQL migrations
         env:
           DATABASE_URL: postgresql://test_user:test_password@127.0.0.1:5432/agent_os_rehearsal
+          # The rehearsal sets the dedicated platform/indexer login passwords (migrations 0052, 0060).
+          PLATFORM_ROLE_PASSWORD: ci-platform-login-password
+          INDEXER_ROLE_PASSWORD: ci-indexer-login-password
         run: pnpm db:migrate:rehearse
       # These live database gates remain ordered because they share one
       # PostgreSQL instance, tenant fixtures, and append-only audit/evidence rows.
@@ -375,11 +431,15 @@ jobs:
       - name: Verify the RLS policies from the NOBYPASSRLS application role
         env:
           DATABASE_URL: postgresql://agentos_app:agentos_app_password@127.0.0.1:5432/agent_os_rehearsal
+          # Fixture tenants are provisioned through the dedicated platform login (migration 0052).
+          PLATFORM_DATABASE_URL: postgresql://agentos_platform_login:ci-platform-login-password@127.0.0.1:5432/agent_os_rehearsal
         run: pnpm test:rls-policies
       - name: Verify P5 provisioning and autonomy repositories on real PostgreSQL
         env:
           APP_ENV: ci
           DATABASE_URL: postgresql://agentos_app:agentos_app_password@127.0.0.1:5432/agent_os_rehearsal
+          # Provisioning runs under the dedicated platform login set by the rehearsal (migration 0052).
+          PLATFORM_DATABASE_URL: postgresql://agentos_platform_login:ci-platform-login-password@127.0.0.1:5432/agent_os_rehearsal
         run: pnpm test:p5-db
       # The P1 Customer Care path has no skip path either: it drives the gateway,
       # the durable task store, the skill runtime and the evidence/audit writers
@@ -389,6 +449,7 @@ jobs:
           APP_ENV: ci
           NODE_ENV: test
           DATABASE_URL: postgresql://agentos_app:agentos_app_password@127.0.0.1:5432/agent_os_rehearsal
+          PLATFORM_DATABASE_URL: postgresql://agentos_platform_login:ci-platform-login-password@127.0.0.1:5432/agent_os_rehearsal
           WORKER_TENANT_IDS: 11111111-1111-1111-1111-111111111111
           CARE_TENANT_IDS: 11111111-1111-1111-1111-111111111111
           # The Sales smoke is scoped to the tenant the mock system of record's fixtures are bound
@@ -437,3 +498,31 @@ jobs:
       # project. No image is pushed, published, or tagged for a registry.
       - name: Build, load, inspect, and boot the named images
         run: node scripts/docker-smoke.mjs --project agentos-ci-smoke --env-file .env --wait-seconds 600
+  test-stack:
+    name: test:stack (Docker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install the frozen workspace
+        run: pnpm install --frozen-lockfile
+      - name: Run the Docker-backed stack suite
+        run: pnpm test:stack
+
+  gitleaks:
+    name: Gitleaks Secret Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        with:
+          args: --redact

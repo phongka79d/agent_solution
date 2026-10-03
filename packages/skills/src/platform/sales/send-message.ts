@@ -26,7 +26,7 @@ export interface OutboundMessagePayload {
 export interface InputSalesSendMessage {
   tenant_id: string;
   recipient_id: string;
-  channel: 'LINE' | 'WHATSAPP' | 'WEB_CHAT' | 'SMS' | 'ZALO' | 'TIKTOK' | 'MESSENGER' | 'INSTAGRAM';
+  channel: 'LINE' | 'WHATSAPP' | 'WEB_CHAT' | 'EMAIL' | 'SMS' | 'ZALO' | 'TIKTOK' | 'MESSENGER' | 'INSTAGRAM';
   message_content: OutboundMessagePayload;
 }
 
@@ -54,6 +54,7 @@ const input_schema: Record<string, unknown> = {
         'LINE',
         'WHATSAPP',
         'WEB_CHAT',
+        'EMAIL',
         'SMS',
         'ZALO',
         'TIKTOK',
@@ -64,6 +65,7 @@ const input_schema: Record<string, unknown> = {
     message_content: {
       type: 'object',
       required: ['text'],
+      additionalProperties: false,
       properties: {
         text: { type: 'string' },
         quick_replies: { type: 'array', items: { type: 'string' } },
@@ -71,6 +73,7 @@ const input_schema: Record<string, unknown> = {
         template_params: { type: 'object', additionalProperties: { type: 'string' } },
         card: {
           type: 'object',
+          additionalProperties: false,
           properties: {
             title: { type: 'string' },
             description: { type: 'string' },
@@ -81,6 +84,7 @@ const input_schema: Record<string, unknown> = {
       },
     },
   },
+  additionalProperties: false,
 };
 
 /** Output schema of §4.2 skill 15, verbatim. */
@@ -109,6 +113,7 @@ const spec: Omit<
   allowed_agents: ['SAL-02', 'SAL-04', 'SAL-05'],
   required_authority: 'AUTH-3',
   tool_binding: 'API-003.CommunicationConnector',
+  requires_consent: true,
   validation_rules: [
     'recipient must have active consent',
     'session mutex lock must not be held by human',

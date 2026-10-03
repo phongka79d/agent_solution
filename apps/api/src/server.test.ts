@@ -11,7 +11,8 @@ import { buildServer, DEPENDENCIES } from './server.js';
 
 /** One tenant's operator, so a route can be reached past authentication. */
 const OPERATOR_TOKEN = 'operator-token-value';
-const TENANT = 'tenant-a';
+const TENANT = '11111111-1111-4111-8111-111111111111';
+const CONVERSATION = '22222222-2222-4222-8222-222222222222';
 
 /**
  * Builds the deployed surface over an empty credential store, or over one known operator.
@@ -67,6 +68,10 @@ describe('request logging and correlation', () => {
         headers: { authorization: `Bearer ${secret}`, cookie: secret, 'x-api-key': secret },
         body: { token: secret, password: secret, email: 'customer@example.test', phone: '+15555550123' },
       },
+      config: { secret },
+      provider: { api_key: secret },
+      credentials: { password: secret },
+      payload: { plaintext: secret },
     }, 'redaction-test');
 
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -132,10 +137,24 @@ describe('the /api/v1 surface', () => {
       headers: { 'content-type': 'application/json' },
       payload: JSON.stringify({ filler: 'x'.repeat(MAX_RAW_BODY_BYTES + 1) }),
     });
-    expect(oversized.statusCode).toBe(400);
+    expect(oversized.statusCode, JSON.stringify(oversized.json())).toBe(400);
     expect(oversized.json()).toMatchObject({
       error_code: 'VALIDATION_FAILED',
+      message: 'Không thể đọc yêu cầu được gửi đến.',
       details: { reason: 'RAW_BODY_TOO_LARGE' },
+    });
+
+    const malformed = await app.inject({
+      method: 'POST',
+      url: '/api/v1/events',
+      headers: { 'content-type': 'application/json' },
+      payload: '{"event":',
+    });
+    expect(malformed.statusCode).toBe(400);
+    expect(malformed.json()).toMatchObject({
+      error_code: 'VALIDATION_FAILED',
+      message: 'Không thể đọc yêu cầu được gửi đến.',
+      details: { reason: 'MALFORMED_REQUEST' },
     });
 
     await app.close();
@@ -143,32 +162,34 @@ describe('the /api/v1 surface', () => {
 });
 
 describe('Customer Care turn admission', () => {
-  it('does not append a message when the execution path is unbound', async () => {
+  it('does not admit or append a message when the execution path is unbound', async () => {
     const composition = createGatewayComposition(
       { SESSION_SECRET: 'test-session-secret-000000', PLATFORM_SECRET: 'test-platform-secret-00000' },
     );
     const appendMessage = vi.fn();
+    const start = vi.fn(async (_input: Parameters<typeof composition.runtime.runs.start>[0]) => {
+      throw new UnboundPortError('runs.start', 'no orchestrator graph is bound in this deployment');
+    });
     const app = buildServer({
       ...composition,
       credentials: createCredentialStore({
         operators: [],
-        sessions: [{ token: 'care-session', tenant_id: TENANT, conversation_id: 'conversation-a', session_id: 'session-a', channel: 'WEB_CHAT' }],
+        sessions: [{ token: 'care-session', tenant_id: TENANT, conversation_id: CONVERSATION, session_id: 'session-a', channel: 'WEB_CHAT' }],
         widgets: [],
       }),
+      intentProposer: { propose: async () => ({ intent: 'faq_search', requirements: {}, confidence: 0.9 }) },
       runtime: {
         ...composition.runtime,
-        // The default composition binds `runs.start`; this deployment case is the one where the
-        // port is absent, which must still refuse the turn before anything is written.
+        // The default composition binds `runs.start`; this deployment case has no bound execution
+        // path, so the admission fails before the customer message can be persisted.
         runs: {
           ...composition.runtime.runs,
-          start: async () => {
-            throw new UnboundPortError('runs.start', 'no orchestrator graph is bound in this deployment');
-          },
+          start,
         },
         conversations: {
           ...composition.runtime.conversations,
           get: async () => ({
-            conversation_id: 'conversation-a', tenant_id: TENANT, customer_id: null,
+            conversation_id: CONVERSATION, tenant_id: TENANT, customer_id: null,
             channel: 'WEB_CHAT' as const, external_thread_id: 'session-a', active_agent: 'CS-01',
             state: 'open' as const, takeover_operator_id: null,
             last_message_at: '2026-01-01T00:00:00.000Z', created_at: '2026-01-01T00:00:00.000Z', bound: true,
@@ -184,41 +205,43 @@ describe('Customer Care turn admission', () => {
     });
 
     const response = await app.inject({
-      method: 'POST', url: '/api/v1/conversations/conversation-a/messages',
+      method: 'POST', url: `/api/v1/conversations/${CONVERSATION}/messages`,
       headers: { authorization: 'Bearer care-session' },
       payload: { message: 'Where is my order?', module: 'support', idempotency_key: 'care-request-1' },
     });
-    expect(response.statusCode, JSON.stringify(response.json())).toBe(403);
-    expect(response.json()).toMatchObject({ error_code: 'CAPABILITY_NOT_ENABLED' });
+    expect(response.statusCode, JSON.stringify(response.json())).toBe(503);
+    expect(response.json()).toMatchObject({ error_code: 'CAPABILITY_UNAVAILABLE' });
+    expect(start).toHaveBeenCalledTimes(1);
     expect(appendMessage).not.toHaveBeenCalled();
     await app.close();
   });
 
-  it('admits the turn through the bound start port before the message is appended', async () => {
+  it('admits the customer message atomically with the turn', async () => {
     const composition = createGatewayComposition(
       { SESSION_SECRET: 'test-session-secret-000000', PLATFORM_SECRET: 'test-platform-secret-00000' },
     );
     const appendMessage = vi.fn();
-    const start = vi.fn(async () => ({
+    const start = vi.fn(async (input: Parameters<typeof composition.runtime.runs.start>[0]) => ({
       run_id: 'run-admitted-1',
       task_version: 1,
-      correlation_id: 'conversation-a',
+      correlation_id: input.correlation_id,
       lifecycle_state: 'queued' as const,
     }));
     const app = buildServer({
       ...composition,
       credentials: createCredentialStore({
         operators: [],
-        sessions: [{ token: 'care-session', tenant_id: TENANT, conversation_id: 'conversation-a', session_id: 'session-a', channel: 'WEB_CHAT' }],
+        sessions: [{ token: 'care-session', tenant_id: TENANT, conversation_id: CONVERSATION, session_id: 'session-a', channel: 'WEB_CHAT' }],
         widgets: [],
       }),
+      intentProposer: { propose: async () => ({ intent: 'faq_search', requirements: {}, confidence: 0.9 }) },
       runtime: {
         ...composition.runtime,
         runs: { ...composition.runtime.runs, start },
         conversations: {
           ...composition.runtime.conversations,
           get: async () => ({
-            conversation_id: 'conversation-a', tenant_id: TENANT, customer_id: null,
+            conversation_id: CONVERSATION, tenant_id: TENANT, customer_id: null,
             channel: 'WEB_CHAT' as const, external_thread_id: 'session-a', active_agent: 'CS-01',
             state: 'open' as const, takeover_operator_id: null,
             last_message_at: '2026-01-01T00:00:00.000Z', created_at: '2026-01-01T00:00:00.000Z', bound: true,
@@ -234,16 +257,27 @@ describe('Customer Care turn admission', () => {
       },
     });
 
+    const idempotencyKey = 'care-request-server-test';
     const response = await app.inject({
-      method: 'POST', url: '/api/v1/conversations/conversation-a/messages',
+      method: 'POST', url: `/api/v1/conversations/${CONVERSATION}/messages`,
       headers: { authorization: 'Bearer care-session' },
-      payload: { message: 'Where is my order?', idempotency_key: `care-request-${Date.now()}` },
+      payload: { message: 'Where is my order?', idempotency_key: idempotencyKey },
     });
 
     expect(response.statusCode, JSON.stringify(response.json())).toBe(202);
     expect(response.json()).toMatchObject({ task_id: 'run-admitted-1', status: 'accepted' });
     expect(start).toHaveBeenCalledTimes(1);
-    expect(appendMessage).toHaveBeenCalledTimes(1);
+    expect(start.mock.calls[0]?.[0]).toMatchObject({
+      admission_reservation: {
+        customer_message: {
+          conversation_id: CONVERSATION,
+          sender_id: 'session-a',
+          content: 'Where is my order?',
+          request_id: idempotencyKey,
+        },
+      },
+    });
+    expect(appendMessage).not.toHaveBeenCalled();
     await app.close();
   });
 });

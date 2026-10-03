@@ -274,6 +274,31 @@ export async function getSessionFromRequest(request: Request): Promise<StoredSes
 
 export const readSession = getSessionFromRequest;
 
+export interface RenewedSession {
+  readonly cookieValue: string;
+  readonly session: StoredSession;
+}
+
+/**
+ * Sliding renewal: re-issue the cookie and push the stored expiry forward, capped by the upstream
+ * provider session expiry and the configured TTL. Returns `undefined` when there is nothing to renew.
+ */
+export async function renewSession(
+  request: Request,
+  nowEpochSec = Math.floor(Date.now() / 1000),
+): Promise<RenewedSession | undefined> {
+  const current = await getSessionFromRequest(request);
+  if (!current) return undefined;
+  const providerExpirySec = Math.floor(Date.parse(current.authSession.expires_at) / 1000);
+  const cap = Number.isFinite(providerExpirySec)
+    ? Math.min(providerExpirySec, nowEpochSec + AUTH_SESSION_TTL_SECONDS)
+    : nowEpochSec + AUTH_SESSION_TTL_SECONDS;
+  if (cap <= nowEpochSec) return undefined;
+  const session: StoredSession = { ...current, expiresAtEpochSec: cap };
+  await store().set(session.id, session);
+  return { cookieValue: signSessionCookie(session.id, cap), session };
+}
+
 export function hasExpiredSessionCookie(request: Request): boolean {
   const reference = cookieReferenceIncludingExpired(request);
   return Boolean(reference && reference.expiresAtEpochSec <= Math.floor(Date.now() / 1000));

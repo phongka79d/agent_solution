@@ -8,6 +8,7 @@ import { registerOperationRoutes } from './operations.js';
 
 const TENANT = 'tenant-operations';
 const OPERATOR_TOKEN = 'operator-operations';
+const RUN_READER_TOKEN = 'operator-operations-reader';
 const CONVERSATION_ID = '11111111-1111-4111-8111-111111111111';
 
 function buildHarness() {
@@ -23,8 +24,9 @@ function buildHarness() {
     correlation_id: 'corr-operations',
     conversation_id: CONVERSATION_ID,
   }));
+  const listRuns = vi.fn(async () => ({ items: [], next_cursor: null }));
   const runtime = {
-    runs: { classifyRetry, retry },
+    runs: { classifyRetry, retry, list: listRuns },
     audit: { record: vi.fn(async () => undefined) },
     ids: () => 'corr-operations',
   } as unknown as GatewayRuntime;
@@ -33,12 +35,25 @@ function buildHarness() {
   registerOperationRoutes(app, {
     runtime,
     credentials: createCredentialStore({
-      operators: [{ token: OPERATOR_TOKEN, tenant_id: TENANT, operator_id: 'operator-1', permissions: ['run:retry'] }],
+      operators: [
+        {
+          token: OPERATOR_TOKEN,
+          tenant_id: TENANT,
+          operator_id: 'operator-1',
+          permissions: ['run:retry'],
+        },
+        {
+          token: RUN_READER_TOKEN,
+          tenant_id: TENANT,
+          operator_id: 'operator-reader',
+          permissions: ['run:read'],
+        },
+      ],
       sessions: [],
       widgets: [],
     }),
   });
-  return { app, classifyRetry, retry };
+  return { app, classifyRetry, listRuns, retry };
 }
 
 describe('R13 retry response', () => {
@@ -80,6 +95,25 @@ describe('R13 retry response', () => {
       expect(response.statusCode).toBe(401);
       expect(response.json().error_code).toBe('AUTHENTICATION_FAILED');
       expect(classifyRetry).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
+});
+describe('GET /runs limit validation', () => {
+  it('rejects non-integer and out-of-range limits before listing runs', async () => {
+    const { app, listRuns } = buildHarness();
+    try {
+      for (const limit of ['abc', '0', '1000']) {
+        const response = await app.inject({
+          method: 'GET',
+          url: `/runs?limit=${limit}`,
+          headers: { authorization: `Bearer ${RUN_READER_TOKEN}` },
+        });
+        expect(response.statusCode).toBe(400);
+        expect(response.json().error_code).toBe('VALIDATION_FAILED');
+      }
+      expect(listRuns).not.toHaveBeenCalled();
     } finally {
       await app.close();
     }

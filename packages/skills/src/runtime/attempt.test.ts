@@ -220,6 +220,27 @@ describe('bounded skill execution', () => {
     expect(harness.invocations).toHaveLength(6);
   });
 
+  it.each(['P_FLOOR_UNAVAILABLE', 'AUTHORITATIVE_SOURCE_UNAVAILABLE'])(
+    'stops cataloged deterministic refusal %s after the first provider attempt',
+    async (code) => {
+      const harness = createHarness({
+        respond: () => Promise.reject(Object.assign(new Error('missing authoritative policy/source'), { code })),
+        row: {
+          effect_class: 'READ',
+          retry_policy: {
+            max_retries: 3,
+            initial_interval_ms: 0,
+            backoff_multiplier: 2,
+            retry_on_timeout: true,
+            non_retryable_errors: [],
+          },
+        },
+      });
+      await expectRefusalAsync(harness.engine.dispatch(dispatchRequest()), 'SKILL_EXECUTION_FAILED');
+      expect(harness.invocations).toHaveLength(1);
+    },
+  );
+
 
   it('forwards the caller’s cancellation to the attempt in flight', async () => {
     const controller = new AbortController();

@@ -1,8 +1,9 @@
 /**
- * Internal SQL projections, row mappers and ledger preparation for audit/evidence repositories.
+ * Internal SQL statements, projections, row mappers and ledger preparation for audit/evidence
+ * repositories and outcome watches.
  *
- * `audit-evidence.ts` remains the public façade and owns the repository classes. Keeping all SQL
- * text here makes the append/read order explicit without changing any statement bytes.
+ * `audit-evidence.ts` remains the public façade and owns the repository classes. Keeping SQL text
+ * here makes each ledger operation and watcher transition explicit.
  */
 
 import type { QueryResultRow } from 'pg';
@@ -126,6 +127,48 @@ export const SELECT_AUDIT_SERVER_TIMESTAMP = `SELECT date_trunc('milliseconds', 
  * language — derives the same lock without sharing a hash function (implement/08 §4.2).
  */
 export const LOCK_CHAIN_SCOPE = 'SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))';
+/** Creates a watcher once per tenant/effect; the table owns its bounded observation deadline. */
+export const INSERT_PENDING_OUTCOME_WATCH = `INSERT INTO agentos.pending_outcome_attributions (
+      tenant_id,
+      run_id,
+      effect_key,
+      skill_id
+    ) VALUES ($1, $2, $3, $4)
+    ON CONFLICT (tenant_id, effect_key) DO NOTHING`;
+
+/**
+ * Locks an expired batch, records one explicit UNKNOWN_OUTCOME per watch, and links each outcome
+ * before marking its watch EXPIRED. Keeping these writes in one statement makes expiry atomic.
+ */
+export const EXPIRE_PENDING_OUTCOME_WATCHES = `WITH expired AS MATERIALIZED (
+  SELECT p.id AS watch_id, p.tenant_id, p.effect_key, agentos.uuid_generate_v7() AS outcome_id
+  FROM agentos.pending_outcome_attributions AS p
+  WHERE p.tenant_id = $1
+    AND p.status = 'OBSERVING'
+    AND p.expires_at <= CURRENT_TIMESTAMP
+  ORDER BY p.expires_at ASC, p.id ASC
+  LIMIT $2::int
+  FOR UPDATE OF p SKIP LOCKED
+), unknown_outcomes AS (
+  INSERT INTO agentos.outcomes (id, tenant_id, conversion_type)
+  SELECT expired.outcome_id, expired.tenant_id, 'UNKNOWN_OUTCOME'
+  FROM expired
+  RETURNING id
+), expired_watches AS (
+  UPDATE agentos.pending_outcome_attributions AS p
+  SET outcome_id = expired.outcome_id,
+      status = 'EXPIRED'
+  FROM expired
+  JOIN unknown_outcomes ON unknown_outcomes.id = expired.outcome_id
+  WHERE p.tenant_id = $1
+    AND p.id = expired.watch_id
+    AND p.status = 'OBSERVING'
+  RETURNING p.effect_key
+)
+SELECT effect_key
+FROM expired_watches
+ORDER BY effect_key`;
+
 
 /**
  * `created_at` is omitted so the durable column default (and the audit timestamp sampled by the
@@ -243,6 +286,11 @@ export const SELECT_RUN_LOGS_BY_RUN = `SELECT${RUN_LOG_PROJECTION}
   FROM ${AGENT_RUN_LOGS}
   WHERE tenant_id = $1 AND run_id = $2
   ORDER BY step_index, skill`;
+
+export const SELECT_RUN_LOGS_FOR_RUNS = `SELECT${RUN_LOG_PROJECTION}
+  FROM ${AGENT_RUN_LOGS}
+  WHERE tenant_id = $1 AND run_id = ANY($2::varchar[])
+  ORDER BY run_id, step_index, skill`;
 
 export const SELECT_EVIDENCE_BY_EFFECT = `SELECT${EVIDENCE_PROJECTION} FROM ${EVIDENCE_RECORDS}
            WHERE tenant_id = $1 AND run_id = $2 AND effect_key = $3 AND step_index = $4`;

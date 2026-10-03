@@ -63,7 +63,8 @@ export function DataTable<TRow>({
         ));
 
   return (
-    <div className={['ui-table-wrap', className].filter(Boolean).join(' ')}>
+    // A horizontally scrollable region must be reachable by keyboard (WCAG 2.1.1, axe scrollable-region-focusable).
+    <div className={['ui-table-wrap', className].filter(Boolean).join(' ')} tabIndex={0}>
       <table className="ui-table">
         <caption>{caption}</caption>
         <thead>

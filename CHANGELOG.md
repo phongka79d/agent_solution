@@ -1,0 +1,51 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+## [Unreleased]
+
+### Changed
+
+- Added tenant-scoped knowledge indexing: approved documents become AVAILABLE through an audited, version-checked transition; an injected Qdrant client can upsert document chunks and remove archived documents, and Qdrant mode refuses to start without that client (`apps/worker/src/knowledge-indexer.ts`, `apps/worker/src/index.ts`, `packages/database/src/repositories/knowledge.ts`).
+- Refreshed the root README with current company/platform routes, runtime configuration, and the real-stack harness command (`README.md`, `apps/tenant-console/src/app/`, `apps/platform-admin/src/app/`, `tests/stack/README.md`).
+- Recorded the checked-in SQL migrations 0023–0048, current auth/session-signing and provider-secret encryption settings, test-data and provider-URL controls, and skill availability refusal reasons (`docs/architecture/README.md`, `packages/database/migrations/`, `packages/core-engine/src/secrets/cipher.ts`, `packages/skills/src/runtime/availability.ts`).
+- Appended current auth, secret-key, test-data, provider URL, and real-stack teardown guidance to the demo runbook (`docs/demo/README.md`, `apps/api/src/runtime/composition.ts`, `packages/core-engine/src/llm/url-guard.ts`, `packages/core-engine/src/secrets/cipher.ts`, `tests/stack/global-setup.mjs`).
+- Scoped live skill availability to tenant-bindable connectors, skill-specific owner inputs, and contract-bounded tenant assignments; synced and enabled the demo catalog in the seed and returned typed planner refusals.
+- Added optional invitee display names and latest sign-in timestamps to company member projections, OpenAPI, and tenant/platform admin lists (migration 0049, `apps/api/`, `apps/tenant-console/`, `apps/platform-admin/`).
+- Fixed run-domain projections for checkpointed tasks by falling back to the persisted plan domain (`0051_task_domain_from_plan.sql`).
+- Bound the testing chat's server-side widget Origin to minted sessions and refreshed campaign details until their task reaches a terminal state.
+- Routed human requests in the testing chat through automatic module classification and displayed run-linked campaign names with friendly requester labels in the approval center.
+- Fixed Care FAQ citation handling for tenant knowledge `namespace/slug` sources while preserving the SHA-256 version, and projected verified processing orders as “Đang xử lý” (`apps/worker/src/runtime/shared/response.ts`).
+
+- Fixed Marketing LLM admission by defaulting the worker's per-call output ceiling below the per-run budget, and aligned local stub URL validation/storage with the platform API (`apps/worker/src/worker-bindings.ts`, migration 0059).
+- Localized malformed and oversized gateway parser refusals in Vietnamese, classified malformed JSON as a typed 400, covered idempotent approval replays and conflicting-decision 409s, and made the platform operations stack test honor the shared per-tenant LLM probe cooldown (`apps/api/src/server.ts`, `apps/api/src/routes/v1/approvals.test.ts`, `tests/stack/`).
+- Enabled Care status-only order results without synthesizing absent ERP details, returned anonymous order lookups as typed clarifications, normalized confirmed owner-scoped misses to a non-disclosing typed no-answer, and rendered verified order statuses through the approved Vietnamese template catalog (`packages/skills/src/platform/care/lookup-order.ts`, `apps/worker/src/runtime/care/skills/order-handler.ts`, `apps/worker/src/runtime/care/agent-runtime.ts`, `apps/worker/src/runtime/shared/response.ts`, `packages/core-engine/src/responses/templates.ts`).
+- Bound the tenant knowledge lifecycle in DB-backed API composition and included each provisioned tenant's data class in its projection; synchronized takeover stack cleanup with durable handoff evidence consumption.
+- Added bounded exponential backoff for durable RETRYABLE runs and a tenant-scoped timer sweeper (`RETRY_SWEEP_INTERVAL_MS`, 5s default) that atomically queues retry-generation-checked `timer.expired` events; UNKNOWN effects remain on reconciliation (`packages/core-engine/src/orchestrator/`, `packages/database/src/repositories/durable-workflows.ts`, `apps/worker/src/retry-timer-sweeper.ts`).
+- Ran the knowledge indexer under a dedicated `agentos_indexer_login` login that can only `SET ROLE agentos_indexer` (`INDEXER_DATABASE_URL`, migration 0060); the worker logs and disables the indexer when the URL is unset.
+- Made a failed RETRYABLE run operator-retryable after the automatic budget is spent, and limited the platform reconciliation queue and counts to runs parked `waiting` on `RECONCILE`, which is exactly what the reconcile command accepts (migration 0061). The operations table and run detail offer "Đối soát" only for such parked runs (`apps/platform-admin/src/components/operations/`).
+- Granted the application role `DELETE` on tenant skill-agent assignments so unassigning an agent no longer fails with a permission error (migration 0062).
+- Settled in-process LLM content effects (`Core.LLMContentEngine`) as FAILED on reconciliation and mapped their dispatch timeout to `LLM_TIMEOUT`, so a RETRYABLE LLM failure releases its reservation; external effects still wait for provider truth. A reclaimed mutating step proceeds only when its reservation is FAILED (`packages/core-engine/src/orchestrator/effect-reconciliation.ts`, `apps/worker/src/worker.ts`).
+- Projected `retry_count` from the shared task adapter, fixing `INVALID_TIMER_RESUME` on durable retry timers (`apps/worker/src/runtime/shared/adapters.ts`).
+- Issued a distinct DB-auth session token per sign-in (random `jti`), fixing a 500 on a repeated login within the same second (`apps/api/src/runtime/db-auth.ts`).
+- Ordered platform audit pages by numeric `chain_seq` so the chain verdict is computed in sequence (`packages/database/src/repositories/platform-audit.ts`).
+- Changed `demo:up` to start infrastructure, migrate, then start the application services, and forwarded the indexer/platform role passwords to bootstrap steps; role passwords are optional in `docker-compose.yml` (`scripts/demo/up.mjs`).
+- Returned a typed `NO_MATCHING_PRODUCT` clarification for an empty Sales search, matched categories case- and plural-insensitively, made `recommend_product` available to anonymous shoppers (D14, skill contract version 4), and let the server own the Marketing content channel with a strict content schema on the fast model.
+- Allowed the tenant BFF to proxy `GET /conversations` and `GET /conversations/{id}/messages`, which the operator inbox needs; the stale OpenAPI document had omitted them (`apps/tenant-console/src/lib/bff-routes.ts`, `packages/api-contract/openapi.json`).
+- Localized remaining console copy: channel labels instead of channel codes, Vietnamese Customer 360 timeline states, company names instead of tenant ids in the platform audit log, AA-contrast status tokens, and an explanatory note for user management in demo-auth mode.
+- Seeded provisioning skill settings idempotently with READ skills enabled and assigned only contract-allowed agents, leaving non-READ skills disabled (`packages/database/src/repositories/p5-provisioning.ts`, `packages/database/src/repositories/skill-catalog.ts`).
+- Aligned company skill availability with the worker's inherited ERP binding and exposed `PARKED_UNTIL_PROMOTED` and `AUTONOMY_PAUSED` autonomy refusals (`apps/api/src/runtime/skills-port.ts`).
+- Surfaced parked draft-gated runs as `PARKED_DRAFT` attention items even without an autonomy policy row (`packages/database/src/repositories/company-projections.ts`, `apps/api/src/projections/attention.ts`).
+- Counted promotion-evidence audit gaps against matching `audit_records` rows rather than stage-result metadata (`packages/database/src/repositories/p5-autonomy.ts`).
+- Preserved the original payload, digest and digest version on the first MODIFY for approval before/after summaries; legacy modified rows omit unavailable “before” data (migration 0063, `packages/database/src/repositories/approvals.sql.ts`, `apps/api/src/runtime/bindings/approval-identity-port.ts`).
+- Resolved campaign runs' operator ownership so distinct-approver governance applies to campaign approvals (`apps/api/src/runtime/bindings/run-port.ts`).
+- Required `AUTH_PROVIDER=db` for production API composition and console auth selection, and forwarded `AUTH_PROVIDER` with a `demo` default in compose (`apps/api/src/runtime/composition.ts`, `apps/tenant-console/src/lib/auth/index.ts`, `apps/platform-admin/src/lib/auth/db-provider.ts`, `docker-compose.yml`).
+- Removed the unused `/api/v1/ws/stream` WebSocket route and empty `StreamPort` (`apps/api/src/server.ts`, `apps/api/src/gateway/ports.ts`).
+- Shared core-engine's canonical JSON serializer through `@agentos/core-engine/canonical-json` for skill schema comparisons and exports (`packages/skills/src/schema/`).
+- Added OpenAPI success schemas for conversation list, messages, summary, takeover, heartbeat, resume, operator messages and customer timeline, with tenant console DTOs aliased to generated types (`apps/api/src/routes/v1/openapi-schemas.ts`, `apps/tenant-console/src/lib/types/tenant-console.ts`).
+- Updated Customer 360 timeline reads to consume `items`, `gap_reason` and `next_cursor` with Vietnamese labels (`apps/tenant-console/src/components/customer/Customer360Timeline.tsx`).
+- Added an optional Test Customer Lab marketing cohort for campaign-eligible TEST customers and used `marketing_messaging` for email consent (`apps/api/src/routes/v1/testing.ts`, `packages/database/src/repositories/test-customers.ts`, `apps/tenant-console/src/components/testing/TestCustomerForm.tsx`).
+- Associated platform operations filter labels explicitly with their controls (`apps/platform-admin/src/components/operations/RunFilterControls.tsx`).
+- Displayed pending and decided approval counts, including zero, in company analytics (`apps/tenant-console/src/components/company/AnalyticsPage.tsx`).
+- Derived integration card status from the latest probe binding (`apps/tenant-console/src/components/company/IntegrationsPage.tsx`).
+- Allowed reconciliation to query ERP order targets qualified as `API-001.*` (`apps/worker/src/worker.ts`).

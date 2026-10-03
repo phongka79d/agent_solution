@@ -38,6 +38,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import { ensureIntegrationTenant } from './tenant-fixtures.mjs';
+import { createIntegrationErpConnectors } from './erp-fixtures.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -193,9 +194,9 @@ async function postTurn(fixture, { message, idempotency_key, module = 'support' 
 /**
  * Claims and executes the run the gateway just admitted, exactly as the polling worker does.
  *
- * A refused step leaves the run re-queued with its reason recorded, which is the durable
- * scheduler's normal outcome rather than a crash; `tolerate_refusal` returns that task state
- * instead of throwing, so the caller can assert on the recorded refusal itself.
+ * A refused step records its outcome durably: transient failures park for a retry timer, while
+ * deterministic refusals terminate. `tolerate_refusal` returns that task state instead of throwing,
+ * so the caller can assert on the recorded refusal itself.
  *
  * @returns The durable task state the worker left behind, read from PostgreSQL.
  */
@@ -216,9 +217,8 @@ async function executeClaimedRun(run_id, { tolerate_refusal = false } = {}) {
 /**
  * Executes every run this tenant's queue holds, so a test's own turn is next in line.
  *
- * A step refused as retryable re-queues its run (implement/04 §4.4), and those retries are the
- * queue's oldest entries; an operating worker drains exactly this way. The loop is bounded by the
- * run's own retry budget, after which a failing run terminates and leaves the queue empty.
+ * Only queued or event-resumable rows are claimable. RETRY waits remain parked until their durable
+ * timer is due and admitted; this drain does not skip that backoff fence.
  */
 async function drainQueue() {
   for (let attempt = 0; attempt < 16; attempt += 1) {
@@ -279,7 +279,7 @@ before(async () => {
   const apiComposition = await loadBuild('../../apps/api/dist/runtime/composition.js', 'the gateway composition');
   const apiPrincipal = await loadBuild('../../apps/api/dist/gateway/principal.js', 'the gateway credential store');
   const apiServer = await loadBuild('../../apps/api/dist/server.js', 'the gateway server');
-  const workerConnectors = await loadBuild('../../apps/worker/dist/runtime/connectors.js', 'the worker connector binding');
+  const adapters = await loadBuild('../../packages/adapters/dist/index.js', 'the API-001 connector and HTTP transport');
   const workerHmac = await loadBuild('../../apps/worker/dist/runtime/hmac.js', 'the worker HMAC primitive');
   const workerEntry = await loadBuild('../../apps/worker/dist/worker.js', 'the worker execution path');
   const careGraph = await loadBuild('../../apps/worker/dist/runtime/care/index.js', 'the Care orchestrator graph');
@@ -347,16 +347,13 @@ before(async () => {
   );
   const app = apiServer.buildServer({ runtime: composition.runtime, credentials });
 
-  const connectors = workerConnectors.createWorkerConnectors(
-    {
-      APP_ENV: app_env,
-      CARE_TENANT_IDS: tenant_id,
-      MOCK_ERP_ENABLED: 'true',
-      ERP_API_BASE_URL: provider_base,
-      MOCK_SECRET_KEY: provider_secret,
-    },
-    { hmac: workerHmac.nodeHmacSha256Hex },
-  );
+  const connectors = createIntegrationErpConnectors(adapters, {
+    app_env,
+    tenant_id,
+    base_url: provider_base,
+    secret: provider_secret,
+    hmac: workerHmac.nodeHmacSha256Hex,
+  });
 
   // One worker identity for the whole smoke: the same id claims the task and releases its lease.
   const context_worker_id = `smoke_worker_${randomUUID().slice(0, 8)}`;
@@ -368,7 +365,7 @@ before(async () => {
     connectors,
     // Kept so a case can build a second orchestrator graph bound to the same durable store but a
     // different system-of-record reachability (the provider outage in the restart-safety case).
-    workerConnectors,
+    adapters,
     careGraph,
     workerHmac,
     care_env: {
@@ -388,6 +385,8 @@ before(async () => {
     orchestratorFactory: careGraph.createCareOrchestratorFactory({
       connectors,
       erp_read: connectors.erp_read,
+      workflowRepository: new db.DurableWorkflowRepository(),
+      runResponseRepository: new db.RunResponseRepository(),
       // The orchestrator releases the task lease at the end of the run, so it must be the same
       // worker identity that claimed the task — a different id is a lease it does not hold.
       workerId: context_worker_id,
@@ -545,13 +544,10 @@ describe('P1 Customer Care execution path', () => {
   });
 
   it('books a provider outage as RETRYABLE and completes the run on the next claim', async () => {
-    // Persisted requeue and reclaim (§4.4): the first attempt is dispatched through a connector
-    // bound to a closed local port, so the provider call fails on the wire and the request never
-    // reaches the system of record. The attempt must still be booked with its error class and spend
-    // its retry budget instead of vanishing, and the re-queued run must be claimable again and
-    // re-enter its persisted plan from the checkpoint — a run that returns to `queued` with nothing
-    // recorded never leaves the queue. Both attempts run in this process, through the same worker
-    // identity: this is a durable row-level proof, not a process-restart proof.
+    // Persisted retry wait and timer-driven reclaim (§4.4): the first attempt uses a connector
+    // bound to a closed local port. Its failure must spend one retry, preserve the checkpoint, and
+    // park until the durable backoff is due. The real repository then admits timer.expired before
+    // the healthy graph reclaims the same run. This is a durable row-level proof, not a process restart.
     const accepted = await postTurn(context.fixture, {
       message: `Where is my order ${context.order_identifier}?`,
       idempotency_key: `smoke-outage-${randomUUID()}`,
@@ -562,19 +558,18 @@ describe('P1 Customer Care execution path', () => {
 
     // The outage graph is the same worker and the same durable store, with the provider base
     // pointed at a port nothing listens on: the step fails on the wire, not on a policy refusal.
-    const outage_connectors = context.workerConnectors.createWorkerConnectors(
-      {
-        APP_ENV: process.env.APP_ENV,
-        CARE_TENANT_IDS: context.tenant_id,
-        MOCK_ERP_ENABLED: 'true',
-        ERP_API_BASE_URL: 'http://127.0.0.1:1/api/v1',
-        MOCK_SECRET_KEY: process.env.MOCK_SECRET_KEY,
-      },
-      { hmac: context.workerHmac.nodeHmacSha256Hex },
-    );
+    const outage_connectors = createIntegrationErpConnectors(context.adapters, {
+      app_env: process.env.APP_ENV,
+      tenant_id: context.tenant_id,
+      base_url: 'http://127.0.0.1:1/api/v1',
+      secret: process.env.MOCK_SECRET_KEY,
+      hmac: context.workerHmac.nodeHmacSha256Hex,
+    });
     const outage_factory = context.careGraph.createCareOrchestratorFactory({
       connectors: outage_connectors,
       erp_read: outage_connectors.erp_read,
+      workflowRepository: new context.db.DurableWorkflowRepository(),
+      runResponseRepository: new context.db.RunResponseRepository(),
       workerId: context.worker_id,
       env: context.care_env,
       audit_secret: context.audit_secret,
@@ -606,11 +601,33 @@ describe('P1 Customer Care execution path', () => {
     const failed = await repository.getTask(context.tenant_id, run_id);
     assert.equal(
       failed.state,
-      'queued',
-      `an unreachable provider re-queues the run (refusal: ${refusal === null ? 'none' : refusal.message})`,
+      'waiting',
+      `an unreachable provider parks for its retry timer (refusal: ${refusal === null ? 'none' : refusal.message})`,
     );
     assert.equal(failed.retry_count, 1, 'the failed attempt spent one unit of retry budget');
     assert.equal(failed.last_error_class, 'RETRYABLE', 'the outage is stored as a retryable failure');
+    assert.equal(failed.state_payload.wait_reason, 'RETRY', 'the parked run waits for a retry, not reconciliation');
+    assert.equal(typeof failed.state_payload.retry_not_before, 'string', 'the durable backoff has a deadline');
+    assert.ok(Number.isFinite(Date.parse(failed.state_payload.retry_not_before)), 'the retry deadline is an instant');
+    assert.equal(failed.state_payload.resume_event, undefined, 'a retry wait has no resume event before its timer');
+
+    // Measure the remaining backoff on the same database clock that fences queueRetryTimer.
+    const remaining_ms = await context.db.withTenantContext(context.tenant_id, async (client) => {
+      const result = await client.query(
+        `SELECT GREATEST(0, CEIL(EXTRACT(EPOCH FROM ($1::timestamptz - clock_timestamp())) * 1000))::int AS remaining_ms`,
+        [failed.state_payload.retry_not_before],
+      );
+      return result.rows[0].remaining_ms;
+    });
+    await new Promise((resolve) => setTimeout(resolve, remaining_ms + 1));
+    assert.equal(await repository.queueRetryTimer({
+      tenant_id: context.tenant_id,
+      run_id,
+      retry_count: failed.retry_count,
+    }), true, 'the due timer is admitted for exactly this durable retry generation');
+    const resumable = await repository.getTask(context.tenant_id, run_id);
+    assert.equal(resumable.state_payload.resume_event.event_type, 'timer.expired');
+    assert.equal(resumable.state_payload.resume_event.retry_count, failed.retry_count);
 
     // The provider is reachable again. The same durable row is re-claimed and the run finishes
     // from its checkpoint: this is the attempt that used to die on a replayed stage edge.
@@ -619,7 +636,7 @@ describe('P1 Customer Care execution path', () => {
       lease_owner: context.worker_id,
       lease_duration_ms: 30_000,
     });
-    assert.ok(second !== null && second.task.run_id === run_id, 'the re-queued run is claimable again');
+    assert.ok(second !== null && second.task.run_id === run_id, 'the timer-resumable run is claimable again');
 
     await context.worker.processClaimedTask({
       taskRecord: second.task,
@@ -725,15 +742,17 @@ describe('P1 Customer Care execution path', () => {
     const run_id = accepted.body.task_id;
     context.run_ids.push(run_id);
 
-    const task = await executeClaimedRun(run_id, { tolerate_refusal: true });
-    const written = await errorsOf(context.db, run_id);
-
-    assert.notEqual(task.state, 'completed', `another customer's order is never released: ${written}`);
-    assert.match(
-      written,
-      /ORDER_OWNER_MISMATCH|ORDER_NOT_FOUND/,
-      `the refusal is the documented one and discloses no existence: ${written}`,
-    );
+    const task = await executeClaimedRun(run_id);
+    assert.equal(task.state, 'completed', 'an authoritative non-match completes with a typed no-answer');
+    const response = await new context.db.RunResponseRepository().read(context.tenant_id, run_id);
+    assert.ok(response, 'the cross-customer lookup persists its customer-visible outcome');
+    assert.equal(response.response_kind, 'NO_ANSWER');
+    assert.equal(response.template_key, 'care.order_not_found');
+    assert.equal(response.reason_code, 'ORDER_NOT_FOUND');
+    const core = await loadBuild('../../packages/core-engine/dist/index.js', 'the canonical response templates');
+    assert.equal(response.answer, core.renderResponseTemplate('care.order_not_found').text);
+    assert.deepEqual(response.sources, [], 'the non-match exposes no foreign order evidence or fields');
+    assert.ok(!response.answer.includes(context.foreign_order_identifier), 'the reply discloses no foreign order id');
   });
 
   it('names the capabilities this build does not bind instead of stubbing them', () => {

@@ -13,16 +13,33 @@
 import type { IEffectGuard } from '@agentos/core-engine/contracts';
 
 import type {
+  AuditPageQuery,
+  PlatformAuditPage,
+  PlatformAuditPageQuery,
   AppendProviderCallInput,
   CareHandoffClaimOutcome,
   CareHandoffCompletionOutcome,
   ClaimCareHandoffInput,
   CompleteCareHandoffInput,
   CompanyCrmCampaignRow,
+  CompanyCrmCampaignSegment,
   CompanyCrmConversationSummaryRow,
   CompanyCrmCustomerProfileRow,
   CompanyCrmCustomerRow,
   CompanyProjectionSources,
+  CompanyActivityPageOptions,
+  ConnectorBindingActor,
+  ConnectorBindingRecord,
+  ConnectorProbeResult,
+  PutConnectorConfigInput,
+  PutTenantSecretInput,
+  SecretAuditContext,
+  TenantSecretDescription,
+  AgentActivationAction,
+  AgentActivationActor,
+  AgentActivationDomain,
+  AgentActivationSnapshot,
+  PlatformRunTraceDetails as PlatformRunTraceDetailsRecord,
 } from '@agentos/database';
 
 import type {
@@ -34,14 +51,13 @@ import type {
   CursorPage,
   EventIngestionStatus,
   GatewayErrorCode_,
-  KpiSnapshotResponse,
   ReconciliationResolution,
   RetryableFailureClass,
   RunProjection,
   RunSourceChannel,
+  TaskErrorProjection,
   TaskSourceRef,
   TaskStoredState,
-  TelemetryFrame,
   TimelineEntry,
 } from './contracts.js';
 
@@ -56,6 +72,7 @@ export interface ConversationRecord {
   readonly conversation_id: string;
   readonly tenant_id: string;
   readonly customer_id: string | null;
+  readonly customer_display_name?: string | null;
   readonly channel: ChannelId;
   readonly external_thread_id: string;
   readonly active_agent: string;
@@ -96,13 +113,35 @@ export interface ConversationPort {
   listMessages(input: { tenant_id: string; conversation_id: string; limit?: number }): Promise<
     readonly { message_id: string; sender_type: ConversationMessageInput['sender_type']; sender_id: string; content: string; created_at: string }[]
   >;
-  /** Moves `conversations.state`; the wire value is never stored (`06` §8.3 C-3). */
+  listWidgetMessages(input: {
+    readonly tenant_id: string;
+    readonly conversation_id: string;
+    readonly after?: string;
+    readonly limit?: number;
+  }): Promise<{
+    readonly messages: readonly {
+      readonly message_id: string;
+      readonly sender_type: ConversationMessageInput['sender_type'];
+      readonly sender_id: string;
+      readonly content: string;
+      readonly created_at: string;
+      readonly delivery_status?: 'STORED' | 'DELIVERED' | 'FAILED';
+    }[];
+    readonly next_cursor: string | null;
+  }>;
+  handoffState(tenant_id: string, conversation_id: string): Promise<{
+    readonly has_enqueued_handoff: boolean;
+    readonly has_assigned_handoff: boolean;
+  }>;
+  /** Compare-and-sets `conversations.state` from the caller's observed state and owner. */
   setState(
     tenant_id: string,
     conversation_id: string,
+    expected_state: ConversationState,
+    expected_takeover_operator_id: string | null,
     state: ConversationState,
     takeover_operator_id: string | null,
-  ): Promise<void>;
+  ): Promise<'UPDATED' | 'CONFLICT'>;
   /**
    * Returns a conversation to agent control only when its persisted takeover marker still belongs
    * to the operator whose lease was observed as expired. This conditional transition prevents stale
@@ -187,7 +226,17 @@ export interface AdmissionReservation {
   readonly run_id: string;
   readonly effect_key: string;
   readonly request_fingerprint: string;
+  readonly customer_message?: {
+    readonly conversation_id: string;
+    readonly sender_id: string;
+    readonly content: string;
+    readonly request_id?: string;
+  };
 }
+
+export type RunRetryClassification =
+  | { readonly retryable: true; readonly failure_class: RetryableFailureClass; readonly effect_key: string }
+  | { readonly retryable: false; readonly reason: 'NOT_FOUND' | 'NOT_FAILED' | 'UNKNOWN' };
 
 export interface RunPort {
   /**
@@ -202,6 +251,14 @@ export interface RunPort {
     readonly admission_reservation?: AdmissionReservation;
     /** Internal gateway admission class; never sourced from a client field. */
     admission_skill_id?: 'campaign.draft';
+    /** Persisted campaign row created atomically with this run when supplied. */
+    readonly campaign?: {
+      readonly campaign_id: string;
+      readonly name: string;
+      readonly objective: string;
+      readonly channels: readonly string[];
+      readonly audience_count: number;
+    };
     source_channel: RunSourceChannel;
     event_type: string;
     session_id: string;
@@ -216,6 +273,7 @@ export interface RunPort {
     task_version: number;
     lifecycle_state: TaskStoredState;
     correlation_id: string;
+    error: TaskErrorProjection | null;
     /** Immutable admission owner; absent for non-conversation runs. */
     conversation_id?: string;
     session_id?: string;
@@ -228,10 +286,7 @@ export interface RunPort {
    * R13: the verified side-effect-free failure classes only. `UNKNOWN` is absent by construction —
    * an indeterminate outcome is reconciled (R18), never blind-retried.
    */
-  classifyRetry(tenant_id: string, run_id: string): Promise<
-    | { readonly retryable: true; readonly failure_class: RetryableFailureClass; readonly effect_key: string }
-    | { readonly retryable: false; readonly reason: 'NOT_FOUND' | 'NOT_FAILED' | 'UNKNOWN' }
-  >;
+  classifyRetry(tenant_id: string, run_id: string): Promise<RunRetryClassification>;
   /** R13: re-queues the failed run under its original `effect_key`. */
   retry(input: { tenant_id: string; run_id: string; operator_id: string; reason: string }): Promise<StartedRun>;
   /** R18: maps one operator resolution onto the durable reservation settlement. */
@@ -253,6 +308,9 @@ export interface RunPort {
     from?: string;
     to?: string;
   }): Promise<CursorPage<RunProjection>>;
+  /** Tenant-scoped company narrative and operator-only diagnostic trace. */
+  story(tenant_id: string, run_id: string): Promise<object | null>;
+  trace(tenant_id: string, run_id: string): Promise<object | null>;
 }
 
 export interface ApprovalPort {
@@ -342,38 +400,6 @@ export interface EventPort {
 }
 
 // ============================================================================
-// Realtime and KPI projections (`06` §8.1.2, §8.1.3)
-// ============================================================================
-
-export interface StreamPort {
-  /** Resumes from `Last-Event-ID`/`cursor`; a replayed frame keeps its original `id`. */
-  subscribe(input: {
-    tenant_id: string;
-    metric?: string;
-    channel?: string;
-    cursor?: string;
-    signal: AbortSignal;
-  }): AsyncIterable<TelemetryFrame>;
-  /** R10: the socket never mutates state; control actions go through R06/R07/R08. */
-  onCommand?(input: {
-    tenant_id: string;
-    operator_id: string;
-    command: string;
-    payload: Record<string, unknown>;
-  }): Promise<{ readonly acknowledged: boolean; readonly events: readonly { event: string; data: Record<string, unknown> }[] }>;
-}
-
-export interface KpiPort {
-  snapshot(input: {
-    tenant_id: string;
-    window?: string;
-    timezone?: string;
-    cursor?: string;
-    limit?: number;
-  }): Promise<KpiSnapshotResponse>;
-}
-
-// ============================================================================
 // Identity and audit (`04` §5, NFR-002)
 // ============================================================================
 
@@ -428,11 +454,69 @@ export interface GatewayAuditPort {
   }): Promise<void>;
 }
 
-/** Read-only tenant governance settings used by approval policy routes. */
+export interface CompanyProfileRecord {
+  readonly tenant_id: string;
+  readonly company_name: string;
+  readonly industry: string | null;
+  readonly locale: string;
+  readonly timezone: string;
+  readonly currency: string;
+  readonly brand_profile: Readonly<Record<string, unknown>>;
+  readonly version: number;
+  readonly updated_at: string;
+}
+
+export interface CompanyProfileValues {
+  readonly company_name: string;
+  readonly industry: string | null;
+  readonly locale: string;
+  readonly timezone: string;
+  readonly currency: string;
+  readonly brand_profile: Readonly<Record<string, unknown>>;
+}
+
+export interface CompanyProfileUpdateInput {
+  readonly tenant_id: string;
+  readonly values: CompanyProfileValues;
+  readonly expected_version: number;
+  readonly actor_kind: string;
+  readonly actor_id: string;
+  readonly correlation_id: string;
+}
+
+export type CompanyProfileUpdateResult =
+  | { readonly status: 'UPDATED'; readonly profile: CompanyProfileRecord }
+  | { readonly status: 'VERSION_CONFLICT'; readonly current_version: number };
+
+/** Tenant-scoped company profile reads and audited optimistic-concurrency updates. */
+export interface CompanyProfilePort {
+  get(tenant_id: string): Promise<CompanyProfileRecord | null>;
+  update(input: CompanyProfileUpdateInput): Promise<CompanyProfileUpdateResult>;
+}
+
+export interface GovernanceSettings {
+  readonly tenant_id: string;
+  readonly require_distinct_approver: boolean;
+  readonly approval_expiry_hours: number;
+  readonly takeover_lease_seconds: number;
+  readonly version: number;
+  readonly updated_at: string;
+}
+
+export interface GovernanceUpdateInput {
+  readonly require_distinct_approver: boolean;
+  readonly approval_expiry_hours: number;
+  readonly takeover_lease_seconds: number;
+  readonly expected_version: number;
+  readonly actor_kind: string;
+  readonly actor_id: string;
+  readonly correlation_id: string;
+}
+
+/** Tenant-scoped governance settings and audited optimistic-concurrency updates. */
 export interface GovernancePort {
-  get(tenant_id: string): Promise<{
-    readonly require_distinct_approver: boolean;
-  }>;
+  get(tenant_id: string): Promise<GovernanceSettings>;
+  update(tenant_id: string, input: GovernanceUpdateInput): Promise<GovernanceSettings | null>;
 }
 /** Cross-tenant platform directory; implementations call only the privileged SQL projections. */
 export interface PlatformDirectoryPort {
@@ -463,13 +547,248 @@ export interface PlatformDirectoryPort {
   } | null>;
   usage(from: string, to: string): Promise<readonly {
     readonly tenant_id: string;
-    readonly runs_count: number | null;
-    readonly token_cost_records_count: number | null;
-    readonly estimated_cost_total: string | null;
-    readonly input_tokens_total: number | null;
-    readonly output_tokens_total: number | null;
-    readonly cached_tokens_total: number | null;
+    readonly display_name: string;
+    readonly usage_day: string;
+    readonly domain: string | null;
+    readonly model: string | null;
+    readonly currency: string | null;
+    readonly cost_recorded: boolean;
+    readonly record_count: number;
+    readonly input_tokens_total: number;
+    readonly output_tokens_total: number;
+    readonly cached_tokens_total: number;
+    readonly tokens_total: number;
+    readonly cost_total: string | null;
+    readonly monthly_token_budget: number | null;
   }[]>;
+  /** Cross-company run list of derived fields only (no customer data, no raw payloads). */
+  listRuns(input: {
+    tenant_id?: string;
+    state?: string;
+    domain?: string;
+    limit?: number;
+    before?: string;
+    search?: string;
+  }): Promise<readonly PlatformRunListItem[]>;
+  runDetail(tenant_id: string, run_id: string): Promise<PlatformRunDetail | null>;
+  runTraceDetails(tenant_id: string, run_id: string): Promise<PlatformRunTraceDetailsRecord>;
+  runsSummary(): Promise<readonly PlatformRunsSummaryRow[]>;
+  reconciliationQueue(input?: {
+    tenant_id?: string;
+    limit?: number;
+  }): Promise<readonly PlatformReconciliationItem[]>;
+  companyOverview(tenant_id: string): Promise<PlatformCompanyOverview | null>;
+}
+
+/** Derived platform run projections; every field is a scalar, never a raw payload. */
+export interface PlatformRunListItem {
+  readonly tenant_id: string;
+  readonly display_name: string;
+  readonly run_id: string;
+  readonly domain: string;
+  readonly current_step: number;
+  readonly state: string;
+  readonly failure_class: string | null;
+  readonly retry_eligible: boolean;
+  readonly attempts: number;
+  readonly max_retries: number;
+  readonly duration_ms: number | null;
+  readonly created_at: string;
+  readonly updated_at: string;
+  readonly correlation_id: string;
+}
+
+export interface PlatformRunDetail {
+  readonly tenant_id: string;
+  readonly display_name: string;
+  readonly run_id: string;
+  readonly domain: string;
+  readonly correlation_id: string;
+  readonly current_step: number;
+  readonly state: string;
+  readonly task_version: number;
+  readonly failure_class: string | null;
+  readonly retry_eligible: boolean;
+  readonly attempts: number;
+  readonly max_retries: number;
+  readonly lease_owner: string | null;
+  readonly lease_expires_at: string | null;
+  readonly conversation_id: string | null;
+  readonly error_code: string | null;
+  readonly duration_ms: number | null;
+  readonly stage_event_count: number;
+  readonly evidence_count: number;
+  readonly cost_breakdown: readonly {
+    readonly currency: string | null;
+    readonly cost_recorded: boolean;
+    readonly record_count: number;
+    readonly cost_total: string | null;
+  }[];
+  readonly input_tokens_total: number;
+  readonly output_tokens_total: number;
+  readonly cached_tokens_total: number;
+  readonly created_at: string;
+  readonly updated_at: string;
+}
+
+export interface PlatformRunsSummaryRow {
+  readonly state: string;
+  readonly run_count: number;
+  readonly tenant_count: number;
+  readonly retry_eligible_count: number;
+  readonly reconciliation_count: number;
+}
+
+export interface PlatformReconciliationItem {
+  readonly tenant_id: string;
+  readonly display_name: string;
+  readonly run_id: string;
+  readonly domain: string;
+  readonly state: string;
+  readonly failure_class: string | null;
+  readonly attempts: number;
+  readonly max_retries: number;
+  readonly reason: string;
+  readonly correlation_id: string;
+  readonly updated_at: string;
+}
+
+export interface PlatformCompanyOverview {
+  readonly tenant_id: string;
+  readonly display_name: string;
+  readonly status: string;
+  readonly data_class: string;
+  readonly created_at: string;
+  readonly runs_total: number;
+  readonly runs_failed: number;
+  readonly runs_running: number;
+  readonly runs_waiting: number;
+  readonly retry_eligible_count: number;
+  readonly reconciliation_count: number;
+  readonly needs_attention: boolean;
+  readonly last_activity_at: string | null;
+}
+
+/** Platform-only tenant lifecycle commands, executed in the target tenant's RLS context. */
+export interface PlatformCompanyCommandsPort {
+  suspend(input: { tenant_id: string; reason?: string }): Promise<{ readonly tenant_id: string; readonly status: string }>;
+  resume(input: { tenant_id: string; reason?: string }): Promise<{ readonly tenant_id: string; readonly status: string }>;
+}
+
+/** Role bundles a company membership may hold; the wire vocabulary of `tenant_memberships`. */
+export type CompanyUserRole = 'COMPANY_ADMIN' | 'OPERATOR' | 'VIEWER';
+export type InvitationRoleBundle = CompanyUserRole | 'PLATFORM_ADMIN';
+export type CompanyUserStatus = 'INVITED' | 'ACTIVE' | 'DEACTIVATED';
+
+export type IdentityScope = 'company' | 'platform';
+
+/** Platform administrator row; email stays private until the route masks it. */
+export interface PlatformAdminRecord {
+  readonly user_id: string | null;
+  readonly display_name: string | null;
+  readonly email: string;
+  readonly status: CompanyUserStatus;
+  readonly last_sign_in_at: string | null;
+  readonly created_at: string;
+  readonly updated_at: string;
+}
+
+export interface PlatformAdminInvitationRecord {
+  readonly invitation_id: string;
+  readonly email: string;
+  readonly expires_at: string;
+}
+
+/** Platform-only admin directory and invitation capability. */
+export interface PlatformAdminsPort {
+  list(): Promise<readonly PlatformAdminRecord[]>;
+  invite(input: {
+    readonly tenant_id: string;
+    readonly email: string;
+    readonly created_by: string;
+  }): Promise<PlatformAdminInvitationRecord | null>;
+}
+
+/** One company member as both consoles list it. */
+export interface CompanyUserRecord {
+  readonly user_id: string;
+  readonly display_name: string | null;
+  readonly email: string;
+  readonly role_bundle: CompanyUserRole;
+  readonly status: CompanyUserStatus;
+  readonly last_sign_in_at: string | null;
+  readonly created_at: string;
+  readonly updated_at: string;
+}
+
+/** The single-use invitation that was just issued and handed to the email sender. */
+export interface CompanyInvitationRecord {
+  readonly invitation_id: string;
+  readonly email: string;
+  readonly role_bundle: CompanyUserRole;
+  readonly expires_at: string;
+}
+
+/**
+ * Company user administration (T9.3): the invite/change/deactivate lifecycle behind both the
+ * platform company wizard and the company settings "Người dùng" tab. The raw invitation token is
+ * created, hashed and delivered inside this port; a route never sees or stores it.
+ */
+export interface CompanyUserAdminPort {
+  listUsers(tenant_id: string): Promise<readonly CompanyUserRecord[]>;
+  invite(input: {
+    readonly tenant_id: string;
+    readonly email: string;
+    readonly role_bundle: CompanyUserRole;
+    /** The authenticated issuer's user id, recorded as the invitation author. */
+    readonly created_by: string;
+  }): Promise<CompanyInvitationRecord | null>;
+  updateUser(input: {
+    readonly tenant_id: string;
+    readonly user_id: string;
+    readonly role_bundle?: CompanyUserRole;
+    readonly status?: CompanyUserStatus;
+  }): Promise<CompanyUserRecord | null>;
+}
+
+/** Redemption of an invitation from the public accept page. */
+/** Redemption of a company or platform invitation from its public accept page. */
+export interface InvitationAcceptPort {
+  inspect(token: string): Promise<{
+    readonly email: string;
+    readonly tenant_id: string;
+    readonly role_bundle: InvitationRoleBundle;
+    readonly scope: IdentityScope;
+    readonly expires_at: string;
+  } | null>;
+  /** `null` for an unknown, expired or already-consumed token. */
+  accept(input: {
+    readonly token: string;
+    readonly password: string;
+    readonly display_name?: string;
+  }): Promise<{
+    readonly user_id: string;
+    readonly email: string;
+    readonly tenant_id: string;
+    readonly role_bundle: InvitationRoleBundle;
+    readonly scope: IdentityScope;
+  } | null>;
+}
+
+/**
+ * Delivery of an outbound email. The default local/CI transport is log-only; the optional file
+ * transport stores invitation links only in a private local/CI outbox and never writes them to logs.
+ */
+export interface EmailSenderPort {
+  sendInvitation(input: {
+    readonly to: string;
+    readonly tenant_id: string;
+    readonly role_bundle: InvitationRoleBundle;
+    readonly scope?: IdentityScope;
+    /** Contains a single-use token; never write this value to process logs. */
+    readonly invitation_url: string;
+    readonly expires_at: string;
+  }): Promise<void>;
 }
 
 /** Provider metadata intentionally contains no credentials, URLs, or model secrets. */
@@ -480,12 +799,16 @@ export interface PlatformProvidersPort {
     readonly mode: string;
   }[]>;
 }
+/** Read-only audit history projections; writes remain inside the setting's own transaction. */
+export interface PlatformAuditPort {
+  listForTenant(tenant_id: string, query?: AuditPageQuery): Promise<PlatformAuditPage>;
+  listForPlatform(query?: PlatformAuditPageQuery): Promise<PlatformAuditPage>;
+}
 /** Tenant-scoped read-only sources for the company console projections. */
 export interface CompanyProjectionPort {
-  getSources(tenant_id: string): Promise<CompanyProjectionSources>;
+  getSources(tenant_id: string, activityPage?: CompanyActivityPageOptions): Promise<CompanyProjectionSources>;
 }
 export type CompanyProjectionsPort = CompanyProjectionPort;
-/** Tenant-scoped Customer 360, campaign, and operator conversation projections. */
 export interface CompanyCrmPort {
   listCustomers(input: {
     readonly tenant_id: string;
@@ -497,6 +820,7 @@ export interface CompanyCrmPort {
     readonly next_cursor: string | null;
   }>;
   getCustomerProfile(tenant_id: string, customer_id: string): Promise<CompanyCrmCustomerProfileRow | null>;
+  listCampaignSegments(tenant_id: string): Promise<readonly CompanyCrmCampaignSegment[]>;
   listCampaigns(input: {
     readonly tenant_id: string;
     readonly limit?: number;
@@ -529,6 +853,35 @@ export interface ReceiptPort {
  * Everything a route group needs, injected at composition time. The bundle is deliberately
  * explicit: a missing binding fails at composition, never at request time.
  */
+export interface CompanyIntegrationsPort {
+  listBindings(tenant_id: string): Promise<readonly ConnectorBindingRecord[]>;
+  getBinding(tenant_id: string, connector_id: string): Promise<ConnectorBindingRecord | null>;
+  /** Environment mock eligibility, scoped to DEMO data; callers must also check a pristine binding. */
+  demoErpEligibleForTenant?(tenant_id: string): Promise<boolean>;
+  putConfig(
+    tenant_id: string,
+    connector_id: string,
+    input: PutConnectorConfigInput,
+    actor: ConnectorBindingActor,
+    expectedVersion: number,
+  ): Promise<ConnectorBindingRecord>;
+  recordProbe(tenant_id: string, connector_id: string, result: ConnectorProbeResult): Promise<ConnectorBindingRecord>;
+  disconnect(
+    tenant_id: string,
+    connector_id: string,
+    actor: ConnectorBindingActor,
+    expectedVersion: number,
+  ): Promise<ConnectorBindingRecord>;
+  putSecret(tenant_id: string, input: PutTenantSecretInput): Promise<TenantSecretDescription>;
+  describeSecret(tenant_id: string, secret_id: string): Promise<TenantSecretDescription | null>;
+  revokeSecret(tenant_id: string, secret_id: string, context: SecretAuditContext): Promise<boolean>;
+  resolveSecret(tenant_id: string, secret_id: string): Promise<string>;
+}
+
+export interface TestCustomerArtifactPort {
+  purge(input: { readonly tenant_id: string; readonly customer_ids: readonly string[] }): Promise<void>;
+}
+
 export interface GatewayRuntime {
   readonly conversations: ConversationPort;
   readonly takeover: TakeoverLeasePort;
@@ -537,13 +890,25 @@ export interface GatewayRuntime {
   readonly approvals: ApprovalPort;
   readonly events: EventPort;
   readonly timeline: EventPort;
-  readonly streams: StreamPort;
-  readonly kpi: KpiPort;
+
   readonly identity: IdentityPort;
+  readonly testCustomerArtifacts?: TestCustomerArtifactPort;
   readonly webhooks: WebhookVerificationPort;
+  readonly companyProfile?: CompanyProfilePort;
   readonly companyCrm?: CompanyCrmPort;
   readonly companyProjections?: CompanyProjectionPort;
+  readonly companyIntegrations?: CompanyIntegrationsPort;
+  readonly companyAiTeam?: {
+    getState(tenant_id: string, domain: AgentActivationDomain): Promise<AgentActivationSnapshot | null>;
+    transition(input: {
+      readonly tenant_id: string;
+      readonly domain: AgentActivationDomain;
+      readonly action: AgentActivationAction;
+      readonly actor: AgentActivationActor;
+    }): Promise<AgentActivationSnapshot>;
+  };
   readonly governance?: GovernancePort;
+  readonly auditHistory?: PlatformAuditPort;
   readonly audit: GatewayAuditPort;
   readonly providerCalls?: ProviderCallPort;
   readonly receipts: ReceiptPort;

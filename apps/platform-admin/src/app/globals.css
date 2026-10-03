@@ -5,8 +5,8 @@
 @tailwind utilities;
 
 :root {
-  --font-ui: 'Inter';
-  --font-mono: 'JetBrains Mono';
+  --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 html,
@@ -89,6 +89,12 @@ body {
   background: var(--color-warning-bg);
   border-color: var(--color-warning-border);
   color: var(--color-warning);
+}
+
+.platform-alert--info {
+  background: var(--color-info-bg);
+  border-color: var(--color-info-border);
+  color: var(--color-ink-body, var(--color-text));
 }
 
 .platform-alert--success {

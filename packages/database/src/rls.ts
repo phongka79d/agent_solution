@@ -1,7 +1,6 @@
-import type { PoolClient } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 
-import { getPool } from './client.js';
-
+import { getIndexerPool, getPool } from './client.js';
 /**
  * Single-tenant context: one UUID in 8-4-4-4-12 hex form. A comma-separated list is
  * refused even though the RLS predicate parses one, because a request must never be
@@ -11,6 +10,8 @@ const TENANT_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0
 
 /** Application role the tenant transaction runs as; it owns no BYPASSRLS (NFR-006). */
 const APPLICATION_ROLE = 'agentos_app';
+/** Dedicated transaction role for audited AVAILABLE transitions. */
+const INDEXER_ROLE = 'agentos_indexer';
 
 /** Schema search order inside the tenant transaction. */
 const SEARCH_PATH = 'agentos, public';
@@ -57,17 +58,44 @@ export function assertTenantContext(tenantId: string): void {
  * @throws Error `TENANT_CONTEXT_REQUIRED` when `tenantId` is blank or not a single UUID, before any pool connection is opened.
  * @throws Error The callback error, after the transaction has been rolled back.
  */
-export async function withTenantContext<T>(
+export function withTenantContext<T>(
   tenantId: string,
   callback: (client: PoolClient) => Promise<T>,
 ): Promise<T> {
+  return withTenantRole(tenantId, callback, getPool, APPLICATION_ROLE);
+}
+
+/**
+ * Executes tenant-scoped work as the dedicated knowledge indexer role.
+ * Its login does not inherit the capability role; it can only assume it per transaction.
+ *
+ * @param tenantId - Tenant UUID bound to the transaction.
+ * @param callback - Work executed against the tenant-scoped client.
+ * @returns The callback result once the transaction commits.
+ * @throws Error `TENANT_CONTEXT_REQUIRED` when `tenantId` is not one UUID.
+ * @throws Error `INDEXER_DATABASE_URL_REQUIRED` when the dedicated pool is not configured.
+ * @throws Error The callback error, after the transaction has been rolled back.
+ */
+export function withIndexerContext<T>(
+  tenantId: string,
+  callback: (client: PoolClient) => Promise<T>,
+): Promise<T> {
+  return withTenantRole(tenantId, callback, getIndexerPool, INDEXER_ROLE);
+}
+
+async function withTenantRole<T>(
+  tenantId: string,
+  callback: (client: PoolClient) => Promise<T>,
+  poolForRole: () => Pool,
+  role: typeof APPLICATION_ROLE | typeof INDEXER_ROLE,
+): Promise<T> {
   assertTenantContext(tenantId);
 
-  const client = await getPool().connect();
+  const client = await poolForRole().connect();
 
   try {
     await client.query('BEGIN');
-    await client.query(`SET LOCAL ROLE ${APPLICATION_ROLE}`);
+    await client.query(`SET LOCAL ROLE ${role}`);
     await client.query(`SET LOCAL search_path TO ${SEARCH_PATH}`);
     await client.query(`SELECT set_config('${TENANT_CONTEXT_SETTING}', $1, true)`, [tenantId]);
 
@@ -80,7 +108,7 @@ export async function withTenantContext<T>(
     try {
       await client.query('ROLLBACK');
     } catch {
-      // Surface the original failure: a broken connection must not mask its cause.
+      // Surface the original database error if the connection is already broken.
     }
     throw error;
   } finally {

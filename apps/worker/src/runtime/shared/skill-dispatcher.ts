@@ -1,9 +1,12 @@
+import { approvalPayloadInput, OrchestratorError } from '@agentos/core-engine';
+
 import { randomUUID } from 'node:crypto';
 
 import type {
   ActionDraft,
   AssignableAuthority,
   ExecutionReceipt,
+  HydratedContext,
   IAdapterDispatcher,
 } from '@agentos/core-engine/contracts';
 import {
@@ -24,6 +27,34 @@ const ASSIGNABLE_AUTHORITIES: Readonly<Record<AssignableAuthority, true>> = Obje
 function isAssignableAuthority(value: unknown): value is AssignableAuthority {
   return typeof value === 'string' && Object.hasOwn(ASSIGNABLE_AUTHORITIES, value);
 }
+
+function errorCodeOf(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null || !('code' in error) || typeof error.code !== 'string') {
+    return undefined;
+  }
+  return error.code;
+}
+
+export function mapSkillError(error: unknown, mutating: boolean, skill_id?: string): unknown {
+  if (!(error instanceof SkillError)) return error;
+  if (
+    skill_id === 'skill.mkt.dispatch_campaign'
+    && error.code === 'SKILL_UNAVAILABLE'
+    && error.message.endsWith('CONNECTOR_UNBOUND')
+  ) {
+    return new OrchestratorError('CAMPAIGN_DISPATCH_NOT_INTEGRATED', error.message);
+  }
+  const causeCode = error.code === 'SKILL_EXECUTION_FAILED' ? errorCodeOf(error.cause) : undefined;
+  const code = causeCode ?? error.code;
+  if (mutating && code === 'TIMEOUT') {
+    return new OrchestratorError(
+      'EFFECT_UNKNOWN',
+      `Skill timeout may have occurred after the effect call: ${error.message}`,
+    );
+  }
+  return new OrchestratorError(code, error.message);
+}
+
 
 export interface SkillAdapterDispatcherOptions {
   readonly engine: SkillRuntimeEngine;
@@ -59,7 +90,15 @@ export interface SkillAdapterDispatcherOptions {
  */
 export function createSkillAdapterDispatcher(options: SkillAdapterDispatcherOptions): IAdapterDispatcher {
   return {
-    async dispatch(action: ActionDraft, dispatchOptions?: { timeout_ms?: number; signal?: AbortSignal }): Promise<ExecutionReceipt> {
+    async dispatch(
+      action: ActionDraft,
+      dispatchOptions?: {
+        timeout_ms?: number;
+        signal?: AbortSignal;
+        request_fingerprint?: string;
+        hydrated_context?: HydratedContext;
+      },
+    ): Promise<ExecutionReceipt> {
       const correlation_id = await options.resolve_correlation_id(action.tenant_id, action.run_id);
       const granted_authority = await options.resolve_grant(action.tenant_id, action.agent_id);
 
@@ -75,7 +114,7 @@ export function createSkillAdapterDispatcher(options: SkillAdapterDispatcherOpti
 
       // The envelope's server-derived key is authoritative. Accept a caller echo only when it
       // agrees, then strip it before the runtime schema guard rejects envelope fields in input.
-      let skillInput = action.payload;
+      let skillInput: unknown = action.payload;
       if (
         typeof action.payload === 'object'
         && action.payload !== null
@@ -90,9 +129,7 @@ export function createSkillAdapterDispatcher(options: SkillAdapterDispatcherOpti
             action.skill_id,
           );
         }
-        const { effect_key: ignoredEffectKey, ...serverInput } = inputRecord;
-        void ignoredEffectKey;
-        skillInput = serverInput;
+        skillInput = approvalPayloadInput(action);
       }
 
       const timeoutSignal = dispatchOptions?.timeout_ms === undefined
@@ -115,15 +152,24 @@ export function createSkillAdapterDispatcher(options: SkillAdapterDispatcherOpti
         step_index: action.step_index,
         action_revision: action.action_revision,
         effect_key: action.effect_key,
+        ...(dispatchOptions?.hydrated_context === undefined
+          ? {}
+          : { hydrated_context: dispatchOptions.hydrated_context }),
+        ...(dispatchOptions?.request_fingerprint === undefined
+          ? {}
+          : { request_fingerprint: dispatchOptions.request_fingerprint }),
         ...(action.approval_id ? { approval_id: action.approval_id } : {}),
         ...(action.approval_payload_digest ? { approval_payload_digest: action.approval_payload_digest } : {}),
         ...(signal === undefined ? {} : { signal }),
         input: skillInput,
       };
 
-      // Dispatches through the SkillRuntimeEngine. A SkillError refusal surfaces as the canonical failure,
-      // never caught or suppressed as a synthetic success.
-      const result: SkillDispatchResult<unknown> = await options.engine.dispatch(request);
+      let result: SkillDispatchResult<unknown>;
+      try {
+        result = await options.engine.dispatch(request);
+      } catch (error) {
+        throw mapSkillError(error, action.mutating, action.skill_id);
+      }
 
       const outputRecord = result.output && typeof result.output === 'object'
         ? (result.output as Record<string, unknown>)

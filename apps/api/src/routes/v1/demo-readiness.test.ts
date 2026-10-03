@@ -15,6 +15,7 @@ const OTHER_TENANT = '88888888-8888-4888-8888-888888888888';
 const ADMIN_TOKEN = 'platform-admin-token';
 const RUN_READER_TOKEN = 'run-reader-token';
 const OTHER_TENANT_RUN_READER_TOKEN = 'other-tenant-run-reader-token';
+const COMPANY_OPERATOR_TOKEN = 'company-operator-token';
 const TENANT_OPERATOR_TOKEN = 'tenant-operator-token';
 const SESSION_TOKEN = 'widget-session-token';
 const RUN_ID = 'run-demo-001';
@@ -108,24 +109,35 @@ function buildHarness(options?: {
           token: ADMIN_TOKEN,
           tenant_id: TENANT,
           operator_id: 'platform-admin',
+          scope: 'platform',
           permissions: ['platform:admin', 'run:read'],
         },
         {
           token: RUN_READER_TOKEN,
           tenant_id: TENANT,
           operator_id: 'run-reader',
+          scope: 'platform',
           permissions: ['run:read'],
         },
         {
           token: OTHER_TENANT_RUN_READER_TOKEN,
           tenant_id: OTHER_TENANT,
           operator_id: 'other-tenant-run-reader',
+          scope: 'platform',
           permissions: ['run:read'],
+        },
+        {
+          token: COMPANY_OPERATOR_TOKEN,
+          tenant_id: TENANT,
+          operator_id: 'company-operator',
+          scope: 'company',
+          permissions: ['platform:admin', 'run:read'],
         },
         {
           token: TENANT_OPERATOR_TOKEN,
           tenant_id: TENANT,
           operator_id: 'tenant-operator',
+          scope: 'company',
           permissions: ['campaign:draft'],
         },
       ],
@@ -263,16 +275,33 @@ describe('GET /demo/readiness', () => {
       await app.close();
     }
   });
+  it('rejects a company-scoped operator with platform:admin', async () => {
+    const { app, readiness } = buildHarness();
+    try {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/demo/readiness',
+        headers: { authorization: `Bearer ${COMPANY_OPERATOR_TOKEN}` },
+      });
+
+      expect(response.statusCode).toBe(403);
+      expect(response.json().error_code).toBe('INSUFFICIENT_AUTHORITY');
+      expect(readiness).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
+
 });
 
-describe('GET /runs/:run_id/trace', () => {
+describe('GET /demo/readiness/runs/:run_id/trace', () => {
   it('allows run:read and redacts stage details, evidence values and provider payloads', async () => {
     const { app, listProviderCalls, listStageEvents, runRead } = buildHarness();
 
     try {
       const response = await app.inject({
         method: 'GET',
-        url: `/runs/${RUN_ID}/trace`,
+        url: `/demo/readiness/runs/${RUN_ID}/trace`,
         headers: { authorization: `Bearer ${RUN_READER_TOKEN}` },
       });
 
@@ -332,7 +361,7 @@ describe('GET /runs/:run_id/trace', () => {
     try {
       const response = await app.inject({
         method: 'GET',
-        url: `/runs/${RUN_ID}/trace`,
+        url: `/demo/readiness/runs/${RUN_ID}/trace`,
         headers: { authorization: `Bearer ${OTHER_TENANT_RUN_READER_TOKEN}` },
       });
 
@@ -352,11 +381,28 @@ describe('GET /runs/:run_id/trace', () => {
     try {
       const response = await app.inject({
         method: 'GET',
-        url: `/runs/${RUN_ID}/trace`,
+        url: `/demo/readiness/runs/${RUN_ID}/trace`,
         headers: {
           authorization: `Bearer ${SESSION_TOKEN}`,
           origin: 'https://demo.invalid',
         },
+      });
+
+      expect(response.statusCode).toBe(403);
+      expect(response.json().error_code).toBe('INSUFFICIENT_AUTHORITY');
+      expect(runRead).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('rejects a company-scoped operator with run:read', async () => {
+    const { app, runRead } = buildHarness();
+    try {
+      const response = await app.inject({
+        method: 'GET',
+        url: `/demo/readiness/runs/${RUN_ID}/trace`,
+        headers: { authorization: `Bearer ${COMPANY_OPERATOR_TOKEN}` },
       });
 
       expect(response.statusCode).toBe(403);

@@ -279,6 +279,8 @@ function serializeReceipt(receipt: unknown): string | null {
 /**
  * Inserts one reservation row within an existing client transaction.
  * Returns null if the reservation key already exists (ON CONFLICT DO NOTHING).
+ * A savepoint keeps a secondary unique-index race from aborting the admission transaction:
+ * a same-key winner is re-read and treated as a lost insert, not a different request identity.
  *
  * @param client PostgreSQL client in an active transaction.
  * @param input Reservation request.
@@ -309,19 +311,23 @@ export async function insertReservationRow(
     params.push(input.expires_at);
   }
 
+  const savepoint = 'insert_effect_reservation';
+  await client.query(`SAVEPOINT ${savepoint}`);
   try {
     const result = await client.query<EffectReservationRow>(statement, params);
+    await client.query(`RELEASE SAVEPOINT ${savepoint}`);
     const row = result.rows[0];
 
     return row === undefined ? null : toRecord(row);
   } catch (error) {
-    const code =
-      typeof error === 'object' && error !== null
-        ? (error as { code?: unknown }).code
-        : undefined;
-
-    if (code === '23505') {
-      const constraint = (error as { constraint?: unknown }).constraint;
+    if (typeof error === 'object' && error !== null && 'code' in error && error.code === '23505') {
+      await client.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+      const existing = await lockReservationRow(client, input.tenant_id, input.effect_key);
+      await client.query(`RELEASE SAVEPOINT ${savepoint}`);
+      // The request-identity index can report the collision before the effect-key arbiter does.
+      // Let the caller compare the fingerprint and return the winner's in-flight/settled receipt.
+      if (existing !== null) return null;
+      const constraint = 'constraint' in error ? error.constraint : undefined;
 
       throw new Error(
         'EFFECT_RESERVATION_IDENTITY_IN_USE: the inbound request identity ' +

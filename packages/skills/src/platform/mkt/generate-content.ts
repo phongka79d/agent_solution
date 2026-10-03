@@ -136,7 +136,7 @@ const spec: Omit<PlatformRowSpec, 'skill_id'> = {
     initial_interval_ms: 1000,
     backoff_multiplier: 1.0,
     retry_on_timeout: true,
-    non_retryable_errors: ['PROMPT_INJECTION_BLOCKED'],
+    non_retryable_errors: ['PROMPT_INJECTION_BLOCKED', 'LLM_NOT_CONFIGURED', 'LLM_AUTH_FAILED'],
   },
   timeout_ms: 18000,
   audit_spec: {

@@ -19,8 +19,8 @@
  *   write nothing (§4.2(4)).
  * - `recordFailure` persists only `RETRYABLE | FATAL`; `UNKNOWN` is a reconciliation state, not a
  *   stored error class, so it is refused instead of being written (§4.4).
- * - `updateTaskProgress` mirrors `state_payload = state_payload || $5::jsonb`: a top-level merge,
- *   so a progress write never erases the checkpoint the resume path needs.
+ * - A retry with a complete checkpoint parks as `waiting` with a bounded retry deadline; a
+ *   first-pass payload without a resumable plan stays queued and is delayed by that deadline.
  */
 
 import { createHash, randomUUID } from 'node:crypto';
@@ -41,10 +41,8 @@ import { assertTaskTransition, taskTransitionEvent } from './task-fsm.js';
 export type ApprovalDecision = 'PENDING' | 'APPROVED' | 'MODIFIED' | 'REJECTED' | 'CANCELLED';
 
 /**
- * One `approvals` row as this binding stores it. `payload_sha256` is the reviewed digest: the
- * SHA-256 of the RFC 8785 canonical approval payload, recomputed at claim time by the SQL binding
- * and stored here at pause time so a caller can supply the same value as
- * `expected_payload_sha256`.
+ * One `approvals` row as this binding stores it. `payload_sha256` and `digest_version` describe
+ * the normalized skill input reviewed by the operator, not the orchestrator's dispatch envelope.
  */
 export interface PersistedApproval {
   readonly approval_id: string;
@@ -54,6 +52,7 @@ export interface PersistedApproval {
   readonly effect_key: string;
   readonly payload: unknown;
   readonly payload_sha256: string;
+  readonly digest_version: number;
   readonly reason: string;
   readonly decision: ApprovalDecision;
   readonly is_paused: boolean;
@@ -84,7 +83,7 @@ interface TaskRow {
   retry_count: number;
   last_error_class: PersistedErrorClass | null;
   error_details: Record<string, unknown> | null;
-  state_payload: DurableTaskCheckpoint | null;
+  state_payload: DurableTaskCheckpoint | Record<string, unknown> | null;
   paused_for_approval_id: string | null;
   readonly created_at: string;
   updated_at: string;
@@ -98,6 +97,7 @@ interface ApprovalRow {
   effect_key: string;
   payload: unknown;
   payload_sha256: string;
+  digest_version: number;
   reason: string;
   decision: ApprovalDecision;
   is_paused: boolean;
@@ -185,7 +185,7 @@ export class MemoryWorkflowEngine implements IStatefulWorkflowEngine {
     task_version: number;
     state: TaskLifecycleState;
     correlation_id: string;
-    state_payload: DurableTaskCheckpoint | null;
+    state_payload: DurableTaskCheckpoint | Record<string, unknown> | null;
     retry_count: number;
   } | null> {
     const row = this.lookupTask(tenant_id, run_id);
@@ -301,17 +301,37 @@ export class MemoryWorkflowEngine implements IStatefulWorkflowEngine {
     run_id: string;
     expected_task_version: number;
     checkpoint: unknown;
-    approval: { action_id: string; effect_key: string; payload: unknown; reason: string };
+    approval: {
+      action_id: string;
+      effect_key: string;
+      payload: unknown;
+      payload_sha256: string;
+      digest_version: number;
+      reason: string;
+    };
   }): Promise<{ approval_id: string }> {
     const row = this.requireTask(params.tenant_id, params.run_id);
+    const payloadDigest = sha256Hex(canonicalizeJson(params.approval.payload));
+    if (
+      !Number.isSafeInteger(params.approval.digest_version)
+      || params.approval.digest_version <= 0
+      || payloadDigest !== params.approval.payload_sha256
+    ) {
+      throw new OrchestratorError(
+        'APPROVAL_BINDING_MISMATCH',
+        'The approval payload and digest version must describe a valid normalized skill input.',
+      );
+    }
 
     const pending = this.listApprovalRows(params.tenant_id, params.run_id).find(
       (approval) => approval.decision === 'PENDING',
     );
     if (pending !== undefined) {
       if (pending.effect_key === params.approval.effect_key && pending.action_id === params.approval.action_id) {
-        const payloadDigest = sha256Hex(canonicalizeJson(params.approval.payload));
-        if (payloadDigest !== pending.payload_sha256) {
+        if (
+          payloadDigest !== pending.payload_sha256
+          || params.approval.digest_version !== pending.digest_version
+        ) {
           throw new OrchestratorError(
             'APPROVAL_BINDING_MISMATCH',
             `Approval '${pending.approval_id}' binds a different reviewed payload; refusing to replay it for another payload.`,
@@ -348,7 +368,8 @@ export class MemoryWorkflowEngine implements IStatefulWorkflowEngine {
       action_id: params.approval.action_id,
       effect_key: params.approval.effect_key,
       payload: params.approval.payload,
-      payload_sha256: sha256Hex(canonicalizeJson(params.approval.payload)),
+      payload_sha256: payloadDigest,
+      digest_version: params.approval.digest_version,
       reason: params.approval.reason,
       decision: 'PENDING',
       is_paused: false,
@@ -423,10 +444,26 @@ export class MemoryWorkflowEngine implements IStatefulWorkflowEngine {
     }
     if (params.decision === 'APPROVED' && params.authorized_action !== null) {
       const authorized = params.authorized_action;
+      const approvalPayload = authorized.approval_payload;
       if (
         authorized.action_id !== approval.action_id
         || authorized.effect_key !== approval.effect_key
-        || sha256Hex(canonicalizeJson(authorized.payload)) !== approval.payload_sha256
+        || approvalPayload === undefined
+        || sha256Hex(canonicalizeJson(approvalPayload)) !== approval.payload_sha256
+        || authorized.approval_payload_digest !== approval.payload_sha256
+        || authorized.approval_digest_version !== approval.digest_version
+      ) {
+        return { claimed: false };
+      }
+    }
+    if (params.decision === 'MODIFIED') {
+      const authorized = params.authorized_action;
+      const approvalPayload = authorized?.approval_payload;
+      if (
+        authorized === null
+        || approvalPayload === undefined
+        || authorized.approval_digest_version === undefined
+        || sha256Hex(canonicalizeJson(approvalPayload)) !== authorized.approval_payload_digest
       ) {
         return { claimed: false };
       }
@@ -474,18 +511,21 @@ export class MemoryWorkflowEngine implements IStatefulWorkflowEngine {
     // updated in the same step so a crash between this claim and the dispatch resumes the exact
     // action the human released — never a re-drafted one.
     if (params.authorized_action !== null) {
+      const authorized = params.authorized_action;
       if (params.decision === 'MODIFIED') {
-        approval.payload = params.authorized_action.payload;
-        approval.effect_key = params.authorized_action.effect_key;
-        approval.payload_sha256 = sha256Hex(canonicalizeJson(params.authorized_action.payload));
+        approval.payload = authorized.approval_payload!;
+        approval.effect_key = authorized.effect_key;
+        approval.payload_sha256 = authorized.approval_payload_digest!;
+        approval.digest_version = authorized.approval_digest_version!;
       }
       const checkpointAction = params.decision === 'MODIFIED'
         ? {
-            ...params.authorized_action,
+            ...authorized,
             approval_id: approval.approval_id,
             approval_payload_digest: approval.payload_sha256,
+            approval_digest_version: approval.digest_version,
           }
-        : params.authorized_action;
+        : authorized;
       if (row.state_payload !== null) {
         row.state_payload = { ...row.state_payload, pending_action: checkpointAction };
       }
@@ -500,16 +540,11 @@ export class MemoryWorkflowEngine implements IStatefulWorkflowEngine {
   }
 
   /**
-   * §4.4 durable recovery: classify, count, re-queue or fail terminally.
+   * §4.4 durable recovery: classify, count, park a scheduled retry or fail terminally.
    *
-   * `RETRYABLE` below `max_retries` re-queues the task (the step's `effect_key` is unchanged, so its
-   * reservation keeps the retry at-most-once). At or above the budget the task fails terminally —
-   * the stored class stays `RETRYABLE` because that is what actually happened. `FATAL` fails
-   * immediately. `UNKNOWN` is refused: it is a reconciliation state resolved by `effect_key`, and
-   * the durable row's `last_error_class` only accepts `RETRYABLE | FATAL`.
-   *
-   * A missing task or an already-terminal task is a no-op (`{ requeued: false }`): this method is
-   * called from a failure path, and a refusal there must never mask the original error.
+   * `RETRYABLE` below `max_retries` earns one retry. A complete checkpoint waits for a matching
+   * timer event; an incomplete first-pass payload stays queued until its persisted deadline. At or
+   * above the budget the task fails terminally, retaining the actual `RETRYABLE` class.
    */
   public async recordFailure(params: {
     tenant_id: string;
@@ -530,25 +565,45 @@ export class MemoryWorkflowEngine implements IStatefulWorkflowEngine {
     }
 
     row.error_details = params.error_details;
-    // §4.4: "Re-queue the task with `retry_count + 1` … while `retry_count < max_retries`". The
-    // budget is read BEFORE the increment, so `max_retries` counts the RETRIES granted after the
-    // first attempt: with the default of 3, failures arriving at retry_count 0, 1 and 2 re-queue
-    // the task (taking it to 1, 2 and 3), and the failure that arrives once `retry_count` has
-    // reached the budget is terminal — the §4.1 matrix guard (`retry_count >= max_retries` ⇒
-    // `task.fatal_error`). Retries are therefore three, attempts are four.
+    // The budget is read BEFORE incrementing: max_retries grants three retries after the first
+    // attempt, and the failure arriving at the limit ends terminally as RETRYABLE.
     const retryable = params.error_class === 'RETRYABLE';
     const withinRetryBudget = row.retry_count < this.maxRetries;
 
     if (retryable && withinRetryBudget) {
-      row.retry_count += 1;
+      const currentRetryCount = row.retry_count;
+      const now = this.now();
+      const delayMs = Math.min(60_000, 1_000 * 2 ** Math.min(currentRetryCount, 6));
+      const checkpoint = row.state_payload;
+      const currentStep = checkpoint?.['current_step'];
+      const checkpointComplete = checkpoint !== null
+        && isPlainRecord(checkpoint['plan'])
+        && typeof currentStep === 'number' && Number.isInteger(currentStep) && currentStep >= 1
+        && Object.prototype.hasOwnProperty.call(checkpoint, 'pending_action')
+        && (checkpoint['pending_action'] === null || isPlainRecord(checkpoint['pending_action']))
+        && isPlainRecord(checkpoint['context'])
+        && typeof checkpoint['previous_evidence_hash'] === 'string'
+        && /^[0-9a-f]{64}$/.test(checkpoint['previous_evidence_hash'])
+        && typeof checkpoint['request_id'] === 'string'
+        && checkpoint['request_id'].trim().length > 0;
+      const nextPayload: Record<string, unknown> = {
+        ...(checkpoint ?? {}),
+        wait_reason: 'RETRY',
+        retry_not_before: new Date(now + delayMs).toISOString(),
+      };
+      delete nextPayload['resume_event'];
+      row.state_payload = nextPayload;
+      row.retry_count = currentRetryCount + 1;
       row.last_error_class = 'RETRYABLE';
-      const requeueEvent = taskTransitionEvent(row.state, 'queued');
-      if (requeueEvent !== null) {
-        assertTaskTransition(row.state, 'queued', requeueEvent);
-        row.state = 'queued';
+
+      const target = checkpointComplete && row.state === 'running' ? 'waiting' : 'queued';
+      const transition = taskTransitionEvent(row.state, target);
+      if (transition !== null) {
+        assertTaskTransition(row.state, target, transition);
+        row.state = target;
       }
       row.task_version += 1;
-      row.updated_at = new Date(this.now()).toISOString();
+      row.updated_at = new Date(now).toISOString();
       return { requeued: true };
     }
 

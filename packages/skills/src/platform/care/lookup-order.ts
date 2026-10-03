@@ -28,18 +28,25 @@ export interface InputCareLookupOrder {
   verification_status: 'VERIFIED';
 }
 
-/** Output of `skill.care.lookup_order` (§4.3 skill 17). */
-export interface OutputCareLookupOrder {
-  order_id: string;
-  status: 'PENDING' | 'PROCESSING' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED' | 'RETURNED';
-  line_items: OrderLineItemRecord[];
-  total_price: number;
-  currency: string;
-  tracking_number: string | null;
-  order_date: string;
+/** A provider-confirmed absence is a successful, non-disclosing lookup result. */
+export interface OutputCareLookupOrderNotFound {
+  result: 'ORDER_NOT_FOUND';
 }
 
-/** Immutable identifier of this row (§4.3 skill 17). */
+/** Provider-supplied order details are optional; status and identifier ground status answers. */
+export interface OutputCareLookupOrderFound {
+  order_id: string;
+  status: 'PENDING' | 'PROCESSING' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED' | 'RETURNED';
+  line_items?: OrderLineItemRecord[];
+  total_price?: number;
+  currency?: string;
+  tracking_number?: string | null;
+  order_date?: string;
+}
+
+export type OutputCareLookupOrder = OutputCareLookupOrderFound | OutputCareLookupOrderNotFound;
+
+
 export const CARE_LOOKUP_ORDER_SKILL_ID = 'skill.care.lookup_order';
 
 /** Strict input schema of §4.3 skill 17, verbatim. */
@@ -75,36 +82,50 @@ const input_schema: Record<string, unknown> = {
   additionalProperties: false,
 };
 
-/** Output schema of §4.3 skill 17, verbatim. */
+/** Provider status results and owner-scoped absence are explicit, non-disclosing outcomes. */
 const output_schema: Record<string, unknown> = {
   $schema: 'https://json-schema.org/draft/2020-12/schema',
   type: 'object',
-  required: ['order_id', 'status', 'line_items', 'total_price', 'currency', 'order_date'],
-  properties: {
-    order_id: { type: 'string' },
-    status: {
-      type: 'string',
-      enum: ['PENDING', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED', 'RETURNED'],
-    },
-    line_items: {
-      type: 'array',
-      items: {
-        type: 'object',
-        required: ['sku_id', 'product_name', 'quantity', 'unit_price', 'currency'],
-        properties: {
-          sku_id: { type: 'string' },
-          product_name: { type: 'string' },
-          quantity: { type: 'integer' },
-          unit_price: { type: 'number' },
-          currency: { type: 'string' },
+  oneOf: [
+    {
+      type: 'object',
+      required: ['order_id', 'status'],
+      properties: {
+        order_id: { type: 'string' },
+        status: {
+          type: 'string',
+          enum: ['PENDING', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED', 'RETURNED'],
         },
+        line_items: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['sku_id', 'product_name', 'quantity', 'unit_price', 'currency'],
+            properties: {
+              sku_id: { type: 'string' },
+              product_name: { type: 'string' },
+              quantity: { type: 'integer' },
+              unit_price: { type: 'number' },
+              currency: { type: 'string' },
+            },
+          },
+        },
+        total_price: { type: 'number' },
+        currency: { type: 'string' },
+        tracking_number: { type: ['string', 'null'] },
+        order_date: { type: 'string', format: 'date-time' },
       },
+      additionalProperties: false,
     },
-    total_price: { type: 'number' },
-    currency: { type: 'string' },
-    tracking_number: { type: ['string', 'null'] },
-    order_date: { type: 'string', format: 'date-time' },
-  },
+    {
+      type: 'object',
+      required: ['result'],
+      properties: {
+        result: { const: 'ORDER_NOT_FOUND' },
+      },
+      additionalProperties: false,
+    },
+  ],
 };
 
 /** The declarative half of the row; `skill_id` is supplied by the factory (§4.3 skill 17). */
@@ -118,16 +139,19 @@ const spec: Omit<PlatformRowSpec, 'skill_id'> = {
   allowed_agents: ['CS-01'],
   required_authority: 'AUTH-0',
   tool_binding: 'API-001.OrderConnector',
+  requires_verified_identity: true,
   validation_rules: [
     'customer_id must be server-resolved from the authenticated session and must match the order owner; a caller-supplied identity or verification claim is never accepted as a binding input (BR-003, NFR-008)',
+    'A provider response must include a non-empty authoritative customer_id before owner comparison; missing or malformed owner data remains AUTHORITATIVE_SOURCE_UNAVAILABLE',
     'verification_reference must resolve server-side to a verification record for this tenant/customer and verification_status must be VERIFIED; a missing, unresolvable, or non-VERIFIED reference fails closed with IDENTITY_UNVERIFIED and releases no order FACT',
+    'Only a provider-confirmed HTTP 404 or an owner mismatch returns the non-disclosing ORDER_NOT_FOUND result; transport failures and other provider rejections remain AUTHORITATIVE_SOURCE_UNAVAILABLE',
   ],
   retry_policy: {
     max_retries: 3,
     initial_interval_ms: 400,
     backoff_multiplier: 1.5,
     retry_on_timeout: true,
-    non_retryable_errors: ['ORDER_NOT_FOUND'],
+    non_retryable_errors: [],
   },
   timeout_ms: 2000,
   audit_spec: {
@@ -142,16 +166,16 @@ const spec: Omit<PlatformRowSpec, 'skill_id'> = {
       category: 'HAPPY_PATH',
       scenario:
         '`CS-01` at `AUTH-0` presents a server-resolved `customer_id` and a `verification_reference` that resolves to VERIFIED for the order owner.',
-      expected_outcome: 'Verified identity → order, line items, tracking',
+      expected_outcome: 'Verified identity → authoritative status and any provider-supplied order details',
       required: true,
     },
     {
       test_id: 'TC-SKILL-02',
       category: 'AUTHORITY',
       scenario:
-        "A caller asserts another customer's order with a self-supplied identifier, and a `verification_reference` that does not resolve to VERIFIED is presented.",
+        'A caller submits an unverified identity claim or a `verification_reference` that does not resolve to VERIFIED.',
       expected_outcome:
-        'Caller-asserted identity or non-VERIFIED reference → `IDENTITY_UNVERIFIED`/`ORDER_OWNER_MISMATCH`; 0 order FACTs',
+        'Caller-asserted identity or non-VERIFIED reference → `IDENTITY_UNVERIFIED`; 0 order FACTs',
       required: true,
     },
     {
@@ -181,9 +205,9 @@ const spec: Omit<PlatformRowSpec, 'skill_id'> = {
       test_id: 'TC-SKILL-17-06',
       category: 'SECURITY',
       scenario:
-        "Caller asserts ownership of another customer's order, supplies a caller-asserted phone/email/identifier as proof, or presents a `verification_reference`/`verification_status` that does not resolve server-side to VERIFIED for the session's server-resolved `customer_id`.",
+        "Caller supplies a caller-asserted phone/email/identifier as proof, or presents a `verification_reference`/`verification_status` that does not resolve server-side to VERIFIED for the session's server-resolved `customer_id`.",
       expected_outcome:
-        '`IDENTITY_UNVERIFIED` / `ORDER_OWNER_MISMATCH` before any `API-001.OrderConnector` call; zero order FACTs are released (BR-003, NFR-006). An unverified or caller-asserted identity never authorizes a lookup.',
+        '`IDENTITY_UNVERIFIED` before any `API-001.OrderConnector` call; zero order FACTs are released (BR-003, NFR-006). An unverified or caller-asserted identity never authorizes a lookup.',
       required: true,
     },
     {
@@ -191,7 +215,7 @@ const spec: Omit<PlatformRowSpec, 'skill_id'> = {
       category: 'BOUNDARY',
       scenario: '`order_identifier` unknown to the tenant, or owned by a different customer.',
       expected_outcome:
-        '`ORDER_NOT_FOUND`; the response never distinguishes "does not exist" from "not yours".',
+        'A typed `NO_ANSWER` response with the successful result `{ result: "ORDER_NOT_FOUND" }`; the response never distinguishes "does not exist" from "not yours" or exposes order details.',
       required: true,
     },
   ],

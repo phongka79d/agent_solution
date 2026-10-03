@@ -13,6 +13,7 @@ export type AttentionType =
   | 'PROVIDER_UNAVAILABLE'
   | 'CONNECTOR_NOT_CONFIGURED'
   | 'POLICY_CONFIGURATION_REQUIRED'
+  | 'PARKED_DRAFT'
   | 'RUN_NEEDS_RECONCILIATION';
 export type AttentionSeverity = 'info' | 'warning' | 'danger';
 
@@ -26,9 +27,58 @@ export interface AttentionItem {
   readonly source_ref: string;
 }
 
+/**
+ * One "Cần bạn xử lý" card: every observed item of one type collapsed into a count and a single
+ * primary CTA. `params` carries the count so the copy can read "2 hội thoại cần nhân viên".
+ */
+export interface AttentionGroup {
+  readonly type: AttentionType;
+  readonly severity: AttentionSeverity;
+  readonly domain: CompanyDomain;
+  readonly count: number;
+  readonly title_key: string;
+  readonly params: Readonly<Record<string, string | number | boolean>>;
+  readonly href: string;
+  readonly cta_key: string;
+}
+
+const SEVERITY_ORDER: Readonly<Record<AttentionSeverity, number>> = { danger: 0, warning: 1, info: 2 };
+
+/** Collapses attention items by type, strongest first, capped at `max` cards. */
+export function groupAttention(items: readonly AttentionItem[], max = 5): readonly AttentionGroup[] {
+  const groups = new Map<AttentionType, AttentionGroup>();
+  for (const item of items) {
+    const existing = groups.get(item.type);
+    if (existing === undefined) {
+      groups.set(item.type, {
+        type: item.type,
+        severity: item.severity,
+        domain: item.domain,
+        count: 1,
+        title_key: `company.attention_group.${item.type.toLowerCase()}`,
+        params: { count: 1 },
+        href: item.href,
+        cta_key: `company.attention_cta.${item.type.toLowerCase()}`,
+      });
+    } else {
+      groups.set(item.type, { ...existing, count: existing.count + 1, params: { count: existing.count + 1 } });
+    }
+  }
+  return [...groups.values()]
+    .sort((left, right) => SEVERITY_ORDER[left.severity] - SEVERITY_ORDER[right.severity] || right.count - left.count)
+    .slice(0, Math.max(1, max));
+}
+
 export interface AttentionProviderSource {
   readonly configured: boolean;
   readonly provider?: string | null;
+}
+/** A draft-gated MINIMUM policy or durable waiting run: "Bản nháp chờ bạn duyệt". */
+export interface CompanyParkedDraftProjectionSource {
+  readonly skill_id: string;
+  readonly policy_version: string;
+  readonly run_id?: string;
+  readonly domain?: CompanyDomain | null;
 }
 export interface AttentionProjectionSources {
   readonly approvals?: readonly (CompanyApprovalProjectionSource & { readonly domain?: CompanyDomain | null })[];
@@ -36,6 +86,7 @@ export interface AttentionProjectionSources {
   readonly connectors?: readonly CompanyConnectorProjectionSource[];
   readonly owner_inputs?: readonly CompanyOwnerInputProjectionSource[];
   readonly reconciliations?: readonly CompanyReconciliationProjectionSource[];
+  readonly parked_drafts?: readonly CompanyParkedDraftProjectionSource[];
   readonly provider?: AttentionProviderSource;
 }
 
@@ -128,6 +179,24 @@ export function mapAttention(sources: AttentionProjectionSources): readonly Atte
       params: { input_id: owner.input_id },
       href: '/settings',
       source_ref: `unresolved_owner_inputs:${owner.input_id}`,
+    });
+  }
+  for (const draft of sources.parked_drafts ?? []) {
+    const domain = draft.domain ?? domainFromText(draft.skill_id);
+    items.push({
+      type: 'PARKED_DRAFT',
+      severity: 'warning',
+      domain,
+      title_key: 'company.attention.parked_draft',
+      params: {
+        skill_id: draft.skill_id,
+        policy_version: draft.policy_version,
+        ...(draft.run_id === undefined ? {} : { run_id: draft.run_id }),
+      },
+      href: `/ai-team/${domain}/skills`,
+      source_ref: draft.run_id === undefined
+        ? `autonomy_policies:${draft.skill_id}:${draft.policy_version}`
+        : `platform_durable_tasks:${draft.run_id}`,
     });
   }
   for (const reconciliation of sources.reconciliations ?? []) {

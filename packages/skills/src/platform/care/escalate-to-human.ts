@@ -75,7 +75,7 @@ const spec: Omit<PlatformRowSpec, 'skill_id'> = {
     initial_interval_ms: 300,
     backoff_multiplier: 1.5,
     retry_on_timeout: false,
-    non_retryable_errors: ['QUEUE_DOWN'],
+    non_retryable_errors: ['QUEUE_DOWN', 'HANDOFF_REQUEST_FINGERPRINT_MISSING'],
   },
   // HandoffBus owns a bounded 1000ms transaction and one same-key recovery retry. The row deadline
   // must leave room for that durable recovery before the orchestrator's outer dispatch deadline.

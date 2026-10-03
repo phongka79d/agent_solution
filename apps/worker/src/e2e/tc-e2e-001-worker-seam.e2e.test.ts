@@ -234,7 +234,9 @@ describe('TC-E2E-001 worker claim seam', () => {
       transitionTask: workflowEngine.transitionTask,
     };
 
-
+    // No database backs this seam: the live availability gate would read absent tenant settings and
+    // refuse every skill (DISABLED_BY_TENANT). The gate's own matrix is covered in packages/skills.
+    const admittingGate = { available: async () => ({ available: true, reason: 'OK' as const }) };
     const worker = startWorker(
       {
         ENABLED_AGENT_MODULES: 'support,sales,marketing',
@@ -251,10 +253,13 @@ describe('TC-E2E-001 worker claim seam', () => {
         workerId: WORKER_ID,
         workflowRepository: workflowRepository as unknown as DurableWorkflowRepository,
         crossDomainHandoff: broker,
-        marketingFactoryOptions: { ...shared, adapterDispatcher },
+        // The seam test dispatches through a scripted adapter; no tenant ERP binding is read.
+        connectorRegistry: { erpFor: async () => null },
+        marketingFactoryOptions: { ...shared, adapterDispatcher, gate: admittingGate },
         salesFactoryOptions: {
           ...shared,
           adapterDispatcher,
+          gate: admittingGate,
           consent: {
             getConsent: async () => ({ consent_marketing: true, suppression_active: false }),
             read: async () => ({ consented: true, suppressed: false }),
@@ -263,6 +268,7 @@ describe('TC-E2E-001 worker claim seam', () => {
         careFactoryOptions: {
           ...shared,
           adapterDispatcher,
+          gate: admittingGate,
           env: { KNOWLEDGE_TENANT_IDS: TENANT_ID },
         },
       },

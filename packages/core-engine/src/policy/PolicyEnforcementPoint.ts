@@ -23,8 +23,9 @@
  *   7. the applicable trusted-input checks (identity, consent, floor provenance, price, autonomy
  *      limits, takeover, effect key, epistemic target) run before any approval row is created, so an
  *      unresolved input is refused rather than queued;
- *   8. only then: create the one pending approval row, or return the permit — each preceded by the
- *      durable audit intent (BR-010), because an unrecorded permit is not a permit.
+ *   8. only then: persist/read a pending row through an injected queue, or return an approval-required
+ *      route without a ticket when the orchestrator owns the durable pause; each route is preceded
+ *      by the durable audit intent (BR-010), because an unrecorded permit is not a permit.
  *
  * What the PEP deliberately does NOT own: the durable effect reservation (§4.4 — the reservation is
  * taken immediately before the authorized dispatch, never at queue time), the duplicate-suppression
@@ -124,7 +125,7 @@ const NO_AUTHORITY: AuthorityFacts = Object.freeze({
  */
 export class PolicyEnforcementPoint {
   private readonly registry: PolicyRegistryPort;
-  private readonly approvals: ApprovalQueuePort;
+  private readonly approvals: ApprovalQueuePort | undefined;
   private readonly tenantPolicy: TenantPolicySource | undefined;
   private readonly authoritativeSource: AuthoritativeSourcePort | undefined;
   private readonly priceFloor: PriceFloorSource | undefined;
@@ -624,8 +625,8 @@ export class PolicyEnforcementPoint {
     outcome: EvaluationOutcome,
   ): Promise<PolicyDecision> {
     if (outcome.kind === 'ROUTE') {
-      // The route intent is durable before an approval row exists. The ticket id is necessarily
-      // absent here: the approval store is the authority that creates or reads it.
+      // The durable route intent is recorded before queue insertion. If no queue port is injected,
+      // the orchestrator owns the durable pause and supplies the real ticket id after this decision.
       const intent = this.buildDecision(base, authority, outcome, null, 'NOT_APPLICABLE');
       const intentAuditStatus = await this.appendAudit(intent);
 
@@ -646,7 +647,14 @@ export class PolicyEnforcementPoint {
         return this.applyAutonomy(denied);
       }
 
-      const queued = await this.createPendingApproval(base, outcome);
+      const approvals = this.approvals;
+      if (approvals === undefined) {
+        return this.applyAutonomy(
+          this.buildDecision(base, authority, outcome, null, intentAuditStatus),
+        );
+      }
+
+      const queued = await this.createPendingApproval(approvals, base, outcome);
 
       if (queued.kind === 'DENY') {
         // The route intent was recorded, but no pending row exists. Record the compensating refusal
@@ -715,13 +723,15 @@ export class PolicyEnforcementPoint {
   /**
    * Creates or reads the one PENDING approval row of an approval route (§7.2). No row is created
    * before every applicable check has passed, and a store that cannot answer produces a refusal
-   * rather than an approval without a ticket.
+   * rather than an approval without a ticket. This helper is only called when the store exists.
    *
+   * @param approvals - Durable approval store to create or read the row.
    * @param base - Per-evaluation facts bound into the row.
    * @param route - The route being taken.
    * @returns The durable approval id, or the refusal that replaces the route.
    */
   private async createPendingApproval(
+    approvals: ApprovalQueuePort,
     base: EvaluationBase,
     route: ApprovalRouteRequest,
   ): Promise<{ readonly kind: 'TICKET'; readonly approval_id: string } | PolicyDenial> {
@@ -735,7 +745,7 @@ export class PolicyEnforcementPoint {
     }
 
     try {
-      const pending = await this.approvals.createOrReadPending({
+      const pending = await approvals.createOrReadPending({
         tenant_id: base.tenant_id.trim(),
         run_id: base.run_id,
         request_id: base.request_id,

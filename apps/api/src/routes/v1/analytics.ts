@@ -20,24 +20,26 @@ import { correlationIdOf, fail, mapError, replyFailure } from '../../gateway/htt
 import type { CredentialStore } from '../../gateway/principal.js';
 import { authenticate, requireOperator, requirePrincipal } from '../../gateway/principal.js';
 import type { GatewayRuntime } from '../../gateway/ports.js';
+import { customerTimelineRouteSchema, registerOpenApiSchemas } from './openapi-schemas.js';
 /** The one operation this module serves. */
 const TIMELINE_OPERATION = 'GET /api/v1/customers/{customer_id}/timeline';
 
 /** Reads a non-empty string field without asserting the object's shape. */
 function stringField(value: unknown, key: string): string | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
-  const field: unknown = (value as Record<string, unknown>)[key];
+  const field: unknown = Reflect.get(value, key);
   return typeof field === 'string' && field.length > 0 ? field : null;
 }
 
-/** Reads a positive integer query parameter; a non-integer is refused, never coerced to a default. */
+/** Reads the positive integer after query-schema coercion; absence keeps the port's default. */
 function limitField(value: unknown, key: string): number | null {
-  const raw = stringField(value, key);
-  if (raw === null) return null;
-  if (!/^\d+$/.test(raw) || raw === '0') {
+  if (typeof value !== 'object' || value === null || !(key in value)) return null;
+  const raw: unknown = Reflect.get(value, key);
+  if (raw === undefined) return null;
+  if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < 1) {
     fail('VALIDATION_FAILED', `${key} must be a positive integer`);
   }
-  return Number.parseInt(raw, 10);
+  return raw;
 }
 
 /** The authenticated principal, or `null` when none was resolved. */
@@ -212,8 +214,9 @@ export function registerAnalyticsRoutes(
   app: FastifyInstance,
   deps: { readonly runtime: GatewayRuntime; readonly credentials: CredentialStore },
 ): void {
+  registerOpenApiSchemas(app);
   const preHandler = authenticate(deps);
-  app.get('/customers/:customer_id/timeline', { preHandler }, (request, reply) =>
+  app.get('/customers/:customer_id/timeline', { preHandler, schema: customerTimelineRouteSchema }, (request, reply) =>
     handleTimeline(request, reply, deps),
   );
 }

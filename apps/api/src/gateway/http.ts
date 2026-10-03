@@ -139,7 +139,7 @@ const CONNECTOR_CODE_MAP: Readonly<Record<string, GatewayErrorCode_>> = Object.f
 
 /** Plain repository errors carry their stable code as the prefix of a sanitized internal message. */
 const REPOSITORY_CODE_MAP: Readonly<Record<string, GatewayErrorCode_>> = Object.freeze({
-  PORT_UNBOUND: 'CAPABILITY_NOT_ENABLED',
+  PORT_UNBOUND: 'CAPABILITY_UNAVAILABLE',
   APPROVAL_STALE_PAYLOAD: 'APPROVAL_STALE_PAYLOAD',
   APPROVAL_NOT_CLAIMABLE: 'APPROVAL_NOT_CLAIMABLE',
   APPROVAL_EXPIRED: 'APPROVAL_EXPIRED',
@@ -148,18 +148,113 @@ const REPOSITORY_CODE_MAP: Readonly<Record<string, GatewayErrorCode_>> = Object.
   TASK_NOT_FOUND: 'TASK_NOT_FOUND',
   TASK_REQUEUE_NOT_FAILED: 'RUN_NOT_RETRYABLE',
   TASK_VERSION_CONFLICT: 'RUN_NOT_RETRYABLE',
+  P5_AUTONOMY_REVISION_CONFLICT: 'VERSION_CONFLICT',
   RUN_RECONCILIATION_REQUIRED: 'RUN_NOT_RECONCILABLE',
+  RUN_NOT_RECONCILABLE: 'RUN_NOT_RECONCILABLE',
+  TASK_ALREADY_TERMINAL: 'RUN_NOT_RETRYABLE',
+  RECONCILIATION_EVENT_CONFLICT: 'RUN_NOT_RECONCILABLE',
+  TASK_REQUEUE_REASON_REQUIRED: 'VALIDATION_FAILED',
+  LLM_CONFIG_INVALID: 'VALIDATION_FAILED',
   TASK_LIST_CURSOR_INVALID: 'VALIDATION_FAILED',
   TASK_LIST_LIMIT_INVALID: 'VALIDATION_FAILED',
   TASK_LIST_RANGE_INVALID: 'VALIDATION_FAILED',
   TASK_AGENT_ID_INVALID: 'VALIDATION_FAILED',
   APPROVAL_CURSOR_INVALID: 'VALIDATION_FAILED',
   APPROVAL_LIMIT_INVALID: 'VALIDATION_FAILED',
+  APPROVAL_EXPIRY_LIMIT_INVALID: 'VALIDATION_FAILED',
+  APPROVAL_ID_INVALID: 'VALIDATION_FAILED',
+  CONVERSATION_NOT_FOUND: 'CONVERSATION_NOT_FOUND',
+  CUSTOMER_LIST_CURSOR_INVALID: 'VALIDATION_FAILED',
+  CUSTOMER_LIST_LIMIT_INVALID: 'VALIDATION_FAILED',
+  CAMPAIGN_LIST_CURSOR_INVALID: 'VALIDATION_FAILED',
+  CAMPAIGN_LIST_LIMIT_INVALID: 'VALIDATION_FAILED',
+  RUN_LOG_PROJECTION_INVALID: 'VALIDATION_FAILED',
   SESSION_TAKEOVER_WINDOW_INVALID: 'VALIDATION_FAILED',
   SESSION_ID_REQUIRED: 'VALIDATION_FAILED',
   OPERATOR_ID_REQUIRED: 'VALIDATION_FAILED',
   TENANT_CONTEXT_REQUIRED: 'VALIDATION_FAILED',
 });
+
+/** PostgreSQL conditions that have a stable public gateway interpretation. */
+const POSTGRES_CODE_MAP: Readonly<Record<string, GatewayErrorCode_>> = Object.freeze({
+  '42501': 'DEPENDENCY_MISCONFIGURED',
+  '42883': 'DEPENDENCY_MISCONFIGURED',
+  '22P02': 'VALIDATION_FAILED',
+});
+
+function repositoryCodeMapping(code: string): GatewayErrorCode_ | undefined {
+  const exact = REPOSITORY_CODE_MAP[code];
+  if (exact !== undefined) return exact;
+
+  if (code.startsWith('APPROVAL_')) {
+    if (code.endsWith('_MISSING') || code.endsWith('_NOT_FOUND')) return 'NOT_FOUND';
+    if (
+      /(?:_CONFLICT|_MISMATCH|_UNSTABLE|_ALREADY_DECIDED|_NOT_CLAIMABLE|_EXPIRED|_STALE_PAYLOAD|_DISPATCHED|_IDENTITY_CHANGED|_REVISION_INVALID|_KEY_UNCHANGED|_WRITE_LOST)$/.test(
+        code,
+      )
+    ) {
+      return 'IDEMPOTENCY_CONFLICT';
+    }
+    return 'VALIDATION_FAILED';
+  }
+
+  if (code.startsWith('HANDOFF_')) {
+    if (code.endsWith('_NOT_FOUND')) return 'NOT_FOUND';
+    if (code === 'HANDOFF_EFFECT_RESERVATION_INVALID') return 'IDEMPOTENCY_CONFLICT';
+    if (
+      /(?:_CONFLICT|_MISMATCH|_UNSTABLE|_UNKNOWN|_LEDGER_MISSING|_REPLAY_LEDGER_MISSING|_NOT_ACTIVE|_NOT_AVAILABLE|_ALREADY_ACTIVE|_PENDING|_TIMEOUT|_RECEIPT_INVALID|_QUEUE_STATE_INVALID)$/.test(
+        code,
+      )
+    ) {
+      return 'IDEMPOTENCY_CONFLICT';
+    }
+    return 'VALIDATION_FAILED';
+  }
+
+  if (/^(?:CUSTOMER_LIST|CAMPAIGN_LIST|PLATFORM)_/.test(code)) return 'VALIDATION_FAILED';
+  if (code.startsWith('P5_')) {
+    return /(?:_EMPTY|_EMPTY_RESULT|_UNSTABLE|_CONFLICT)$/.test(code)
+      ? 'IDEMPOTENCY_CONFLICT'
+      : 'VALIDATION_FAILED';
+  }
+  return undefined;
+}
+
+function errorField(error: unknown, field: string): string | undefined {
+  if (typeof error !== 'object' || error === null) return undefined;
+  try {
+    const value = (error as Record<string, unknown>)[field];
+    return typeof value === 'string' ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function logFailure(
+  reply: FastifyReply,
+  error: unknown,
+  error_code: GatewayErrorCode_,
+  status: number,
+  correlation_id: string,
+): void {
+  const route = reply.request.routeOptions.url || 'unmatched';
+  if (status >= 500) {
+    reply.request.log.error({
+      correlation_id,
+      error_code,
+      route,
+      err: {
+        name: errorField(error, 'name') ?? 'UnknownError',
+        code: errorField(error, 'code') ?? null,
+        constraint: errorField(error, 'constraint') ?? null,
+        routine: errorField(error, 'routine') ?? null,
+        message: (errorField(error, 'message') ?? '').slice(0, 300),
+      },
+    });
+  } else if (status >= 400) {
+    reply.request.log.warn({ correlation_id, error_code, route });
+  }
+}
 
 function messageCode(error: unknown): string | undefined {
   if (!(error instanceof Error)) return undefined;
@@ -202,6 +297,10 @@ export function mapError(error: unknown, correlation_id: string): ErrorResponse 
   }
 
   if (isCodedError(error)) {
+    const postgresMapped = POSTGRES_CODE_MAP[error.code];
+    if (postgresMapped !== undefined) {
+      return toErrorResponse(failureFor(postgresMapped, `${postgresMapped} [${error.code}]`), correlation_id);
+    }
     const name = nameOf(error);
     const table =
       name === 'SkillError'
@@ -222,13 +321,13 @@ export function mapError(error: unknown, correlation_id: string): ErrorResponse 
     }
   }
   const repositoryCode = messageCode(error);
-  const repositoryMapped = repositoryCode === undefined ? undefined : REPOSITORY_CODE_MAP[repositoryCode];
+  const repositoryMapped = repositoryCode === undefined ? undefined : repositoryCodeMapping(repositoryCode);
   if (repositoryMapped !== undefined) {
     return toErrorResponse(failureFor(repositoryMapped, `${repositoryMapped} [${repositoryCode}]`), correlation_id);
   }
   if (isCodedError(error) && error.code === 'FST_ERR_VALIDATION') {
     return toErrorResponse(
-      failureFor('VALIDATION_FAILED', 'the request failed schema validation'),
+      failureFor('VALIDATION_FAILED', 'Yêu cầu không hợp lệ.'),
       correlation_id,
     );
   }
@@ -273,10 +372,11 @@ export function correlationIdOf(request: FastifyRequest, runtime: GatewayRuntime
   return resolved;
 }
 
-/** Writes a refusal in the canonical envelope; the status comes from the code, never the caller. */
+/** Writes a refusal in the canonical envelope and logs it without request data or SQL details. */
 export function replyFailure(reply: FastifyReply, error: unknown, correlation_id: string): FastifyReply {
   const failure = error instanceof GatewayFailureError ? error.failure : undefined;
   const envelope = mapError(error, correlation_id);
   const status = failure?.http_status ?? FAILURE_STATUS[envelope.error_code] ?? 500;
+  logFailure(reply, error, envelope.error_code, status, correlation_id);
   return reply.status(status).header('content-type', 'application/json; charset=utf-8').send(envelope);
 }

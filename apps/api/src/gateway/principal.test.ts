@@ -33,10 +33,8 @@ import type {
   GatewayAuditPort,
   GatewayRuntime,
   IdentityPort,
-  KpiPort,
   ReceiptPort,
   RunPort,
-  StreamPort,
   TakeoverLeasePort,
   WebhookVerificationPort,
 } from './ports.js';
@@ -146,8 +144,6 @@ function createTestRuntime(): TestRuntime {
       approvals: recordingPort<ApprovalPort>('approvals'),
       events: recordingPort<EventPort>('events'),
       timeline: recordingPort<EventPort>('timeline'),
-      streams: recordingPort<StreamPort>('streams'),
-      kpi: recordingPort<KpiPort>('kpi'),
       identity: recordingPort<IdentityPort>('identity'),
       webhooks: recordingPort<WebhookVerificationPort>('webhooks'),
       audit: recordingPort<GatewayAuditPort>('audit'),
@@ -396,7 +392,7 @@ describe('authenticate', () => {
     await app.close();
   });
 
-  it('resolves a session credential presented as a provider delivery api key', async () => {
+  it('does not accept an X-Tenant-ID assertion as a credential', async () => {
     const tested = createTestRuntime();
     const app = createApp(testCredentials(), tested);
 
@@ -404,6 +400,21 @@ describe('authenticate', () => {
       method: 'POST',
       url: '/api/v1/probe',
       headers: { 'x-tenant-id': SESSION_TOKEN },
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toMatchObject({ error_code: 'AUTHENTICATION_FAILED' });
+    await app.close();
+  });
+
+  it('resolves a session credential presented through Authorization', async () => {
+    const tested = createTestRuntime();
+    const app = createApp(testCredentials(), tested);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/probe',
+      headers: bearer(SESSION_TOKEN),
     });
 
     expect(response.statusCode).toBe(200);

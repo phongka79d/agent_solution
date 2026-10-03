@@ -4,10 +4,35 @@ import { authenticate, requireOperator } from '../../gateway/principal.js';
 import type { CredentialStore } from '../../gateway/principal.js';
 import type { GatewayRuntime } from '../../gateway/ports.js';
 import { correlationIdOf, fail, replyFailure } from '../../gateway/http.js';
+import type {
+  OwnerInputRecord,
+  ResolveOwnerInputInput,
+  ResolveOwnerInputResult,
+} from '@agentos/database';
 import type { AutonomyAdminPort } from './autonomy-admin.js';
+import { isCurrency, isLocale, isTimezone } from './company-profile.js';
+
+/** `agentos.data_class` classification accepted at provisioning time. */
+export type ProvisioningDataClass = 'PRODUCTION' | 'DEMO' | 'TEST';
+
+const DATA_CLASSES: Readonly<Record<string, ProvisioningDataClass>> = {
+  PRODUCTION: 'PRODUCTION',
+  DEMO: 'DEMO',
+  TEST: 'TEST',
+};
+
 export interface ProvisioningCreateInput {
   readonly idempotency_key?: string;
   readonly display_name?: string;
+  /** Tenant data classification; the server defaults to `PRODUCTION` when omitted. */
+  readonly data_class?: ProvisioningDataClass;
+  readonly locale?: string;
+  readonly timezone?: string;
+  readonly currency?: string;
+  /** Platform actor recorded against the provisioned company profile write. */
+  readonly actor_kind?: string;
+  readonly actor_id?: string;
+  readonly correlation_id?: string;
   /** Legacy client field intentionally ignored; the server derives the request fingerprint. */
   readonly fingerprint?: string;
 }
@@ -15,6 +40,7 @@ export interface ProvisioningCreateInput {
 export interface ProvisioningTenantProjection {
   readonly tenant_id: string;
   readonly status: string;
+  readonly data_class: ProvisioningDataClass;
   readonly capabilities: unknown;
   readonly connectors: unknown;
   readonly unresolved_owner_inputs: readonly string[];
@@ -24,6 +50,8 @@ export interface ProvisioningTenantProjection {
 export interface ProvisioningRoutePort {
   createShell(input?: ProvisioningCreateInput): Promise<ProvisioningTenantProjection>;
   getShell(tenant_id: string): Promise<ProvisioningTenantProjection | null>;
+  listOwnerInputs(tenant_id: string): Promise<readonly OwnerInputRecord[]>;
+  resolveOwnerInput(input: ResolveOwnerInputInput): Promise<ResolveOwnerInputResult>;
 }
 
 /*
@@ -67,6 +95,32 @@ function isProvisioningIdempotencyConflict(error: unknown): boolean {
   );
 }
 
+function dataClassOf(value: unknown): ProvisioningDataClass {
+  if (value === undefined) return 'PRODUCTION';
+  if (typeof value !== 'string' || DATA_CLASSES[value] === undefined) {
+    fail('VALIDATION_FAILED', 'data_class must be PRODUCTION, DEMO, or TEST');
+  }
+  return DATA_CLASSES[value];
+}
+
+function optionalLocale(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || !isLocale(value)) fail('VALIDATION_FAILED', 'locale must be a valid BCP-47 locale');
+  return value;
+}
+
+function optionalTimezone(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || !isTimezone(value)) fail('VALIDATION_FAILED', 'timezone must be an IANA timezone');
+  return value;
+}
+
+function optionalCurrency(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || !isCurrency(value)) fail('VALIDATION_FAILED', 'currency must be a supported ISO-4217 code');
+  return value;
+}
+
 /** Registers tenant-shell provisioning behind the authenticated operator boundary. */
 export function registerProvisioningRoutes(
   app: FastifyInstance,
@@ -77,7 +131,7 @@ export function registerProvisioningRoutes(
   const createTenantShell = async (request: FastifyRequest, reply: FastifyReply) => {
     const runtime = deps.runtime;
     try {
-      const principal = requireOperator(request, 'platform:admin');
+      const principal = requireOperator(request, 'platform:companies:write');
       if (principal.scope !== 'platform') {
         fail(
           'INSUFFICIENT_AUTHORITY',
@@ -98,6 +152,10 @@ export function registerProvisioningRoutes(
       if (display_name.length < 1 || display_name.length > 128) {
         fail('VALIDATION_FAILED', 'display_name must contain 1 to 128 characters');
       }
+      const data_class = dataClassOf(bodyRecord['data_class']);
+      const locale = optionalLocale(bodyRecord['locale']);
+      const timezone = optionalTimezone(bodyRecord['timezone']);
+      const currency = optionalCurrency(bodyRecord['currency']);
       const bodyKey = typeof bodyRecord['idempotency_key'] === 'string'
         && bodyRecord['idempotency_key'].trim().length > 0
         ? bodyRecord['idempotency_key']
@@ -107,7 +165,17 @@ export function registerProvisioningRoutes(
       if (idempotency_key === undefined) {
         fail('VALIDATION_FAILED', 'an Idempotency-Key header or idempotency_key body field is required');
       }
-      const input: ProvisioningCreateInput = { display_name, idempotency_key };
+      const input: ProvisioningCreateInput = {
+        display_name,
+        idempotency_key,
+        data_class,
+        actor_kind: 'PLATFORM',
+        actor_id: principal.operator_id ?? principal.kind,
+        correlation_id: correlationIdOf(request, runtime),
+        ...(locale === undefined ? {} : { locale }),
+        ...(timezone === undefined ? {} : { timezone }),
+        ...(currency === undefined ? {} : { currency }),
+      };
 
       const shell = await deps.provisioning.createShell(input);
       await runtime.audit.record({

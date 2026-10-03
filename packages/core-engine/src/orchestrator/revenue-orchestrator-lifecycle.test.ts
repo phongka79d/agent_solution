@@ -23,6 +23,7 @@ import {
   type ExecutionReceipt,
   type HydratedContext,
   type HypothesisRecord,
+  type IAuditTrail,
   type IEvidenceLogger,
   type IPolicyEngine,
   type PlannedStep,
@@ -44,7 +45,6 @@ import { evaluateAuthorityVerdict } from '../policy/authority.js';
 import { PolicyEnforcementPoint, type PolicyRegistrySkill } from '../policy/index.js';
 import { MemoryLeaseManager } from '../workflow/memory-lease.js';
 import { MemoryWorkflowEngine } from '../workflow/memory-workflow-engine.js';
-import { assertOrchestratorBrokered } from './agent-boundary.js';
 import { RevenueOrchestrator } from './revenue-orchestrator.js';
 import * as engine from '../index.js';
 
@@ -135,13 +135,18 @@ interface HarnessOptions {
   readonly customer?: HydratedContext['customer'];
   readonly agents?: PlatformAgentId[];
   readonly hypothesisRecord?: HypothesisRecord;
-  readonly dispatch?: (action?: ActionDraft) => Promise<ExecutionReceipt>;
+  readonly dispatch?: (
+    action?: ActionDraft,
+    options?: { timeout_ms?: number; signal?: AbortSignal; request_fingerprint?: string },
+  ) => Promise<ExecutionReceipt>;
   readonly policyEngine?: IPolicyEngine;
   readonly effectGuard?: MemoryEffectGuard;
   /** Live SCR-005 lock state, so a case can hold the lock and release it mid-flight. */
   readonly isTakenOver?: () => Promise<boolean>;
   /** Evidence writer override (a failing audit/evidence store is a governance case, not a bug). */
   readonly evidenceLogger?: IEvidenceLogger;
+  /** Audit sink override for assertions about the exact payload sent to persistence. */
+  readonly auditTrail?: IAuditTrail;
   /** Durable engine override, so the claimed-queue reattempt path can be driven with a spy. */
   readonly workflowEngine?: IStatefulWorkflowEngine;
   /** Lease manager override, so a case can assert the attempt's release. */
@@ -214,7 +219,7 @@ function harness(options: HarnessOptions = {}) {
     },
     workflowEngine: workflow,
     evidenceLogger,
-    auditTrail: { append: async () => undefined },
+    auditTrail: options.auditTrail ?? { append: async () => undefined },
     adapterDispatcher: {
       dispatch,
       ...(reconcile !== undefined ? { reconcile } : {}),
@@ -298,6 +303,61 @@ describe('RevenueOrchestrator', () => {
     ]);
     expect(dispatch).toHaveBeenCalledTimes(1);
     expect(result.evidence?.previous_evidence_hash).toBe(GENESIS_HASH);
+  });
+
+  it('redacts context email and phone before either audit writer receives the record', async () => {
+    const email = 'private.customer@example.test';
+    const phone = '+1 415 555 0199';
+    const append = vi.fn(async (_record: Parameters<IAuditTrail['append']>[0]) => undefined);
+    const auditTrail: IAuditTrail = { append };
+    const customer: NonNullable<HydratedContext['customer']> = {
+      customer_id: 'customer-123',
+      tenant_id: TENANT,
+      verified_phone: phone,
+      verified_email: email,
+      total_spent: 128,
+      order_count: 2,
+      rfm_segment_hypothesis: 'ACTIVE',
+      consent_marketing: false,
+      consent_updated_at: null,
+      suppression_active: false,
+      created_at: '2026-01-01T00:00:00.000Z',
+    };
+    const { orchestrator, evidenceLogger } = harness({
+      customer,
+      auditTrail,
+      steps: [step({ audit_spec: { mask_pii_fields: ['customer_id'] } })],
+    });
+    const logAgentRun = vi.spyOn(evidenceLogger, 'logAgentRun');
+
+    const result = await orchestrator.processSignal(signal());
+    const auditRecord = append.mock.calls[0]?.[0];
+    const runLog = logAgentRun.mock.calls[0]?.[0];
+
+    expect(auditRecord).toBeDefined();
+    expect(runLog).toBeDefined();
+    expect((auditRecord?.context as HydratedContext).customer?.customer_id).toBe('[REDACTED]');
+    expect((runLog?.context as HydratedContext).customer?.customer_id).toBe('[REDACTED]');
+    expect(JSON.stringify([auditRecord, runLog])).not.toContain(email);
+    expect(JSON.stringify([auditRecord, runLog])).not.toContain(phone);
+    expect(result.lifecycle_state).toBe('completed');
+  });
+
+  it('reuses one full pending-action fingerprint for reservation and dispatch', async () => {
+    const { orchestrator, effectGuard, dispatch } = harness({
+      steps: [step({ skill_id: 'skill.care.escalate_to_human' })],
+    });
+    const fingerprint = vi.spyOn(effectGuard, 'computeRequestFingerprint');
+    const reserve = vi.spyOn(effectGuard, 'reserve');
+
+    await orchestrator.processSignal(signal());
+
+    const dispatchedAction = dispatch.mock.calls[0]?.[0];
+    const expectedFingerprint = fingerprint.mock.results[0]?.value;
+    expect(fingerprint).toHaveBeenCalledTimes(1);
+    expect(fingerprint).toHaveBeenCalledWith(dispatchedAction?.payload);
+    expect(reserve.mock.calls[0]?.[0].request_fingerprint).toBe(expectedFingerprint);
+    expect(dispatch.mock.calls[0]?.[1]?.request_fingerprint).toBe(expectedFingerprint);
   });
   it('does not leak the previous run journal into a sequential run', async () => {
     const { orchestrator } = harness();
@@ -482,13 +542,7 @@ describe('RevenueOrchestrator', () => {
     const { orchestrator, dispatch, deriveHypothesis, resolveRouting, formulatePlan } = harness({
       agents: ['MKT-01', 'SAL-01'],
     });
-    const decision: RoutingDecision = {
-      target_agent: 'MKT-01',
-      requires_clarification: false,
-      rationalization: 'brokered',
-    };
 
-    expect(assertOrchestratorBrokered(decision).target_agent).toBe('MKT-01');
     await orchestrator.processSignal(signal());
 
     expect(deriveHypothesis).toHaveBeenCalledTimes(1);
@@ -639,14 +693,34 @@ describe('RevenueOrchestrator', () => {
     ).rejects.toMatchObject({ code: 'PROVIDER_UNAVAILABLE' });
 
     expect(workflow.recordFailure).toHaveBeenCalledTimes(1);
-    const [failure] = vi.mocked(workflow.recordFailure).mock.calls[0] as [
-      { tenant_id: string; run_id: string; error_class: string; error_details: { code: string; message: string } },
-    ];
+    const failure = vi.mocked(workflow.recordFailure).mock.calls[0]?.[0];
+    if (failure === undefined) throw new Error('recordFailure input was not captured');
     expect(failure.tenant_id).toBe(TENANT);
     expect(failure.run_id).toBe(run_id);
     expect(failure.error_class).toBe('RETRYABLE');
     expect(failure.error_details.code).toBe('PROVIDER_UNAVAILABLE');
     expect(failure.error_details.message).toContain('provider is down');
     expect(leaseManager.releaseLease).toHaveBeenCalledWith(TENANT, run_id, 'worker-test');
+  });
+
+  it('records a deterministic handoff reservation refusal as FATAL with its code', async () => {
+    const { orchestrator, run_id, workflow } = reattemptHarness({
+      step: step({ skill_id: 'skill.care.escalate_to_human', mutating: true }),
+      dispatch: async () => {
+        throw new OrchestratorError(
+          'HANDOFF_EFFECT_RESERVATION_INVALID',
+          'reservation does not match the pending handoff action',
+        );
+      },
+    });
+
+    await expect(
+      orchestrator.processQueuedSignal(run_id, signal(), { worker_id: 'worker-test' }),
+    ).rejects.toMatchObject({ code: 'HANDOFF_EFFECT_RESERVATION_INVALID' });
+
+    const failure = vi.mocked(workflow.recordFailure).mock.calls[0]?.[0];
+    if (failure === undefined) throw new Error('recordFailure input was not captured');
+    expect(failure.error_class).toBe('FATAL');
+    expect(failure.error_details.code).toBe('HANDOFF_EFFECT_RESERVATION_INVALID');
   });
 });

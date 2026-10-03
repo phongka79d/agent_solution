@@ -46,6 +46,11 @@ const CHECKPOINT: DurableTaskCheckpoint = {
   request_id: 'sig_1',
 };
 
+const ACTION_PAYLOAD = { message: 'Your cart is waiting', discount_percent: 0 };
+function payloadDigest(payload: unknown): string {
+  return createHash('sha256').update(canonicalizeJson(payload), 'utf8').digest('hex');
+}
+const ACTION_DIGEST = payloadDigest(ACTION_PAYLOAD);
 const ACTION: ActionDraft = {
   action_id: '33333333-3333-4333-8333-333333333333',
   run_id: RUN,
@@ -60,11 +65,14 @@ const ACTION: ActionDraft = {
   action_revision: 0,
   effect_key: 'effect_key_v0',
   required_authority: 'AUTH-4',
-  payload: { message: 'Your cart is waiting', discount_percent: 0 },
+  payload: ACTION_PAYLOAD,
+  approval_payload: ACTION_PAYLOAD,
+  approval_digest_version: 1,
+  approval_payload_digest: ACTION_DIGEST,
 };
 
-async function engineWithRunningTask(run_id: string = RUN): Promise<MemoryWorkflowEngine> {
-  const engine = new MemoryWorkflowEngine();
+async function engineWithRunningTask(run_id: string = RUN, now?: () => number): Promise<MemoryWorkflowEngine> {
+  const engine = new MemoryWorkflowEngine(now === undefined ? {} : { now });
   await engine.createTask({
     run_id,
     tenant_id: TENANT,
@@ -89,6 +97,8 @@ async function enginePausedForApproval(): Promise<{
       action_id: ACTION.action_id,
       effect_key: ACTION.effect_key,
       payload: ACTION.payload,
+      payload_sha256: ACTION_DIGEST,
+      digest_version: 1,
       reason: 'AUTH-4 requires a human decision',
     },
   });
@@ -162,7 +172,7 @@ describe('MemoryWorkflowEngine task state', () => {
 
     const task = await engine.getTask(TENANT, RUN);
     expect(task?.state_payload?.request_id).toBe('sig_1');
-    expect(task?.state_payload?.plan.plan_id).toBe('plan_1');
+    expect(task?.state_payload).toMatchObject({ plan: { plan_id: 'plan_1' } });
     expect(task?.state_payload?.current_step).toBe(3);
     expect(task?.task_version).toBe(4);
 
@@ -184,6 +194,8 @@ describe('MemoryWorkflowEngine approvals', () => {
         action_id: ACTION.action_id,
         effect_key: ACTION.effect_key,
         payload: ACTION.payload,
+        payload_sha256: ACTION_DIGEST,
+        digest_version: 1,
         reason: 'AUTH-4 requires a human decision',
       },
     });
@@ -198,9 +210,8 @@ describe('MemoryWorkflowEngine approvals', () => {
     expect(approvals[0]?.approval_id).toBe(paused.approval_id);
     expect(approvals[0]?.decision).toBe('PENDING');
     expect(approvals[0]?.is_paused).toBe(false);
-    expect(approvals[0]?.payload_sha256).toBe(
-      createHash('sha256').update(canonicalizeJson(ACTION.payload), 'utf8').digest('hex'),
-    );
+    expect(approvals[0]?.payload_sha256).toBe(ACTION_DIGEST);
+    expect(approvals[0]?.digest_version).toBe(1);
   });
 
   it('does not insert a second PENDING row for the same binding', async () => {
@@ -215,6 +226,8 @@ describe('MemoryWorkflowEngine approvals', () => {
         action_id: ACTION.action_id,
         effect_key: ACTION.effect_key,
         payload: ACTION.payload,
+        payload_sha256: ACTION_DIGEST,
+        digest_version: 1,
         reason: 'AUTH-4 requires a human decision',
       },
     });
@@ -236,6 +249,8 @@ describe('MemoryWorkflowEngine approvals', () => {
           action_id: '44444444-4444-4444-8444-444444444444',
           effect_key: 'effect_key_other',
           payload: { message: 'other action' },
+          payload_sha256: payloadDigest({ message: 'other action' }),
+          digest_version: 1,
           reason: 'AUTH-4 requires a human decision',
         },
       }),
@@ -248,7 +263,14 @@ describe('MemoryWorkflowEngine approvals', () => {
         run_id: OTHER_RUN,
         expected_task_version: 7,
         checkpoint: CHECKPOINT,
-        approval: { action_id: ACTION.action_id, effect_key: ACTION.effect_key, payload: ACTION.payload, reason: 'stale' },
+        approval: {
+          action_id: ACTION.action_id,
+          effect_key: ACTION.effect_key,
+          payload: ACTION_PAYLOAD,
+          payload_sha256: ACTION_DIGEST,
+          digest_version: 1,
+          reason: 'stale',
+        },
       }),
     ).rejects.toThrow(OrchestratorError);
     expect(fresh.listApprovals(TENANT, OTHER_RUN)).toHaveLength(0);
@@ -357,13 +379,16 @@ describe('MemoryWorkflowEngine approvals', () => {
   it('persists the authorized revision of a human MODIFY', async () => {
     const { engine, approval_id } = await enginePausedForApproval();
     const digest = engine.listApprovals(TENANT, RUN)[0]?.payload_sha256 ?? 'missing-digest';
+    const revisedPayload = { message: 'Your cart is waiting', discount_percent: 5 };
     const revised: ActionDraft = {
       ...ACTION,
       action_revision: 1,
       effect_key: 'effect_key_v1',
-      payload: { message: 'Your cart is waiting', discount_percent: 5 },
+      payload: revisedPayload,
+      approval_payload: revisedPayload,
+      approval_digest_version: 1,
+      approval_payload_digest: payloadDigest(revisedPayload),
     };
-
     expect(
       await engine.claimApprovalAndResume({
         tenant_id: TENANT,
@@ -378,10 +403,12 @@ describe('MemoryWorkflowEngine approvals', () => {
       }),
     ).toEqual({ claimed: true });
 
-    const revisedDigest = createHash('sha256').update(canonicalizeJson(revised.payload), 'utf8').digest('hex');
+    const revisedDigest = payloadDigest(revised.approval_payload);
     expect(engine.listApprovals(TENANT, RUN)[0]?.effect_key).toBe('effect_key_v1');
     expect(engine.listApprovals(TENANT, RUN)[0]?.decision).toBe('MODIFIED');
     expect(engine.listApprovals(TENANT, RUN)[0]?.payload_sha256).toBe(revisedDigest);
+    expect(engine.listApprovals(TENANT, RUN)[0]?.digest_version).toBe(1);
+    expect(engine.listApprovals(TENANT, RUN)[0]?.payload).toEqual(revised.approval_payload);
     expect((await engine.getTask(TENANT, RUN))?.state_payload?.pending_action).toEqual(
       expect.objectContaining({
         action_revision: 1,
@@ -394,23 +421,29 @@ describe('MemoryWorkflowEngine approvals', () => {
 });
 
 describe('MemoryWorkflowEngine failures', () => {
-  it('re-queues three RETRYABLE retries after the first attempt, then fails terminally', async () => {
-    const engine = await engineWithRunningTask();
+  it('parks complete-checkpoint RETRYABLE retries until a timer and then fails after exhaustion', async () => {
+    const now = Date.parse('2026-01-01T00:00:00.000Z');
+    const engine = await engineWithRunningTask(RUN, () => now);
+    await engine.updateTaskProgress(TENANT, RUN, 1, CHECKPOINT);
     const failure = {
       tenant_id: TENANT,
       run_id: RUN,
       error_class: 'RETRYABLE' as PersistedErrorClass,
       error_details: { code: 'PROVIDER_UNAVAILABLE' },
     };
+    const retryDelays = [1_000, 2_000, 4_000];
 
-    // retry_count 0, 1 and 2 are below the budget of 3, so each re-queues the task (§4.4).
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
+    for (const delayMs of retryDelays) {
       expect(await engine.recordFailure(failure)).toEqual({ requeued: true });
-      expect((await engine.getTask(TENANT, RUN))?.state).toBe('queued');
-      await engine.transitionTask(TENANT, RUN, 'running', 'task.claim');
+      const waiting = await engine.getTask(TENANT, RUN);
+      expect(waiting?.state).toBe('waiting');
+      expect(waiting?.state_payload).toMatchObject({
+        wait_reason: 'RETRY',
+        retry_not_before: new Date(now + delayMs).toISOString(),
+      });
+      await engine.transitionTask(TENANT, RUN, 'running', 'timer.expired', CHECKPOINT);
     }
 
-    // retry_count is now 3 >= max_retries: the next RETRYABLE failure is terminal (§4.1 matrix).
     expect(await engine.recordFailure(failure)).toEqual({ requeued: false });
     expect((await engine.getTask(TENANT, RUN))?.state).toBe('failed');
   });

@@ -33,6 +33,93 @@ export interface RunStageEventRecord {
   readonly entered_at: string;
 }
 
+export type RunStageResultStatus = 'completed' | 'failed' | 'refused' | 'awaiting_human';
+
+export interface RunStageResultRecord {
+  readonly tenant_id: string;
+  readonly run_id: string;
+  readonly attempt_ordinal: number;
+  readonly step_index: number;
+  readonly stage: RunStage;
+  readonly status: RunStageResultStatus;
+  readonly started_at: string;
+  readonly completed_at: string;
+  readonly duration_ms: number;
+  readonly agent_code: string | null;
+  readonly skill_id: string | null;
+  readonly summary_key: string | null;
+  readonly refusal_code: string | null;
+  readonly error_class: string | null;
+  readonly input_digest: string | null;
+  readonly output_digest: string | null;
+  readonly detail: unknown;
+  readonly evidence_refs: unknown;
+}
+
+export interface AppendRunStageResultInput {
+  readonly tenant_id: string;
+  readonly run_id: string;
+  readonly attempt_ordinal: number;
+  readonly step_index: number;
+  readonly stage: RunStage;
+  readonly status: RunStageResultStatus;
+  readonly started_at: string;
+  readonly completed_at: string;
+  readonly duration_ms: number;
+  readonly agent_code?: string | null;
+  readonly skill_id?: string | null;
+  readonly summary_key?: string | null;
+  readonly refusal_code?: string | null;
+  readonly error_class?: string | null;
+  readonly input_digest?: string | null;
+  readonly output_digest?: string | null;
+  readonly detail?: unknown;
+  readonly evidence_refs?: unknown;
+}
+
+interface RunStageResultRow extends QueryResultRow {
+  tenant_id: string;
+  run_id: string;
+  attempt_ordinal: number;
+  step_index: number;
+  stage: RunStage;
+  status: RunStageResultStatus;
+  started_at: Date | string;
+  completed_at: Date | string;
+  duration_ms: number;
+  agent_code: string | null;
+  skill_id: string | null;
+  summary_key: string | null;
+  refusal_code: string | null;
+  error_class: string | null;
+  input_digest: string | null;
+  output_digest: string | null;
+  detail: unknown;
+  evidence_refs: unknown;
+}
+
+const RUN_STAGE_RESULTS = 'agentos.run_stage_results';
+const STAGE_RESULT_COLUMNS = `
+  tenant_id, run_id, attempt_ordinal, step_index, stage, status, started_at, completed_at,
+  duration_ms, agent_code, skill_id, summary_key, refusal_code, error_class, input_digest,
+  output_digest, detail, evidence_refs`;
+const INSERT_STAGE_RESULT = `INSERT INTO ${RUN_STAGE_RESULTS} (
+    tenant_id, run_id, attempt_ordinal, step_index, stage, status, started_at, completed_at,
+    duration_ms, agent_code, skill_id, summary_key, refusal_code, error_class, input_digest,
+    output_digest, detail, evidence_refs
+  ) VALUES ($1, $2, $3, $4, $5, $6, $7::timestamptz, $8::timestamptz, $9,
+    $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18::jsonb)
+  ON CONFLICT (tenant_id, run_id, attempt_ordinal, step_index, stage) DO NOTHING
+  RETURNING${STAGE_RESULT_COLUMNS}`;
+const SELECT_STAGE_RESULT = `SELECT${STAGE_RESULT_COLUMNS}
+  FROM ${RUN_STAGE_RESULTS}
+  WHERE tenant_id = $1 AND run_id = $2 AND attempt_ordinal = $3 AND step_index = $4 AND stage = $5`;
+
+const SELECT_STAGE_RESULTS = `SELECT${STAGE_RESULT_COLUMNS}
+  FROM ${RUN_STAGE_RESULTS}
+  WHERE tenant_id = $1 AND run_id = $2
+  ORDER BY attempt_ordinal ASC, started_at ASC, step_index ASC, stage ASC`;
+
 export interface AppendRunStageEventInput {
   readonly tenant_id: string;
   readonly run_id: string;
@@ -162,6 +249,11 @@ const SELECT_PROVIDER_CALLS = `SELECT${PROVIDER_COLUMNS}
   WHERE tenant_id = $1 AND run_id = $2
   ORDER BY step_index ASC, stage ASC, call_index ASC, recorded_at ASC`;
 
+const SELECT_PROVIDER_CALLS_FOR_RUNS = `SELECT${PROVIDER_COLUMNS}
+  FROM ${PROVIDER_CALL_LEDGER}
+  WHERE tenant_id = $1 AND run_id = ANY($2::varchar[])
+  ORDER BY run_id, step_index ASC, stage ASC, call_index ASC, recorded_at ASC`;
+
 function assertNonNegativeInteger(value: unknown, field: string, code: string): void {
   if (!Number.isSafeInteger(value) || (value as number) < 0) {
     throw new Error(`${code}: ${field} must be a safe integer >= 0 (${CODE_OWNER}).`);
@@ -259,6 +351,43 @@ function toStageRecord(row: RunStageEventRow): RunStageEventRecord {
     evidence_refs: row.evidence_refs,
     entered_at: readInstant(row.entered_at, 'entered_at'),
   };
+}
+
+function toStageResultRecord(row: RunStageResultRow): RunStageResultRecord {
+  return {
+    tenant_id: row.tenant_id,
+    run_id: row.run_id,
+    attempt_ordinal: row.attempt_ordinal,
+    step_index: row.step_index,
+    stage: row.stage,
+    status: row.status,
+    started_at: readInstant(row.started_at, 'started_at'),
+    completed_at: readInstant(row.completed_at, 'completed_at'),
+    duration_ms: row.duration_ms,
+    agent_code: row.agent_code,
+    skill_id: row.skill_id,
+    summary_key: row.summary_key,
+    refusal_code: row.refusal_code,
+    error_class: row.error_class,
+    input_digest: row.input_digest,
+    output_digest: row.output_digest,
+    detail: row.detail,
+    evidence_refs: row.evidence_refs,
+  };
+}
+
+function nullableBoundedText(value: unknown, field: string, maxLength: number): string | null {
+  return value === undefined || value === null
+    ? null
+    : assertBoundedText(value, field, maxLength, 'RUN_STAGE_RESULT_INPUT_INVALID');
+}
+
+function nullableDigest(value: unknown, field: string): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string' || !/^[0-9a-f]{64}$/.test(value)) {
+    throw new Error(`RUN_STAGE_RESULT_INPUT_INVALID: ${field} must be a lowercase SHA-256 digest.`);
+  }
+  return value;
 }
 
 function toProviderCallRecord(row: ProviderCallLedgerRow): ProviderCallLedgerRecord {
@@ -427,6 +556,87 @@ export class RunStageEventsRepository {
     });
   }
 
+  async appendStageResult(input: AppendRunStageResultInput): Promise<RunStageResultRecord> {
+    assertIdentifier(input.tenant_id, 'tenant_id', 36, 'RUN_STAGE_RESULT_TENANT_ID_REQUIRED');
+    assertIdentifier(input.run_id, 'run_id', 64, 'RUN_STAGE_RESULT_RUN_ID_REQUIRED');
+    assertPositiveInteger(input.attempt_ordinal, 'attempt_ordinal', 'RUN_STAGE_RESULT_ATTEMPT_INVALID');
+    assertNonNegativeInteger(input.step_index, 'step_index', 'RUN_STAGE_RESULT_STEP_INVALID');
+    const stage = assertRunStage(input.stage, 'RUN_STAGE_RESULT_STAGE_INVALID');
+    if (!['completed', 'failed', 'refused', 'awaiting_human'].includes(input.status)) {
+      throw new Error('RUN_STAGE_RESULT_STATUS_INVALID: unsupported stage result status.');
+    }
+    const started_at = normalizeInstant(input.started_at, 'started_at', 'RUN_STAGE_RESULT_INPUT_INVALID');
+    const completed_at = normalizeInstant(input.completed_at, 'completed_at', 'RUN_STAGE_RESULT_INPUT_INVALID');
+    const duration_ms = input.duration_ms;
+    assertNonNegativeInteger(duration_ms, 'duration_ms', 'RUN_STAGE_RESULT_INPUT_INVALID');
+    if (duration_ms > 2_147_483_647 || Date.parse(completed_at) < Date.parse(started_at)) {
+      throw new Error('RUN_STAGE_RESULT_INPUT_INVALID: duration or completion timestamp is out of range.');
+    }
+    const agent_code = nullableBoundedText(input.agent_code, 'agent_code', 32);
+    const skill_id = nullableBoundedText(input.skill_id, 'skill_id', 128);
+    const summary_key = nullableBoundedText(input.summary_key, 'summary_key', 128);
+    const refusal_code = nullableBoundedText(input.refusal_code, 'refusal_code', 64);
+    const error_class = nullableBoundedText(input.error_class, 'error_class', 32);
+    const input_digest = nullableDigest(input.input_digest, 'input_digest');
+    const output_digest = nullableDigest(input.output_digest, 'output_digest');
+    const detail = serializeJsonb(input.detail ?? {}, 'RUN_STAGE_RESULT_DETAIL_INVALID');
+    const evidence_refs = serializeJsonb(input.evidence_refs ?? [], 'RUN_STAGE_RESULT_EVIDENCE_REFS_INVALID');
+
+    return this.runInTenantTransaction(input.tenant_id, async (client) => {
+      const args = [
+        input.tenant_id,
+        input.run_id,
+        input.attempt_ordinal,
+        input.step_index,
+        stage,
+        input.status,
+        started_at,
+        completed_at,
+        duration_ms,
+        agent_code,
+        skill_id,
+        summary_key,
+        refusal_code,
+        error_class,
+        input_digest,
+        output_digest,
+        detail,
+        evidence_refs,
+      ];
+      const inserted = await client.query<RunStageResultRow>(INSERT_STAGE_RESULT, args);
+      const insertedRow = inserted.rows[0];
+      if (insertedRow !== undefined) return toStageResultRecord(insertedRow);
+
+      const existing = await client.query<RunStageResultRow>(SELECT_STAGE_RESULT, args.slice(0, 5));
+      const existingRow = requireRow(
+        existing.rows[0],
+        `RUN_STAGE_RESULT_UNSTABLE: key conflict for ${input.run_id} returned no visible row (${CODE_OWNER}).`,
+      );
+      const record = toStageResultRecord(existingRow);
+      if (
+        record.status !== input.status
+        || record.started_at !== started_at
+        || record.completed_at !== completed_at
+        || record.duration_ms !== duration_ms
+        || record.agent_code !== agent_code
+        || record.skill_id !== skill_id
+        || record.summary_key !== summary_key
+        || record.refusal_code !== refusal_code
+        || record.error_class !== error_class
+        || record.input_digest !== input_digest
+        || record.output_digest !== output_digest
+        || !sameJsonValue(record.detail, JSON.parse(detail))
+        || !sameJsonValue(record.evidence_refs, JSON.parse(evidence_refs))
+      ) {
+        throw new Error(
+          `RUN_STAGE_RESULT_CONFLICT: stage result ${input.run_id}/${input.attempt_ordinal}/${input.step_index}/${stage} ` +
+            'already exists with different immutable content; refusing to overwrite it.',
+        );
+      }
+      return record;
+    });
+  }
+
   async listStageEvents(tenant_id: string, run_id: string): Promise<readonly RunStageEventRecord[]> {
     assertIdentifier(tenant_id, 'tenant_id', 36, 'RUN_STAGE_EVENT_TENANT_ID_REQUIRED');
     assertIdentifier(run_id, 'run_id', 64, 'RUN_STAGE_EVENT_RUN_ID_REQUIRED');
@@ -434,6 +644,15 @@ export class RunStageEventsRepository {
     return this.runInTenantTransaction(tenant_id, async (client) => {
       const result = await client.query<RunStageEventRow>(SELECT_STAGES, [tenant_id, run_id]);
       return result.rows.map(toStageRecord);
+    });
+  }
+
+  async listStageResults(tenant_id: string, run_id: string): Promise<readonly RunStageResultRecord[]> {
+    assertIdentifier(tenant_id, 'tenant_id', 36, 'RUN_STAGE_RESULT_TENANT_ID_REQUIRED');
+    assertIdentifier(run_id, 'run_id', 64, 'RUN_STAGE_RESULT_RUN_ID_REQUIRED');
+    return this.runInTenantTransaction(tenant_id, async (client) => {
+      const result = await client.query<RunStageResultRow>(SELECT_STAGE_RESULTS, [tenant_id, run_id]);
+      return result.rows.map(toStageResultRecord);
     });
   }
 
@@ -511,6 +730,16 @@ export class RunStageEventsRepository {
 
     return this.runInTenantTransaction(tenant_id, async (client) => {
       const result = await client.query<ProviderCallLedgerRow>(SELECT_PROVIDER_CALLS, [tenant_id, run_id]);
+      return result.rows.map(toProviderCallRecord);
+    });
+  }
+
+  async listProviderCallsForRuns(tenant_id: string, run_ids: readonly string[]): Promise<readonly ProviderCallLedgerRecord[]> {
+    assertIdentifier(tenant_id, 'tenant_id', 36, 'PROVIDER_CALL_TENANT_ID_REQUIRED');
+    if (run_ids.length === 0) return [];
+    for (const run_id of run_ids) assertIdentifier(run_id, 'run_id', 64, 'PROVIDER_CALL_TENANT_ID_REQUIRED');
+    return this.runInTenantTransaction(tenant_id, async (client) => {
+      const result = await client.query<ProviderCallLedgerRow>(SELECT_PROVIDER_CALLS_FOR_RUNS, [tenant_id, run_ids]);
       return result.rows.map(toProviderCallRecord);
     });
   }

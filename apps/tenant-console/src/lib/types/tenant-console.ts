@@ -1,18 +1,10 @@
 /**
- * Tenant-console HTTP DTOs for the existing /api/v1 contracts.
- * Shared status and lifecycle vocabulary comes from @agentos/ui-foundation.
+ * Tenant-console type surface for the /api/v1 client.
+ * Schema-backed DTOs alias @agentos/api-contract; local shapes remain only where no matching schema exists.
  */
 
-import type {
-  ApprovalDecisionRequest,
-  ApprovalDecisionResponse,
-  CompanyGovernanceResponse,
-} from '@agentos/api-contract';
-import type {
-  EvidenceClassification,
-  SourceStatus,
-  TaskLifecycleState,
-} from '@agentos/ui-foundation';
+import type { components } from '@agentos/api-contract';
+import type { TaskLifecycleState } from '@agentos/ui-foundation';
 
 export type { AuthSession, Permission, TenantMembership, UserIdentity } from '@agentos/ui-foundation/auth';
 export type {
@@ -35,8 +27,9 @@ export type {
 } from '@agentos/api-contract';
 
 // R14: Approval Center
-export type ApprovalDecision = ApprovalDecisionRequest['decision'];
-export type ApprovalDecisionStatus = ApprovalDecisionResponse['status'];
+export type ApprovalDecision = components['schemas']['ApprovalDecisionRequest']['decision'];
+export type ApprovalDecisionStatus = components['schemas']['ApprovalDecisionResponse']['status'];
+/** UI status vocabulary includes presentation states not present in the API's approval status enum. */
 export type ApprovalStatus =
   | 'AWAITING_HUMAN'
   | 'PENDING'
@@ -47,204 +40,34 @@ export type ApprovalStatus =
   | 'CANCELLED'
   | 'QUEUED';
 
-export type GovernanceSettingsResponse = CompanyGovernanceResponse;
+/** Governance response schema shared with the API; the contract owns its optional timestamp. */
+export type CompanyGovernanceSettings = components['schemas']['CompanyGovernanceResponse'];
+
+export type GovernanceSettingsResponse = CompanyGovernanceSettings;
 
 // R15: Customer 360 timeline
-export interface CustomerTimelineParams {
-  readonly cursor?: string | undefined;
-  readonly limit?: number | undefined;
-  readonly from?: string | undefined;
-  readonly to?: string | undefined;
-}
-
-export interface TimelineEntry {
-  readonly occurred_at: string;
-  readonly source_record_id: string;
-  readonly event_id: string;
-  readonly stage: string;
-  readonly canonical_event: string | null;
-  readonly classification: EvidenceClassification;
-  readonly evidence_reference: string | null;
-  readonly gap_reason?: string | undefined;
-}
+export type CustomerTimelineParams = components['schemas']['CustomerTimelineParams'];
+export type TimelineEntry = components['schemas']['CustomerTimelineEntry'];
 
 export type CustomerTimelineEntry = TimelineEntry;
 
-export interface CustomerTimelineProfile {
-  readonly customer_id?: string | undefined;
-  readonly name?: string | undefined;
-  readonly tier?: string | undefined;
-  readonly ltv_twd?: number | undefined;
-  readonly aov_twd?: number | undefined;
-  readonly churn_risk_score?: number | undefined;
-}
-
-export interface CustomerTimelineResponse {
-  readonly items: readonly TimelineEntry[];
-  readonly next_cursor: string | null;
-  readonly entries?: readonly TimelineEntry[] | undefined;
-  readonly events?: readonly TimelineEntry[] | undefined;
-  readonly gaps?: readonly Record<string, unknown>[] | undefined;
-  readonly nextCursor?: string | null | undefined;
-  readonly customer_id?: string | undefined;
-  readonly customer?: CustomerTimelineProfile | undefined;
-}
-
-// R17: Executive KPI snapshot and telemetry
-export interface GetKpiSnapshotParams {
-  readonly window?: string | undefined;
-  readonly timezone?: string | undefined;
-  readonly cursor?: string | undefined;
-  readonly limit?: number | undefined;
-}
-
-export interface KpiMetricItem<T = unknown> {
-  readonly metric?: string | undefined;
-  readonly name?: string | undefined;
-  readonly value: T | null;
-  readonly source_status: SourceStatus;
-  readonly observed_at: string | null;
-  readonly window?: string | undefined;
-  readonly timezone?: string | undefined;
-  readonly provisional?: boolean | undefined;
-  readonly reason?: string | undefined;
-  readonly note?: string | undefined;
-}
-
-export interface RevenueMetricValue {
-  readonly totalRevenue: number;
-  readonly organicBaselineRevenue: number;
-}
-export interface LeadsMetricValue {
-  readonly total: number;
-  readonly marketingQualified: number;
-}
-export interface ConversionMetricValue {
-  readonly overallPercent: number;
-  readonly aiAssisted: number;
-  readonly unassisted: number;
-  readonly relativeLiftPercent: number;
-}
-export interface ActiveCampaignsMetricValue {
-  readonly liveCount: number;
-  readonly pendingApprovalCount: number;
-}
-export interface AiAttributedRevenueMetricValue {
-  readonly directCheckout: number;
-  readonly cartRecovery: number;
-  readonly crossSellUpsell: number;
-  readonly total: number;
-  readonly shareOfTotalRevenuePercent: number;
-}
-export interface CustomerServiceStatusMetricValue {
-  readonly firstResponseSeconds: number;
-  readonly escalationRatePercent: number;
-  readonly openTicketCount: number;
-}
-export interface RetentionMetricValue {
-  readonly repeatCustomerRatePercent: number;
-  readonly churnRatePercent: number;
-}
-export interface AiActionsMetricValue {
-  readonly executedCount: number;
-}
-export interface ApprovalPendingMetricValue {
-  readonly awaitingSignOffCount: number;
-}
-export interface AbnormalEventsMetricValue {
-  readonly warningCount: number;
-  readonly criticalCount: number;
-}
-export interface BaselineMetricsCollection {
-  readonly revenue: KpiMetricItem<RevenueMetricValue | number>;
-  readonly leads: KpiMetricItem<LeadsMetricValue | number>;
-  readonly conversion: KpiMetricItem<ConversionMetricValue | number>;
-  readonly activeCampaigns: KpiMetricItem<ActiveCampaignsMetricValue | number>;
-  readonly aiGeneratedRevenue: KpiMetricItem<AiAttributedRevenueMetricValue | number>;
-  readonly customerServiceStatus: KpiMetricItem<CustomerServiceStatusMetricValue | string>;
-  readonly retention: KpiMetricItem<RetentionMetricValue | number>;
-  readonly aiActions: KpiMetricItem<AiActionsMetricValue | number>;
-  readonly approvalPending: KpiMetricItem<ApprovalPendingMetricValue | number>;
-  readonly abnormalEvents: KpiMetricItem<AbnormalEventsMetricValue | number>;
-}
-
-export interface KpiSnapshotResponse {
-  readonly window: string;
-  readonly timezone: string;
-  readonly observed_at: string;
-  readonly metrics:
-    | readonly KpiMetricItem<unknown>[]
-    | (Record<string, KpiMetricItem<unknown>> & Partial<BaselineMetricsCollection>);
-  readonly cursor: string | null;
-  readonly tenant_id?: string | undefined;
-  readonly timestamp?: string | undefined;
-}
-
-export interface TelemetrySSEFrame<T = unknown> {
-  readonly id: string;
-  readonly event:
-    | 'telemetry.snapshot'
-    | 'run.updated'
-    | 'approval.pending'
-    | 'approval.decided'
-    | 'conversation.message'
-    | 'takeover.acquired'
-    | 'takeover.heartbeat'
-    | 'takeover.released'
-    | 'stream.error'
-    | string;
-  readonly data: T;
-  readonly retry?: number | undefined;
-}
+export type CustomerTimelineResponse = components['schemas']['CustomerTimelineResponse'];
 
 // SCR-005: Conversation takeover and messaging
-export type TakeoverMode = 'FULL_CONTROL' | 'CO_PILOT';
+export type TakeoverMode = components['schemas']['ConversationTakeoverRequest']['takeover_mode'];
 export type ConversationWireStatus = 'ACTIVE' | 'HUMAN_TAKEOVER' | 'CLOSED';
 
-export interface ConversationTakeoverRequest {
-  readonly reason: string;
-  readonly takeover_mode: TakeoverMode;
-}
-export interface ConversationTakeoverResponse {
-  readonly conversation_id: string;
-  readonly status: 'HUMAN_TAKEOVER';
-  readonly operator_id: string;
-  readonly taken_over_at: string;
-  readonly lease_expires_at: string;
-}
-export interface ConversationTakeoverHeartbeatRequest {
-  readonly extend_seconds: number;
-}
-export interface ConversationTakeoverHeartbeatResponse {
-  readonly conversation_id: string;
-  readonly status: 'HUMAN_TAKEOVER';
-  readonly operator_id: string;
-  readonly lease_expires_at: string;
-}
-export interface ConversationResumeRequest {
-  readonly handoff_summary?: string | undefined;
-  readonly next_agent_id?: string | undefined;
-}
-export interface ConversationResumeResponse {
-  readonly conversation_id: string;
-  readonly status: 'ACTIVE';
-  readonly resumed_at: string;
-}
-export interface ConversationListParams {
-  readonly cursor?: string | undefined;
-  readonly limit?: number | undefined;
-}
-export interface ConversationListResponse {
-  readonly items: readonly Record<string, unknown>[];
-  readonly next_cursor?: string | null | undefined;
-  readonly nextCursor?: string | null | undefined;
-}
-export interface ConversationMessagesResponse {
-  readonly items: readonly Record<string, unknown>[];
-  readonly next_cursor?: string | null | undefined;
-  readonly nextCursor?: string | null | undefined;
-}
-export interface ConversationSummaryResponse extends Record<string, unknown> {}
+export type ConversationTakeoverRequest = components['schemas']['ConversationTakeoverRequest'];
+export type ConversationTakeoverResponse = components['schemas']['ConversationTakeoverResponse'];
+export type ConversationTakeoverHeartbeatRequest = components['schemas']['ConversationTakeoverHeartbeatRequest'];
+export type ConversationTakeoverHeartbeatResponse = components['schemas']['ConversationTakeoverHeartbeatResponse'];
+export type ConversationResumeRequest = components['schemas']['ConversationResumeRequest'];
+export type ConversationResumeResponse = components['schemas']['ConversationResumeResponse'];
+export type ConversationListParams = components['schemas']['ConversationListParams'];
+export type ConversationListResponse = components['schemas']['ConversationListResponse'];
+export type ConversationMessagesResponse = components['schemas']['ConversationMessagesResponse'];
+export type ConversationSummaryResponse = components['schemas']['ConversationSummaryResponse'];
+export type ConversationOperatorMessageResponse = components['schemas']['ConversationOperatorMessageResponse'];
 export interface CustomerListParams {
   readonly query?: string | undefined;
   readonly cursor?: string | undefined;
@@ -256,13 +79,7 @@ export interface CustomerListResponse {
   readonly nextCursor?: string | null | undefined;
 }
 export interface CustomerProfileResponse extends Record<string, unknown> {}
-export interface PostMessageRequest {
-  readonly message: string;
-  readonly idempotency_key?: string | undefined;
-  readonly module?: 'marketing' | 'sales' | 'support' | 'auto' | undefined;
-  readonly attachments?: readonly string[] | undefined;
-  readonly sender?: 'operator' | 'customer' | 'ai' | undefined;
-}
+export type PostMessageRequest = components['schemas']['ConversationOperatorMessageRequest'];
 
 // Durable task acknowledgement and storefront integration
 export interface TaskAcceptedResponse {
@@ -272,24 +89,267 @@ export interface TaskAcceptedResponse {
   readonly task_version: number;
   readonly correlation_id: string;
 }
-export interface StorefrontStreamRequest {
-  readonly message: string;
-  readonly idempotency_key: string;
-  readonly session_id?: string | undefined;
-  readonly module?: 'marketing' | 'sales' | 'support' | 'auto' | undefined;
-  readonly attachments?: readonly string[] | undefined;
-}
-export interface PlatformEventEnvelope {
-  readonly event_id: string;
-  readonly event_type: string;
-  readonly source: string;
-  readonly occurred_at: string;
-  readonly payload: Record<string, unknown>;
-  readonly session_id?: string | undefined;
-}
-export interface EventIngestionResponse {
-  readonly event_id: string;
-  readonly correlation_id: string;
-  readonly status: 'QUEUED' | 'IGNORED' | 'PROCESSED';
+
+// T6.9: connector catalog, binding and probe DTOs returned by /company/integrations.
+export type ConnectorStatusCode = components['schemas']['CompanyIntegrationItem']['status'];
+export type ProbeCheckOutcome = 'PASS' | 'FAIL';
+
+export interface ConnectorProbeCheck {
+  readonly probe: string;
+  readonly outcome: ProbeCheckOutcome;
+  readonly latency_ms: number;
+  readonly http_status: number | null;
+  readonly error_class: string | null;
 }
 
+export interface ConnectorProbeResult {
+  readonly outcome: ProbeCheckOutcome;
+  readonly checks: readonly ConnectorProbeCheck[];
+}
+
+export interface ConnectorSecretDescription {
+  readonly fingerprint: string;
+  readonly last4: string;
+}
+
+export interface ConnectorProbeSummary {
+  readonly outcome: 'PASS' | 'FAIL';
+  readonly latency_ms: number | null;
+  readonly http_status: number | null;
+  readonly error_class: string | null;
+  readonly probed_at: string | null;
+}
+
+export interface ConnectorBinding {
+  readonly status: string;
+  readonly mode: string;
+  readonly config: Readonly<Record<string, unknown>>;
+  readonly version: number;
+  readonly bound_at: string;
+  readonly probe: ConnectorProbeSummary | null;
+  readonly secret: ConnectorSecretDescription | null;
+}
+
+/** OpenAPI owns the documented identity and state; the console consumes additional connector metadata. */
+export type CompanyConnectorItem = components['schemas']['CompanyIntegrationItem'] & {
+  readonly probe?: ConnectorProbeSummary | undefined;
+  readonly connector_id: string;
+  readonly display_key: string;
+  readonly catalog_category: string;
+  readonly integrated: boolean;
+  readonly config_schema: Readonly<Record<string, unknown>>;
+  readonly auth_schemes: readonly string[];
+  readonly probes: readonly string[];
+  readonly binding: ConnectorBinding | null;
+};
+
+export type CompanyConnectorsResponse = Omit<components['schemas']['CompanyIntegrationsResponse'], 'items'> & {
+  readonly items: readonly CompanyConnectorItem[];
+};
+
+export interface ConnectorUpdateRequest {
+  readonly config: Readonly<Record<string, unknown>>;
+  readonly secret?: string | undefined;
+}
+
+export interface ConnectorUpdateResponse {
+  readonly binding: ConnectorBinding;
+}
+
+export interface ConnectorTestResponse extends ConnectorProbeResult {
+  readonly binding: ConnectorBinding;
+}
+
+// R16: Company settings (profile, governance, LLM)
+export interface BrandProfile {
+  readonly voice?: string | undefined;
+  readonly prohibited_claims_url?: string | undefined;
+  readonly logo_url?: string | undefined;
+}
+
+export interface CompanyProfileResponse {
+  readonly tenant_id: string;
+  readonly company_name: string;
+  readonly industry: string | null;
+  readonly locale: string;
+  readonly timezone: string;
+  readonly currency: string;
+  readonly brand_profile: BrandProfile;
+  readonly version: number;
+  readonly updated_at: string;
+}
+
+export interface CompanyProfileUpdateRequest {
+  readonly company_name: string;
+  readonly industry: string | null;
+  readonly locale: string;
+  readonly timezone: string;
+  readonly currency: string;
+  readonly brand_profile: BrandProfile;
+}
+
+export type CompanyGovernanceUpdateRequest = components['schemas']['CompanyGovernanceUpdateRequest'];
+
+export type StructuredMode = 'json_object' | 'json_schema';
+
+export interface CompanyLlmEffective {
+  readonly provider_id: string;
+  readonly display_name: string;
+  readonly base_url: string;
+  readonly reasoning_model: string;
+  readonly fast_model: string;
+  readonly timeout_ms: number;
+  readonly structured_mode: StructuredMode;
+  readonly secret_configured: boolean;
+}
+
+export interface CompanyLlmResponse {
+  readonly tenant_id: string;
+  readonly mode: 'INHERIT' | 'CUSTOM';
+  readonly provider_id: string | null;
+  readonly base_url: string | null;
+  readonly reasoning_model: string | null;
+  readonly fast_model: string | null;
+  readonly timeout_ms: number | null;
+  readonly structured_mode: StructuredMode | null;
+  readonly monthly_token_budget: number | null;
+  readonly secret_configured: boolean;
+  readonly config_version: string | null;
+  readonly updated_at: string | null;
+  readonly effective: CompanyLlmEffective | null;
+}
+
+export interface CompanyLlmUpdateRequest {
+  readonly mode: 'INHERIT' | 'CUSTOM';
+  readonly provider_id?: string | null | undefined;
+  readonly base_url?: string | null | undefined;
+  readonly reasoning_model?: string | null | undefined;
+  readonly fast_model?: string | null | undefined;
+  readonly timeout_ms?: number | null | undefined;
+  readonly structured_mode?: StructuredMode | null | undefined;
+  readonly monthly_token_budget?: number | null | undefined;
+  readonly api_key?: string | undefined;
+}
+
+export interface LlmProbeResult {
+  readonly outcome: 'PASS' | 'FAIL';
+  readonly latency_ms: number | null;
+  readonly http_status: number | null;
+  readonly error_class: string | null;
+}
+
+// T6.4 AI Team per-domain activation and T4.6 skills management.
+
+export type AiTeamDomain = 'marketing' | 'sales' | 'care';
+export type AiTeamActivationAction = 'activate' | 'pause' | 'resume';
+export type AiTeamActivationStatus = components['schemas']['CompanyAiTeamDomainResponse']['activation_status'];
+
+export type AiTeamPrerequisite = components['schemas']['CompanyAiTeamPrerequisite'];
+
+export type AiTeamDomainResponse = components['schemas']['CompanyAiTeamDomainResponse'];
+
+export type SkillAvailabilityReason =
+  | 'OK'
+  | 'NOT_CONFIGURED'
+  | 'DISABLED_BY_TENANT'
+  | 'MISSING_CONFIGURATION'
+  | 'CONNECTOR_UNBOUND'
+  | 'NO_ASSIGNED_AGENT'
+  | 'RETIRED';
+
+export interface SkillAvailability {
+  readonly available: boolean;
+  readonly status: string;
+  readonly reason: SkillAvailabilityReason;
+}
+
+export interface CompanySkill {
+  readonly skill_id: string;
+  readonly display_key: string;
+  readonly domain: string;
+  readonly effect_class: 'READ' | 'EFFECT' | 'APPROVAL' | 'INTERNAL';
+  readonly required_authority: string;
+  readonly autonomy_class: 'NEVER' | 'PROMOTABLE';
+  readonly completion: 'SYNC' | 'AWAITS_HUMAN';
+  readonly connector_kinds: readonly string[];
+  readonly config_schema: Readonly<Record<string, unknown>>;
+  readonly allowed_agents: readonly string[];
+  readonly enabled: boolean;
+  readonly config: Readonly<Record<string, unknown>>;
+  readonly connector_id: string | null;
+  readonly version: string | null;
+  readonly assigned_agents: readonly string[];
+  readonly availability: SkillAvailability;
+}
+
+export interface SkillsResponse {
+  readonly skills: readonly CompanySkill[];
+}
+
+export interface SkillSettingsUpdateRequest {
+  readonly enabled: boolean;
+  readonly config: Readonly<Record<string, unknown>>;
+  readonly connector_id: string | null;
+  readonly version: string | null;
+}
+
+export interface SkillTestResult {
+  readonly test_id: string;
+  readonly skill_id: string;
+  readonly mode: 'READ_DISPATCH' | 'CONNECTOR_DRY_RUN';
+  readonly outcome: 'PASS' | 'FAIL' | 'REFUSED';
+  readonly latency_ms: number | null;
+  readonly detail: Readonly<Record<string, unknown>>;
+  readonly tested_by: string;
+  readonly tested_at: string;
+}
+
+export interface SkillTestResponse {
+  readonly result: SkillTestResult;
+}
+
+export interface SkillHealthSnapshot {
+  readonly window_start: string;
+  readonly success_count: number;
+  readonly failure_count: number;
+  readonly refusal_count: number;
+  readonly awaiting_human_count: number;
+  readonly success_rate: number | null;
+  readonly avg_latency_ms: number | null;
+  readonly p95_latency_ms: number | null;
+  readonly last_activity_at: string | null;
+  readonly last_error_class: string | null;
+}
+
+export interface SkillHealthResponse {
+  readonly health: SkillHealthSnapshot;
+  readonly recent_tests: readonly SkillTestResult[];
+  readonly data_class: 'PRODUCTION' | 'DEMO' | 'TEST' | null;
+}
+
+// T6.10: company analytics contract returned by GET /company/analytics.
+export type CompanyAnalyticsWindow = '24h' | '7d' | '30d';
+export type CompanyAnalyticsSourceStatus = 'OK' | 'NO_DATA' | 'NOT_INTEGRATED';
+
+export interface CompanyAnalyticsBreakdownEntry {
+  readonly key: string;
+  readonly value: number;
+}
+
+export interface CompanyAnalyticsKpi {
+  readonly key: string;
+  readonly kind: 'NUMBER' | 'PERCENT' | 'DURATION_MS' | 'BREAKDOWN';
+  readonly value: number | null;
+  readonly unit: 'count' | 'percent' | 'ms';
+  readonly source_status: CompanyAnalyticsSourceStatus;
+  readonly as_of: string;
+  readonly note?: string | undefined;
+  readonly breakdown?: readonly CompanyAnalyticsBreakdownEntry[] | undefined;
+  readonly detail?: Readonly<Record<string, number>> | undefined;
+}
+
+export interface CompanyAnalyticsResponse {
+  readonly window: CompanyAnalyticsWindow;
+  readonly as_of: string;
+  readonly kpis: readonly CompanyAnalyticsKpi[];
+}

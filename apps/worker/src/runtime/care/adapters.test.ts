@@ -4,7 +4,9 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import { OrchestratorError } from '@agentos/core-engine/contracts';
+import type { IStatefulWorkflowEngine } from '@agentos/core-engine/contracts';
 import type {
+  AppendConversationMessageInput,
   ApprovalRepository,
   AuditRepository,
   ConversationRecord,
@@ -75,6 +77,12 @@ describe('createDurableAdapters', () => {
       queueHandoffEvidence: vi.fn().mockResolvedValue({ queued: true, task_version: 1 }),
     } as unknown as DurableWorkflowRepository;
 
+    const approvalClaim = {
+      claimed: true,
+      approval: {},
+      action: {},
+      task: createFakeTaskRecord(),
+    };
     const approvalRepository = {
       pauseForApproval: vi.fn().mockResolvedValue({
         approval_id: 'appr-uuid-1',
@@ -82,12 +90,7 @@ describe('createDurableAdapters', () => {
         action: {},
         task: {},
       }),
-      claimApprovalAndResume: vi.fn().mockResolvedValue({
-        claimed: true,
-        approval: {},
-        action: {},
-        task: {},
-      }),
+      claimApprovalAndResume: vi.fn().mockResolvedValue(approvalClaim),
     } as unknown as ApprovalRepository;
 
     const evidenceRepository = {
@@ -108,10 +111,17 @@ describe('createDurableAdapters', () => {
       append: vi.fn().mockResolvedValue(undefined),
     } as unknown as AuditRepository;
 
+    const storedMessages = new Map<string, AppendConversationMessageInput>();
+    const appendMessage = vi.fn(async (input: AppendConversationMessageInput) => {
+      const key = JSON.stringify([input.tenant_id, input.conversation_id, input.request_id]);
+      if (!storedMessages.has(key)) storedMessages.set(key, input);
+      return 'notice-1';
+    });
     const conversationRepository = {
       get: vi.fn().mockResolvedValue(createFakeConversationRecord()),
       getByThread: vi.fn().mockResolvedValue(createFakeConversationRecord()),
       setState: vi.fn().mockResolvedValue(true),
+      appendMessage,
     } as unknown as ConversationRepository;
 
     const adapters = createDurableAdapters({
@@ -128,6 +138,9 @@ describe('createDurableAdapters', () => {
       adapters,
       workflowRepository,
       approvalRepository,
+      approvalClaim,
+      appendMessage,
+      storedMessages,
       evidenceRepository,
       auditRepository,
       conversationRepository,
@@ -201,17 +214,20 @@ describe('createDurableAdapters', () => {
         state: 'waiting',
         correlation_id: 'corr-99',
         state_payload: { checkpoint: 'ok' },
+        retry_count: 2,
         lease_owner: 'worker-2',
         lease_expires_at: '2026-09-23T13:00:00.000Z',
       });
       vi.mocked(workflowRepository.getTask).mockResolvedValueOnce(taskRow);
 
       const snapshot = await adapters.workflowEngine.getTask('tenant-1', 'run-1');
+      // retry_count is the generation a timer resume must match (T5.5).
       expect(snapshot).toEqual({
         task_version: 5,
         state: 'waiting',
         correlation_id: 'corr-99',
         state_payload: { checkpoint: 'ok' },
+        retry_count: 2,
         lease_owner: 'worker-2',
         lease_expires_at: '2026-09-23T13:00:00.000Z',
       });
@@ -236,6 +252,8 @@ describe('createDurableAdapters', () => {
           action_id: 'act-1',
           effect_key: 'ek-1',
           payload: { discount: 20 },
+          payload_sha256: 'a'.repeat(64),
+          digest_version: 1,
           reason: 'Discount > 10% requires manager approval',
         },
       };
@@ -262,6 +280,65 @@ describe('createDurableAdapters', () => {
       const result = await adapters.workflowEngine.claimApprovalAndResume(params);
       expect(approvalRepository.claimApprovalAndResume).toHaveBeenCalledWith(params);
       expect(result).toEqual({ claimed: true });
+    });
+
+    const rejectParams = {
+      tenant_id: 'tenant-1',
+      run_id: 'run-1',
+      approval_id: 'appr-uuid-1',
+      effect_key: 'ek-1',
+      expected_payload_sha256: 'f'.repeat(64),
+      authorized_action: null,
+      decision: 'REJECTED',
+      operator_id: 'operator-1',
+      review_comment: 'Reject this order',
+    } satisfies Parameters<IStatefulWorkflowEngine['claimApprovalAndResume']>[0];
+
+    it.each(['REJECTED', 'CANCELLED'] as const)('appends one tenant-scoped support notice when %s stops a conversation run', async (decision) => {
+      const { adapters, approvalClaim, appendMessage, storedMessages } = setupFakeRepos();
+      approvalClaim.task = createFakeTaskRecord({
+        state: 'stopped',
+        state_payload: { context: { working_memory: { conversation_id: 'conv-1' } } },
+      });
+
+      await adapters.workflowEngine.claimApprovalAndResume({ ...rejectParams, decision });
+
+      expect(appendMessage).toHaveBeenCalledTimes(1);
+      expect([...storedMessages.values()]).toEqual([{
+        tenant_id: 'tenant-1',
+        conversation_id: 'conv-1',
+        sender_type: 'system',
+        sender_id: 'system',
+        content: 'Trợ lý chưa trả lời được. Nhân viên sẽ hỗ trợ bạn.',
+        request_id: 'run-failed:run-1',
+      }]);
+    });
+
+    it('replaying a rejection never duplicates its support notice', async () => {
+      const { adapters, approvalClaim, appendMessage, storedMessages } = setupFakeRepos();
+      approvalClaim.task = createFakeTaskRecord({
+        state: 'stopped',
+        state_payload: { context: { working_memory: { conversation_id: 'conv-1' } } },
+      });
+
+      await adapters.workflowEngine.claimApprovalAndResume(rejectParams);
+      await adapters.workflowEngine.claimApprovalAndResume(rejectParams);
+
+      expect(appendMessage).toHaveBeenCalledTimes(2);
+      expect(storedMessages.size).toBe(1);
+    });
+
+    it('rejecting a non-conversational run appends no support notice', async () => {
+      const { adapters, approvalClaim, appendMessage, storedMessages } = setupFakeRepos();
+      approvalClaim.task = createFakeTaskRecord({
+        state: 'stopped',
+        state_payload: { context: { working_memory: { session_id: 'scheduled-1' } } },
+      });
+
+      await adapters.workflowEngine.claimApprovalAndResume(rejectParams);
+
+      expect(appendMessage).not.toHaveBeenCalled();
+      expect(storedMessages.size).toBe(0);
     });
 
     it('recordFailure delegates to workflowRepository and maps { requeued }', async () => {
@@ -386,24 +463,20 @@ describe('createDurableAdapters', () => {
       expect(orcErr.message).toContain('initializeOutcomeWatch is unbound');
     });
 
-    it('initializeOutcomeWatch delegates when repository exposes pending_outcome writer', async () => {
+    it('initializeOutcomeWatch delegates to the durable outcome-watch writer', async () => {
       const { adapters, evidenceRepository } = setupFakeRepos();
-      const mockWriter = vi.fn().mockResolvedValue(undefined);
-      Object.assign(evidenceRepository, { appendPendingOutcomeAttribution: mockWriter });
+      const initializeOutcomeWatch = vi.fn().mockResolvedValue(undefined);
+      Object.assign(evidenceRepository, { initializeOutcomeWatch });
 
-      await adapters.evidenceLogger.initializeOutcomeWatch({
+      const params = {
         tenant_id: 'tenant-1',
         run_id: 'run-1',
         effect_key: 'ek-mutating',
         skill_id: 'skill.care.order_mutation',
-      });
+      };
+      await expect(adapters.evidenceLogger.initializeOutcomeWatch(params)).resolves.toBeUndefined();
 
-      expect(mockWriter).toHaveBeenCalledWith({
-        tenant_id: 'tenant-1',
-        run_id: 'run-1',
-        effect_key: 'ek-mutating',
-        skill_id: 'skill.care.order_mutation',
-      });
+      expect(initializeOutcomeWatch).toHaveBeenCalledWith(params);
     });
   });
 
@@ -509,7 +582,6 @@ describe('createDurableAdapters', () => {
         tenant_id: 'tenant-1',
         run_id: 'run-1',
         lease_owner: 'worker-1',
-        task_version: 4,
       });
     });
 
@@ -564,7 +636,7 @@ describe('createDurableAdapters', () => {
       expect(workflowRepository.renewTaskLease).not.toHaveBeenCalled();
     });
 
-    it('acquireLease returns false when renewTaskLease throws (e.g. concurrent collision)', async () => {
+    it('acquireLease returns false when renewal refuses the worker lease', async () => {
       const { adapters, workflowRepository } = setupFakeRepos();
       const runningTask = createFakeTaskRecord({
         state: 'running',
@@ -574,7 +646,7 @@ describe('createDurableAdapters', () => {
       });
       vi.mocked(workflowRepository.getTask).mockResolvedValueOnce(runningTask);
       vi.mocked(workflowRepository.renewTaskLease).mockRejectedValueOnce(
-        new Error('TASK_VERSION_CONFLICT'),
+        new Error('TASK_LEASE_NOT_HELD'),
       );
 
       const acquired = await adapters.leaseManager.acquireLease('tenant-1', 'run-1', 'worker-1');

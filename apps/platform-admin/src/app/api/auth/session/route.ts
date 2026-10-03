@@ -1,5 +1,5 @@
 import { AuthProviderError, ExpiredSessionError } from '../../../../lib/auth/provider';
-import { createDemoAuthProvider, demoGateResponse } from '../../../../lib/auth/demo-provider';
+import { authGateResponse, createConfiguredAuthProvider } from '../../../../lib/auth/selection';
 import {
   csrfCookieHeader,
   ensureCsrfCookie,
@@ -28,9 +28,9 @@ function errorResponse(error: unknown, request: Request): Response {
 
 export async function GET(request: Request): Promise<Response> {
   const env = process.env as AuthEnvironment;
-  const gate = demoGateResponse(env);
+  const gate = authGateResponse(env);
   if (gate) return gate;
-  const provider = createDemoAuthProvider({ env });
+  const provider = createConfiguredAuthProvider({ env });
   try {
     const session = await provider.getSession(request);
     if (!session) {

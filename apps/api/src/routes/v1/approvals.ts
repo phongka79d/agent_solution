@@ -73,15 +73,15 @@ export function registerApprovalRoutes(
         const principal = requireOperator(request, 'approval:read');
         const status = request.query.status ?? 'PENDING';
 
-        // `PENDING` is the only supported filter in the baseline: the queue is exactly the pending
-        // projection, and a paused-but-undecided item appears in it once with `is_paused = true`.
-        if (status !== 'PENDING') {
-          fail('VALIDATION_FAILED', 'status must be PENDING: it is the only supported queue filter');
+        // `PENDING` is the queue projection; `DECIDED` is the processed history. A paused-but-undecided
+        // item is still undecided, so it appears in `PENDING` once with `is_paused = true`.
+        if (status !== 'PENDING' && status !== 'DECIDED') {
+          fail('VALIDATION_FAILED', 'status must be PENDING or DECIDED');
         }
 
         const page = await runtime.approvals.list({
           tenant_id: principal.tenant_id,
-          status: 'PENDING',
+          status: status === 'DECIDED' ? 'DECIDED' : 'PENDING',
           ...(request.query.cursor === undefined ? {} : { cursor: request.query.cursor }),
           ...(request.query.limit === undefined ? {} : { limit: Number(request.query.limit) }),
         });
@@ -216,7 +216,7 @@ export function registerApprovalRoutes(
             fail('PROVIDER_TIMEOUT', 'the draft owner could not be read; the decision was refused');
           }
           if (run === null || run.session_id === undefined || run.session_id.length === 0) {
-            fail('PROVIDER_TIMEOUT', 'the draft owner could not be read; the decision was refused');
+            fail('APPROVAL_NOT_CLAIMABLE', 'the draft has no verifiable owner; the decision was refused');
           }
           if (run.session_id === operator_id) {
             fail('APPROVER_MUST_DIFFER', 'the approver must differ from the draft owner');

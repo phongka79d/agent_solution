@@ -1,5 +1,5 @@
-import { checkPromotionEligibility } from './eligibility.js';
-import { isAutonomousAuthority, isNeverPromotableSkill } from './never-promotable.js';
+import { checkPromotionEligibility, isDraftGatedSkill } from './eligibility.js';
+import { isAutonomousAuthority, isNeverPromotableSkill, isPromotableSkill } from './never-promotable.js';
 import type {
   AutonomyAdmission,
   AutonomyAdmissionPort,
@@ -324,7 +324,33 @@ export class AutonomyService implements AutonomyAdmissionPort {
     } else {
       current = await this.store.getCurrent(input);
     }
-    if (current === undefined) return { workflow: 'UNCHANGED', reason: 'UNCHANGED: no autonomy row exists.' };
+    const paused = await this.store.isTenantPaused(input.tenant_id);
+    const killSwitch = await this.store.isKillSwitchSet(input.tenant_id);
+    const safety = { ...request, ...(request.safety ?? {}) };
+    const trigger = this.admissionTrigger(safety);
+    if (current === undefined) {
+      if (isDraftGatedSkill(input.skill_id)) {
+        return { workflow: 'PARKED_DRAFT', reason: 'PARKED_DRAFT: Bản nháp chờ bạn duyệt.' };
+      }
+      if (!isPromotableSkill(input.skill_id, request.required_authority)) {
+        return { workflow: 'UNCHANGED', reason: 'UNCHANGED: no autonomy row exists.' };
+      }
+      if (paused || killSwitch || trigger !== undefined) {
+        return {
+          workflow: 'PARKED_DRAFT',
+          reason: killSwitch
+            ? 'PARKED_DRAFT: tenant kill switch is set.'
+            : paused
+              ? 'PARKED_DRAFT: tenant autonomy is paused.'
+              : `PARKED_DRAFT: autonomy safety trigger ${trigger} is active.`,
+          ...(trigger === undefined ? {} : { trigger }),
+        };
+      }
+      return {
+        workflow: 'AUTO_EXECUTE',
+        reason: 'AUTO_EXECUTE: READ skill admitted at MINIMUM authority.',
+      };
+    }
     if (ambiguous) {
       return {
         workflow: 'PARKED_DRAFT',
@@ -355,10 +381,6 @@ export class AutonomyService implements AutonomyAdmissionPort {
         ...(demoted.record === undefined ? {} : { record: demoted.record }),
       };
     }
-    const paused = await this.store.isTenantPaused(input.tenant_id);
-    const killSwitch = await this.store.isKillSwitchSet(input.tenant_id);
-    const safety = { ...request, ...(request.safety ?? {}) };
-    const trigger = this.admissionTrigger(safety);
     if (trigger !== undefined && (current.state === 'PROMOTED' || current.state === 'PAUSED')) {
       const demoted = await this.demote({
         tenant_id: input.tenant_id,
@@ -378,8 +400,19 @@ export class AutonomyService implements AutonomyAdmissionPort {
     const admissionAuthority = typeof request.required_authority === 'string'
       ? request.required_authority
       : typeof recordedAuthority === 'string' ? recordedAuthority : '';
-    if (current.state === 'PROMOTED' && !paused && !killSwitch && isAutonomousAuthority(admissionAuthority)) {
-      return { workflow: 'AUTO_EXECUTE', record: current, reason: 'AUTO_EXECUTE: promoted policy is admitted.' };
+    if (
+      (current.state === 'PROMOTED' || (current.state === 'MINIMUM' && !isDraftGatedSkill(input.skill_id)))
+      && !paused
+      && !killSwitch
+      && isAutonomousAuthority(admissionAuthority)
+    ) {
+      return {
+        workflow: 'AUTO_EXECUTE',
+        record: current,
+        reason: current.state === 'PROMOTED'
+          ? 'AUTO_EXECUTE: promoted policy is admitted.'
+          : 'AUTO_EXECUTE: READ skill admitted at MINIMUM authority.',
+      };
     }
     return {
       workflow: 'PARKED_DRAFT',
@@ -388,7 +421,9 @@ export class AutonomyService implements AutonomyAdmissionPort {
         ? 'PARKED_DRAFT: tenant kill switch is set.'
         : paused
           ? 'PARKED_DRAFT: tenant autonomy is paused.'
-          : 'PARKED_DRAFT: policy is not promoted.',
+          : isDraftGatedSkill(input.skill_id) && current.state !== 'PROMOTED'
+            ? 'PARKED_DRAFT: Bản nháp chờ bạn duyệt.'
+            : 'PARKED_DRAFT: policy is not promoted.',
     };
   }
 

@@ -1,14 +1,16 @@
 /**
  * @file Deterministic harness for the skill-runtime suites. Excluded from the package build.
  *
- * The three canonical seams are supplied as small independent implementations rather than by
- * importing the engine's own modules, so a test asserts the *contract* — which inputs the seam is
- * handed, and which verdict maps to which refusal — instead of re-running the code under test.
+ * The authority and effect-identity seams are supplied independently so tests assert the dispatch
+ * contract. Canonical JSON is shared with durable writers: a test double must never derive a
+ * different digest for the same payload.
  */
 
 import { createHash } from 'node:crypto';
 
 import type { AssignableAuthority } from '@agentos/core-engine/contracts';
+
+import { canonicalizeJson } from '@agentos/core-engine/canonical-json';
 
 import {
   ORCHESTRATOR_BROKER,
@@ -40,29 +42,14 @@ export function sha256Hex(input: string): string {
   return createHash('sha256').update(input, 'utf8').digest('hex');
 }
 
-/** Canonical JSON for the test double: object keys sorted, arrays in place. */
-export function stableJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') {
-    return JSON.stringify(value);
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => stableJson(item)).join(',')}]`;
-  }
-  const record = value as Record<string, unknown>;
-  const pairs = Object.keys(record)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`);
-  return `{${pairs.join(',')}}`;
-}
-
 /** Independent BR-005 derivation: only the five immutable identity fields take part. */
 export function testEffectKey(identity: EffectKeyIdentity): string {
-  return sha256Hex(stableJson(identity));
+  return sha256Hex(canonicalizeJson(identity));
 }
 
-/** Independent payload digest: RFC 8785 canonical JSON + SHA-256. */
+/** Payload digest using the shared RFC 8785 canonical bytes and SHA-256. */
 export function testDigest(payload: unknown): string {
-  return sha256Hex(stableJson(payload));
+  return sha256Hex(canonicalizeJson(payload));
 }
 
 /** Independent canonical gate: branch order and refusal codes mirror implement/04 §3.2.1. */
@@ -175,12 +162,12 @@ export function createHarness(
   let tick = 0;
   const engine = createSkillRuntimeEngine({
     registry,
-    digestPayload: testDigest,
     deriveEffectKey: (identity) => {
       effectKeyIdentities.push(identity);
       return testEffectKey(identity);
     },
     evaluateAuthority: testAuthorityVerdict,
+    approvalDigest: ({ payload }) => testDigest(payload),
     now: () => {
       tick += 5;
       return tick;

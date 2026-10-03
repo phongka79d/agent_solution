@@ -36,10 +36,11 @@ export interface StatusBadgeProps {
   readonly code?: string;
   readonly tone?: Tone;
   readonly label?: ReactNode;
+  readonly live?: boolean;
   readonly className?: string;
 }
 
-export function StatusBadge({ code, tone, label, className }: StatusBadgeProps) {
+export function StatusBadge({ code, tone, label, live = false, className }: StatusBadgeProps) {
   const view = statusView(code ?? '');
   const Icon = statusIcons[view.icon] ?? HelpCircle;
   const badgeLabel = label ?? t(view.label_key);
@@ -48,7 +49,7 @@ export function StatusBadge({ code, tone, label, className }: StatusBadgeProps) 
   return (
     <span
       className={['ui-status', `ui-status--${badgeTone}`, className].filter(Boolean).join(' ')}
-      role="status"
+      role={live ? 'status' : undefined}
     >
       <Icon size={14} aria-hidden="true" focusable="false" />
       <span>{badgeLabel}</span>

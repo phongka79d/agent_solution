@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
@@ -401,6 +404,73 @@ describe('CareAgentRuntime', () => {
     });
   });
 
+  it('returns a typed skill-unavailable refusal for an unavailable Care step', async () => {
+    const signal: SignalEnvelope = {
+      signal_id: 'sig-unavailable-faq',
+      tenant_id,
+      correlation_id: 'corr-1',
+      source_channel: 'WEB_CHAT',
+      event_type: 'message.received',
+      timestamp: '2026-09-01T00:00:00Z',
+      subject: { session_id: 'sess-1', channel_type: 'web' },
+      payload: {
+        message: 'What is your return policy?',
+        care_intent: 'faq_search',
+        care_requirements: { question: 'What is your return policy?' },
+      },
+    };
+    const gatedRuntime = new CareAgentRuntime({
+      registry: mockRegistry,
+      verificationResolver,
+      gate: {
+        available: async () => ({ available: false, reason: 'DISABLED_BY_TENANT' }),
+      },
+    });
+
+    const hypothesis = await gatedRuntime.deriveHypothesis(signal, verifiedContext);
+    const routing = await gatedRuntime.resolveRouting(signal, verifiedContext, hypothesis);
+    const plan = await gatedRuntime.formulatePlan(routing, verifiedContext, hypothesis);
+
+    expect(plan.domain).toBe('support');
+    expect(plan.steps).toEqual([]);
+    expect(plan.terminal_response).toMatchObject({
+      response_kind: 'REFUSAL',
+      reason_code: 'DISABLED_BY_TENANT',
+    });
+  });
+
+  it('keeps the Care escalation path when its handoff skill is available', async () => {
+    let checkedSkill = '';
+    const signal: SignalEnvelope = {
+      signal_id: 'sig-gated-human',
+      tenant_id,
+      correlation_id: 'corr-1',
+      source_channel: 'WEB_CHAT',
+      event_type: 'message.received',
+      timestamp: '2026-09-01T00:00:00Z',
+      subject: { session_id: 'sess-1', channel_type: 'web' },
+      payload: { message: 'Tôi muốn gặp người thật để giải quyết vấn đề này.' },
+    };
+    const gatedRuntime = new CareAgentRuntime({
+      registry: mockRegistry,
+      verificationResolver,
+      gate: {
+        available: async (_tenant_id, skill_id) => {
+          checkedSkill = skill_id;
+          return { available: true, reason: 'OK' };
+        },
+      },
+    });
+
+    const hypothesis = await gatedRuntime.deriveHypothesis(signal, verifiedContext);
+    const routing = await gatedRuntime.resolveRouting(signal, verifiedContext, hypothesis);
+    const plan = await gatedRuntime.formulatePlan(routing, verifiedContext, hypothesis);
+
+    expect(checkedSkill).toBe('skill.care.escalate_to_human');
+    expect(plan.fallback_strategy).toBe('ESCALATE_HUMAN');
+    expect(plan.steps.map((step) => step.skill_id)).toEqual(['skill.care.escalate_to_human']);
+  });
+
   it('executes the structured Scenario B FAQ plan against approved NovaMart knowledge', async () => {
     const signal: SignalEnvelope = {
       signal_id: 'sig-scenario-b-faq',
@@ -426,11 +496,22 @@ describe('CareAgentRuntime', () => {
     const plan = await runtime.formulatePlan(routing, novamartContext, hypothesis);
     const step = plan.steps[0]!;
 
+    // The approved demo FAQ as the seed imports it into the tenant knowledge store (T3.3).
+    const faqBody = readFileSync(join(novamart_knowledge_root, 'customer-care', 'faq.md'), 'utf8');
     const services = createCareSkillServices({
       erp_read: null,
-      env: {
-        KNOWLEDGE_ROOT: novamart_knowledge_root,
-        KNOWLEDGE_TENANT_IDS: novamart_tenant_id,
+      env: {},
+      knowledge_store: {
+        listAvailable: async (tenant_id, namespace) => tenant_id === novamart_tenant_id && namespace === 'customer-care'
+          ? [{
+              document_id: 'f0000000-0000-4000-8000-000000000001',
+              version: 1,
+              content_sha256: createHash('sha256').update(faqBody, 'utf8').digest('hex'),
+              body: faqBody,
+              namespace: 'customer-care',
+              slug: 'faq',
+            }]
+          : [],
       },
       resolve_correlation_id: async () => 'corr-1',
       resolve_grant: async () => 'AUTH-0',
@@ -462,7 +543,7 @@ describe('CareAgentRuntime', () => {
     const faq = result.answers.find((answer) => answer.faq_id === 'FAQ-1');
     expect(faq).toMatchObject({
       faq_id: 'FAQ-1',
-      source_file: 'customer-care/faq.md',
+      source_file: 'customer-care/faq',
     });
     expect(faq?.approved_answer).toContain('14-day unopened return policy');
     expect(result.source_version).toMatch(/^[a-f0-9]{64}$/);
@@ -492,7 +573,7 @@ describe('CareAgentRuntime', () => {
     expect(plan.fallback_strategy).toBe('FAIL_CLOSED');
   });
 
-  it('refuses order-status intent on unverified session with NO plan', async () => {
+  it('returns a typed identity-required response plan for anonymous order lookup', async () => {
     const signal: SignalEnvelope = {
       signal_id: 'sig-order-unverified',
       tenant_id,
@@ -513,18 +594,58 @@ describe('CareAgentRuntime', () => {
     const hypothesis = await runtime.deriveHypothesis(signal, unverifiedContext);
     const routing = await runtime.resolveRouting(signal, unverifiedContext, hypothesis);
     expect(hypothesis.intent).toBe('order_lookup_unverified');
-
     expect(routing.target_agent).toBe('CS-01');
     expect(routing.requires_clarification).toBe(false);
-    expect(routing.rationalization).toContain('IDENTITY_UNVERIFIED');
+    expect(routing.clarification_template_key).toBe('care.identity_required');
+    expect(routing.clarification_reason_code).toBe('IDENTITY_UNVERIFIED');
     expect(JSON.stringify(hypothesis)).not.toContain('554433');
     expect(JSON.stringify(routing)).not.toContain('554433');
+    const plan = await runtime.formulatePlan(routing, unverifiedContext, hypothesis);
 
-    await expect(runtime.formulatePlan(routing, unverifiedContext, hypothesis))
-      .rejects.toMatchObject({ code: 'IDENTITY_UNVERIFIED' });
-    await expect(runtime.formulatePlan(routing, unverifiedContext, hypothesis))
-      .rejects.toThrow(/no order record was read or disclosed/i);
+    expect(plan).toMatchObject({
+      steps: [],
+      fallback_strategy: 'FAIL_CLOSED',
+      response_agent_id: 'CS-01',
+      terminal_response: {
+        response_kind: 'CLARIFICATION',
+        text: expect.any(String),
+        source: 'Core.Template@1',
+        template_key: 'care.identity_required',
+        reason_code: 'IDENTITY_UNVERIFIED',
+        sources: [],
+      },
+    });
   });
+  it('requires identity before asking for a missing order reference', async () => {
+    const signal: SignalEnvelope = {
+      signal_id: 'sig-order-unverified-no-reference',
+      tenant_id,
+      correlation_id: 'corr-1',
+      source_channel: 'WEB_CHAT',
+      event_type: 'message.received',
+      timestamp: '2026-09-01T00:00:00Z',
+      subject: { session_id: 'sess-1', channel_type: 'web' },
+      payload: {
+        message: 'Where is my order?',
+        module: 'support',
+      },
+    };
+
+    const hypothesis = await runtime.deriveHypothesis(signal, unverifiedContext);
+    expect(hypothesis.intent).toBe('order_lookup_unverified');
+    const routing = await runtime.resolveRouting(signal, unverifiedContext, hypothesis);
+    expect(routing.clarification_template_key).toBe('care.identity_required');
+    expect(routing.clarification_reason_code).toBe('IDENTITY_UNVERIFIED');
+
+    const plan = await runtime.formulatePlan(routing, unverifiedContext, hypothesis);
+    expect(plan.terminal_response).toMatchObject({
+      response_kind: 'CLARIFICATION',
+      template_key: 'care.identity_required',
+      reason_code: 'IDENTITY_UNVERIFIED',
+      sources: [],
+    });
+  });
+
 
   it('refuses order-status intent without a verified identity reference with NO plan', async () => {
     const signal: SignalEnvelope = {
@@ -588,6 +709,34 @@ describe('CareAgentRuntime', () => {
     const plan = await runtime.formulatePlan(routing, verifiedContext, hypothesis);
     expect(plan.steps).toHaveLength(0);
     expect(plan.fallback_strategy).toBe('FAIL_CLOSED');
+  });
+
+  it('routes a bare greeting to clarification despite a provider FAQ classification', async () => {
+    const signal: SignalEnvelope = {
+      signal_id: 'sig-greeting',
+      tenant_id,
+      correlation_id: 'corr-1',
+      source_channel: 'WEB_CHAT',
+      event_type: 'message.received',
+      timestamp: '2026-09-01T00:00:00Z',
+      subject: {
+        session_id: 'sess-1',
+        channel_type: 'web',
+      },
+      payload: {
+        message: 'hi',
+        module: 'support',
+        care_intent: 'faq_search',
+        care_requirements: {},
+      },
+    };
+
+    const hypothesis = await runtime.deriveHypothesis(signal, unverifiedContext);
+    expect(hypothesis.intent).toBe('requires_clarification');
+    const routing = await runtime.resolveRouting(signal, unverifiedContext, hypothesis);
+    expect(routing.requires_clarification).toBe(true);
+    expect(routing.clarification_template_key).toBe('care.need_more_detail');
+    expect(routing.clarification_reason_code).toBe('CARE_INTENT_UNCLEAR');
   });
 
 
@@ -683,6 +832,8 @@ describe('CareAgentRuntime', () => {
 
     const plan = await runtime.formulatePlan(routing, verifiedContext, hypothesis);
     expect(plan.fallback_strategy).toBe('ESCALATE_HUMAN');
+    expect(plan.domain).toBe('support');
+    expect(plan.steps[0]?.completion).toBe('AWAITS_HUMAN');
     expect(plan.steps).toHaveLength(1);
 
     const step = plan.steps[0]!;

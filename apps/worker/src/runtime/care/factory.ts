@@ -25,6 +25,7 @@ import {
 } from '@agentos/core-engine';
 import type {
   AssignableAuthority,
+  HydratedContext,
   ICrossDomainHandoffBroker,
   DurableLeaseManager,
   IAdapterDispatcher,
@@ -52,7 +53,12 @@ import {
   withTenantContext,
   type TenantTransactionRunner,
 } from '@agentos/database';
-import { DEFAULT_P0_PLATFORM_SKILL_ENABLEMENT } from '@agentos/skills';
+import {
+  DEFAULT_P0_PLATFORM_SKILL_ENABLEMENT,
+  type SkillBreakerRegistry,
+  type SkillGate,
+  type SkillRegistry,
+} from '@agentos/skills';
 
 import { CareAgentRuntime, type SkillRegistryResolver } from './agent-runtime.js';
 import { CareContextAggregator, type CareContextAggregatorRepositories } from './context-aggregator.js';
@@ -77,6 +83,17 @@ import {
   type CareSkillServices,
 } from './skills/index.js';
 import type { ErpReadPort } from '../connectors.js';
+
+/** Narrows the planner's registry resolver to the platform registry that owns input schemas. */
+function isSkillRegistry(value: SkillRegistryResolver | undefined): value is SkillRegistry & SkillRegistryResolver {
+  return typeof value === 'object'
+    && value !== null
+    && !(value instanceof Map)
+    && 'resolve' in value
+    && typeof value.resolve === 'function'
+    && 'list' in value
+    && typeof value.list === 'function';
+}
 
 export const DEFAULT_P1B_CARE_SKILL_ENABLEMENT: NonNullable<CareSkillOptions['skill_enablement']> = Object.freeze({
   enabled_skill_ids: Object.freeze([
@@ -121,6 +138,10 @@ export interface CareOrchestratorFactoryOptions {
   readonly adapters?: Partial<CareAdaptersShape> | undefined;
   readonly skillServices?: CareSkillServices | undefined;
   readonly registry?: SkillRegistryResolver | undefined;
+  /** Live availability gate (PLAN T4.3): the engine enablement step is `row.enabled AND gate`. */
+  readonly gate?: SkillGate | undefined;
+  /** Shared breaker table keyed `tenant + dependency`; the same instance the gate observes. */
+  readonly breakers?: SkillBreakerRegistry | undefined;
   readonly aggregatorRepositories?: CareContextAggregatorRepositories | undefined;
   readonly workflowRepository?: DurableWorkflowRepository | undefined;
   readonly approvalRepository?: ApprovalRepository | undefined;
@@ -135,6 +156,7 @@ export interface CareOrchestratorFactoryOptions {
   readonly case_sla_target_hours?: CareSkillOptions['case_sla_target_hours'] | undefined;
   readonly handoff_repository?: CareSkillOptions['handoff_repository'] | undefined;
   readonly skill_enablement?: CareSkillOptions['skill_enablement'] | undefined;
+  readonly llm?: CareSkillOptions['llm'] | undefined;
   readonly now?: (() => Date) | undefined;
   readonly resolve_grant?: ((tenant_id: string, agent_id: string) => Promise<AssignableAuthority | null>) | undefined;
   readonly resolve_correlation_id?: ((tenant_id: string, run_id: string) => Promise<string>) | undefined;
@@ -150,6 +172,7 @@ export interface CreateCarePolicyEngineOptions {
   readonly auditTrail?: IAuditTrail | undefined;
   readonly auditRepository?: AuditRepository | undefined;
   readonly now?: (() => Date) | undefined;
+  readonly normalizeActionInput?: IPolicyEngine['normalizeActionInput'];
 }
 
 /**
@@ -165,6 +188,7 @@ export function createCarePolicyEngine(options: CreateCarePolicyEngineOptions = 
   return new DomainPolicyEngine({
     skills: CARE_SKILLS,
     allowed_payload_fields: CARE_ALLOWED_PAYLOAD_FIELDS,
+    ...(options.normalizeActionInput === undefined ? {} : { normalizeActionInput: options.normalizeActionInput }),
     ...(options.pep ? { pep: options.pep } : {}),
     ...(options.resolveGrant ? { resolveGrant: options.resolveGrant } : {}),
     defaultGrant: (agent_id: string) => {
@@ -358,6 +382,9 @@ export function createCareOrchestratorFactory(
       skill_enablement: options.skill_enablement ?? DEFAULT_P1B_CARE_SKILL_ENABLEMENT,
       resolve_correlation_id: resolveCorrelationId,
       resolve_grant: resolveGrant,
+      ...(options.gate === undefined ? {} : { gate: options.gate }),
+      ...(options.breakers === undefined ? {} : { breakers: options.breakers }),
+      ...(options.llm === undefined ? {} : { llm: options.llm }),
     });
     adapterDispatcher ??= skillServices.dispatcher;
     registry ??= skillServices.registry;
@@ -367,8 +394,9 @@ export function createCareOrchestratorFactory(
   const agentRuntime: IAgentRuntime = options.agentRuntime ?? new CareAgentRuntime({
     ...(options.now ? { now: options.now } : {}),
     ...(registry ? { registry } : {}),
-    verificationReference: (correlation_id: string, tenant_id?: string) =>
-      tenant_id === undefined ? null : aggregator.verificationReferenceFor(tenant_id, correlation_id),
+    ...(options.gate === undefined ? {} : { gate: options.gate }),
+    verificationReference: (_correlation_id: string, _tenant_id: string, context: HydratedContext) =>
+      aggregator.verificationReferenceFor(context),
   });
 
   // 6. Policy engine adapter over PolicyEnforcementPoint bound to the durable audit boundary
@@ -380,6 +408,12 @@ export function createCareOrchestratorFactory(
     audit: options.audit,
     auditTrail,
     auditRepository: options.auditRepository,
+    ...(isSkillRegistry(registry)
+      ? {
+          normalizeActionInput: (skill_id: string, input: Record<string, unknown>) =>
+            registry.resolve(skill_id).validateInput(input),
+        }
+      : {}),
   });
 
   return async (_tenant_id: string): Promise<RevenueOrchestrator | null> => {

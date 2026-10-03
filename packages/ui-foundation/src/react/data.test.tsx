@@ -23,7 +23,7 @@ describe('shared data components', () => {
     );
 
     expect(screen.getByText('Hoạt động')).toBeTruthy();
-    expect(screen.getByText('Chưa phân loại')).toBeTruthy();
+    expect(screen.getByText('Không xác định')).toBeTruthy();
     expect(container.querySelectorAll('svg')).toHaveLength(2);
   });
 

@@ -6,6 +6,7 @@ import type {
   WidgetCredential,
 } from '../gateway/principal.js';
 import type { OperatorPermission } from '../gateway/contracts.js';
+import { createWidgetSessionRegistry } from './widget-sessions.js';
 
 /** The only tenant admitted by the local/CI demo authentication boundary. */
 export const DEMO_TENANT_ID = '99999999-9999-4999-8999-999999999999';
@@ -34,12 +35,24 @@ export const PLATFORM_BUNDLE = [
   'run:retry',
   'run:reconcile',
   'telemetry:read',
+  'platform:providers:write',
+  'platform:companies:write',
+  'platform:audit:read',
 ] as const satisfies readonly OperatorPermission[];
 
 const COMPANY_ADMIN_PERMISSIONS: readonly OperatorPermission[] = Object.freeze([
   ...TENANT_OPERATOR_BUNDLE,
   'approval:read',
   'approval:decide',
+  'settings:manage',
+  'integration:manage',
+  'llm:manage',
+  'knowledge:manage',
+  'knowledge:approve',
+  'skills:manage',
+  'agents:manage',
+  'testdata:manage',
+  'run:retry:company',
 ]);
 
 export type DemoAudience = 'company' | 'platform';
@@ -53,7 +66,8 @@ export interface DemoIdentity {
 
 export interface DemoMembership {
   readonly tenant_id: typeof DEMO_TENANT_ID;
-  readonly tenant_name: string | null;
+  readonly tenant_name: string;
+  readonly data_class: 'DEMO';
   readonly role: DemoRole;
   readonly scope: DemoAudience;
 }
@@ -87,7 +101,7 @@ export interface DemoCredentialStore extends CredentialStore {
   /** Resolves only active, tenant-bound widget credentials. */
   resolveWidgetSession(token: string): WidgetCredential | null;
   /** Issues an opaque tenant-bound widget token for an operator-launched session. */
-  issueWidget(session_id: string, origin: string): DemoWidgetSession;
+  issueWidget(session_id: string, origin: string, tenant_id?: string): DemoWidgetSession;
 }
 
 interface StoredOperatorSession extends OperatorCredential {
@@ -99,15 +113,14 @@ interface StoredOperatorSession extends OperatorCredential {
   readonly expires_at_ms: number;
 }
 
-interface StoredWidgetSession extends WidgetCredential {
-  readonly expires_at_ms: number;
-}
 
 export interface DemoCredentialStoreOptions {
   readonly companyAdminEmail: string;
   readonly companyAdminPassword: string;
   readonly platformAdminEmail: string;
   readonly platformAdminPassword: string;
+  /** Display name of the demo company; the seed's profile name is passed in by the composition root. */
+  readonly tenantName?: string;
   readonly now?: () => number;
   readonly tokenBytes?: number;
   readonly maxFailures?: number;
@@ -179,6 +192,7 @@ function validAt(now: number, expiry: number): boolean {
  * in separate maps so a widget token can never resolve as an operator session.
  */
 export function createDemoCredentialStore(options: DemoCredentialStoreOptions): DemoCredentialStore {
+  const tenantName = options.tenantName?.trim() || 'Demo';
   const companyEmail = normalizeEmail(options.companyAdminEmail);
   const platformEmail = normalizeEmail(options.platformAdminEmail);
   if (companyEmail.length === 0 || platformEmail.length === 0 || options.companyAdminPassword.length === 0 || options.platformAdminPassword.length === 0) {
@@ -193,6 +207,11 @@ export function createDemoCredentialStore(options: DemoCredentialStoreOptions): 
   if (!Number.isInteger(tokenBytes) || tokenBytes < 32) {
     throw new Error('DEMO_MODE session token size must be at least 32 bytes');
   }
+  const widgetSessionRegistry = createWidgetSessionRegistry({
+    now,
+    tokenBytes,
+    ttlMs: DEMO_SESSION_TTL_MS,
+  });
   const maxFailures = options.maxFailures ?? 5;
   const backoffBaseMs = options.backoffBaseMs ?? 1000;
   if (!Number.isInteger(maxFailures) || maxFailures < 1 || !Number.isInteger(backoffBaseMs) || backoffBaseMs < 1) {
@@ -221,7 +240,6 @@ export function createDemoCredentialStore(options: DemoCredentialStoreOptions): 
   ]);
   const dummyVerifier = verifier('invalid-demo-account-password');
   const operators = new Map<string, StoredOperatorSession>();
-  const widgets = new Map<string, StoredWidgetSession>();
   const failures = new Map<string, FailureState>();
 
   const limiterKey = (email: string, clientIp: string | undefined): string => `${normalizeIp(clientIp)}\u0000${normalizeEmail(email)}`;
@@ -254,15 +272,6 @@ export function createDemoCredentialStore(options: DemoCredentialStoreOptions): 
     return session;
   };
 
-  const resolveWidgetSession = (token: string): WidgetCredential | null => {
-    const session = widgets.get(token);
-    if (session === undefined) return null;
-    if (!validAt(now(), session.expires_at_ms)) {
-      widgets.delete(token);
-      return null;
-    }
-    return session;
-  };
 
   const sessionDto = (session: StoredOperatorSession): DemoSession => ({
     access_token: session.token,
@@ -274,7 +283,8 @@ export function createDemoCredentialStore(options: DemoCredentialStoreOptions): 
     },
     membership: {
       tenant_id: DEMO_TENANT_ID,
-      tenant_name: null,
+      tenant_name: tenantName,
+      data_class: 'DEMO',
       role: session.role,
       scope: session.scope,
     },
@@ -315,7 +325,7 @@ export function createDemoCredentialStore(options: DemoCredentialStoreOptions): 
     retryAfter,
     resolveOperator,
     resolveConversationSession: () => null,
-    resolveWidgetSession,
+    resolveWidgetSession: widgetSessionRegistry.resolve,
 
     resolveDemoSession: (token) => {
       const session = resolveOperator(token);
@@ -324,24 +334,7 @@ export function createDemoCredentialStore(options: DemoCredentialStoreOptions): 
 
     revoke: (token) => operators.delete(token),
 
-    issueWidget: (session_id, origin) => {
-      if (session_id.trim().length === 0 || origin.trim().length === 0) {
-        throw new Error('widget session_id and origin are required');
-      }
-      const token = randomToken(tokenBytes);
-      const expiry = expiresAt(now());
-      widgets.set(token, {
-        token,
-        tenant_id: DEMO_TENANT_ID,
-        session_id,
-        origin,
-        expires_at_ms: expiry.expires_at_ms,
-      });
-      return {
-        access_token: token,
-        expires_at: expiry.expires_at,
-        session_id,
-      };
-    },
+    issueWidget: (session_id, origin, tenant_id = DEMO_TENANT_ID) =>
+      widgetSessionRegistry.issue({ tenant_id, session_id, origin }),
   };
 }

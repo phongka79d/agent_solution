@@ -11,12 +11,16 @@ The API keeps the internal bundles below:
 | --- | --- |
 | Tenant operator bundle | `campaign:draft`, `conversation:takeover`, `customer:read`, `run:read`, `telemetry:read` |
 | Approver bundle | `approval:read`, `approval:decide`, `run:read` |
-| Platform bundle | `platform:admin`, `run:read`, `run:retry`, `run:reconcile`, `telemetry:read` |
+| Company admin bundle | All tenant operator and approver permissions, plus `settings:manage`, `integration:manage`, `llm:manage`, `knowledge:manage`, `knowledge:approve`, `skills:manage`, `agents:manage`, `testdata:manage`, `run:retry:company` |
+| Platform bundle | `platform:admin`, `run:read`, `run:retry`, `run:reconcile`, `telemetry:read`, `platform:providers:write`, `platform:companies:write`, `platform:audit:read` |
 
-`company_admin` is the union of the first two bundles, exactly seven permissions:
+`company_admin` has these 16 company-scope permissions:
 `campaign:draft`, `conversation:takeover`, `customer:read`, `run:read`, `telemetry:read`,
-`approval:read`, and `approval:decide`. The company account uses `audience=company` and has
-`scope=company`. The platform account uses `audience=platform` and has `scope=platform`.
+`approval:read`, `approval:decide`, `settings:manage`, `integration:manage`, `llm:manage`,
+`knowledge:manage`, `knowledge:approve`, `skills:manage`, `agents:manage`, `testdata:manage`,
+and `run:retry:company`. The company account uses `audience=company` and has `scope=company`;
+it receives no platform permissions. The platform account uses `audience=platform` and has
+`scope=platform`.
 
 ## Environment migration
 

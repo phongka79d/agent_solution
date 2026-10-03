@@ -4,7 +4,10 @@ import { correlationIdOf, fail, replyFailure } from '../../gateway/http.js';
 import type { CredentialStore } from '../../gateway/principal.js';
 import { authenticate, requireOperator } from '../../gateway/principal.js';
 import type { CompanyCrmPort, GatewayRuntime } from '../../gateway/ports.js';
-import { toCustomerListItem, toCustomerProfile } from '../../projections/customers.js';
+import { mergeCustomerTimeline, toCustomerListItem, toCustomerProfile } from '../../projections/customers.js';
+
+/** Upper bound of the merged Customer 360 chronology page. */
+const TIMELINE_MERGE_LIMIT = 200;
 
 export interface CustomerRouteDeps {
   readonly runtime: GatewayRuntime;
@@ -80,6 +83,23 @@ async function handleCustomerProfile(
     if (customer_id === null) fail('VALIDATION_FAILED', 'customer_id is required in the path');
     const row = await crmPort(runtime).getCustomerProfile(principal.tenant_id, customer_id);
     if (row === null) fail('NOT_FOUND', 'the customer profile was not found');
+    const profile = toCustomerProfile(row);
+    let events: readonly unknown[] = [];
+    try {
+      const page = await runtime.events.timeline({ tenant_id: principal.tenant_id, customer_id, limit: TIMELINE_MERGE_LIMIT });
+      events = page.items;
+    } catch {
+      // A timeline read that is unavailable must not hide the profile: the merged chronology then
+      // carries the profile's own sources, so the missing event stream stays an open gap.
+      events = [];
+    }
+    const timeline = mergeCustomerTimeline({
+      events,
+      conversations: profile.conversations,
+      orders: profile.orders,
+      campaign_engagement: profile.campaign_engagement,
+      service_cases: profile.service_cases,
+    });
     await runtime.audit.record({
       tenant_id: principal.tenant_id,
       correlation_id: correlationIdOf(request, runtime),
@@ -87,9 +107,9 @@ async function handleCustomerProfile(
       principal_kind: principal.kind,
       outcome: 'ACCEPTED',
       ...(principal.operator_id === undefined ? {} : { operator_id: principal.operator_id }),
-      detail: { customer_id },
+      detail: { customer_id, timeline_count: timeline.length },
     });
-    return reply.code(200).send(toCustomerProfile(row));
+    return reply.code(200).send({ ...profile, timeline });
   } catch (error) {
     return replyFailure(reply, error, correlationIdOf(request, runtime));
   }

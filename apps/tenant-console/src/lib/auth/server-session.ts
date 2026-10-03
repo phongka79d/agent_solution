@@ -8,7 +8,7 @@ import {
   verifySessionCookie,
   type SessionCookieReference,
 } from './session';
-import { demoAuthProvider, ExpiredProviderSessionError, ProviderHttpError } from './demo-provider';
+import { authProvider, ExpiredProviderSessionError, ProviderHttpError } from './index';
 
 /** Resolve the request-bound BFF session for a Server Component. */
 export async function getServerSession(): Promise<AuthSession | null> {
@@ -31,7 +31,7 @@ export async function getServerSession(): Promise<AuthSession | null> {
   if (!(await getSessionFromRequest(request))) return null;
 
   try {
-    return await demoAuthProvider.getSession(request);
+    return await authProvider.getSession(request);
   } catch (error) {
     if (error instanceof ExpiredProviderSessionError) {
       destroySession(request);

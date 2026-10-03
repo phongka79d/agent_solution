@@ -54,9 +54,8 @@ interface SignedSessionBinding {
 // ============================================================================
 
 /**
- * The tenant routing hint (`06` §1 apiKey security scheme). A provider delivery presents its
- * opaque credential here; on a bearer-authenticated request the same header is only an assertion
- * that has to agree with the resolved principal.
+ * The tenant routing hint (`06` §1 apiKey security scheme) is an assertion, never a credential.
+ * Provider credentials and operator/session tokens are presented through `Authorization`.
  */
 export const TENANT_HEADER = 'x-tenant-id';
 
@@ -158,6 +157,7 @@ export interface WidgetCredential {
   readonly token: string;
   readonly tenant_id: string;
   readonly session_id: string;
+  readonly customer_id?: string;
   readonly origin: string;
 }
 
@@ -168,6 +168,12 @@ export interface WidgetCredential {
  */
 export interface CredentialStore {
   resolveOperator(token: string): OperatorCredential | null;
+  /**
+   * Durable (database-backed) stores resolve asynchronously, because a session is a live row rather
+   * than an in-memory map entry. The synchronous surface above stays for the in-memory stores; a
+   * store that implements neither is simply unable to resolve a presented token, which fails closed.
+   */
+  resolveOperatorAsync?(token: string): Promise<OperatorCredential | null>;
   resolveConversationSession(token: string): SessionCredential | null;
   resolveWidgetSession(token: string): WidgetCredential | null;
 }
@@ -211,12 +217,8 @@ export function createCredentialStore(config: {
 // Credential presentation
 // ============================================================================
 
-/** Where the opaque token was presented. It decides what a header carries, never who the caller is. */
-type CredentialSource = 'AUTHORIZATION' | 'TENANT_HEADER';
-
 interface PresentedToken {
   readonly token: string;
-  readonly source: CredentialSource;
 }
 
 /** The bearer scheme prefix; compared case-insensitively, as RFC 7235 requires. */
@@ -230,38 +232,41 @@ function headerValue(request: FastifyRequest, name: string): string | null {
 }
 
 /**
- * Extracts the credential the request presented.
- *
- * An `Authorization` header, when present, IS the presentation: a malformed one is refused rather
- * than quietly falling back to another header, because a caller must not be able to probe which
- * of two credentials the gateway would honour. Without it, the `X-Tenant-ID` header carries the
- * provider delivery's opaque credential.
+ * An `Authorization` header is the only credential presentation. A malformed header is refused
+ * rather than quietly falling back to a tenant assertion.
  */
 function presentedToken(request: FastifyRequest): PresentedToken | null {
   const authorization = headerValue(request, AUTHORIZATION_HEADER);
 
-  if (authorization !== null) {
-    if (authorization.slice(0, BEARER_PREFIX.length).toLowerCase() !== BEARER_PREFIX) return null;
-    const token = authorization.slice(BEARER_PREFIX.length).trim();
-    return token.length === 0 ? null : { token, source: 'AUTHORIZATION' };
+  if (authorization === null || authorization.slice(0, BEARER_PREFIX.length).toLowerCase() !== BEARER_PREFIX) {
+    return null;
   }
-
-  const provider = headerValue(request, TENANT_HEADER);
-  return provider === null ? null : { token: provider, source: 'TENANT_HEADER' };
+  const token = authorization.slice(BEARER_PREFIX.length).trim();
+  return token.length === 0 ? null : { token };
 }
 
 // ============================================================================
 // Principal resolution
 // ============================================================================
 
+/** The one mapping from a stored operator credential to its gateway principal, sync and async alike. */
+function operatorPrincipal(operator: OperatorCredential): GatewayPrincipal {
+  return {
+    kind: 'OPERATOR',
+    tenant_id: operator.tenant_id,
+    operator_id: operator.operator_id,
+    ...(operator.scope === undefined ? {} : { scope: operator.scope }),
+    permissions: operator.permissions,
+  };
+}
+
 /**
  * Resolves the principal for a presented token, or `null` when nothing in the store holds it.
  *
  * The lookup order is operator, conversation session, widget session, and the principal kind
- * follows the credential that resolved — not the header it arrived in, so re-presenting the same
- * token elsewhere cannot change what the caller is. No branch synthesizes a principal: an unknown
- * token stays unknown, which is what keeps an unknown connector or a disabled capability failing
- * closed rather than being admitted as an anonymous caller.
+ * follows the stored credential that resolved. No branch synthesizes a principal: an unknown token
+ * stays unknown, which keeps an unknown connector or disabled capability from being admitted as an
+ * anonymous caller.
  */
 function resolvePrincipal(
   credentials: CredentialStore,
@@ -269,13 +274,7 @@ function resolvePrincipal(
 ): GatewayPrincipal | null {
   const operator = credentials.resolveOperator(presented.token);
   if (operator !== null) {
-    return {
-      kind: 'OPERATOR',
-      tenant_id: operator.tenant_id,
-      operator_id: operator.operator_id,
-      ...(operator.scope === undefined ? {} : { scope: operator.scope }),
-      permissions: operator.permissions,
-    };
+    return operatorPrincipal(operator);
   }
 
   const session = credentials.resolveConversationSession(presented.token);
@@ -317,22 +316,20 @@ function assertedTenant(value: unknown): unknown {
 
 /**
  * Every tenant the request asserts: the body's and the query's `tenant_id`, plus the `X-Tenant-ID`
- * header when it is not already the credential itself.
+ * header. The header is never used to authenticate a request.
  *
  * The set is collected, never merged: each assertion has to agree with the resolved principal on
  * its own, so a matching hint cannot be used to carry a mismatching one past the check.
  */
-function tenantAssertions(request: FastifyRequest, presented: PresentedToken): readonly unknown[] {
+function tenantAssertions(request: FastifyRequest): readonly unknown[] {
   const assertions: unknown[] = [];
   const fromBody = assertedTenant(request.body);
   if (fromBody !== undefined) assertions.push(fromBody);
   const fromQuery = assertedTenant(request.query);
   if (fromQuery !== undefined) assertions.push(fromQuery);
 
-  if (presented.source === 'AUTHORIZATION') {
-    const fromHeader = headerValue(request, TENANT_HEADER);
-    if (fromHeader !== null) assertions.push(fromHeader);
-  }
+  const fromHeader = headerValue(request, TENANT_HEADER);
+  if (fromHeader !== null) assertions.push(fromHeader);
 
   return assertions;
 }
@@ -376,7 +373,14 @@ export function authenticate(deps: {
 
   return async (request: FastifyRequest, _reply: FastifyReply): Promise<void> => {
     const presented = presentedToken(request);
-    const principal = presented === null ? null : resolvePrincipal(credentials, presented);
+    let principal = presented === null ? null : resolvePrincipal(credentials, presented);
+    // A durable store keeps its sessions in the database, so the first resolution of a token is a
+    // lookup rather than a map hit. Only a null result falls through to it: a token that the
+    // synchronous surface already refused was never a valid credential for this store.
+    if (principal === null && presented !== null && credentials.resolveOperatorAsync !== undefined) {
+      const operator = await credentials.resolveOperatorAsync(presented.token);
+      if (operator !== null) principal = operatorPrincipal(operator);
+    }
 
     if (presented === null || principal === null) {
       fail(
@@ -392,7 +396,7 @@ export function authenticate(deps: {
       }
     }
 
-    enforceTenantBinding(principal, tenantAssertions(request, presented));
+    enforceTenantBinding(principal, tenantAssertions(request));
 
     request.gatewayPrincipal = principal;
   };

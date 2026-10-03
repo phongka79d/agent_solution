@@ -6,6 +6,8 @@ import type {
   DurableTaskState,
   PersistedErrorClass,
 } from './durable-workflows.js';
+
+import { canonicalizeJson } from './canonical-json.js';
 /** Every state the enum accepts, in declaration order. */
 export const DURABLE_TASK_STATES: readonly DurableTaskState[] = [
   'queued',
@@ -215,19 +217,20 @@ export function isPlainObject(value: unknown): value is Record<string, unknown> 
 
   return prototype === Object.prototype || prototype === null;
 }
-/** Canonical comparison for JSONB event replays; object key order is not event identity. */
+/**
+ * Canonical comparison for JSONB event replays; object key order is not event identity.
+ *
+ * The bytes are the shared canonical serializer (`./canonical-json.js`), so the same event written
+ * by one process and read back by another compares equal; only the refusal vocabulary is local to
+ * this repository (`TASK_PAYLOAD_UNSERIALIZABLE` rather than `CANONICAL_JSON_INVALID`).
+ */
 export function canonicalizeEvent(value: unknown): string {
-  if (value === null || typeof value !== 'object') {
-    const scalar = JSON.stringify(value);
-    if (scalar === undefined) throw new Error('TASK_PAYLOAD_UNSERIALIZABLE: resume event is not JSON-serializable.');
-    return scalar;
+  try {
+    return canonicalizeJson(value);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`TASK_PAYLOAD_UNSERIALIZABLE: resume event is not JSON-serializable: ${detail}`);
   }
-  if (Array.isArray(value)) return '[' + value.map(canonicalizeEvent).join(',') + ']';
-  if (!isPlainObject(value)) {
-    throw new Error('TASK_PAYLOAD_UNSERIALIZABLE: resume event must contain plain JSON objects.');
-  }
-  return '{' + Object.keys(value).sort().map((key) =>
-    JSON.stringify(key) + ':' + canonicalizeEvent(value[key])).join(',') + '}';
 }
 
 /** Validates a lifecycle state against the closed enum (`UNKNOWN` is not a member). */

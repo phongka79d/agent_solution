@@ -27,6 +27,9 @@ export const EXPECTED_DEFAULT_SERVICES = Object.freeze([
   'platform-admin',
 ]);
 
+/** Data services the schema migration needs before the application containers may start. */
+const INFRA_SERVICES = Object.freeze(['postgres', 'redis', 'qdrant', 'mock-erp']);
+
 const DEMO_ACCOUNT_ENV_KEYS = Object.freeze([
   'DEMO_COMPANY_ADMIN_EMAIL',
   'DEMO_COMPANY_ADMIN_PASSWORD',
@@ -34,7 +37,7 @@ const DEMO_ACCOUNT_ENV_KEYS = Object.freeze([
   'DEMO_PLATFORM_ADMIN_PASSWORD',
 ]);
 
-const USAGE = 'Usage: pnpm demo:up [-- --env-file <path>]';
+const USAGE = 'Usage: pnpm demo:up [-- --env-file <path>] [--profile <offline|live>] [--live]';
 
 /**
  * Parse the small CLI surface of the demo bootstrapper without exiting the
@@ -47,6 +50,7 @@ export function parseArgs(argv = []) {
   const options = {
     envFile: DEFAULT_ENV_FILE,
     help: false,
+    live: false,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -59,12 +63,17 @@ export function parseArgs(argv = []) {
       continue;
     }
 
+    if (argument === '--live') {
+      options.live = true;
+      continue;
+    }
+
     const equalsIndex = argument.startsWith('--') ? argument.indexOf('=') : -1;
     const name = equalsIndex === -1 ? argument : argument.slice(0, equalsIndex);
     const inlineValue = equalsIndex === -1 ? undefined : argument.slice(equalsIndex + 1);
 
-    if (name !== '--env-file') {
-      throw new Error(`UNKNOWN_ARGUMENT: ${argument}. Supported: --env-file <path>`);
+    if (!['--env-file', '--profile'].includes(name)) {
+      throw new Error(`UNKNOWN_ARGUMENT: ${argument}. Supported: --env-file <path>, --profile <offline|live>, --live`);
     }
 
     const value = inlineValue ?? argv[index + 1];
@@ -73,7 +82,12 @@ export function parseArgs(argv = []) {
     }
 
     if (inlineValue === undefined) index += 1;
-    options.envFile = value;
+    if (name === '--profile') {
+      if (!['offline', 'live'].includes(value)) throw new Error(`INVALID_PROFILE: ${value}`);
+      options.live = value === 'live';
+    } else {
+      options.envFile = value;
+    }
   }
 
   return options;
@@ -94,7 +108,20 @@ export function buildPlan(options = {}) {
   if (!Number.isFinite(pollIntervalMs) || pollIntervalMs < 0) throw new TypeError('pollIntervalMs must not be negative');
 
   const composePrefix = ['compose', '--env-file', envFile];
-  const composeUpArgs = [...composePrefix, 'up', '-d', '--build', '--wait'];
+  // Preflight and smoke default to the offline profile; --live makes both require and exercise the provider.
+  const profileArgs = options.live ? ['--live'] : [];
+  const composeUp = (name, services) => ({
+    name,
+    kind: 'compose-up',
+    command: 'docker',
+    args: [...composePrefix, 'up', '-d', '--build', '--wait', ...services],
+    fallbackArgs: [...composePrefix, 'up', '-d', '--build', ...services],
+    healthArgs: [...composePrefix, 'ps', '--format', 'json'],
+    healthTimeoutMs,
+    pollIntervalMs,
+    envFile,
+    expectedServices: services.length > 0 ? services : EXPECTED_DEFAULT_SERVICES,
+  });
 
   return [
     {
@@ -109,34 +136,29 @@ export function buildPlan(options = {}) {
       args: ['--version'],
       envFile,
     },
-    {
-      name: 'compose-up',
-      kind: 'compose-up',
-      command: 'docker',
-      args: composeUpArgs,
-      fallbackArgs: [...composePrefix, 'up', '-d', '--build'],
-      healthArgs: [...composePrefix, 'ps', '--format', 'json'],
-      healthTimeoutMs,
-      pollIntervalMs,
-      envFile,
-    },
+    // The API and worker refuse to start on an unmigrated database, so the data services come up
+    // first, the schema is migrated, and only then do the application containers start.
+    composeUp('compose-infra', INFRA_SERVICES),
     {
       name: 'migrate',
-      kind: 'migration',
+      kind: 'bootstrap',
       command: process.execPath,
       args: [MIGRATION_SCRIPT],
       envFile,
     },
+    composeUp('compose-up', []),
     {
       name: 'preflight',
       kind: 'command',
       command: process.execPath,
-      args: ['--env-file', envFile, 'scripts/demo/preflight.mjs'],
+      args: ['--env-file', envFile, 'scripts/demo/preflight.mjs', ...profileArgs],
       envFile,
     },
     {
       name: 'seed',
-      kind: 'command',
+      // The seed writes as the bootstrap user and drops to agentos_app itself; the file's own
+      // DATABASE_URL (the app role) cannot mark the demo tenant's data class.
+      kind: 'bootstrap',
       command: process.execPath,
       args: ['--env-file', envFile, 'scripts/demo/seed.mjs'],
       envFile,
@@ -145,7 +167,7 @@ export function buildPlan(options = {}) {
       name: 'smoke',
       kind: 'command',
       command: process.execPath,
-      args: ['--env-file', envFile, 'scripts/demo/smoke.mjs'],
+      args: ['--env-file', envFile, 'scripts/demo/smoke.mjs', ...profileArgs],
       envFile,
     },
   ];
@@ -372,14 +394,14 @@ async function waitForComposeHealthy(step) {
       throw new Error('compose ps returned invalid JSON');
     }
 
-    const failed = EXPECTED_DEFAULT_SERVICES
+    const failed = step.expectedServices
       .map((service) => observed.get(service))
       .find((container) => container && containerFailed(container));
     if (failed) {
       throw new Error(`container ${serviceName(failed)} is ${failed.State ?? 'failed'}`);
     }
 
-    const pending = EXPECTED_DEFAULT_SERVICES.filter((service) => {
+    const pending = step.expectedServices.filter((service) => {
       const container = observed.get(service);
       return container === undefined || !containerIsHealthy(container);
     });
@@ -413,8 +435,8 @@ async function executeStep(step) {
     throw commandFailure(started, step.envFile);
   }
 
-  if (step.kind === 'migration') {
-    const result = await runCommand(step.command, step.args, { env: migrationEnvironment(step.envFile) });
+  if (step.kind === 'bootstrap') {
+    const result = await runCommand(step.command, step.args, { env: bootstrapEnvironment(step.envFile) });
     if (!result.ok) throw commandFailure(result, step.envFile);
     return result;
   }
@@ -447,11 +469,17 @@ function readEnvFile(filePath) {
   return values;
 }
 
-function migrationEnvironment(envFile) {
+function bootstrapEnvironment(envFile) {
   const envFromFile = readEnvFile(resolve(REPO_ROOT, envFile));
   const migrationConfig = { ...process.env, ...envFromFile };
   return {
     ...process.env,
+    ...(migrationConfig.PLATFORM_ROLE_PASSWORD === undefined
+      ? {}
+      : { PLATFORM_ROLE_PASSWORD: migrationConfig.PLATFORM_ROLE_PASSWORD }),
+    ...(migrationConfig.INDEXER_ROLE_PASSWORD === undefined
+      ? {}
+      : { INDEXER_ROLE_PASSWORD: migrationConfig.INDEXER_ROLE_PASSWORD }),
     DATABASE_URL: buildBootstrapDatabaseUrl(migrationConfig),
   };
 }

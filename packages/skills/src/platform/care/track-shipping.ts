@@ -80,6 +80,7 @@ const spec: Omit<PlatformRowSpec, 'skill_id'> = {
   allowed_agents: ['CS-01'],
   required_authority: 'AUTH-0',
   tool_binding: 'LogisticsConnector',
+  requires_verified_identity: true,
   validation_rules: ['tracking_number must match carrier checksum rules'],
   retry_policy: {
     max_retries: 3,

@@ -1,4 +1,5 @@
 import type { ConnectorReadResult } from '@agentos/adapters';
+import type { HydratedContext } from '@agentos/core-engine/contracts';
 import type { SalesPriceFloorDecision, SalesPriceFloorPort } from './skills/types.js';
 import type { ErpReadPort } from './skills/types.js';
 
@@ -23,44 +24,72 @@ export interface SalesAdvisorRequirements {
   readonly product_eligibility?: SalesProductEligibilityProposal;
 }
 
-interface AdvisorRunState {
-  readonly requirements?: SalesAdvisorRequirements;
-  readonly stock: Map<string, number>;
-  candidate_sku?: string;
+
+function salesRunState(context: HydratedContext) {
+  context.run_state ??= {};
+  context.run_state.sales ??= {};
+  return context.run_state.sales;
+}
+
+function readRequirements(value: unknown): SalesAdvisorRequirements | undefined {
+  if (!isRecord(value)) return undefined;
+  const requirements: {
+    category?: string;
+    budget?: SalesAdvisorBudget;
+    use_case?: string;
+    product_eligibility?: SalesProductEligibilityProposal;
+  } = {};
+  if (typeof value['category'] === 'string') requirements.category = value['category'];
+  if (typeof value['use_case'] === 'string') requirements.use_case = value['use_case'];
+  const budget = value['budget'];
+  if (isRecord(budget) && typeof budget['amount'] === 'number'
+    && Number.isFinite(budget['amount']) && budget['amount'] >= 0
+    && typeof budget['currency'] === 'string' && budget['currency'].trim().length > 0) {
+    requirements.budget = { amount: budget['amount'], currency: budget['currency'] };
+  }
+  const eligibility = value['product_eligibility'];
+  if (isRecord(eligibility)) {
+    const product_eligibility: { sku?: string; category?: string } = {};
+    if (typeof eligibility['sku'] === 'string') product_eligibility.sku = eligibility['sku'];
+    if (typeof eligibility['category'] === 'string') product_eligibility.category = eligibility['category'];
+    if (Object.keys(product_eligibility).length > 0) requirements.product_eligibility = product_eligibility;
+  }
+  return Object.keys(value).length === 0 || Object.keys(requirements).length > 0
+    ? requirements
+    : undefined;
 }
 
 /**
  * Small run-scoped state seam shared by the plan builder and Sales read handlers.
- * It carries only server-stamped requirements and observations from earlier reads; it never
- * accepts caller/model-selected SKU, price, authority or tenant values.
+ * It carries server-stamped requirements and observations in checkpoint context; it never accepts
+ * caller/model-selected SKU, price, authority or tenant values.
  */
 export class SalesAdvisorExecutionState {
-  private readonly runs = new Map<string, AdvisorRunState>();
+  setRequirements(context: HydratedContext, requirements: SalesAdvisorRequirements): void {
+    salesRunState(context).advisor_requirements = requirements;
+  }
 
-  setRequirements(tenant_id: string, correlation_id: string, requirements: SalesAdvisorRequirements): void {
-    const key = this.key(tenant_id, correlation_id);
-    const current = this.runs.get(key);
-    this.runs.set(key, {
-      requirements,
-      stock: current?.stock ?? new Map<string, number>(),
+  requirementsFor(context: HydratedContext): SalesAdvisorRequirements | undefined {
+    return readRequirements(context.run_state?.sales?.advisor_requirements);
+  }
+
+  recordStock(context: HydratedContext, sku_id: string, available_quantity: number): void {
+    const sales = salesRunState(context);
+    const stock = sales.advisor_stock ?? Object.create(null) as Record<string, number>;
+    Object.defineProperty(stock, sku_id, {
+      configurable: true,
+      enumerable: true,
+      value: available_quantity,
+      writable: true,
     });
-    this.prune();
+    sales.advisor_stock = stock;
   }
 
-  requirementsFor(tenant_id: string, correlation_id: string): SalesAdvisorRequirements | undefined {
-    return this.runs.get(this.key(tenant_id, correlation_id))?.requirements;
-  }
-
-  recordStock(tenant_id: string, correlation_id: string, sku_id: string, available_quantity: number): void {
-    const key = this.key(tenant_id, correlation_id);
-    const current = this.runs.get(key) ?? { stock: new Map<string, number>() };
-    current.stock.set(sku_id, available_quantity);
-    this.runs.set(key, current);
-    this.prune();
-  }
-
-  stockFor(tenant_id: string, correlation_id: string, sku_id: string): number | undefined {
-    return this.runs.get(this.key(tenant_id, correlation_id))?.stock.get(sku_id);
+  stockFor(context: HydratedContext, sku_id: string): number | undefined {
+    const stock = context.run_state?.sales?.advisor_stock;
+    if (!isRecord(stock) || !Object.prototype.hasOwnProperty.call(stock, sku_id)) return undefined;
+    const quantity = stock[sku_id];
+    return typeof quantity === 'number' && Number.isFinite(quantity) ? quantity : undefined;
   }
 
   /**
@@ -68,26 +97,13 @@ export class SalesAdvisorExecutionState {
    * back so the customer-visible product stays the SKU whose stock and owner-approved quote were
    * already verified in this same run; a later step never re-selects a different SKU.
    */
-  recordCandidateSku(tenant_id: string, correlation_id: string, sku_id: string): void {
-    const key = this.key(tenant_id, correlation_id);
-    const current = this.runs.get(key) ?? { stock: new Map<string, number>() };
-    current.candidate_sku = sku_id;
-    this.runs.set(key, current);
-    this.prune();
+  recordCandidateSku(context: HydratedContext, sku_id: string): void {
+    salesRunState(context).advisor_candidate_sku = sku_id;
   }
 
-  candidateSkuFor(tenant_id: string, correlation_id: string): string | undefined {
-    return this.runs.get(this.key(tenant_id, correlation_id))?.candidate_sku;
-  }
-
-  private key(tenant_id: string, correlation_id: string): string {
-    return `${tenant_id}\u0000${correlation_id}`;
-  }
-
-  private prune(): void {
-    if (this.runs.size <= 256) return;
-    const oldest = this.runs.keys().next().value;
-    if (typeof oldest === 'string') this.runs.delete(oldest);
+  candidateSkuFor(context: HydratedContext): string | undefined {
+    const sku = context.run_state?.sales?.advisor_candidate_sku;
+    return typeof sku === 'string' ? sku : undefined;
   }
 }
 

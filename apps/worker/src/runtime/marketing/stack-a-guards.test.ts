@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  computeRequestFingerprint,
+  approvalPayloadDigest,
   MemoryEffectGuard,
   type ActionDraft,
   type ApprovalGateResult,
@@ -351,12 +351,10 @@ function makeHarness(options: {
 function autoPolicy(digest: 'valid' | 'invalid' = 'valid'): IPolicyEngine {
   return {
     validateAction: async (action: ActionDraft) => {
-      const payload = { ...(action.payload as Record<string, unknown>) };
-      delete payload.effect_key;
       return {
         ...action,
         approval_id: 'approval-stack-a',
-        approval_payload_digest: digest === 'valid' ? computeRequestFingerprint(payload) : '0'.repeat(64),
+        approval_payload_digest: digest === 'valid' ? approvalPayloadDigest(action) : '0'.repeat(64),
       };
     },
     evaluateAuthority: async (): Promise<ApprovalGateResult> => ({ verdict: 'AUTO_APPROVED', reason: 'test approval' }),
@@ -394,15 +392,13 @@ describe('Stack A Marketing guard port', () => {
     const paused = await orchestrator!.processSignal(signal('signal-digest-mismatch'));
 
     expect(paused.lifecycle_state).toBe('awaiting_human');
-    const resumed = await orchestrator!.resumeTask(paused.run_id, {
+    await expect(orchestrator!.resumeTask(paused.run_id, {
       tenant_id: TENANT,
       event_type: 'human.approval',
       approval_id: 'approval-stack-a',
       expected_payload_sha256: '0'.repeat(64),
       operator_id: 'operator-stack-a',
-    });
-
-    expect(resumed.lifecycle_state).toBe('waiting');
+    })).rejects.toMatchObject({ code: 'APPROVAL_PAYLOAD_MISMATCH' });
     expect(harness.dispatch).not.toHaveBeenCalled();
   });
 
@@ -473,9 +469,9 @@ describe('Stack A Marketing guard port', () => {
       consent: async () => ({ allowed: false }),
     });
     const orchestrator = await harness.factory(TENANT);
-    const result = await orchestrator!.processSignal(signal('signal-consent-all-denied'));
-
-    expect(result.lifecycle_state).toBe('waiting');
+    await expect(orchestrator!.processSignal(signal('signal-consent-all-denied'))).rejects.toMatchObject({
+      code: 'AUDIENCE_REQUIRED',
+    });
     expect(harness.dispatch).not.toHaveBeenCalled();
   });
 
@@ -569,9 +565,9 @@ describe('Stack A Marketing guard port', () => {
       resolveAudience: async () => [],
     });
     const orchestrator = await harness.factory(TENANT);
-    const result = await orchestrator!.processSignal(signal('signal-audience-empty'));
-
-    expect(result.lifecycle_state).toBe('waiting');
+    await expect(orchestrator!.processSignal(signal('signal-audience-empty'))).rejects.toMatchObject({
+      code: 'AUDIENCE_REQUIRED',
+    });
     expect(harness.dispatch).not.toHaveBeenCalled();
   });
 

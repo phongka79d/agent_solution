@@ -12,6 +12,174 @@ import { DurableRunStageRecorder } from './runtime/shared/stage-recorder.js';
 import { createExecutionLeaseAssertion } from './runtime/execution-lease.js';
 import { createWorkerPoller } from './worker-polling.js';
 
+import { createDomainRuntimeRegistry } from './runtime/domain-registry.js';
+import { createMarketingOrchestratorFactory } from './runtime/marketing/factory.js';
+
+describe('claimed task domain discovery', () => {
+  it.each([
+    { enabled: true, resumed: false },
+    { enabled: false, resumed: false },
+    { enabled: true, resumed: true },
+    { enabled: false, resumed: true },
+  ])('rechecks missing Marketing activation before failing closed (enabled=$enabled, resumed=$resumed)', async ({ enabled, resumed }) => {
+    const tenant_id = '00000000-0000-4000-8000-000000000001';
+    const signal = {
+      signal_id: 'marketing-activation-signal',
+      tenant_id,
+      correlation_id: 'marketing-activation-correlation',
+      source_channel: 'WEB_CHAT',
+      event_type: 'campaign.requested',
+      subject: { session_id: 'marketing-operator-session' },
+      payload: { module: 'marketing' },
+      timestamp: '2026-01-01T00:00:00.000Z',
+    };
+    const resumeEvent = { tenant_id, event_type: 'human.approval', operator_id: 'marketing-approver' };
+    const taskRecord: DurableTaskRecord = {
+      tenant_id, task_id: 'marketing-activation-run', run_id: 'marketing-activation-run',
+      correlation_id: signal.correlation_id, current_step: 0, state: 'running',
+      task_version: 1, lease_owner: 'worker-activation', lease_expires_at: null,
+      retry_count: 0, max_retries: 3, last_error_class: null, paused_for_approval_id: null,
+      state_payload: resumed ? {
+        resume_event: resumeEvent,
+        plan: { plan_id: 'marketing-activation-plan', domain: 'marketing', steps: [] },
+        current_step: 1,
+        pending_action: null,
+        context: { tenant_id, correlation_id: signal.correlation_id },
+        previous_evidence_hash: '0'.repeat(64),
+        request_id: signal.signal_id,
+      } : { signal },
+      error_details: null,
+      created_at: signal.timestamp, updated_at: signal.timestamp,
+    };
+    const factory = createMarketingOrchestratorFactory({
+      auditSecret: 'marketing-activation-regression-secret',
+      env: { AUDIT_HMAC_SECRET: 'marketing-activation-regression-secret' },
+    });
+    const orchestrator = await factory(tenant_id);
+    if (orchestrator === null) throw new Error('Marketing test factory must bind');
+    const processQueuedSignal = vi.spyOn(orchestrator, 'processQueuedSignal')
+      .mockResolvedValue({ run_id: taskRecord.run_id, lifecycle_state: 'waiting' });
+    const resumeTask = vi.spyOn(orchestrator, 'resumeTask')
+      .mockResolvedValue({ run_id: taskRecord.run_id, lifecycle_state: 'waiting' });
+    const refreshRegistry = vi.fn(async () => createDomainRuntimeRegistry(enabled ? [{
+      contract: {
+        module: 'marketing', source_channels: ['WEB_CHAT'], event_types: ['campaign.requested'],
+        signal_invalid_code: 'MARKETING_SIGNAL_INVALID',
+      },
+      createOrchestrator: () => orchestrator,
+    }] : []));
+    const recordFailure = vi.fn();
+    try {
+      await processClaimedTask({
+        taskRecord, tenant_id, worker_id: 'worker-activation',
+        registry: createDomainRuntimeRegistry([]),
+        refreshRegistry,
+        workflowRepository: {
+          getTask: vi.fn().mockResolvedValue({ ...taskRecord, state: enabled ? 'waiting' : 'failed' }),
+          releaseTaskLease: vi.fn(), recordFailure, transitionTask: vi.fn(),
+        },
+        conversationRepository: { appendMessage: vi.fn() },
+      });
+      expect(refreshRegistry).toHaveBeenCalledOnce();
+      if (enabled) {
+        if (resumed) {
+          expect(resumeTask).toHaveBeenCalledWith(taskRecord.run_id, resumeEvent);
+          expect(processQueuedSignal).not.toHaveBeenCalled();
+        } else {
+          expect(processQueuedSignal).toHaveBeenCalledWith(taskRecord.run_id, signal, { worker_id: 'worker-activation' });
+          expect(resumeTask).not.toHaveBeenCalled();
+        }
+        expect(recordFailure).not.toHaveBeenCalled();
+      } else {
+        expect(processQueuedSignal).not.toHaveBeenCalled();
+        expect(resumeTask).not.toHaveBeenCalled();
+        expect(recordFailure).toHaveBeenCalledWith(expect.objectContaining({
+          error_class: 'FATAL',
+          error_details: expect.objectContaining({ code: 'CAPABILITY_NOT_ENABLED', module: 'marketing' }),
+        }));
+      }
+    } finally {
+      processQueuedSignal.mockRestore();
+      resumeTask.mockRestore();
+    }
+  });
+
+  it('refreshes the discovered domain snapshot when an existing tenant activates Marketing before its next claim', async () => {
+    const tenant_id = '00000000-0000-4000-8000-000000000001';
+    const timestamp = '2026-01-01T00:00:00.000Z';
+    const signal = {
+      signal_id: 'discovered-marketing-signal', tenant_id,
+      correlation_id: 'discovered-marketing-correlation', source_channel: 'WEB_CHAT',
+      event_type: 'campaign.requested', payload: { module: 'marketing' }, timestamp,
+    };
+    const taskRecord: DurableTaskRecord = {
+      tenant_id, task_id: 'discovered-marketing-run', run_id: 'discovered-marketing-run',
+      correlation_id: signal.correlation_id, current_step: 0, state: 'running',
+      task_version: 1, lease_owner: 'worker-discovery', lease_expires_at: null,
+      retry_count: 0, max_retries: 3, last_error_class: null, paused_for_approval_id: null,
+      state_payload: { signal }, error_details: null, created_at: timestamp, updated_at: timestamp,
+    };
+    const factory = createMarketingOrchestratorFactory({
+      auditSecret: 'discovered-marketing-regression-secret',
+      env: { AUDIT_HMAC_SECRET: 'discovered-marketing-regression-secret' },
+    });
+    const orchestrator = await factory(tenant_id);
+    if (orchestrator === null) throw new Error('Marketing test factory must bind');
+    const processQueuedSignal = vi.spyOn(orchestrator, 'processQueuedSignal')
+      .mockResolvedValue({ run_id: taskRecord.run_id, lifecycle_state: 'waiting' });
+    const listActiveTenants = vi.fn()
+      .mockResolvedValueOnce([{ tenant_id, enabled_domains: ['sales'] }])
+      .mockResolvedValue([{ tenant_id, enabled_domains: ['sales', 'marketing'] }]);
+    const claimNextQueuedTask = vi.fn().mockResolvedValueOnce({
+      task: taskRecord, task_version: 1, lease_owner: 'worker-discovery', lease_expires_at: timestamp,
+    }).mockResolvedValue(null);
+    const recordFailure = vi.fn();
+    const onError = vi.fn();
+    const worker = startWorker({ ENABLED_AGENT_MODULES: 'sales,marketing' }, {
+      hmac: () => '',
+      workerId: 'worker-discovery',
+      readiness: true,
+      pollIntervalMs: 60_000,
+      tenantDiscoveryIntervalMs: 60_000,
+      tenantDiscoveryRepository: { listActiveTenants },
+      domainRegistry: createDomainRuntimeRegistry([
+        {
+          contract: {
+            module: 'sales', source_channels: ['WEB_CHAT'], event_types: ['message.received'],
+            signal_invalid_code: 'SALES_SIGNAL_INVALID',
+          },
+          createOrchestrator: () => orchestrator,
+        },
+        {
+          contract: {
+            module: 'marketing', source_channels: ['WEB_CHAT'], event_types: ['campaign.requested'],
+            signal_invalid_code: 'MARKETING_SIGNAL_INVALID',
+          },
+          createOrchestrator: () => orchestrator,
+        },
+      ]),
+      workflowRepository: {
+        claimNextQueuedTask,
+        getTask: vi.fn().mockResolvedValue({ ...taskRecord, state: 'waiting' }),
+        renewTaskLease: vi.fn(), releaseTaskLease: vi.fn(), recordFailure, transitionTask: vi.fn(),
+      },
+      conversationRepository: { appendMessage: vi.fn() },
+      onError,
+    });
+    try {
+      await vi.waitFor(() => expect(worker.getTenantIds()).toEqual([tenant_id]));
+      expect(listActiveTenants).toHaveBeenCalledOnce();
+      expect(await worker.poller?.pollOnce()).toBe(1);
+      expect(listActiveTenants).toHaveBeenCalledTimes(2);
+      expect(processQueuedSignal).toHaveBeenCalledWith(taskRecord.run_id, signal, { worker_id: 'worker-discovery' });
+      expect(recordFailure).not.toHaveBeenCalled();
+      expect(onError).not.toHaveBeenCalled();
+    } finally {
+      await worker.close();
+      processQueuedSignal.mockRestore();
+    }
+  });
+});
 describe('startWorker', () => {
 
   it('binds PostgreSQL stage recording for the production Marketing composition', async () => {
@@ -128,6 +296,44 @@ describe('startWorker', () => {
     );
     expect(orchestratorFactory).not.toHaveBeenCalled();
     expect(releaseTaskLease).not.toHaveBeenCalled();
+  });
+
+  it('lets a reclaimed mutating step run again only when its reservation is confirmed absent', async () => {
+    const tenant_id = '00000000-0000-4000-8000-000000000001';
+    const checkpoint = {
+      plan: { plan_id: 'plan-1', steps: [], fallback_strategy: 'FAIL_CLOSED' },
+      current_step: 1,
+      pending_action: { mutating: true, effect_key: 'effect-1' },
+      context: { tenant_id },
+      previous_evidence_hash: '0'.repeat(64),
+      request_id: 'request-1',
+    };
+    const taskRecord = {
+      tenant_id, run_id: 'run-1', correlation_id: 'corr-1',
+      task_version: 2, state: 'running', lease_owner: 'worker-1',
+      state_payload: checkpoint,
+    } as DurableTaskRecord;
+
+    async function reclaim(status: 'FAILED' | 'RESERVED') {
+      const transitionTask = vi.fn().mockResolvedValue(undefined);
+      const getReservation = vi.fn().mockResolvedValue({ status });
+      await processClaimedTask({
+        taskRecord, tenant_id, worker_id: 'worker-1',
+        workflowRepository: {
+          transitionTask,
+          getTask: vi.fn().mockResolvedValue(taskRecord),
+          releaseTaskLease: vi.fn(),
+          recordFailure: vi.fn(),
+        } as unknown as DurableWorkflowRepository,
+        orchestratorFactory: vi.fn().mockResolvedValue(null),
+        effectReservations: { getReservation } as never,
+      });
+      expect(getReservation).toHaveBeenCalledWith(tenant_id, 'effect-1');
+      return transitionTask.mock.calls.some((call) => call[2] === 'waiting');
+    }
+
+    expect(await reclaim('RESERVED')).toBe(true);
+    expect(await reclaim('FAILED')).toBe(false);
   });
   it('does not execute a parked task until a resume event is present', async () => {
     const tenant_id = '00000000-0000-4000-8000-000000000001';
@@ -357,6 +563,74 @@ describe('startWorker', () => {
     });
     expect(resumeTask).not.toHaveBeenCalled();
   });
+  it.each([
+    ['failed', false],
+    ['stopped', false],
+    ['failed', true],
+    ['stopped', true],
+  ])(
+    'appends one replay-safe system message when a conversational run is %s (checkpoint binding: %s)',
+    async (terminalState, checkpointBinding) => {
+      const tenant_id = '00000000-0000-4000-8000-000000000001';
+      const conversation_id = '33333333-3333-4333-8333-333333333333';
+      const taskRecord = {
+        tenant_id,
+        run_id: 'run-conversation-failure',
+        correlation_id: 'corr-conversation-failure',
+        task_version: 1,
+        state: 'queued',
+        lease_owner: 'worker-1',
+        state_payload: checkpointBinding
+          ? { context: { working_memory: { conversation_id } } }
+          : {
+              signal: {
+                subject: { session_id: 'thread-1', conversation_id },
+                payload: { module: 'support' },
+              },
+            },
+      } as DurableTaskRecord;
+      const getTask = vi.fn().mockResolvedValue({ ...taskRecord, state: terminalState });
+      const recordFailure = vi.fn().mockResolvedValue(undefined);
+      const storedMessages = new Map<string, string>();
+      const appendMessage = vi.fn(async (input: {
+        readonly request_id?: string;
+        readonly content: string;
+      }) => {
+        if (input.request_id !== undefined && !storedMessages.has(input.request_id)) {
+          storedMessages.set(input.request_id, input.content);
+        }
+        return 'message-1';
+      });
+      const workflowRepository = {
+        getTask,
+        releaseTaskLease: vi.fn(),
+        recordFailure,
+        transitionTask: vi.fn(),
+      } as unknown as DurableWorkflowRepository;
+      const params = {
+        taskRecord,
+        tenant_id,
+        worker_id: 'worker-1',
+        workflowRepository,
+        conversationRepository: { appendMessage } as never,
+      };
+
+      await processClaimedTask(params);
+      await processClaimedTask(params);
+
+      expect(appendMessage).toHaveBeenCalledTimes(2);
+      expect(appendMessage).toHaveBeenNthCalledWith(1, {
+        tenant_id,
+        conversation_id,
+        sender_type: 'system',
+        sender_id: 'system',
+        content: 'Trợ lý chưa trả lời được. Nhân viên sẽ hỗ trợ bạn.',
+        request_id: 'run-failed:run-conversation-failure',
+      });
+      expect(appendMessage.mock.calls[1]?.[0].request_id).toBe('run-failed:run-conversation-failure');
+      expect([...storedMessages.values()]).toEqual(['Trợ lý chưa trả lời được. Nhân viên sẽ hỗ trợ bạn.']);
+    },
+  );
 
   it('reports unbound capabilities in worker.blockers', async () => {
     const worker = startWorker({}, {
@@ -487,7 +761,7 @@ describe('startWorker', () => {
     expect(worker.registry?.resolve('sales')).toBeNull();
     await worker.close();
   });
-  it('binds demo revenue evidence only when demo mode is explicitly enabled', async () => {
+  it('keeps read recommendations available without optional revenue evidence in either environment', async () => {
     const baseEnv = {
       ENABLED_AGENT_MODULES: 'sales',
       SALES_SIGNAL_SOURCE_CHANNELS: 'WEB_CHAT',
@@ -508,7 +782,7 @@ describe('startWorker', () => {
 
     try {
       expect(demoWorker.blockers?.some((blocker) => blocker.includes('Core.RecommendationEngine revenue evidence'))).toBe(false);
-      expect(productionWorker.blockers?.some((blocker) => blocker.includes('Core.RecommendationEngine revenue evidence'))).toBe(true);
+      expect(productionWorker.blockers?.some((blocker) => blocker.includes('Core.RecommendationEngine revenue evidence'))).toBe(false);
     } finally {
       await demoWorker.close();
       await productionWorker.close();
@@ -1066,7 +1340,7 @@ describe('startWorker', () => {
     await worker.close();
   });
 
-  it('routes resumed Marketing tasks through the shared domain registry and orchestrator path', async () => {
+  it('routes resumed Marketing tasks by the checkpoint plan domain through the shared registry', async () => {
     const tenant_id = '00000000-0000-4000-8000-000000000001';
     const resumeEvent = {
       tenant_id,
@@ -1076,30 +1350,26 @@ describe('startWorker', () => {
       expected_payload_sha256: 'a'.repeat(64),
       operator_id: 'operator-marketing-1',
     };
-    const signal = {
-      signal_id: 'sig-marketing-resume-1',
-      tenant_id,
-      correlation_id: 'corr-marketing-resume-1',
-      source_channel: 'MARKETING_CAMPAIGN',
-      event_type: 'campaign.requested',
-      payload: { module: 'marketing', skill_id: 'skill.mkt.dispatch_campaign', input: { tenant_id } },
-    };
     const taskRecord = {
       tenant_id,
       run_id: 'run-marketing-resume-1',
-      correlation_id: signal.correlation_id,
+      correlation_id: 'corr-marketing-resume-1',
       task_version: 2,
       state: 'awaiting_human',
       lease_owner: 'worker-1',
       state_payload: {
-        signal,
         resume_event: resumeEvent,
-        plan: { plan_id: 'plan-marketing-1', steps: [], fallback_strategy: 'FAIL_CLOSED' },
+        plan: {
+          plan_id: 'plan-marketing-1',
+          domain: 'marketing',
+          steps: [],
+          fallback_strategy: 'FAIL_CLOSED',
+        },
         current_step: 1,
         pending_action: { action_id: '00000000-0000-4000-8000-000000000098', effect_key: 'effect-marketing-1' },
-        context: { tenant_id, correlation_id: signal.correlation_id },
+        context: { tenant_id, correlation_id: 'corr-marketing-resume-1' },
         previous_evidence_hash: '0'.repeat(64),
-        request_id: signal.signal_id,
+        request_id: 'sig-marketing-resume-1',
       },
     } as DurableTaskRecord;
     const resumeTask = vi.fn().mockResolvedValue(undefined);
@@ -1192,7 +1462,7 @@ describe('startWorker', () => {
     expect(claimNextQueuedTask).not.toHaveBeenCalled();
     await poller.stop();
   });
-  it('renews the execution lease at TTL/3 and aborts the run when renewal fails', async () => {
+  it('renews across an interleaved checkpoint version bump and fails when another worker owns the lease', async () => {
     vi.useFakeTimers();
     try {
       const tenant_id = '00000000-0000-4000-8000-000000000001';
@@ -1207,10 +1477,19 @@ describe('startWorker', () => {
         lease_expires_at: new Date(now.getTime() + 10_000).toISOString(),
         state_payload: {},
       } as DurableTaskRecord;
+      const checkpointed = { ...task, task_version: 2, state_payload: { current_step: 2 } };
+      const lostLease = { ...checkpointed, lease_owner: 'worker-2' };
+      let currentTask: DurableTaskRecord = task;
       const getTask = vi.fn()
-        .mockResolvedValueOnce(task)
-        .mockResolvedValue({ ...task, task_version: 2 });
-      const renewTaskLease = vi.fn().mockResolvedValue(task);
+        .mockImplementationOnce(async () => {
+          currentTask = checkpointed;
+          return task;
+        })
+        .mockImplementationOnce(async () => {
+          currentTask = lostLease;
+          return currentTask;
+        });
+      const renewTaskLease = vi.fn(async () => currentTask);
       const processTask = vi.fn(({ signal }: { signal: AbortSignal }) => new Promise<void>((resolve) => {
         signal.addEventListener('abort', () => resolve(), { once: true });
       }));
@@ -1246,16 +1525,94 @@ describe('startWorker', () => {
         expect(processTask).toHaveBeenCalledOnce();
       });
       await vi.advanceTimersByTimeAsync(100);
-      expect(renewTaskLease).toHaveBeenCalledWith(expect.objectContaining({
-        task_version: 1,
+      expect(renewTaskLease).toHaveBeenCalledWith({
+        tenant_id,
+        run_id: task.run_id,
+        lease_owner: 'worker-1',
         lease_duration_ms: 300,
-      }));
+      });
+      expect(processTask.mock.calls[0]?.[0].signal.aborted).toBe(false);
 
-      renewTaskLease.mockRejectedValueOnce(new Error('TASK_LEASE_NOT_HELD'));
       await vi.advanceTimersByTimeAsync(100);
+      expect(getTask).toHaveBeenCalledTimes(2);
+      expect(renewTaskLease).toHaveBeenCalledOnce();
       expect(processTask.mock.calls[0]?.[0].signal.aborted).toBe(true);
       await pollPromise;
       expect(onError).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('retries a heartbeat once for transient database errors', async () => {
+    vi.useFakeTimers();
+    try {
+      const transientErrors = [
+        Object.assign(new Error('serialization failure'), { code: '40001' }),
+        Object.assign(new Error('deadlock detected'), { code: '40P01' }),
+        Object.assign(new Error('administrator shutdown'), { code: '57P01' }),
+        Object.assign(new Error('socket reset'), { code: 'ECONNRESET' }),
+        new Error('read ECONNRESET'),
+        new Error('connection reset by peer'),
+      ];
+
+      for (const transientError of transientErrors) {
+        const tenant_id = '00000000-0000-4000-8000-000000000001';
+        const now = new Date('2026-09-29T00:00:00.000Z');
+        const task = {
+          tenant_id,
+          run_id: 'run-heartbeat-retry',
+          correlation_id: 'corr-heartbeat-retry',
+          task_version: 1,
+          state: 'running',
+          lease_owner: 'worker-1',
+          lease_expires_at: new Date(now.getTime() + 10_000).toISOString(),
+          state_payload: {},
+        } as DurableTaskRecord;
+        const checkpointed = { ...task, task_version: 2 };
+        const renewTaskLease = vi.fn()
+          .mockRejectedValueOnce(transientError)
+          .mockResolvedValue(checkpointed);
+        let finishTask: (() => void) | undefined;
+        const processTask = vi.fn(({ signal }: { signal: AbortSignal }) => new Promise<void>((resolve) => {
+          finishTask = resolve;
+          signal.addEventListener('abort', () => resolve(), { once: true });
+        }));
+        const poller = createWorkerPoller({
+          tenantIds: [tenant_id],
+          registry: { modules: () => ['support'] } as never,
+          workflowRepository: {
+            getTask: vi.fn().mockResolvedValue(checkpointed),
+            renewTaskLease,
+            claimNextQueuedTask: vi.fn().mockResolvedValueOnce({
+              task,
+              task_version: 1,
+              lease_owner: 'worker-1',
+              lease_expires_at: task.lease_expires_at,
+            }).mockResolvedValue(null),
+            releaseTaskLease: vi.fn(),
+            recordFailure: vi.fn(),
+            transitionTask: vi.fn(),
+          } as unknown as DurableWorkflowRepository,
+          workerId: 'worker-1',
+          leaseDurationMs: 300,
+          pollIntervalMs: 1000,
+          autoStartPolling: false,
+          readiness: true,
+          now: () => now,
+          processTask,
+        });
+
+        const pollPromise = poller.pollOnce();
+        await vi.waitFor(() => {
+          expect(processTask).toHaveBeenCalledOnce();
+        });
+        await vi.advanceTimersByTimeAsync(100);
+        expect(renewTaskLease).toHaveBeenCalledTimes(2);
+        expect(processTask.mock.calls[0]?.[0].signal.aborted).toBe(false);
+        finishTask?.();
+        await pollPromise;
+      }
     } finally {
       vi.useRealTimers();
     }

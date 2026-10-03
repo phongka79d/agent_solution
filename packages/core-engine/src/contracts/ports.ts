@@ -16,16 +16,15 @@ import type { LifecycleStage } from '../lifecycle/stages.js';
 
 import type {
   ActionDraft,
-  AgentRunLogRecord,
   ApprovalGateResult,
   DurableTaskGuard,
   DurableTaskSnapshot,
   ExecutionPlan,
   ExecutionReceipt,
   FinalResponse,
+  ResponseOutcome,
   HydratedContext,
   HypothesisRecord,
-  ImmutableEvidenceRecord,
   IStatefulWorkflowEngine,
   PlannedStep,
   PreviousStepReceipts,
@@ -50,6 +49,14 @@ export type {
 // barrel path as a compatibility re-export for adapter/test bindings.
 export type { IEffectGuard, ReservationOutcome } from './types.js';
 // ============================================================================
+// Evidence and audit ports (§04 §6.1, §08 §4.1)
+// ============================================================================
+//
+// `IEvidenceLogger` and `IAuditTrail` are declared once, in `types.ts`, beside the record shapes
+// they consume. These are barrel re-exports for call sites that bind the port through
+// `contracts/ports.ts`; a second declaration here is how the writer and the reader drift apart.
+export type { IAuditTrail, IEvidenceLogger } from './types.js';
+// ============================================================================
 // Dependency interfaces (runtime bindings; not implemented in this blueprint)
 // ============================================================================
 
@@ -61,7 +68,7 @@ export interface IContextAggregator {
  * Cognitive layer binding (MKT/SAL/CS agents + LLM). The orchestrator owns routing and plan
  * execution; this port exposes only the three derivation steps of the lifecycle. There is
  * deliberately no agent-to-agent invoke/message/call method here: agents never call agents, and a
- * `RoutingDecision` crosses the boundary only through `assertOrchestratorBrokered()`.
+ * `RoutingDecision` crosses the boundary only through the orchestrator broker.
  */
 export interface IAgentRuntime {
   deriveHypothesis(signal: SignalEnvelope, context: HydratedContext): Promise<HypothesisRecord>;
@@ -90,6 +97,7 @@ export interface IRunResponseStore {
     tenant_id: string;
     run_id: string;
     conversation_id?: string;
+    outcome: ResponseOutcome;
     sender_id: string;
     response: FinalResponse;
   }): Promise<void>;
@@ -101,6 +109,8 @@ export interface IRunResponseStore {
  * Implementations should make `(tenant_id, run_id, attempt_ordinal, step_index, stage)` idempotent
  * for recovery/replay.
  */
+export type RunStageResultStatus = 'completed' | 'failed' | 'refused' | 'awaiting_human';
+
 export interface IRunStageRecorder {
   nextAttemptOrdinal(tenant_id: string, run_id: string): Promise<number>;
   append(input: {
@@ -110,6 +120,26 @@ export interface IRunStageRecorder {
     step_index: number;
     stage: LifecycleStage;
     entered_at: string;
+    detail?: unknown;
+    evidence_refs?: unknown;
+  }): Promise<void>;
+  complete(input: {
+    tenant_id: string;
+    run_id: string;
+    attempt_ordinal: number;
+    step_index: number;
+    stage: LifecycleStage;
+    status: RunStageResultStatus;
+    started_at: string;
+    completed_at: string;
+    duration_ms: number;
+    agent_code?: string | null;
+    skill_id?: string | null;
+    summary_key?: string | null;
+    refusal_code?: string | null;
+    error_class?: string | null;
+    input_digest?: string | null;
+    output_digest?: string | null;
     detail?: unknown;
     evidence_refs?: unknown;
   }): Promise<void>;
@@ -135,6 +165,8 @@ export interface IPolicyEngine {
   /** Normalize with the registered skill schema; reject unknown fields, bind tenant/subject,
    * and resolve price/floor metadata from trusted sources. Plan/delta policy fields are not proof. */
   validateAction(action: ActionDraft, context: HydratedContext): Promise<ActionDraft>;
+  /** Normalize the action payload with the exact registered skill input schema used at dispatch. */
+  normalizeActionInput?(skill_id: string, input: Record<string, unknown>): unknown;
   /** Re-read registry/grant, identity, consent, policy, source/floor and takeover state.
    * Create no queue here. A claimed approval covering this exact action satisfies AUTH-4 only;
    * invalid/revoked bindings are DENIED. Checkpoint context is not a freshness proof. */
@@ -142,39 +174,25 @@ export interface IPolicyEngine {
 }
 
 
-export interface IEvidenceLogger {
-  createImmutableRecord(params: {
-    run_id: string;
-    tenant_id: string;
-    correlation_id: string;
-    step_index: number;
-    effect_key: string;
-    previous_evidence_hash: string;
-    payload: Record<string, unknown>;
-  }): Promise<ImmutableEvidenceRecord>;
-  findImmutableRecord?(params: { tenant_id: string; run_id: string; effect_key: string; step_index: number }): Promise<ImmutableEvidenceRecord | null>;
-  /** Durable lookup used when a predecessor's action revision is not derivable from the plan. */
-  findImmutableRecordByStep?(params: {
-    tenant_id: string;
-    run_id: string;
-    step_index: number;
-  }): Promise<ImmutableEvidenceRecord | null>;
-  initializeOutcomeWatch(params: { tenant_id: string; run_id: string; effect_key: string; skill_id: string }): Promise<void>;
-  logAgentRun(runLog: AgentRunLogRecord): Promise<void>;
-}
-
 export interface IAdapterDispatcher {
   /**
-   * Dispatches one action under the step deadline. The adapter owns the provider-specific error
+   * Dispatches one action under its bounded-invocation deadline. The adapter owns the provider-specific error
    * vocabulary and either returns a receipt (including `adapter_status = 'TIMEOUT'` when the
    * provider reported a deadline breach) or raises a canonical `OrchestratorError`; `UNKNOWN` is
    * never the adapter's call to make (§3.2.4). The engine's dispatch guard wraps this call, so a
    * thrown non-canonical error is normalized to an unproven effect instead of a terminal failure.
    *
-   * The signal is aborted by the guard when the registry deadline expires; implementations MUST
+   * The signal is aborted by the guard when the bounded-invocation deadline expires; implementations MUST
    * forward it to their in-flight provider request.
    */
-  dispatch(action: ActionDraft, options?: { timeout_ms?: number; signal?: AbortSignal }): Promise<ExecutionReceipt>;
+  dispatch(action: ActionDraft, options?: {
+    timeout_ms?: number;
+    signal?: AbortSignal;
+    /** Reservation fingerprint computed once by the orchestrator over the pending-action payload. */
+    request_fingerprint?: string;
+    /** The immutable hydrated state stored in the current checkpoint. */
+    hydrated_context?: HydratedContext;
+  }): Promise<ExecutionReceipt>;
   /**
    * Queries the provider by effect_key / action_id to reconcile an unproven effect outcome (§4.4).
    */
@@ -188,15 +206,6 @@ export interface IAdapterDispatcher {
     readonly outcome: 'SUCCEEDED' | 'FAILED' | 'INDETERMINATE';
     readonly receipt?: ExecutionReceipt | unknown;
   }>;
-}
-
-/**
- * Canonical chained compliance writer (`audit_records`, §08 §4.1). The engine appends EVERY event
- * of a step here — the AUTH-4 pause, each failing attempt, each retry, each reconciliation attempt
- * and the terminal outcome — so exactly one writer owns the tenant's hash chain (NFR-002).
- */
-export interface IAuditTrail {
-  append(record: AgentRunLogRecord): Promise<void>;
 }
 
 export interface IIdentityResolver {

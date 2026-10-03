@@ -1,0 +1,67 @@
+services:
+  postgres:
+    ports: !override
+      - "127.0.0.1:15433:5432"
+
+  redis:
+    ports: !override
+      - "127.0.0.1:16379:6379"
+
+  qdrant:
+    ports: !override
+      - "127.0.0.1:16333:6333"
+      - "127.0.0.1:16334:6334"
+
+  mock-erp:
+    ports: !override
+      - "127.0.0.1:18081:8081"
+
+  api:
+    environment:
+      AUTH_PROVIDER: ${STACK_AUTH_PROVIDER:-demo}
+      # The API invitation port uses a different env key than the console applications.
+      PLATFORM_ADMIN_BASE_URL: ${PLATFORM_ADMIN_URL:-http://localhost:13001}
+      PLATFORM_DATABASE_URL: postgresql://agentos_platform_login:${PLATFORM_ROLE_PASSWORD:-}@postgres:5432/${POSTGRES_DB:-agentos_dev}?schema=agentos
+      EMAIL_TRANSPORT: file
+      EMAIL_OUTBOX_DIR: /repo/tests/stack/.state/outbox
+    volumes:
+      - ./tests/stack/.state/outbox:/repo/tests/stack/.state/outbox
+    ports: !override
+      - "127.0.0.1:14000:4000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  worker:
+    environment:
+      PLATFORM_DATABASE_URL: postgresql://agentos_platform_login:${PLATFORM_ROLE_PASSWORD:-}@postgres:5432/${POSTGRES_DB:-agentos_dev}?schema=agentos
+      INDEXER_DATABASE_URL: postgresql://agentos_indexer_login:${INDEXER_ROLE_PASSWORD:-}@postgres:5432/${POSTGRES_DB:-agentos_dev}?schema=agentos
+      # Approved knowledge must become AVAILABLE within a test's wait, not one 15 s production tick.
+      KNOWLEDGE_INDEX_INTERVAL_MS: ${KNOWLEDGE_INDEX_INTERVAL_MS:-2000}
+      ERP_TIMEOUT_MS: ${ERP_TIMEOUT_MS:-5000}
+      # An UNKNOWN effect must reach the reconciliation sweeper within a test's wait (T5.5), not the
+      # production 5-minute minimum age on a 60 s cadence.
+      RECONCILE_SWEEP_MIN_AGE_MINUTES: ${RECONCILE_SWEEP_MIN_AGE_MINUTES:-1}
+      RECONCILE_SWEEP_INTERVAL_MS: ${RECONCILE_SWEEP_INTERVAL_MS:-5000}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  temporal:
+    ports: !override
+      - "127.0.0.1:17233:7233"
+
+  temporal-ui:
+    ports: !override
+      - "127.0.0.1:18080:8080"
+
+  tenant-console:
+    profiles: [stacktest-consoles]
+    environment:
+      AUTH_PROVIDER: ${STACK_AUTH_PROVIDER:-demo}
+    ports: !override
+      - "127.0.0.1:13000:3000"
+  platform-admin:
+    profiles: [stacktest-consoles]
+    environment:
+      AUTH_PROVIDER: ${STACK_AUTH_PROVIDER:-demo}
+    ports: !override
+      - "127.0.0.1:13001:3001"

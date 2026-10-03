@@ -16,17 +16,17 @@ const session: AuthSession = {
   expires_at: '2030-01-01T00:00:00.000Z',
 };
 
-function renderShell() {
+function renderShell(subscriptionsEnabled: boolean) {
   return render(
     <SessionProvider session={session}>
-      <PlatformShell><p>Protected content</p></PlatformShell>
+      <PlatformShell subscriptionsEnabled={subscriptionsEnabled}><p>Protected content</p></PlatformShell>
     </SessionProvider>,
   );
 }
 
 describe('PlatformShell', () => {
-  it('renders all platform navigation items', () => {
-    renderShell();
+  it('renders all platform navigation items when subscriptions are enabled', () => {
+    renderShell(true);
 
     expect(screen.getByRole('link', { name: 'Tổng quan' })).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Công ty' })).toBeTruthy();
@@ -36,11 +36,25 @@ describe('PlatformShell', () => {
     expect(screen.getByRole('link', { name: 'Tình trạng hệ thống' })).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Gói dịch vụ' })).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Cài đặt' })).toBeTruthy();
+    expect(screen.getAllByRole('link').some((link) => link.getAttribute('href') === '/audit')).toBe(true);
+  });
+
+  it('hides subscriptions from navigation when the feature is disabled', () => {
+    renderShell(false);
+
+    expect(screen.queryByRole('link', { name: 'Gói dịch vụ' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Cài đặt' })).toBeTruthy();
+  });
+
+  it('does not render the single-tenant authority scope card', () => {
+    renderShell(true);
+    expect(screen.queryByText('Chỉ công ty hiện tại')).toBeNull();
+    expect(screen.queryByText('Phạm vi quyền hạn')).toBeNull();
   });
 
   it('opens and closes the mobile drawer with focus return', async () => {
     const user = userEvent.setup();
-    renderShell();
+    renderShell(false);
 
     const trigger = screen.getByRole('button', { name: 'Menu' });
     await user.click(trigger);

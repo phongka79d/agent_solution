@@ -42,6 +42,7 @@ import {
 import { registerConversationTakeoverRoutes } from './conversations-takeover.js';
 import type { TurnIntentPort } from '../../runtime/bindings/turn-intent.js';
 import { classifyTurnModule } from './turn-classifier.js';
+import { registerOpenApiSchemas, taskStateRouteSchema } from './openapi-schemas.js';
 
 /** Runtime counterpart of the frozen `ChannelId` vocabulary; request channels are never guessed. */
 const VALID_CHANNELS: readonly ChannelId[] = Object.freeze([
@@ -56,6 +57,12 @@ const VALID_CHANNELS: readonly ChannelId[] = Object.freeze([
   'LINE',
   'WHATSAPP',
 ]);
+const CONVERSATION_PARAMS_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['conversation_id'],
+  properties: { conversation_id: { type: 'string', format: 'uuid' } },
+} as const;
 
 /** `06` §8.3 C-8: the wire vocabulary differs from the stored one in exactly one value. */
 export function toWireStatus(state: TaskStoredState): TaskWireStatus {
@@ -105,6 +112,7 @@ export function registerConversationRoutes(
   app: FastifyInstance,
   deps: ConversationRouteDeps,
 ): void {
+  registerOpenApiSchemas(app);
   const preHandler = authenticate(deps);
 
   const turnRateLimiter = deps.turnRateLimiter ?? new InMemoryTurnRateLimiter({
@@ -229,7 +237,7 @@ export function registerConversationRoutes(
 
   app.post<{ Params: { conversation_id: string } }>(
     '/conversations/:conversation_id/messages',
-    { preHandler },
+    { preHandler, schema: { params: CONVERSATION_PARAMS_SCHEMA } },
     async (request, reply) => {
       const runtime = deps.runtime;
       const correlation_id = correlationIdOf(request, runtime);
@@ -301,7 +309,7 @@ export function registerConversationRoutes(
   // R03 — GET /api/v1/tasks/{task_id}
   // -------------------------------------------------------------------------
 
-  app.get<{ Params: { task_id: string } }>('/tasks/:task_id', { preHandler }, async (request, reply) => {
+  app.get<{ Params: { task_id: string } }>('/tasks/:task_id', { preHandler, schema: taskStateRouteSchema }, async (request, reply) => {
     const runtime = deps.runtime;
     const correlation_id = correlationIdOf(request, runtime);
 
@@ -335,6 +343,7 @@ export function registerConversationRoutes(
         ...(task.sources === undefined ? {} : { sources: task.sources }),
         ...(task.actions === undefined ? {} : { actions: task.actions }),
         ...(task.evidence_reference === undefined ? {} : { evidence_reference: task.evidence_reference }),
+        error: task.error,
         correlation_id: task.correlation_id,
       };
 

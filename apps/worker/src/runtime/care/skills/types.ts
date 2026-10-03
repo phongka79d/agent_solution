@@ -1,7 +1,21 @@
 import type { AssignableAuthority, IAdapterDispatcher } from '@agentos/core-engine/contracts';
-import type { CareHandoffRepository, ServiceCasePriority, ServiceCaseRepository } from '@agentos/database';
-import type { ExecutionContext, PlatformSkillEnablement, SkillRegistry, SkillToolPort } from '@agentos/skills';
+import type {
+  CareHandoffRepository,
+  ConversationRepository,
+  ServiceCasePriority,
+  ServiceCaseRepository,
+} from '@agentos/database';
+import type {
+  ExecutionContext,
+  PlatformSkillEnablement,
+  SkillBreakerRegistry,
+  SkillGate,
+  SkillLlmPortFactory,
+  SkillRegistry,
+  SkillToolPort,
+} from '@agentos/skills';
 import type { ErpReadPort } from '../../connectors.js';
+import type { KnowledgeStore } from '../../shared/knowledge-store.js';
 
 export type { ErpReadPort } from '../../connectors.js';
 
@@ -53,14 +67,24 @@ export interface CareSkillOptions {
   readonly erp_read: ErpReadPort | null;
   readonly env: CareSkillEnv;
   readonly now?: () => Date;
+  /** Live availability gate (PLAN T4.3); when supplied, enablement is `row.enabled AND gate.available`. */
+  readonly gate?: SkillGate;
+  /** Shared breaker table keyed `tenant + dependency`; pass the same instance the gate observes. */
+  readonly breakers?: SkillBreakerRegistry;
+  /** Invocation-scoped structured completion port, bound to the trusted run and tenant context. */
+  readonly llm?: SkillLlmPortFactory;
   readonly resolve_correlation_id: (tenant_id: string, run_id: string) => Promise<string>;
   readonly resolve_grant: (tenant_id: string, agent_id: string) => Promise<AssignableAuthority | null>;
+  /** Tenant-scoped DB-backed knowledge store; production defaults to KnowledgeRepository. */
+  readonly knowledge_store?: Pick<KnowledgeStore, 'listAvailable'>;
   /** Optional identity resolver override; defaults to findVerifiedIdentityById from @agentos/database. */
   readonly find_verified_identity?: (tenant_id: string, id: string) => Promise<VerifiedCustomerIdentity | null>;
   /** Optional repository override for deterministic store tests; production defaults to PostgreSQL. */
   readonly case_repository?: Pick<ServiceCaseRepository, 'manage' | 'reconcile'>;
   /** Optional durable handoff repository override; production defaults to PostgreSQL. */
   readonly handoff_repository?: Pick<CareHandoffRepository, 'enqueue' | 'reconcile'>;
+  /** Optional conversation message sink for durable handoff confirmations. */
+  readonly conversation_repository?: Pick<ConversationRepository, 'appendMessage'>;
   /** Tenant-specific SLA policy. Missing values never receive an invented default. */
   readonly case_sla_target_hours?: CareCaseSlaTargetHoursResolver;
   /** Optional authoritative churn analytics provider; absent providers refuse, never synthesize scores. */

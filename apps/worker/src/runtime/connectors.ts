@@ -3,7 +3,11 @@ import {
   ConnectorRegistry,
   createAdapterDispatcher,
   type ConnectorReadResult,
+  type ErpCreateOrderInput,
+  type ErpCreatedOrder,
   type ErpMutationAuthority,
+  type ErpTransportFailureClass,
+  type ErpTransportRequest,
   type HmacSha256Hex,
 } from '@agentos/adapters';
 import type { ExecutionReceipt, IAdapterDispatcher } from '@agentos/core-engine/contracts';
@@ -20,13 +24,12 @@ import { createErpHttpTransport, type ErpFetchLike } from './erp-http-transport.
  * - **Nothing is reachable by default.** The registry starts empty; every id in it was bound here
  *   from explicit configuration. An action naming anything else is refused before a socket opens.
  * - **A mock system of record is a local/CI privilege.** `MOCK_ERP_ENABLED=true` in a managed
- *   environment (`staging`, `sandbox`, `production`) is refused at composition instead of quietly
- *   letting a deployment read inventory and write orders against a fictional provider. The mock-erp
- *   container refuses the same combination, so neither side can be the one that forgets.
+ *   environment is allowed only after the tenant registry proves DEMO scope. Binding an env mock
+ *   process-wide would let one tenant's connector leak into another tenant's execution.
  */
 
-/** Environments where a provider is real: a mock system of record may never be bound. */
-const MANAGED_ENVS: readonly string[] = ['staging', 'sandbox', 'production'];
+/** A process environment mock is reachable only after the tenant registry proves DEMO scope. */
+export type WorkerTenantDataClass = 'PRODUCTION' | 'DEMO' | 'TEST';
 
 /** The API-001 id a planned step names as its `adapter_target`. */
 const API_001_CONNECTOR_ID = 'API-001';
@@ -51,6 +54,14 @@ export interface WorkerConnectorEnv {
   readonly ERP_TIMEOUT_MS?: string;
 }
 
+export type ErpCartTransportResult =
+  | { readonly ok: true; readonly status: number; readonly body: Record<string, unknown> }
+  | { readonly ok: false; readonly failure_class: ErpTransportFailureClass; readonly status: number | null };
+
+export interface ErpCartTransport {
+  request(input: ErpTransportRequest): Promise<ErpCartTransportResult>;
+}
+
 /** Read interface to the authoritative ERP system of record. */
 export interface ErpReadPort {
   read(input: {
@@ -58,6 +69,7 @@ export interface ErpReadPort {
     readonly resource: string;
     readonly key?: string;
     readonly customer_id?: string;
+    readonly signal?: AbortSignal;
   }): Promise<ConnectorReadResult>;
   reconcile?(input: {
     readonly tenant_id: string;
@@ -69,9 +81,14 @@ export interface ErpReadPort {
     readonly outcome: 'SUCCEEDED' | 'FAILED' | 'INDETERMINATE';
     readonly receipt?: ExecutionReceipt;
   }>;
+  createOrder?(input: ErpCreateOrderInput): Promise<ErpCreatedOrder>;
+  /** Authenticated transport for API-002 carts on this tenant's bound ERP endpoint. */
+  readonly cart_transport?: ErpCartTransport | undefined;
 }
 
 export interface WorkerConnectorOptions {
+  /** Tenant class used when explicitly composing the process-env demo fallback. */
+  readonly tenantDataClass?: WorkerTenantDataClass | undefined;
   /** HMAC primitive from the host; the adapters package stays crypto-free. */
   readonly hmac: HmacSha256Hex;
   /**
@@ -83,7 +100,6 @@ export interface WorkerConnectorOptions {
   /** Transport override, used by tests to reach an in-process mock. */
   readonly fetch?: ErpFetchLike;
 }
-
 export interface WorkerConnectors {
   readonly registry: ConnectorRegistry;
   /** The engine-facing dispatcher over this registry, with unknown targets refused before transport. */
@@ -101,31 +117,40 @@ export const REFUSE_ALL_MUTATIONS: ErpMutationAuthority = {
   authorize: () => false,
 };
 
+/** Keeps DB bindings and the pristine DEMO fallback on the same ERP/cart/order capability surface. */
+export function createWorkerErpPort(
+  connector: Api001ErpConnector,
+  transport: ErpCartTransport,
+): ErpReadPort {
+  return {
+    read: (input) => connector.read(input),
+    reconcile: (input) => connector.reconcile(input),
+    createOrder: (input) => connector.createOrder(input),
+    cart_transport: transport,
+  };
+}
+
 /**
- * Binds the connectors this worker process may reach.
+ * Composes an environment connector for one explicitly authorized tenant class.
+ *
+ * Process-wide callers must omit `tenantDataClass`; the environment mock is then unreachable.
+ * The tenant registry supplies `DEMO` only after checking the tenant's immutable data class.
  *
  * @param env Process environment; only {@link WorkerConnectorEnv} is read.
- * @param options Host-supplied HMAC, authority and transport.
+ * @param options Host-supplied HMAC, authority, transport and tenant-class gate.
  * @returns The registry, its dispatcher and the named unbound capabilities.
- * @throws Error when a managed environment enables the mock provider, or when the mock is enabled
- *   without the provider location and shared secret it signs with. Both are composition-time
- *   refusals: a worker that cannot reach its system of record must not start and report healthy.
+ * @throws Error when a DEMO fallback is enabled without a valid provider location or shared secret.
  */
 export function createWorkerConnectors(
   env: WorkerConnectorEnv,
   options: WorkerConnectorOptions,
 ): WorkerConnectors {
-  const app_env = env.APP_ENV ?? '';
-  const mock_enabled = env.MOCK_ERP_ENABLED === 'true';
+  const mock_requested = env.MOCK_ERP_ENABLED === 'true';
+  const mock_enabled = mock_requested && options.tenantDataClass === 'DEMO';
   const registry = new ConnectorRegistry();
   let erp_read: ErpReadPort | null = null;
   const bound: string[] = [];
   const unbound: string[] = [];
-  if (mock_enabled && MANAGED_ENVS.includes(app_env)) {
-    throw new Error(
-      `MOCK_ERP_FORBIDDEN: MOCK_ERP_ENABLED=true is refused for APP_ENV=${app_env}; a managed deployment must reach an audited system of record, not a simulated one`,
-    );
-  }
 
   if (mock_enabled) {
     const base_url = env.ERP_API_BASE_URL;
@@ -152,8 +177,7 @@ export function createWorkerConnectors(
       ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
     });
 
-    // One instance for the process: it holds no state of its own, and a per-call instance would
-    // allocate a transport wrapper on every dispatch for no behaviour.
+    // This instance is exposed only to the tenant registry after DEMO data-class resolution.
     const connector = new Api001ErpConnector({
       transport,
       authority: options.authority ?? REFUSE_ALL_MUTATIONS,
@@ -171,16 +195,17 @@ export function createWorkerConnectors(
       reconcile: (input) => connector.reconcile(input),
     });
     bound.push(API_001_CONNECTOR_ID);
-    erp_read = connector;
+    erp_read = createWorkerErpPort(connector, transport);
     if (options.authority === undefined) {
       unbound.push(
         'API-001 mutation authority: no approval-backed authority is bound, so every dispatch is refused before the provider is contacted',
       );
     }
   } else {
-    unbound.push(
-      'API-001: no system of record is bound (MOCK_ERP_ENABLED is not true, and no audited provider transport is configured)',
-    );
+    const reason = mock_requested && options.tenantDataClass !== 'DEMO'
+      ? 'process environment mock is restricted to DEMO tenant data'
+      : 'MOCK_ERP_ENABLED is not true, and no audited provider transport is configured';
+    unbound.push(`API-001: no system of record is bound (${reason})`);
   }
 
   const dispatcher = createAdapterDispatcher({

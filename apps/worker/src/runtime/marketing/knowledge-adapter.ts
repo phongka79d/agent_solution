@@ -1,13 +1,6 @@
-import { createHash } from 'node:crypto';
-import { readFile as fsReadFile } from 'node:fs/promises';
-import { isAbsolute, join, normalize } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { listApprovedKnowledge } from '@agentos/core-engine';
-import {
-  createTenantKnowledgeRootResolver,
-  TenantKnowledgeRootError,
-  type TenantKnowledgeRootResolver,
-} from '../knowledge-root.js';
+import { isAbsolute, normalize } from 'node:path';
+import type { KnowledgeDocumentNamespace } from '@agentos/database';
+import { KnowledgeStore, type AvailableKnowledgeDocument } from '../shared/knowledge-store.js';
 import {
   type MarketingKnowledgeDocument,
   type MarketingKnowledgePort,
@@ -36,8 +29,6 @@ const ALLOWLIST_LOOKUP: Record<string, true> = {
   'marketing/content-guidelines.md': true,
 };
 
-const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---/;
-const STATUS_PATTERN = /^status:[ \t]*(\S.*?)[ \t]*$/m;
 
 /**
  * Known instruction override, prompt injection, and jailbreak patterns.
@@ -87,173 +78,66 @@ export function screenMarketingUntrustedContent(text: string): string {
 
 
 export interface MarketingKnowledgePortOptions {
-  readonly root_dir?: string;
-  /** Explicit server-owned tenant scope for a configured root. */
-  readonly tenant_ids?: readonly string[];
-  /** Single server-verified tenant binding for a configured root. */
-  readonly tenant_id?: string;
-  /**
-   * Direct filesystem seams used by focused tests. They may supply a fake root
-   * without a production tenant allowlist; real filesystem access remains bound.
-   */
-  readonly listApproved?: (
-    rootDir: string,
-  ) => Promise<readonly { path: string; status: string }[]>;
-  readonly readFile?: (
-    path: string,
-    encoding: 'utf8',
-  ) => Promise<string>;
+  readonly knowledge_store?: Pick<KnowledgeStore, 'listAvailable'>;
 }
 
-/**
- * Creates a MarketingKnowledgePort bound to a knowledge root.
- * Validates tenant binding, enforces canonical allowlist, requires approved frontmatter,
- * computes deterministic content version hash from exact approved source bytes,
- * and screens content for instruction override before returning.
- */
+/** Creates a Marketing knowledge port that exposes only tenant-scoped AVAILABLE database rows. */
 export function createMarketingKnowledgePort(
   options: MarketingKnowledgePortOptions = {},
 ): MarketingKnowledgePort {
-  const defaultRootDir = fileURLToPath(
-    new URL('../../../../../packages/second-brain', import.meta.url),
-  );
-  const hasConfiguredRoot = options.root_dir !== undefined;
-  const rootDir = hasConfiguredRoot ? options.root_dir! : defaultRootDir;
-  const listApproved = options.listApproved ?? listApprovedKnowledge;
-  const readFile = options.readFile ?? fsReadFile;
-  const usesInjectedFilesystem = options.listApproved !== undefined || options.readFile !== undefined;
-  let rootResolver: TenantKnowledgeRootResolver;
-  try {
-    rootResolver = createTenantKnowledgeRootResolver({
-      root_dir: rootDir,
-      ...(options.tenant_ids === undefined ? {} : { tenant_ids: options.tenant_ids }),
-      ...(options.tenant_id === undefined ? {} : { tenant_id: options.tenant_id }),
-      // The package root and explicit fake filesystem seams retain compatibility
-      // with offline tests; configured real roots require an explicit tenant scope.
-      allow_unbound: !hasConfiguredRoot || usesInjectedFilesystem,
-    });
-  } catch (error) {
-    if (error instanceof TenantKnowledgeRootError) {
-      throw new MarketingRuntimeError(error.code, error.message);
-    }
-    throw error;
-  }
-
+  const knowledgeStore = options.knowledge_store ?? new KnowledgeStore();
   return {
-    async readApproved(
-      tenant_id: string,
-      path: string,
-    ): Promise<MarketingKnowledgeDocument> {
-      // 1. Validate tenant binding
-      if (!tenant_id || typeof tenant_id !== 'string' || tenant_id.trim().length === 0) {
-        throw new MarketingRuntimeError(
-          'INVALID_TENANT',
-          'Tenant ID must be a non-empty string',
-        );
+    async readApproved(tenant_id: string, path: string): Promise<MarketingKnowledgeDocument> {
+      if (typeof tenant_id !== 'string' || tenant_id.trim().length === 0) {
+        throw new MarketingRuntimeError('INVALID_TENANT', 'Tenant ID must be a non-empty string');
       }
-      let scopedRootDir: string;
-      try {
-        scopedRootDir = rootResolver.resolve(tenant_id);
-      } catch (error) {
-        if (error instanceof TenantKnowledgeRootError) {
-          throw new MarketingRuntimeError(error.code, error.message);
-        }
-        throw error;
+      if (typeof path !== 'string' || path.trim().length === 0) {
+        throw new MarketingRuntimeError('INVALID_PATH', 'Document path must be a non-empty string');
       }
-
-
-      // 2. Validate path
-      if (!path || typeof path !== 'string' || path.trim().length === 0) {
-        throw new MarketingRuntimeError(
-          'INVALID_PATH',
-          'Document path must be a non-empty string',
-        );
-      }
-
-      // Reject traversal, absolute paths, drive-qualified paths, and non-canonical separators before normalization.
       if (
-        isAbsolute(path) ||
-        path.includes('..') ||
-        path.startsWith('/') ||
-        path.startsWith('\\') ||
-        path.includes('\\') ||
-        path.includes(':')
+        isAbsolute(path)
+        || path.includes('..')
+        || path.startsWith('/')
+        || path.startsWith('\\')
+        || path.includes('\\')
+        || path.includes(':')
       ) {
-        throw new MarketingRuntimeError(
-          'PATH_NOT_ALLOWED',
-          `Path traversal or absolute path rejected: '${path}'`,
-        );
+        throw new MarketingRuntimeError('PATH_NOT_ALLOWED', `Path traversal or absolute path rejected: '${path}'`);
       }
 
-      // Canonical POSIX normalization
       const normalizedPath = normalize(path).replace(/\\/g, '/');
-
-      // 3. Safe canonical allowlist verification
       if (!ALLOWLIST_LOOKUP[normalizedPath]) {
         throw new MarketingRuntimeError(
           'PATH_NOT_ALLOWED',
           `Path '${normalizedPath}' is not in the marketing approved document allowlist`,
         );
       }
+      const separator = normalizedPath.indexOf('/');
+      const namespace = normalizedPath.slice(0, separator) as KnowledgeDocumentNamespace;
+      const slug = normalizedPath.slice(separator + 1).replace(/\.md$/, '');
 
-      // 4. Verify document is approved in Second Brain corpus via listApproved
-      let approvedDocs: readonly { path: string; status: string }[];
+      let availableDocs: readonly AvailableKnowledgeDocument[];
       try {
-        approvedDocs = await listApproved(scopedRootDir);
+        availableDocs = await knowledgeStore.listAvailable(tenant_id, namespace);
       } catch (error) {
         throw new MarketingRuntimeError(
           'CORPUS_UNAVAILABLE',
-          `Failed to list approved knowledge documents from configured root: ${error instanceof Error ? error.message : String(error)}`,
+          `Failed to list available knowledge documents: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
-
-      const isDocumentApproved = approvedDocs.some(
-        (doc) => doc.path === normalizedPath && doc.status === 'approved',
-      );
-
-      if (!isDocumentApproved) {
+      const document = availableDocs.find((item) => item.slug === slug);
+      if (!document) {
         throw new MarketingRuntimeError(
           'DOCUMENT_NOT_APPROVED',
-          `Document '${normalizedPath}' is not approved or is draft in second-brain corpus`,
+          `Document '${normalizedPath}' is not AVAILABLE in the tenant knowledge store`,
         );
       }
 
-      // 5. Read physical file content
-      const fullPath = join(scopedRootDir, normalizedPath);
-      let source: string;
-      try {
-        source = await readFile(fullPath, 'utf8');
-      } catch (error) {
-        throw new MarketingRuntimeError(
-          'DOCUMENT_UNREADABLE',
-          `Failed to read approved document '${normalizedPath}': ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-
-      // 6. Direct frontmatter verification: status must be approved
-      const frontmatterMatch = FRONTMATTER_PATTERN.exec(source);
-      const statusMatch =
-        frontmatterMatch === null
-          ? null
-          : STATUS_PATTERN.exec(frontmatterMatch[1] ?? '');
-
-      if (statusMatch?.[1] !== 'approved') {
-        throw new MarketingRuntimeError(
-          'DOCUMENT_NOT_APPROVED',
-          `Document '${normalizedPath}' frontmatter status is '${statusMatch?.[1] ?? 'missing'}', expected 'approved'`,
-        );
-      }
-
-      // 7. Screen untrusted content for prompt injection / instruction override
-      screenMarketingUntrustedContent(source);
-
-      // 8. Deterministic version hash of exact approved source bytes
-      const version = createHash('sha256').update(source, 'utf8').digest('hex');
-
+      screenMarketingUntrustedContent(document.body);
       return {
         path: normalizedPath,
-        version,
-        content: source,
+        version: document.content_sha256,
+        content: document.body,
       };
     },
   };

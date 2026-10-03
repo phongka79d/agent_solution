@@ -3,6 +3,7 @@
  * dispatch envelope, the canonical primitive seams, and the stable refusal vocabulary.
  */
 
+export * from './digest.js';
 export * from './dispatch.js';
 export * from './errors.js';
 export * from './seams.js';

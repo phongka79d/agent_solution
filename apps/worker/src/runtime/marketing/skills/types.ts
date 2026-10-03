@@ -6,6 +6,9 @@ import type {
 import type {
   ExecutionContext,
   PlatformSkillEnablement,
+  SkillBreakerRegistry,
+  SkillGate,
+  SkillLlmPortFactory,
   SkillRegistry,
   SkillToolPort,
 } from '@agentos/skills';
@@ -358,6 +361,12 @@ export interface MarketingSkillToolPortOptions {
  */
 export interface MarketingSkillOptions extends MarketingSkillToolPortOptions {
   readonly now?: () => Date;
+  /** Invocation-scoped structured completion port, bound to the trusted run and tenant context. */
+  readonly llm?: SkillLlmPortFactory;
+  /** Live availability gate (PLAN T4.3); when supplied, enablement is `row.enabled AND gate.available`. */
+  readonly gate?: SkillGate;
+  /** Shared breaker table keyed `tenant + dependency`; pass the same instance the gate observes. */
+  readonly breakers?: SkillBreakerRegistry;
   readonly resolve_correlation_id: (tenant_id: string, run_id: string) => Promise<string>;
   readonly resolve_grant: (tenant_id: string, agent_id: string) => Promise<AssignableAuthority | null>;
   readonly skill_enablement?: PlatformSkillEnablement;

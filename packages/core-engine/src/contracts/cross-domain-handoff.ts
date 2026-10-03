@@ -38,6 +38,7 @@ import {
   OrchestratorError,
   type AssignableAuthority,
   type AuthorityLevel,
+  type ExecutionDomain,
   type EpistemicClassification,
   type PlatformAgentId,
 } from './types.js';
@@ -64,7 +65,7 @@ export const MAX_HANDOFF_HOPS = 3;
  * the existing Customer Care module — no fourth worker module exists, and `VALID_AGENT_MODULES` is
  * unchanged.
  */
-export const JOURNEY_DOMAIN_MODULES: Readonly<Record<JourneyDomain, string>> = Object.freeze({
+export const JOURNEY_DOMAIN_MODULES: Readonly<Record<JourneyDomain, ExecutionDomain>> = Object.freeze({
   marketing: 'marketing',
   sales: 'sales',
   care: 'support',
@@ -111,42 +112,20 @@ export interface HandoffIntent {
   readonly reason: string;
 }
 
-/** The agent-id families each journey leg may act with. `care` and `retention` share Care agents. */
-export const JOURNEY_DOMAIN_AGENT_PREFIXES: Readonly<Record<JourneyDomain, readonly string[]>> =
-  Object.freeze({
-    marketing: Object.freeze(['MKT-']),
-    sales: Object.freeze(['SAL-']),
-    care: Object.freeze(['CS-']),
-    retention: Object.freeze(['CS-']),
-  });
-
-/**
- * Corroborates a handoff intent's declared leg against the steps the run actually planned.
- *
- * A run may only hand off as the domain it acted in: a Sales plan cannot declare itself marketing
- * to reach an edge it otherwise could not, and a Care plan cannot declare itself retention to skip
- * the handoff that opens that leg.
- *
- * @param source_domain The leg the intent declares.
- * @param agent_ids The agents of the run's own plan steps.
- * @throws OrchestratorError `HANDOFF_PACKAGE_INVALID` when no step corroborates the declared leg.
- */
+/** Maps each journey leg to the execution domain declared by the worker planner. */
 export function assertHandoffSourceDomain(
   source_domain: JourneyDomain,
-  agent_ids: readonly PlatformAgentId[],
+  plan_domain: ExecutionDomain | undefined,
+  planned_step_count: number,
 ): void {
-  const prefixes = JOURNEY_DOMAIN_AGENT_PREFIXES[source_domain];
-  const corroborating = agent_ids.filter((agent_id) =>
-    prefixes.some((prefix) => agent_id.startsWith(prefix)),
-  );
+  const expected_domain = JOURNEY_DOMAIN_MODULES[source_domain];
 
-  if (agent_ids.length === 0 || corroborating.length !== agent_ids.length) {
+  if (planned_step_count === 0 || plan_domain !== expected_domain) {
     throw new OrchestratorError(
       'HANDOFF_PACKAGE_INVALID',
-      `A run handing off as '${source_domain}' must have acted only through `
-        + `${prefixes.join('/')} agents; its plan names `
-        + `${agent_ids.length === 0 ? 'none' : agent_ids.join(', ')}, which does not corroborate `
-        + 'the declared leg of the journey.',
+      `A run handing off as '${source_domain}' must contain planned steps in the `
+        + `'${expected_domain}' domain; it declared '${plan_domain ?? 'none'}' with `
+        + `${planned_step_count} planned step${planned_step_count === 1 ? '' : 's'}.`,
     );
   }
 }

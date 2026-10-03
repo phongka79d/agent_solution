@@ -19,9 +19,7 @@
     "test:contracts": "vitest run --config vitest.contracts.config.ts"
   },
   "dependencies": {
-    "@agentos/adapters": "workspace:*",
-    "@agentos/core-engine": "workspace:*",
-    "@agentos/database": "workspace:*"
+    "@agentos/core-engine": "workspace:*"
   },
   "devDependencies": {
     "@agentos/typescript-config": "workspace:*",

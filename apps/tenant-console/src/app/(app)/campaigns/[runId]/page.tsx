@@ -1,18 +1,12 @@
 'use client';
 
-import Link from 'next/link';
-import { useEffect, useState } from 'react';
 import { RequirePermission } from '../../../../components/auth/RequirePermission';
-import { AdvancedDetails, EmptyState, PageHeader, StatusBadge } from '@agentos/ui-foundation/react';
+import { CampaignDetailView } from '../../../../components/campaigns/CampaignDetailView';
 
-type Campaign = { readonly run_id?: string | null; readonly campaign_id?: string | null; readonly name?: string | null; readonly objective?: string | null; readonly channels?: unknown; readonly lifecycle_state?: string; readonly draft_receipt?: unknown; readonly brand_audit?: unknown; readonly approval?: { readonly approval_id?: string; readonly decision?: string }; readonly dispatch?: { readonly status?: string } };
-const lifecycleLabel: Record<string, string> = { draft: 'Nháp', in_review: 'Đang rà soát', brand_audit: 'Đang rà soát', awaiting_approval: 'Chờ phê duyệt', approved: 'Đã duyệt', in_flight: 'Gửi đi' };
-async function readJson(response: Response): Promise<Record<string, unknown>> { try { const value: unknown = await response.json(); return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}; } catch { return {}; } }
-function CampaignDetailContent({ runId }: { readonly runId: string }) {
-  const [campaign, setCampaign] = useState<Campaign | null>(null); const [error, setError] = useState<string | null>(null); const [loading, setLoading] = useState(true);
-  useEffect(() => { let active = true; void fetch(`/api/v1/campaigns/${encodeURIComponent(runId)}`, { credentials: 'same-origin', headers: { Accept: 'application/json' } }).then(async (response) => { const payload = await readJson(response); if (!response.ok) throw new Error(typeof payload.message === 'string' ? payload.message : 'Không thể tải chiến dịch.'); if (active) setCampaign(payload as Campaign); }).catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : 'Không thể tải chiến dịch.'); }).finally(() => { if (active) setLoading(false); }); return () => { active = false; }; }, [runId]);
-  if (loading) return <p aria-busy="true">Đang tải…</p>; if (error) return <p role="alert" className="rounded-lg border border-danger/40 bg-danger/10 p-3 text-sm text-danger">{error}</p>; if (!campaign) return <EmptyState status="NO_DATA" title="Chưa có dữ liệu" />;
-  const state = campaign.lifecycle_state ?? 'unknown';
-  return <div className="space-y-6"><PageHeader title={campaign.name ?? campaign.objective ?? 'Chiến dịch'} description="Chi tiết vòng đời và dữ liệu được API xác nhận." actions={<Link href="/campaigns" className="ui-button ui-button--secondary">Quay lại</Link>} /><section className="rounded-xl border border-line bg-surface p-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-sm text-muted">Mục tiêu</p><p className="mt-1 font-medium text-ink">{campaign.objective ?? 'Chưa có dữ liệu'}</p></div><StatusBadge code={state === 'approved' ? 'ACTIVE' : state === 'awaiting_approval' ? 'APPROVAL_PENDING' : state === 'in_flight' ? 'NOT_INTEGRATED' : 'UNKNOWN'} label={lifecycleLabel[state] ?? 'Chưa phân loại'} /></div><dl className="mt-5 grid gap-4 text-sm sm:grid-cols-2"><div><dt className="text-muted">Kênh</dt><dd className="mt-1 text-ink">{Array.isArray(campaign.channels) && campaign.channels.length > 0 ? campaign.channels.join(', ') : 'Chưa có dữ liệu'}</dd></div><div><dt className="text-muted">Gửi đi</dt><dd className="mt-1 text-ink">Chưa tích hợp</dd></div></dl></section><AdvancedDetails summary="Chi tiết nâng cao"><dl className="grid gap-3 text-xs sm:grid-cols-2"><div><dt className="text-muted">run_id</dt><dd className="break-all font-mono text-ink">{campaign.run_id ?? runId}</dd></div><div><dt className="text-muted">campaign_id</dt><dd className="break-all font-mono text-ink">{campaign.campaign_id ?? '—'}</dd></div><div><dt className="text-muted">approval_id</dt><dd className="break-all font-mono text-ink">{campaign.approval?.approval_id ?? '—'}</dd></div><div><dt className="text-muted">approval decision</dt><dd className="font-mono text-ink">{campaign.approval?.decision ?? '—'}</dd></div></dl></AdvancedDetails></div>;
+export default function CampaignDetailPage({ params }: { readonly params: { readonly runId: string } }) {
+  return (
+    <RequirePermission permissions={['campaign:draft', 'approval:read']}>
+      <CampaignDetailView runId={params.runId} />
+    </RequirePermission>
+  );
 }
-export default function CampaignDetailPage({ params }: { readonly params: { readonly runId: string } }) { return <RequirePermission permissions={['campaign:draft', 'approval:read']}><CampaignDetailContent runId={params.runId} /></RequirePermission>; }

@@ -2,11 +2,12 @@ import { createHash, randomUUID } from 'node:crypto';
 import { Pool, type PoolClient } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { getPool } from './client.js';
+import { getPlatformPool, getPool } from './client.js';
 import { withTenantContext } from './rls.js';
 import {
   P5AutonomyRepository,
   P5ProvisioningRepository,
+  RunResponseRepository,
   type CommitAutonomyPolicyInput,
   type TenantTransactionRunner,
 } from './repositories/index.js';
@@ -71,6 +72,8 @@ function restartPool(): Pool {
   return restartedPool;
 }
 
+// DATABASE_URL is the tenant app login; PLATFORM_DATABASE_URL must be the dedicated
+// platform login (0052). Provisioning is intentionally not an app-role capability.
 // The app role cannot DELETE these append-only fixtures. Use an ephemeral rehearsal DB;
 // random idempotency keys isolate repeat/full-suite runs without weakening production grants.
 describe('P5 provisioning and autonomy repositories (live PostgreSQL)', () => {
@@ -78,6 +81,13 @@ describe('P5 provisioning and autonomy repositories (live PostgreSQL)', () => {
     const url = process.env.DATABASE_URL;
     if (!url || url.trim().length === 0) {
       throw new Error('DATABASE_URL_REQUIRED: P5 live repository smoke requires migrated PostgreSQL.');
+    }
+    if (!process.env.PLATFORM_DATABASE_URL?.trim()) {
+      throw new Error(
+        'P5_PLATFORM_DATABASE_URL_REQUIRED: provisionTenantShell uses the dedicated ' +
+        'agentos_platform_login connection. Migration 0052 forbids agentos_app from assuming ' +
+        'agentos_platform; configure PLATFORM_DATABASE_URL rather than granting app membership.',
+      );
     }
     const client = await getPool().connect();
     try {
@@ -105,6 +115,20 @@ describe('P5 provisioning and autonomy repositories (live PostgreSQL)', () => {
     } finally {
       client.release();
     }
+    const platformIdentity = await getPlatformPool().query<{
+      role_name: string; rolsuper: boolean; rolbypassrls: boolean; rolinherit: boolean; can_assume: boolean;
+    }>(
+      `SELECT session_user AS role_name, rolsuper, rolbypassrls, rolinherit,
+         pg_catalog.pg_has_role(session_user, 'agentos_platform', 'SET') AS can_assume
+       FROM pg_catalog.pg_roles WHERE rolname = session_user`,
+    );
+    expect(platformIdentity.rows[0]).toEqual({
+      role_name: 'agentos_platform_login',
+      rolsuper: false,
+      rolbypassrls: false,
+      rolinherit: false,
+      can_assume: true,
+    });
     tenantA = await provisioning.provisionTenantShell({
       idempotency_key: keyA, request_fingerprint: fingerprintA, display_name: 'P5 live tenant A',
     });
@@ -120,6 +144,10 @@ describe('P5 provisioning and autonomy repositories (live PostgreSQL)', () => {
   });
 
   it('provisions a safe shell idempotently and reads workspace/capabilities after a pool restart', async () => {
+    const originalEvents = await provisioning.listProvisioningEvents(tenantA);
+    expect(originalEvents).toEqual([
+      expect.objectContaining({ event_type: 'TENANT_PROVISIONED', idempotency_key: keyA }),
+    ]);
     expect(await provisioning.provisionTenantShell({
       idempotency_key: keyA, request_fingerprint: fingerprintA, display_name: 'P5 live tenant A',
     })).toBe(tenantA);
@@ -151,6 +179,9 @@ describe('P5 provisioning and autonomy repositories (live PostgreSQL)', () => {
     expect(await fresh.listProvisioningEvents(tenantA)).toEqual([
       expect.objectContaining({ event_type: 'TENANT_PROVISIONED', idempotency_key: keyA }),
     ]);
+    // Replaying the shell must preserve the original event identity and timestamp,
+    // not replace or append a second event of the same type.
+    expect(await fresh.listProvisioningEvents(tenantA)).toEqual(originalEvents);
     const agents = await withTenantContext(tenantA, (client) => client.query<{
       code: string; assigned_authority: string; is_active: boolean;
     }>('SELECT code, assigned_authority, is_active FROM agentos.agents WHERE tenant_id = $1', [tenantA]));
@@ -272,4 +303,75 @@ describe('P5 provisioning and autonomy repositories (live PostgreSQL)', () => {
     expect(events.map((event) => event.event_id)).not.toContain(eventId);
     expect(events).toHaveLength(2);
   });
+
+  it('saves, replays, and rejects conflicting run responses as agentos_app', async () => {
+    const pool = restartPool();
+    const run_id = `run-response-replay-${randomUUID()}`;
+    const conversation_id = randomUUID();
+    const runInAppRole = runnerFrom(pool);
+    const repository = new RunResponseRepository(runInAppRole);
+
+    await runInAppRole(tenantA, async (client) => {
+      const role = await client.query<{
+        db_user: string;
+        rolsuper: boolean;
+        rolbypassrls: boolean;
+      }>(
+        `SELECT current_user AS db_user, rolsuper, rolbypassrls
+          FROM pg_roles WHERE rolname = current_user`,
+      );
+      expect(role.rows[0]).toEqual({
+        db_user: 'agentos_app',
+        rolsuper: false,
+        rolbypassrls: false,
+      });
+      await client.query(
+        `INSERT INTO agentos.platform_durable_tasks (tenant_id, run_id, correlation_id)
+         VALUES ($1, $2, $3)`,
+        [tenantA, run_id, run_id],
+      );
+      await client.query(
+        `INSERT INTO agentos.conversations (id, tenant_id, channel, external_thread_id)
+         VALUES ($1, $2, $3, $4)`,
+        [conversation_id, tenantA, 'web', `run-response-${randomUUID()}`],
+      );
+    });
+
+    const input = {
+      tenant_id: tenantA,
+      run_id,
+      answer: 'A persisted live response.',
+      sources: [{ evidence_id: 'run-response-live' }],
+      response_kind: 'ANSWER' as const,
+      outcome: 'ANSWERED' as const,
+      source: 'ERP.Catalog@live',
+      sender_id: 'SAL-01',
+      conversation_id,
+    };
+    const first = await repository.save(input);
+
+    expect(first.message_id).not.toBeNull();
+    expect(await repository.save(input)).toEqual(first);
+    await expect(
+      repository.save({ ...input, answer: 'A conflicting live response.' }),
+    ).rejects.toThrow('RUN_RESPONSE_CONFLICT');
+
+    const persisted = await runInAppRole(tenantA, async (client) => {
+      const result = await client.query<{
+        response_count: number;
+        agent_message_count: number;
+      }>(
+        `SELECT
+          (SELECT count(*)::int FROM agentos.run_responses
+            WHERE tenant_id = $1 AND run_id = $2) AS response_count,
+          (SELECT count(*)::int FROM agentos.conversation_messages
+            WHERE tenant_id = $1 AND conversation_id = $3 AND sender_type = 'agent')
+            AS agent_message_count`,
+        [tenantA, run_id, conversation_id],
+      );
+      return result.rows[0];
+    });
+    expect(persisted).toEqual({ response_count: 1, agent_message_count: 1 });
+  });
+
 });

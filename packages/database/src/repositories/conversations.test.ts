@@ -48,6 +48,7 @@ interface ConversationRow extends QueryResultRow {
   tenant_id: string;
   customer_id: string | null;
   channel: string;
+  customer_display_name?: string | null;
   external_thread_id: string;
   active_agent: string;
   state: ConversationState;
@@ -63,10 +64,11 @@ interface MessagePageRow extends QueryResultRow {
   sender_id: string;
   content: string;
   created_at: Date;
+  delivery_status: 'STORED' | 'DELIVERED' | 'FAILED' | null;
 }
 
 /** Which statement of the repository a SQL text is: a test names the transition, not the text. */
-type StatementKind = 'insert' | 'read_thread' | 'read' | 'state' | 'touch' | 'message' | 'messages' | 'requested_message' | 'savepoint';
+type StatementKind = 'insert' | 'read_thread' | 'read' | 'state' | 'customer_bind' | 'touch' | 'message' | 'messages' | 'delivery' | 'requested_message' | 'savepoint';
 
 function classify(sql: string): StatementKind {
   if (sql.startsWith('INSERT INTO agentos.conversations')) {
@@ -80,7 +82,13 @@ function classify(sql: string): StatementKind {
   if (sql.includes('last_message_at = GREATEST')) {
     return 'touch';
   }
+  if (sql.startsWith('UPDATE agentos.conversation_messages')) {
+    return 'delivery';
+  }
 
+  if (sql.startsWith('UPDATE agentos.conversations') && sql.includes('SET customer_id = $4')) {
+    return 'customer_bind';
+  }
   if (sql.startsWith('UPDATE agentos.conversations')) {
     return 'state';
   }
@@ -216,8 +224,8 @@ function messagePageRow(overrides: Partial<MessagePageRow> = {}): MessagePageRow
     sender_id: 'SAL-01',
     content: 'Xin chao',
     created_at: LAST_MESSAGE_AT,
+    delivery_status: null,
   };
-
   return Object.assign(row, overrides);
 }
 
@@ -292,6 +300,7 @@ describe('ConversationRepository.bindOrCreate', () => {
       conversation_id: CONVERSATION_ID,
       tenant_id: TENANT,
       customer_id: CUSTOMER_ID,
+      customer_display_name: null,
       channel: CHANNEL,
       external_thread_id: THREAD,
       active_agent: 'auto',
@@ -330,6 +339,7 @@ describe('ConversationRepository.bindOrCreate', () => {
       conversation_id: CONVERSATION_ID,
       tenant_id: TENANT,
       customer_id: CUSTOMER_ID,
+      customer_display_name: null,
       channel: CHANNEL,
       external_thread_id: THREAD,
       active_agent: 'auto',
@@ -340,6 +350,67 @@ describe('ConversationRepository.bindOrCreate', () => {
       bound: true,
     });
   });
+
+  it('attaches a verified customer to an existing anonymous conversation once', async () => {
+    const { repository, client } = harnessFor({
+      insert: { rows: [] },
+      read_thread: { rows: [conversationRow({ customer_id: null })] },
+      customer_bind: { rows: [conversationRow({ customer_id: CUSTOMER_ID })] },
+    });
+
+    const bound = await repository.bindOrCreate(bindInput());
+
+    expect(bound.bound).toBe(true);
+    expect(bound.customer_id).toBe(CUSTOMER_ID);
+    expect(client.statements.map((statement) => statement.kind)).toEqual([
+      'insert',
+      'read_thread',
+      'customer_bind',
+    ]);
+    expect(bindingsOf(client, 'customer_bind')).toEqual([TENANT, CHANNEL, THREAD, CUSTOMER_ID]);
+    expect(client.statements.find((statement) => statement.kind === 'customer_bind')?.sql).toContain(
+      'customer_id IS NULL',
+    );
+  });
+
+  it('never rebinds an existing customer to a different identity', async () => {
+    const { repository, client } = harnessFor({
+      insert: { rows: [] },
+      read_thread: { rows: [conversationRow({ customer_id: CUSTOMER_ID })] },
+    });
+
+    const bound = await repository.bindOrCreate(
+      bindInput({ customer_id: '01920000-0000-7000-8000-0000000000c2' }),
+    );
+
+    expect(bound.customer_id).toBe(CUSTOMER_ID);
+    expect(client.statements.map((statement) => statement.kind)).toEqual(['insert', 'read_thread']);
+  });
+  it('does not overwrite a different customer attached concurrently', async () => {
+    let threadReads = 0;
+    const anonymous = conversationRow({ customer_id: null });
+    const concurrentlyBound = conversationRow({ customer_id: '01920000-0000-7000-8000-0000000000c2' });
+    const { repository, client } = harnessFor({
+      insert: { rows: [] },
+      read_thread: () => {
+        threadReads += 1;
+        return { rows: [threadReads === 1 ? anonymous : concurrentlyBound] };
+      },
+      customer_bind: { rows: [] },
+    });
+
+    const bound = await repository.bindOrCreate(bindInput());
+
+    expect(bound.customer_id).toBe(concurrentlyBound.customer_id);
+    expect(client.statements.map((statement) => statement.kind)).toEqual([
+      'insert',
+      'read_thread',
+      'customer_bind',
+      'read_thread',
+    ]);
+  });
+
+
 
   it('never rewrites the bound conversation: a null customer and a repeated bind leave it intact', async () => {
     const held = conversationRow({
@@ -414,6 +485,7 @@ describe('ConversationRepository.get', () => {
       conversation_id: CONVERSATION_ID,
       tenant_id: TENANT,
       customer_id: CUSTOMER_ID,
+      customer_display_name: null,
       channel: CHANNEL,
       external_thread_id: THREAD,
       active_agent: 'auto',
@@ -450,38 +522,83 @@ describe('ConversationRepository.get', () => {
 });
 
 describe('ConversationRepository.setState', () => {
-  it('moves the conversation between the stored states and records the operator with each', async () => {
+  it('moves the conversation only when its expected state and operator still match', async () => {
     const takeover = harnessFor({ state: { rows: [{ id: CONVERSATION_ID }] } });
     const resume = harnessFor({ state: { rows: [{ id: CONVERSATION_ID }] } });
 
     await expect(
-      takeover.repository.setState(TENANT, CONVERSATION_ID, 'paused_takeover', OPERATOR_ID),
-    ).resolves.toBe(true);
+      takeover.repository.setState(
+        TENANT,
+        CONVERSATION_ID,
+        'open',
+        null,
+        'paused_takeover',
+        OPERATOR_ID,
+      ),
+    ).resolves.toBe('UPDATED');
 
     expect(bindingsOf(takeover.client, 'state')).toEqual([
       TENANT,
       CONVERSATION_ID,
+      'open',
+      null,
       'paused_takeover',
       OPERATOR_ID,
     ]);
 
     await expect(
-      resume.repository.setState(TENANT, CONVERSATION_ID, 'open', null),
-    ).resolves.toBe(true);
+      resume.repository.setState(
+        TENANT,
+        CONVERSATION_ID,
+        'paused_takeover',
+        OPERATOR_ID,
+        'open',
+        null,
+      ),
+    ).resolves.toBe('UPDATED');
 
-    // The release writes the state and the cleared operator as one decision.
-    expect(bindingsOf(resume.client, 'state')).toEqual([TENANT, CONVERSATION_ID, 'open', null]);
+    expect(bindingsOf(resume.client, 'state')).toEqual([
+      TENANT,
+      CONVERSATION_ID,
+      'paused_takeover',
+      OPERATOR_ID,
+      'open',
+      null,
+    ]);
   });
 
-  it('reports false and creates nothing when no row of this tenant matched', async () => {
+  it('returns a conflict instead of applying a stale expected state', async () => {
+    const { repository, client } = harnessFor({ state: { rows: [], rowCount: 0 } });
+
+    await expect(
+      repository.setState(
+        TENANT,
+        CONVERSATION_ID,
+        'open',
+        null,
+        'paused_takeover',
+        OPERATOR_ID,
+      ),
+    ).resolves.toBe('CONFLICT');
+
+    expect(bindingsOf(client, 'state')).toEqual([
+      TENANT,
+      CONVERSATION_ID,
+      'open',
+      null,
+      'paused_takeover',
+      OPERATOR_ID,
+    ]);
+    expect(client.statements[0]?.sql).toContain('takeover_operator_id IS NOT DISTINCT FROM $4');
+  });
+
+  it('reports a conflict and creates nothing when no row of this tenant matched', async () => {
     const { repository, client, boundTenants } = harnessFor({ state: { rows: [] } });
 
     await expect(
-      repository.setState(OTHER_TENANT, CONVERSATION_ID, 'closed', null),
-    ).resolves.toBe(false);
+      repository.setState(OTHER_TENANT, CONVERSATION_ID, 'open', null, 'closed', null),
+    ).resolves.toBe('CONFLICT');
 
-    // A control action never inserts the conversation it was asked to move, and the tenant it was
-    // bound to is the caller's own.
     expect(boundTenants).toEqual([OTHER_TENANT]);
     expect(client.statements.map((statement) => statement.kind)).toEqual(['state']);
   });
@@ -491,7 +608,14 @@ describe('ConversationRepository.setState', () => {
 
     for (const wire_state of ['ACTIVE', 'HUMAN_TAKEOVER', 'CLOSED']) {
       const refusal = await refusalOf(
-        repository.setState(TENANT, CONVERSATION_ID, wire_state as ConversationState, OPERATOR_ID),
+        repository.setState(
+          TENANT,
+          CONVERSATION_ID,
+          'open',
+          null,
+          wire_state as ConversationState,
+          OPERATOR_ID,
+        ),
       );
 
       expect(refusal, wire_state).toContain('CONVERSATION_STATE_INVALID');
@@ -501,11 +625,14 @@ describe('ConversationRepository.setState', () => {
     expect(client.statements).toEqual([]);
   });
 
-  it('refuses a blank operator identity before opening a transaction', async () => {
+  it('refuses a blank expected or new operator identity before opening a transaction', async () => {
     const { repository, client } = harnessFor({});
 
     await expect(
-      repository.setState(TENANT, CONVERSATION_ID, 'paused_takeover', '   '),
+      repository.setState(TENANT, CONVERSATION_ID, 'open', null, 'paused_takeover', '   '),
+    ).rejects.toThrow('CONVERSATION_OPERATOR_INVALID');
+    await expect(
+      repository.setState(TENANT, CONVERSATION_ID, 'paused_takeover', '   ', 'open', null),
     ).rejects.toThrow('CONVERSATION_OPERATOR_INVALID');
     expect(client.statements).toEqual([]);
   });
@@ -535,6 +662,34 @@ describe('ConversationRepository.clearTakeoverIfOwned', () => {
   });
 });
 
+
+describe('ConversationRepository.clearOrphanedTakeoverIfOwned', () => {
+  it('atomically preserves paused takeovers with an assigned handoff', async () => {
+    const { repository, client } = harnessFor({ state: { rows: [{ id: CONVERSATION_ID }] } });
+
+    await expect(
+      repository.clearOrphanedTakeoverIfOwned(TENANT, CONVERSATION_ID, OPERATOR_ID),
+    ).resolves.toBe(true);
+
+    expect(client.statements[0]?.params).toEqual([TENANT, CONVERSATION_ID, OPERATOR_ID]);
+    expect(client.statements[0]?.sql).toContain("h.status = 'ASSIGNED'");
+    expect(client.statements[0]?.sql).toContain('NOT EXISTS');
+  });
+});
+
+describe('ConversationRepository.listPausedTakeovers', () => {
+  it('pages takeover candidates by conversation id so full pages can continue fairly', async () => {
+    const candidate = { conversation_id: CONVERSATION_ID, takeover_operator_id: OPERATOR_ID };
+    const { repository, client, boundTenants } = harnessFor({ read: { rows: [candidate] } });
+
+    await expect(repository.listPausedTakeovers(TENANT, 20, SECOND_MESSAGE_ID)).resolves.toEqual([candidate]);
+
+    expect(boundTenants).toEqual([TENANT]);
+    expect(bindingsOf(client, 'read')).toEqual([TENANT, 20, SECOND_MESSAGE_ID]);
+    expect(client.statements[0]?.sql).toContain('id > $3::uuid');
+    expect(client.statements[0]?.sql).toContain('ORDER BY id ASC');
+  });
+});
 describe('ConversationRepository.appendMessage', () => {
   it('appends the turn and advances the conversation in one transaction', async () => {
     const { repository, client, boundTenants } = harnessFor({
@@ -557,6 +712,28 @@ describe('ConversationRepository.appendMessage', () => {
       'Xin chao',
     ]);
   });
+  it('stores a new operator reply as STORED until a widget read acknowledges delivery', async () => {
+    const { repository, client } = harnessFor({
+      touch: { rows: [{ id: CONVERSATION_ID }] },
+      message: { rows: [{ id: MESSAGE_ID }] },
+    });
+
+    await repository.appendMessage(messageInput({
+      sender_type: 'operator',
+      sender_id: OPERATOR_ID,
+      content: 'Human response',
+    }));
+
+    expect(bindingsOf(client, 'message')).toEqual([
+      TENANT,
+      CONVERSATION_ID,
+      'operator',
+      OPERATOR_ID,
+      'Human response',
+      'STORED',
+    ]);
+  });
+
 
   it('stores the content type and metadata when the caller supplies them', async () => {
     const { repository, client } = harnessFor({
@@ -738,5 +915,63 @@ describe('ConversationRepository.listMessages', () => {
 
     expect(boundTenants).toEqual([]);
     expect(client.statements).toEqual([]);
+  });
+});
+
+describe('ConversationRepository.list', () => {
+  it('includes customer names without a data-class filter or cross-tenant join', async () => {
+    const row = conversationRow({ customer_display_name: 'Stack UI QA 123' });
+    const { repository, client, boundTenants } = harnessFor({ read: { rows: [row] } });
+
+    const conversations = await repository.list(TENANT, 10);
+
+    expect(boundTenants).toEqual([TENANT]);
+    expect(conversations[0]).toMatchObject({
+      conversation_id: CONVERSATION_ID,
+      customer_id: CUSTOMER_ID,
+      customer_display_name: 'Stack UI QA 123',
+    });
+    expect(client.statements[0]?.sql).toContain('LEFT JOIN agentos.customers');
+    expect(client.statements[0]?.sql).toContain('c.tenant_id = cv.tenant_id AND c.id = cv.customer_id');
+    expect(client.statements[0]?.sql).toContain('WHERE cv.tenant_id = $1');
+    expect(client.statements[0]?.sql).not.toContain('data_class');
+    expect(bindingsOf(client, 'read')).toEqual([TENANT, 10]);
+  });
+});
+
+describe('ConversationRepository.listWidgetMessages', () => {
+  it('returns one scoped cursor page and marks its operator messages delivered', async () => {
+    const { repository, client, boundTenants } = harnessFor({
+      messages: {
+        rows: [messagePageRow({
+          sender_type: 'operator',
+          sender_id: OPERATOR_ID,
+          content: 'Human response',
+          delivery_status: 'STORED',
+        })],
+      },
+      delivery: { rowCount: 1 },
+    });
+    const page = await repository.listWidgetMessages({
+      tenant_id: TENANT,
+      conversation_id: CONVERSATION_ID,
+      after: SECOND_MESSAGE_ID,
+      limit: 1,
+    });
+
+    expect(boundTenants).toEqual([TENANT]);
+    expect(page).toEqual({
+      messages: [{
+        message_id: MESSAGE_ID,
+        sender_type: 'operator',
+        sender_id: OPERATOR_ID,
+        content: 'Human response',
+        created_at: '2026-01-01T00:05:00.000Z',
+        delivery_status: 'DELIVERED',
+      }],
+      next_cursor: null,
+    });
+    expect(bindingsOf(client, 'messages')).toEqual([TENANT, CONVERSATION_ID, SECOND_MESSAGE_ID, 2]);
+    expect(bindingsOf(client, 'delivery')).toEqual([TENANT, CONVERSATION_ID, [MESSAGE_ID]]);
   });
 });

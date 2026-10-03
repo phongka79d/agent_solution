@@ -16,6 +16,7 @@ function conversation(tenant_id = TENANT, state: 'open' | 'paused_takeover' | 'c
     conversation_id: CONVERSATION_ID,
     tenant_id,
     customer_id: 'customer-a',
+    customer_display_name: 'Alice',
     channel: 'WEB_CHAT' as const,
     external_thread_id: 'thread-a',
     active_agent: 'support',
@@ -49,6 +50,7 @@ function buildHarness(options: {
     conversations: {
       get: vi.fn(async (tenant_id: string) => (tenant_id === row.tenant_id ? row : null)),
       list: vi.fn(async (tenant_id: string) => (tenant_id === row.tenant_id ? [row] : [])),
+      handoffState: vi.fn(async () => ({ has_enqueued_handoff: false, has_assigned_handoff: false })),
       listMessages: vi.fn(async (input: { tenant_id: string }) =>
         input.tenant_id === row.tenant_id ? messages : [],
       ),
@@ -102,7 +104,12 @@ describe('operator conversation routes', () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
       next_cursor: null,
-      items: [{ conversation_id: CONVERSATION_ID, tenant_id: TENANT }],
+      items: [{
+        conversation_id: CONVERSATION_ID,
+        customer: { customer_id: 'customer-a', display_name: 'Alice' },
+        ownership: 'HUMAN_ME',
+        owner: { operator_id: 'operator-a', display_name: null },
+      }],
     });
     expect(list).toHaveBeenCalledWith(TENANT, 10);
     expect(audit).toHaveBeenCalledWith(expect.objectContaining({

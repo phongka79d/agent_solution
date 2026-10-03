@@ -1,5 +1,5 @@
 import { AuthProviderError } from '../../../../lib/auth/provider';
-import { createDemoAuthProvider, demoGateResponse } from '../../../../lib/auth/demo-provider';
+import { authGateResponse, createConfiguredAuthProvider } from '../../../../lib/auth/selection';
 import {
   jsonResponse,
   mutationProtection,
@@ -38,14 +38,14 @@ function errorResponse(error: unknown): Response {
 
 export async function POST(request: Request): Promise<Response> {
   const env = process.env as AuthEnvironment;
-  const gate = demoGateResponse(env);
+  const gate = authGateResponse(env);
   if (gate) return gate;
   const protection = mutationProtection(request, null);
   if (protection) return protection;
   const body = await readBody(request);
   const email = typeof body?.email === 'string' ? body.email : '';
   const password = typeof body?.password === 'string' ? body.password : '';
-  const provider = createDemoAuthProvider({ env });
+  const provider = createConfiguredAuthProvider({ env });
   try {
     const result = await provider.signIn(email, password);
     const response = wantsJson(request)

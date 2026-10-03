@@ -7,10 +7,11 @@ import { ApprovalCenter } from '../../../components/approvals/ApprovalCenter';
 export default function ApprovalsPage() {
   return (
     <RequirePermission permission="approval:read">
-      <main className="space-y-6" aria-label="Danh sách phê duyệt">
+      {/* The app shell already renders the page <main>; a second one nests landmarks (T6.8). */}
+      <section className="space-y-6" aria-label="Danh sách phê duyệt">
         <PageHeader title="Phê duyệt" description="Xem xét các đề xuất trước khi chúng có thể tạo tác động." />
         <ApprovalCenter />
-      </main>
+      </section>
     </RequirePermission>
   );
 }

@@ -68,7 +68,16 @@ export function fixtureRow(
   const tool_binding = overrides.tool_binding ?? 'API-001.CatalogConnector';
 
   const base: ISkillContract = {
+    display_key: skill_id.slice('skill.'.length),
+    domain: skill_id.split('.')[1] ?? '',
+    config_schema: { type: 'object', properties: {}, additionalProperties: false },
+    autonomy_class: 'NEVER',
+    receipt_ref: `${skill_id}.receipt`,
+    completion: 'SYNC',
+    connector_kinds: [tool_binding],
     skill_id,
+    requires_verified_identity: false,
+    requires_consent: false,
     purpose: 'fixture row for the registry and runtime suites',
     effect_class,
     guarded_dependency: 'Test.Fixture',

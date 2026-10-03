@@ -3,17 +3,31 @@ import { packageName as adaptersPackageName } from '@agentos/adapters';
 import {
   packageName as coreEnginePackageName,
   RevenueOrchestrator,
+  appendTerminalRunNotice,
+  createSecretCipher,
+  SecretResolver,
   type AutonomyAdmissionPort,
+  type AutonomyService,
 } from '@agentos/core-engine';
 import {
   packageName as databasePackageName,
+  ConnectorBindingRepository,
+  ConversationRepository,
   DurableWorkflowRepository,
+  EffectReservationRepository,
+  AgentActivationRepository,
+  SkillCatalogRepository,
+  P5ProvisioningRepository,
+  SecretRepository,
   assertCompleteCheckpoint,
   readCrossDomainLifecycle,
+  type ConversationRepository as ConversationRepositoryType,
   type DurableTaskRecord,
   type TenantTransactionRunner,
+  PlatformDirectoryRepository,
 } from '@agentos/database';
-import { packageName as skillsPackageName } from '@agentos/skills';
+import { packageName as skillsPackageName, PLATFORM_SKILL_ROWS } from '@agentos/skills';
+import { createWorkerSkillGate } from './runtime/skill-availability.js';
 import type {
   ActionDraft,
   ExecutionReceipt,
@@ -25,6 +39,11 @@ import { createCrossDomainHandoffBroker } from './runtime/shared/cross-domain-ha
 
 import { createWorkerConnectors, type WorkerConnectorEnv, type WorkerConnectorOptions } from './runtime/connectors.js';
 import { nodeHmacSha256Hex } from './runtime/hmac.js';
+import {
+  createConnectorRegistry,
+  type ConnectorRegistry,
+  type ConnectorSecretResolver,
+} from './runtime/connector-registry.js';
 
 import {
   type CareOrchestratorFactoryOptions,
@@ -44,6 +63,12 @@ import {
 import { createDatabaseAutonomy } from './worker-database-autonomy.js';
 import { createWorkerDomainBindings } from './worker-bindings.js';
 import { createWorkerPoller, type WorkerDrainResult, type WorkerPollerHandle } from './worker-polling.js';
+import {
+  createTenantDiscovery,
+  DEFAULT_TENANT_DISCOVERY_INTERVAL_MS,
+  type ActiveTenantRepository,
+  type TenantDiscoveryHandle,
+} from './tenant-discovery.js';
 
 export type { WorkerDrainResult, WorkerPollerHandle } from './worker-polling.js';
 
@@ -145,6 +170,15 @@ export interface WorkerHandle {
    * @returns The provider receipt.
    */
   dispatchAction(draft: ActionDraft): Promise<ExecutionReceipt>;
+  /** Provider-side observation for a reserved effect; never dispatches or retries it. */
+  reconcileEffect(input: {
+    readonly tenant_id: string;
+    readonly effect_key: string;
+    readonly action_id?: string;
+    readonly adapter_target?: string;
+    readonly skill_id: string;
+  }): Promise<{ readonly outcome: 'SUCCEEDED' | 'FAILED' | 'INDETERMINATE'; readonly receipt?: ExecutionReceipt }>;
+  getTenantIds(): readonly string[];
   close(): Promise<WorkerDrainResult>;
 }
 
@@ -159,6 +193,8 @@ export interface WorkerEnv extends WorkerConnectorEnv {
   readonly DATABASE_URL?: string;
   readonly WORKER_TENANT_CONCURRENCY?: string;
   readonly WORKER_DRAIN_TIMEOUT_MS?: string;
+  readonly ENCRYPTION_KEY_AES256?: string;
+  readonly ENCRYPTION_KEY_AES256_PREVIOUS?: string;
   /**
    * Enables the brokered cross-domain journey (`marketing → sales → care → retention`). Absent or
    * not `true`, no broker is bound and a plan that declares a handoff refuses
@@ -181,12 +217,17 @@ export interface WorkerExecutionOptions extends WorkerConnectorOptions {
   readonly marketingOrchestratorFactory?: (tenant_id: string) => Promise<RevenueOrchestrator | null> | RevenueOrchestrator | null;
   readonly marketingFactoryOptions?: MarketingOrchestratorFactoryOptions;
   readonly domainRegistry?: DomainRuntimeRegistry;
+  readonly connectorRegistry?: ConnectorRegistry;
   readonly pollIntervalMs?: number;
   readonly leaseDurationMs?: number;
   readonly tenantConcurrency?: number;
   readonly drainTimeoutMs?: number;
   readonly now?: () => Date;
   readonly setTimeout?: (handler: () => void, timeout: number) => NodeJS.Timeout;
+  readonly tenantDiscoveryRepository?: ActiveTenantRepository;
+  readonly tenantDiscoveryIntervalMs?: number;
+  readonly setInterval?: (handler: () => void, timeout: number) => NodeJS.Timeout;
+  readonly clearInterval?: (handle: NodeJS.Timeout) => void;
   readonly clearTimeout?: (handle: NodeJS.Timeout) => void;
   readonly autoStartPolling?: boolean;
   /** Explicit admission from the process readiness gate; absent means polling stays disabled. */
@@ -198,6 +239,10 @@ export interface WorkerExecutionOptions extends WorkerConnectorOptions {
   readonly crossDomainHandoff?: ICrossDomainHandoffBroker;
   /** Persistence the broker reads the durable journey from; defaults to the real repository. */
   readonly handoffRepository?: { readCrossDomainLifecycle: typeof readCrossDomainLifecycle };
+  /** Persists replay-safe system notifications for terminal conversational runs. */
+  readonly conversationRepository?: Pick<ConversationRepositoryType, 'appendMessage'>;
+  /** Reads the durable reservation of a reclaimed mutating step before it is parked. */
+  readonly effectReservationRepository?: Pick<EffectReservationRepository, 'getReservation'>;
 }
 
 function parsePositiveWorkerInteger(raw: string | undefined, name: string, defaultValue: number): number {
@@ -263,14 +308,19 @@ export async function processClaimedTask(params: {
   workflowRepository: Pick<DurableWorkflowRepository, 'getTask' | 'releaseTaskLease' | 'recordFailure' | 'transitionTask'>;
   orchestratorFactory?: (tenant_id: string) => Promise<RevenueOrchestrator | null> | RevenueOrchestrator | null;
   registry?: DomainRuntimeRegistry | undefined;
+  /** Rechecks database domain activation before refusing a cached missing binding. */
+  refreshRegistry?: (() => Promise<DomainRuntimeRegistry>) | undefined;
   signal?: AbortSignal | undefined;
+  conversationRepository?: Pick<ConversationRepositoryType, 'appendMessage'>;
+  /** Absent in a binding without durable reservations: every reclaimed mutating step then parks. */
+  effectReservations?: Pick<EffectReservationRepository, 'getReservation'>;
 }): Promise<void> {
   const { taskRecord, tenant_id, worker_id, workflowRepository, orchestratorFactory, signal: abortSignal } = params;
   const hadResumeEvent = hasResumeEvent(taskRecord.state_payload);
   const parkedWithoutResumeEvent =
     (taskRecord.state === 'waiting' || taskRecord.state === 'awaiting_human') && !hadResumeEvent;
 
-  const registry = params.registry ?? (
+  let registry = params.registry ?? (
     orchestratorFactory
       ? createDomainRuntimeRegistry([{
           contract: CARE_SIGNAL_CONTRACT,
@@ -329,10 +379,16 @@ export async function processClaimedTask(params: {
       const signal = record?.['signal'];
       const signalRecord = asRecord(signal);
       const signalPayload = asRecord(signalRecord?.['payload']);
-      const moduleName = typeof signalPayload?.['module'] === 'string'
-        ? signalPayload['module']
-        : null;
-
+      // AUTH-4 pause checkpoints intentionally omit the inbound signal, so the persisted plan is
+      // the authoritative source for the resumed run's domain. Retain the signal fallback for
+      // parked checkpoints created before that plan-domain contract was persisted.
+      const plan = asRecord(record?.['plan']);
+      const planDomain = plan?.['domain'];
+      const moduleName = typeof planDomain === 'string'
+        ? planDomain
+        : typeof signalPayload?.['module'] === 'string'
+          ? signalPayload['module']
+          : null;
       if (!moduleName) {
         await workflowRepository.recordFailure({
           tenant_id,
@@ -345,7 +401,12 @@ export async function processClaimedTask(params: {
         return;
       }
 
-      const binding = registry.resolve(moduleName);
+      let binding = registry.resolve(moduleName);
+      if (binding === null && params.refreshRegistry !== undefined) {
+        registry = await params.refreshRegistry();
+        abortSignal?.throwIfAborted();
+        binding = registry.resolve(moduleName);
+      }
       if (!binding) {
         await workflowRepository.recordFailure({
           tenant_id,
@@ -383,13 +444,21 @@ export async function processClaimedTask(params: {
       return;
     }
 
-    const pending = record?.['pending_action'] ?? null;
-    if (typeof pending === 'object' && pending !== null && !Array.isArray(pending)
-      && 'mutating' in pending && pending.mutating === true) {
-      await workflowRepository.transitionTask(tenant_id, taskRecord.run_id, 'waiting',
-        'EFFECT_UNKNOWN: reclaimed mutating action requires provider reconciliation',
-        payload, { expected_task_version: taskRecord.task_version, lease_owner: worker_id });
-      return;
+    const pending = asRecord(record?.['pending_action']);
+    if (pending !== null && pending['mutating'] === true) {
+      // A reclaimed mutating step may have landed its effect, so it parks for reconciliation. The
+      // one exception is a reservation the provider confirmed absent (FAILED): the orchestrator's
+      // effect slot reconciles and reopens that exact key, so the step can run again (§4.4).
+      const effectKey = pending['effect_key'];
+      const reservation = params.effectReservations !== undefined && typeof effectKey === 'string'
+        ? await params.effectReservations.getReservation(tenant_id, effectKey)
+        : null;
+      if (reservation?.status !== 'FAILED') {
+        await workflowRepository.transitionTask(tenant_id, taskRecord.run_id, 'waiting',
+          'EFFECT_UNKNOWN: reclaimed mutating action requires provider reconciliation',
+          payload, { expected_task_version: taskRecord.task_version, lease_owner: worker_id });
+        return;
+      }
     }
 
     const signal = record?.['signal'];
@@ -398,7 +467,12 @@ export async function processClaimedTask(params: {
 
     if (signalPayload !== null && typeof signalPayload['module'] === 'string') {
       const moduleName = signalPayload['module'];
-      const binding = registry.resolve(moduleName);
+      let binding = registry.resolve(moduleName);
+      if (binding === null && params.refreshRegistry !== undefined) {
+        registry = await params.refreshRegistry();
+        abortSignal?.throwIfAborted();
+        binding = registry.resolve(moduleName);
+      }
       if (!binding) {
         await workflowRepository.recordFailure({
           tenant_id,
@@ -459,8 +533,20 @@ export async function processClaimedTask(params: {
       lease_owner: worker_id,
     });
   } finally {
-    if (!abortSignal?.aborted) {
-      const current = await workflowRepository.getTask(tenant_id, taskRecord.run_id);
+    const current = await workflowRepository.getTask(tenant_id, taskRecord.run_id);
+    try {
+      if (current?.state === 'failed' || current?.state === 'stopped') {
+        await appendTerminalRunNotice(
+          {
+            tenant_id,
+            run_id: taskRecord.run_id,
+            state: current.state,
+            state_payload: taskRecord.state_payload,
+          },
+          params.conversationRepository ?? new ConversationRepository(),
+        );
+      }
+    } finally {
       if (!abortSignal?.aborted) {
         const currentPayload = asRecord(current?.state_payload);
         const currentPending = currentPayload?.['pending_action'];
@@ -503,25 +589,27 @@ export function startWorker(
   );
   const tenantConcurrency = options.tenantConcurrency ?? configuredTenantConcurrency;
   const drainTimeoutMs = options.drainTimeoutMs ?? configuredDrainTimeoutMs;
-  const connectors = createWorkerConnectors(env, options);
+  const connectors = createWorkerConnectors(env, { ...options, tenantDataClass: undefined });
   const workerId = options.workerId ?? `worker_${randomUUID().slice(0, 8)}`;
   const blockers: string[] = [];
 
-  // Polling scope is independent of the knowledge corpus tenant allowlist.
-  const rawTenants = options.tenantIds ?? (
-    typeof env.WORKER_TENANT_IDS === 'string'
-      ? env.WORKER_TENANT_IDS.split(',').map((id) => id.trim()).filter(Boolean)
-      : []
-  );
-
-  const tenantIds = [...rawTenants];
-  // The tenant identifier is a `uuid` column, so the check is the generic UUID shape. The RFC 4122
-  // version/variant nibbles are deliberately not required: the pilot's synthetic tenant
-  // (`11111111-1111-1111-1111-111111111111`) is a real row in the fixtures, and rejecting it here
-  // would refuse the registered tenant rather than an unregistered one.
-  if (tenantIds.some((id) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))) {
+  // An explicit tenant list is retained as a static embedding/test seam. Production discovers
+  // active tenants from the platform projection and treats env lists only as filters.
+  const dynamicTenantDiscovery = options.tenantIds === undefined;
+  const tenantIds = [...(options.tenantIds ?? [])];
+  const tenantFilter = dynamicTenantDiscovery && typeof env.WORKER_TENANT_IDS === 'string'
+    && env.WORKER_TENANT_IDS.trim().length > 0
+    ? [...new Set(env.WORKER_TENANT_IDS.split(',').map((id) => id.trim()).filter(Boolean))]
+    : undefined;
+  const tenantIdsToValidate = options.tenantIds ?? tenantFilter ?? [];
+  // UUID shape validation deliberately accepts the pilot's synthetic fixture UUID.
+  if (tenantIdsToValidate.some((id) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))) {
     throw new Error('WORKER_TENANT_IDS_INVALID: expected comma-separated tenant UUIDs');
   }
+  const rawModuleFilter = env.ENABLED_AGENT_MODULES;
+  const enabledModules = rawModuleFilter === undefined || rawModuleFilter.trim().length === 0
+    ? dynamicTenantDiscovery ? VALID_AGENT_MODULES : parseEnabledAgentModules(undefined)
+    : parseEnabledAgentModules(rawModuleFilter);
   const pollIntervalMs = options.pollIntervalMs ?? 1000;
   const leaseDurationMs = options.leaseDurationMs ?? 30000;
   if (!Number.isSafeInteger(pollIntervalMs) || pollIntervalMs < 1
@@ -530,10 +618,66 @@ export function startWorker(
   }
 
   const workflowRepository = options.workflowRepository ?? new DurableWorkflowRepository();
+  const conversationRepository = options.conversationRepository ?? new ConversationRepository();
+  const effectReservations = options.effectReservationRepository ?? new EffectReservationRepository();
   const autonomy = createDatabaseAutonomy({
     databaseRunner: options.databaseRunner,
     databaseUrl: env.DATABASE_URL,
     autonomy: options.autonomy,
+  });
+  const tenantRepository = new P5ProvisioningRepository(options.databaseRunner);
+  let secretResolver: SecretResolver | null = null;
+  const secretEnv = {
+    ENCRYPTION_KEY_AES256: env.ENCRYPTION_KEY_AES256,
+    ENCRYPTION_KEY_AES256_PREVIOUS: env.ENCRYPTION_KEY_AES256_PREVIOUS,
+  };
+  const connectorSecrets: ConnectorSecretResolver = {
+    async resolve(tenant_id, secret_id) {
+      if (secretResolver === null) {
+        const cipher = createSecretCipher(secretEnv);
+        secretResolver = new SecretResolver(
+          new SecretRepository(cipher, options.databaseRunner),
+          cipher,
+        );
+      }
+      return secretResolver.resolve(tenant_id, secret_id);
+    },
+  };
+  const connectorRegistry = options.connectorRegistry ?? createConnectorRegistry({
+    bindings: new ConnectorBindingRepository(options.databaseRunner),
+    secrets: connectorSecrets,
+    env,
+    dataClassOf: (tenant_id) => tenantRepository.getTenantDataClass(tenant_id),
+    ...(options.now === undefined ? {} : { now: options.now }),
+  });
+
+  // One availability gate for the whole worker (PLAN T4.3): every domain's planner and skill engine
+  // observes the same tenant settings, connector health, assignments, autonomy and breakers, so a
+  // refusal a planner skips is the refusal the engine would apply.
+  const guardedDependencyBySkillId: Record<string, string> = Object.fromEntries(
+    PLATFORM_SKILL_ROWS.map((row) => [row.skill_id, row.guarded_dependency]),
+  );
+  const autonomyInspector = autonomy !== undefined
+    && 'inspect' in autonomy
+    && typeof autonomy.inspect === 'function'
+    // The service we construct above exposes `inspect`; the admission port just erases it.
+    ? (autonomy as Pick<AutonomyService, 'inspect'>)
+    : undefined;
+  const { gate: skillGate, breakers: skillBreakers } = createWorkerSkillGate({
+    dependencyFor: (skill_id) => guardedDependencyBySkillId[skill_id] ?? null,
+    api001BoundForTenant: async (tenant_id) => (await connectorRegistry.erpFor(tenant_id)) !== null,
+    ...(options.now === undefined ? {} : { now: () => options.now!().getTime() }),
+    ...(autonomyInspector === undefined ? {} : { autonomy: autonomyInspector }),
+    repositories: {
+      catalog: new SkillCatalogRepository(
+        options.databaseRunner === undefined ? {} : { tenantTransaction: options.databaseRunner },
+      ),
+      connectors: new ConnectorBindingRepository(options.databaseRunner),
+      agents: new AgentActivationRepository(
+        options.databaseRunner === undefined ? {} : { tenantTransaction: options.databaseRunner },
+      ),
+      provisioning: new P5ProvisioningRepository(options.databaseRunner),
+    },
   });
 
   // The brokered journey is opt-in and fail-closed: without an explicit `true` no broker is bound,
@@ -549,9 +693,7 @@ export function startWorker(
     ? {
         workerId,
         workflowRepository: workflowRepository as DurableWorkflowRepository,
-        // The connector's own read surface, or `null` when no system of record is bound — in which
-        // case the order skill refuses at dispatch instead of the worker substituting a cached value.
-        erp_read: connectors.erp_read,
+        // ERP access is resolved per task tenant through the connector registry.
         env,
         ...(crossDomainHandoff === undefined ? {} : { crossDomainHandoff }),
         ...(autonomy === undefined ? {} : { autonomy }),
@@ -569,12 +711,13 @@ export function startWorker(
           : { autonomy }),
       };
 
-  const enabledModules = parseEnabledAgentModules(env.ENABLED_AGENT_MODULES);
+  
   const bindings = createWorkerDomainBindings({
     env,
     workerId,
     workflowRepository,
     connectors,
+    connectorRegistry,
     enabledModules,
     blockers,
     autonomy,
@@ -589,19 +732,59 @@ export function startWorker(
     salesFactoryOptions: options.salesFactoryOptions,
     marketingOrchestratorFactory: options.marketingOrchestratorFactory,
     marketingFactoryOptions: options.marketingFactoryOptions,
+    skillGate,
+    skillBreakers,
   });
   const registry = options.domainRegistry ?? createDomainRuntimeRegistry(bindings);
-
-  if (tenantIds.length === 0) {
-    blockers.push('WORKER_TENANT_IDS_EMPTY: No tenants configured; background polling disabled (fail closed).');
-  }
   const autoStartPolling = options.autoStartPolling ?? true;
   const readiness = options.readiness === true;
+  let tenantDiscovery: TenantDiscoveryHandle | null = null;
+  if (dynamicTenantDiscovery) {
+    tenantDiscovery = createTenantDiscovery({
+      repository: options.tenantDiscoveryRepository ?? new PlatformDirectoryRepository(),
+      ...(tenantFilter === undefined ? {} : { tenantIds: tenantFilter }),
+      enabledDomains: enabledModules,
+      intervalMs: options.tenantDiscoveryIntervalMs ?? DEFAULT_TENANT_DISCOVERY_INTERVAL_MS,
+      ...(options.setInterval === undefined ? {} : { setInterval: options.setInterval }),
+      ...(options.clearInterval === undefined ? {} : { clearInterval: options.clearInterval }),
+      ...(options.onError === undefined
+        ? {}
+        : { onError: (error: unknown) => options.onError?.('tenant-discovery', error) }),
+    });
+    if (autoStartPolling && readiness) tenantDiscovery.start();
+  }
+
+  const tenantRegistryCache = new Map<string, DomainRuntimeRegistry>();
+  const registryForTenantDomains = (domains: readonly string[]): DomainRuntimeRegistry => {
+    const key = [...domains].sort().join(',');
+    const cached = tenantRegistryCache.get(key);
+    if (cached !== undefined) return cached;
+    const allowed = new Set(domains);
+    const tenantBindings = registry.modules()
+      .filter((module) => allowed.has(module))
+      .map((module) => registry.resolve(module))
+      .filter((binding): binding is NonNullable<typeof binding> => binding !== null);
+    const tenantRegistry = createDomainRuntimeRegistry(tenantBindings);
+    tenantRegistryCache.set(key, tenantRegistry);
+    return tenantRegistry;
+  };
+  const getTenantRuntimes = tenantDiscovery === null
+    ? undefined
+    : () => tenantDiscovery!.tenants.map(({ tenant_id, enabled_domains }) => ({
+        tenant_id,
+        registry: registryForTenantDomains(enabled_domains),
+      }));
+
+  if (!dynamicTenantDiscovery && tenantIds.length === 0) {
+    blockers.push('WORKER_TENANT_IDS_EMPTY: No tenants configured; background polling disabled (fail closed).');
+  }
   if (autoStartPolling && !readiness) {
     blockers.push('WORKER_READINESS_REQUIRED: readiness gate has not admitted background polling.');
   }
+  const discoveryForClaims = tenantDiscovery;
   const poller = createWorkerPoller({
     tenantIds,
+    ...(getTenantRuntimes === undefined ? {} : { getTenantRuntimes }),
     registry,
     workflowRepository,
     workerId,
@@ -615,12 +798,21 @@ export function startWorker(
     ...(options.clearTimeout === undefined ? {} : { clearTimeout: options.clearTimeout }),
     autoStartPolling,
     onError: options.onError,
-    processTask: ({ taskRecord, tenant_id, signal }) => processClaimedTask({
+    processTask: ({ taskRecord, tenant_id, signal, registry: tenantRegistry }) => processClaimedTask({
       taskRecord,
       tenant_id,
       worker_id: workerId,
       workflowRepository,
-      registry,
+      registry: tenantRegistry,
+      ...(discoveryForClaims === null ? {} : {
+        refreshRegistry: async () => {
+          const tenants = await discoveryForClaims.refresh();
+          const tenant = tenants.find((candidate) => candidate.tenant_id === tenant_id);
+          return registryForTenantDomains(tenant?.enabled_domains ?? []);
+        },
+      }),
+      conversationRepository,
+      effectReservations,
       signal,
     }),
   });
@@ -632,8 +824,23 @@ export function startWorker(
     poller,
     blockers: Object.freeze(blockers),
     registry,
+    getTenantIds: () => tenantDiscovery?.tenantIds ?? tenantIds,
     dispatchAction: (draft) => connectors.dispatcher.dispatch(draft),
-    close: () => poller.stop(),
+    reconcileEffect: async (input) => {
+      // ERP targets are qualified (`API-001.OrderConnector`); any other provider is not observable here.
+      const target = input.adapter_target;
+      if (target !== undefined && target !== 'API-001' && !target.startsWith('API-001.')) {
+        return { outcome: 'INDETERMINATE' };
+      }
+      const erp = await connectorRegistry.erpFor(input.tenant_id);
+      if (erp?.reconcile === undefined) return { outcome: 'INDETERMINATE' };
+      return erp.reconcile(input);
+    },
+    close: async () => {
+      const result = await poller.stop();
+      if (tenantDiscovery !== null) await tenantDiscovery.stop();
+      return result;
+    },
   };
 
 

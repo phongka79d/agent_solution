@@ -7,6 +7,35 @@
  * this package publishes as a type-only entry point.
  */
 export { canonicalizeJson, sha256CanonicalJson } from './canonical-json.js';
+export { SecretRepository } from './secrets.js';
+export type {
+  EncryptedSecret,
+  EncryptedTenantSecret,
+  PlatformSecretDescription,
+  PutPlatformSecretInput,
+  PutTenantSecretInput,
+  SecretAuditContext,
+  SecretEncryptor,
+  TenantSecretDescription,
+} from './secrets.js';
+export { IdentityRepository } from './auth-identity.js';
+export type {
+  AuthTransactionRunner,
+  IdentityAcceptedInvitation,
+  IdentityActiveMembership,
+  IdentityInvitation,
+  IdentityInvitationInspection,
+  IdentityMembershipScope,
+  IdentityPlatformAdmin,
+  IdentityMembership,
+  IdentityMembershipStatus,
+  IdentityRepositoryOptions,
+  IdentityRoleBundle,
+  IdentitySession,
+  IdentityTenantMember,
+  IdentityUserCredential,
+} from './auth-identity.js';
+
 
 
 export {
@@ -16,6 +45,7 @@ export {
 export type {
   AdmitCareTurnInput,
   AdmissionOutcome,
+  CampaignAdmission,
 } from './run-admission.js';
 
 export {
@@ -38,10 +68,13 @@ export type {
   DurableTaskState,
   FailureClass,
   PersistedErrorClass,
-  RecordTaskFailureInput,
   QueueReconciliationInput,
+  QueueRetryTimerInput,
+  ReconciliationCandidate,
+  RecordTaskFailureInput,
   ReleaseTaskLeaseInput,
   RenewTaskLeaseInput,
+  RetryTimerCandidate,
 } from './durable-workflows.js';
 export { RunResponseRepository } from './run-responses.js';
 export {
@@ -54,6 +87,9 @@ export type {
   RunStage,
   RunStageEventRecord,
   AppendRunStageEventInput,
+  RunStageResultStatus,
+  RunStageResultRecord,
+  AppendRunStageResultInput,
   ProviderCallObservedStatus,
   ProviderCallLedgerRecord,
   AppendProviderCallInput,
@@ -107,7 +143,7 @@ export type {
   ConversationMessageScope,
   ConversationRecord,
   ConversationState,
-  MessageSenderType,
+  WidgetConversationMessagePage,
 } from './conversations.js';
 export { CustomerEventRepository } from './customer-events.js';
 export type {
@@ -141,9 +177,10 @@ export { P5AutonomyRepository, AutonomyRepository } from './p5-autonomy.js';
 export type {
   AppendAutonomyPolicyEventInput,
   AppendTokenCostRecordInput,
-  AutonomyPolicyEventRecord,
+  ReserveLlmTokenBudgetInput,
   AutonomyPolicyRecord,
   AutonomyPolicyState,
+  AutonomyPromotionRequestRecord,
   CommitAutonomyPolicyInput,
   CommitTenantAutonomyControlInput,
   TenantAutonomyControlRecord,
@@ -162,10 +199,14 @@ export type {
   CommitTenantWorkspaceInput,
   ConnectorConfigurationRecord,
   ConnectorConfigurationStatus,
+  ConnectorMode,
   NamespaceBindingRecord,
   OwnerInputRecord,
   ProvisionTenantShellInput,
   ProvisioningEventRecord,
+  ResolveOwnerInputInput,
+  ResolveOwnerInputResult,
+  TenantDataClass,
   ResidencyConfigurationRecord,
   ResidencyStatus,
   ShopifyInstallationRecord,
@@ -185,7 +226,26 @@ export type {
   PlatformTenantRecord,
   PlatformTenantReadinessRecord,
   PlatformUsageRecord,
+  PlatformActiveTenantRecord,
+  PlatformRunListItem,
+  PlatformRunCostBreakdown,
+  PlatformRunDetail,
+  PlatformRunStepDiagnostic,
+  PlatformRunStageDiagnostic,
+  PlatformRunProviderCall,
+  PlatformRunAuditEntry,
+  PlatformRunApproval,
+  PlatformRunHandoff,
+  PlatformRunTraceDetails,
+  PlatformRunsSummaryRow,
+  PlatformReconciliationItem,
+  PlatformCompanyOverview,
 } from './platform-directory.js';
+export { PlatformCompanyRepository } from './platform-commands.js';
+export type {
+  PlatformCompanyRepositoryOptions,
+  PlatformTenantStatusRecord,
+} from './platform-commands.js';
 export { TenantGovernanceRepository } from './tenant-governance.js';
 export type { TenantGovernanceSettingsRecord } from './tenant-governance.js';
 export {
@@ -194,21 +254,34 @@ export {
 } from './company-projections.js';
 export type {
   CompanyActivityProjectionSource,
+  CompanyActivityPageOptions,
   CompanyAgentProjectionSource,
   CompanyApprovalProjectionSource,
+  CompanyCampaignProjectionSource,
   CompanyConnectorProjectionSource,
+  CompanyConversationProjectionSource,
   CompanyHandoffProjectionSource,
   CompanyOwnerInputProjectionSource,
   CompanyProjectionSources,
   CompanyReconciliationProjectionSource,
   CompanyRunProjectionSource,
 } from './company-projections.js';
+export { CompanyAnalyticsRepository, COMPANY_ANALYTICS_WINDOWS } from './company-analytics.js';
+export type {
+  CompanyAnalyticsBreakdownEntry,
+  CompanyAnalyticsKpi,
+  CompanyAnalyticsQuery,
+  CompanyAnalyticsSnapshot,
+  CompanyAnalyticsSourceStatus,
+  CompanyAnalyticsWindow,
+} from './company-analytics.js';
 export { CompanyCrmProjectionRepository } from './company-crm-projections.js';
 export type {
   CampaignListInput,
   CampaignListPage,
   CompanyCrmCampaignEngagementRow,
   CompanyCrmCampaignRow,
+  CompanyCrmCampaignSegment,
   CompanyCrmConversationRow,
   CompanyCrmConversationSummaryRow,
   CompanyCrmCustomerProfileRow,
@@ -220,3 +293,121 @@ export type {
   CustomerListInput,
   CustomerListPage,
 } from './company-crm-projections.js';
+export {
+  PlatformAuditRepository,
+  appendConfigAudit,
+} from './platform-audit.js';
+export type {
+  AuditPageQuery,
+  ConfigAuditInput,
+  PlatformAuditEvent,
+  PlatformAuditPage,
+  PlatformAuditPageQuery,
+} from './platform-audit.js';
+export { ConnectorBindingRepository, isPristineConnectorBinding } from './connector-bindings.js';
+export type {
+  ConnectorBindingActor,
+  ConnectorBindingMode,
+  ConnectorBindingRecord,
+  ConnectorBindingStatus,
+  ConnectorProbeName,
+  ConnectorProbeOutcome,
+  ConnectorProbeResult,
+  PutConnectorConfigInput,
+} from './connector-bindings.js';
+export { AgentActivationRepository } from './agent-activation.js';
+export type {
+  AgentActivationAction,
+  AgentActivationActor,
+  AgentActivationAgent,
+  AgentActivationDomain,
+  AgentActivationSnapshot,
+  AgentActivationStatus,
+  AgentActivationRepositoryOptions,
+} from './agent-activation.js';
+export { KnowledgeRepository, KNOWLEDGE_NAMESPACES, KNOWLEDGE_TYPES } from './knowledge.js';
+export type {
+  KnowledgeActor,
+  KnowledgeDocumentInput,
+  KnowledgeDocumentRecord,
+  KnowledgeDocumentNamespace,
+  KnowledgePage,
+  KnowledgeUsageRecord,
+  KnowledgePageQuery,
+  KnowledgeRepositoryOptions,
+  KnowledgeStatus,
+  KnowledgeType,
+  KnowledgeVersionRecord,
+} from './knowledge.js';
+export { SkillCatalogRepository, SkillCatalogRefusal, syncSkillCatalogAtBoot } from './skill-catalog.js';
+export type {
+  RecordSkillTestInput,
+  SkillCatalogActor,
+  SkillCatalogManifestRow,
+  SkillCatalogRecord,
+  SkillCatalogRepositoryOptions,
+  SkillCatalogSyncResult,
+  SkillEffectClass,
+  SkillHealthSnapshot,
+  SkillStageOutcomeRow,
+  SkillTestMode,
+  SkillTestOutcome,
+  SkillTestResultRecord,
+  TenantSkillSettingsRecord,
+  UpsertSkillSettingsInput,
+} from './skill-catalog.js';
+export { PlatformSkillFleetHealthRepository } from './platform-skill-health.js';
+export type {
+  PlatformSkillFleetHealthRecord,
+  PlatformSkillFleetHealthRepositoryOptions,
+} from './platform-skill-health.js';
+export { TenantProfileRepository } from './tenant-profiles.js';
+export type {
+  TenantProfileRecord,
+  TenantProfileValues,
+  UpdateTenantProfileInput,
+  UpdateTenantProfileResult,
+} from './tenant-profiles.js';
+export { LlmConfigRepository } from './llm-configs.js';
+export type {
+  LlmConfigActor,
+  LlmConfigMode,
+  LlmConfigRepositoryOptions,
+  LlmProbeResult,
+  LlmProbeScope,
+  LlmProviderStatus,
+  LlmStructuredMode,
+  PlatformLlmProviderInput,
+  PlatformLlmProviderListing,
+  PlatformLlmProviderRecord,
+  PlatformLlmProbeSummary,
+  TenantLlmConfigRecord,
+  TenantLlmOverrideInput,
+} from './llm-configs.js';
+export { TestDataRepository } from './test-data.js';
+export type {
+  TestDataRepositoryOptions,
+  TestDataResetResult,
+} from './test-data.js';
+export { TestCustomersRepository } from './test-customers.js';
+export type {
+  CreateTestCustomerInput,
+  TestCustomerConsentInput,
+  TestCustomerConsentRecord,
+  TestCustomerDetail,
+  TestCustomerEventInput,
+  TestCustomerEventRecord,
+  TestCustomerHandoffInput,
+  TestCustomerIdentityInput,
+  TestCustomerIdentityRecord,
+  TestCustomerListPage,
+  TestCustomerListQuery,
+  TestCustomerMutationContext,
+  TestCustomerOrderInput,
+  TestCustomerOrderRecord,
+  TestCustomerRecord,
+  TestCustomerServiceCaseRecord,
+  TestCustomerSupportInput,
+  TestCustomersRepositoryOptions,
+  TestDataClass,
+} from './test-customers.js';

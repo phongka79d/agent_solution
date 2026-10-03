@@ -38,7 +38,6 @@ export {
 } from './agent-runtime.js';
 
 export {
-  BoundedMap,
   SalesContextAggregator,
   createCustomerEventPurchaseEvidencePort,
   type SalesContextAggregatorOptions,
@@ -60,20 +59,6 @@ export {
   type SalesSkillToolPortOptions,
 } from './skills/index.js';
 
-export {
-  createSalesOfflineHarness,
-  PILOT_02_OFFLINE_FIXTURE,
-  SALES_P2_DISABLED_SKILLS,
-  SalesOfflineHarness,
-  SalesOfflineHarnessError,
-  type SalesOfflineCatalogItem,
-  type SalesOfflineFixture,
-  type SalesOfflineHarnessOptions,
-  type SalesOfflineInventoryItem,
-  type SalesOfflineReadInput,
-  type SalesOfflineRefusalCode,
-  type SalesOfflineSkillServiceOverrides,
-} from './offline-harness.js';
 export {
   createSalesOrchestratorFactory,
   getSalesUnboundCapabilities,

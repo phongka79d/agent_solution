@@ -1833,41 +1833,57 @@ export interface OutputCareSearchFAQ {
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
-  "required": ["order_id", "status", "line_items", "total_price", "currency", "order_date"],
-  "properties": {
-    "order_id": { "type": "string" },
-    "status": { "type": "string", "enum": ["PENDING", "PROCESSING", "SHIPPED", "DELIVERED", "CANCELLED", "RETURNED"] },
-    "line_items": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": ["sku_id", "product_name", "quantity", "unit_price", "currency"],
-        "properties": {
-          "sku_id": { "type": "string" },
-          "product_name": { "type": "string" },
-          "quantity": { "type": "integer" },
-          "unit_price": { "type": "number" },
-          "currency": { "type": "string" }
-        }
-      }
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["order_id", "status"],
+      "properties": {
+        "order_id": { "type": "string" },
+        "status": { "type": "string", "enum": ["PENDING", "PROCESSING", "SHIPPED", "DELIVERED", "CANCELLED", "RETURNED"] },
+        "line_items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["sku_id", "product_name", "quantity", "unit_price", "currency"],
+            "properties": {
+              "sku_id": { "type": "string" },
+              "product_name": { "type": "string" },
+              "quantity": { "type": "integer" },
+              "unit_price": { "type": "number" },
+              "currency": { "type": "string" }
+            }
+          }
+        },
+        "total_price": { "type": "number" },
+        "currency": { "type": "string" },
+        "tracking_number": { "type": ["string", "null"] },
+        "order_date": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
     },
-    "total_price": { "type": "number" },
-    "currency": { "type": "string" },
-    "tracking_number": { "type": ["string", "null"] },
-    "order_date": { "type": "string", "format": "date-time" }
-  }
+    {
+      "type": "object",
+      "required": ["result"],
+      "properties": {
+        "result": { "const": "ORDER_NOT_FOUND" }
+      },
+      "additionalProperties": false
+    }
+  ]
 }
 ```
+The output union distinguishes a found order from an owner-scoped miss. For a found order, status and identifier are the minimum authoritative fields; optional details are included only when the provider supplies them, never synthesized. A confirmed miss returns `{"result":"ORDER_NOT_FOUND"}`; source failures remain errors.
+
 - **5. Allowed Agents**: `["CS-01"]`
 - **6. Required Authority**: `AUTH-0` (Observe — order lookup is read-only after verified identity; sending the answer is a separate AUTH-3 action)
 - **7. Tool Binding**: `API-001.OrderConnector`
-- **8. Validation Rules**: `["customer_id must be server-resolved from the authenticated session and must match the order owner; a caller-supplied identity or verification claim is never accepted as a binding input (BR-003, NFR-008)", "verification_reference must resolve server-side to a verification record for this tenant/customer and verification_status must be VERIFIED; a missing, unresolvable, or non-VERIFIED reference fails closed with IDENTITY_UNVERIFIED and releases no order FACT"]`
-- **9. Retry Policy**: `{"max_retries": 3, "initial_interval_ms": 400, "backoff_multiplier": 1.5, "retry_on_timeout": true, "non_retryable_errors": ["ORDER_NOT_FOUND"]}`
+- **8. Validation Rules**: `["customer_id must be server-resolved from the authenticated session and must match the order owner; a caller-supplied identity or verification claim is never accepted as a binding input (BR-003, NFR-008)", "A provider response must include a non-empty authoritative customer_id before owner comparison; missing or malformed owner data remains AUTHORITATIVE_SOURCE_UNAVAILABLE", "verification_reference must resolve server-side to a verification record for this tenant/customer and verification_status must be VERIFIED; a missing, unresolvable, or non-VERIFIED reference fails closed with IDENTITY_UNVERIFIED and releases no order FACT", "Only a provider-confirmed HTTP 404 or an owner mismatch produces the non-disclosing ORDER_NOT_FOUND result; transport failures and other provider rejections remain AUTHORITATIVE_SOURCE_UNAVAILABLE"]`
+- **9. Retry Policy**: `{"max_retries": 3, "initial_interval_ms": 400, "backoff_multiplier": 1.5, "retry_on_timeout": true, "non_retryable_errors": []}`
 - **10. Timeout**: `2000ms`
 - **11. Audit Spec (SRS §11 field 10)**: `{"log_level": "INFO", "mask_pii_fields": ["customer_id"], "evidence_card": "EV_ORDER_LOOKUP", "record_latency": true}`
 - **12. Test Cases & Acceptance Criteria (SRS §11 field 11)**: `test_cases` = `TC-SKILL-01`..`TC-SKILL-05` (§5, baseline) instantiated for this skill, plus:
-  - `TC-SKILL-17-06` (**SECURITY**) — Caller asserts ownership of another customer's order, supplies a caller-asserted phone/email/identifier as proof, or presents a `verification_reference`/`verification_status` that does not resolve server-side to VERIFIED for the session's server-resolved `customer_id`. Expected: `IDENTITY_UNVERIFIED` / `ORDER_OWNER_MISMATCH` before any `API-001.OrderConnector` call; zero order FACTs are released (BR-003, NFR-006). An unverified or caller-asserted identity never authorizes a lookup.
-  - `TC-SKILL-17-07` (**BOUNDARY**) — `order_identifier` unknown to the tenant, or owned by a different customer. Expected: `ORDER_NOT_FOUND`; the response never distinguishes "does not exist" from "not yours".
+  - `TC-SKILL-17-06` (**SECURITY**) — Caller supplies caller-asserted phone/email/identifier proof or presents a `verification_reference`/`verification_status` that does not resolve server-side to VERIFIED for the session's server-resolved `customer_id`. Expected: `IDENTITY_UNVERIFIED` before any `API-001.OrderConnector` call; zero order FACTs are released (BR-003, NFR-006). An unverified or caller-asserted identity never authorizes a lookup.
+  - `TC-SKILL-17-07` (**BOUNDARY**) — `order_identifier` unknown to the tenant, or owned by a different customer. Expected: a typed `NO_ANSWER` response with the successful result `{"result":"ORDER_NOT_FOUND"}`; the response never distinguishes "does not exist" from "not yours" or exposes order details.
 
 ```typescript
 export interface OrderLineItemRecord {
@@ -1887,15 +1903,21 @@ export interface InputCareLookupOrder {
   verification_reference: string;
   verification_status: 'VERIFIED';
 }
-export interface OutputCareLookupOrder {
+export interface OutputCareLookupOrderFound {
   order_id: string;
   status: 'PENDING' | 'PROCESSING' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED' | 'RETURNED';
-  line_items: OrderLineItemRecord[];
-  total_price: number;
-  currency: string;
-  tracking_number: string | null;
-  order_date: string;
+  line_items?: OrderLineItemRecord[];
+  total_price?: number;
+  currency?: string;
+  tracking_number?: string | null;
+  order_date?: string;
 }
+
+export interface OutputCareLookupOrderNotFound {
+  result: 'ORDER_NOT_FOUND';
+}
+
+export type OutputCareLookupOrder = OutputCareLookupOrderFound | OutputCareLookupOrderNotFound;
 ```
 
 ---
@@ -2476,7 +2498,7 @@ One row per registered skill. `Class` describes **effect behaviour**, not cleara
 | `skill.sales.create_order` | EFFECT | `API-001.OrderConnector` | schema → identity binding → quote match → payment method supported → `effect_key` reservation → ERP | `ORDER_ALREADY_EXISTS`, `PAYMENT_REJECTED`, `SCHEMA_VALIDATION_ERROR` | transport; ≤1; `false` | `effect_key` | `EV_ORDER_CREATION` / `customer_id`, `shipping_address` |
 | `skill.sales.send_message` | EFFECT | `API-003.CommunicationConnector` | schema → consent at send time → suppression → session mutex free → `effect_key` reservation → provider | `BLOCKED_BY_USER`, `SESSION_EXPIRED`, `SCHEMA_VALIDATION_ERROR` | transport; ≤2; `false` | `effect_key` | `EV_OUTBOUND_MESSAGE` / `recipient_id` |
 | `skill.care.search_faq` | READ | `SecondBrain.FAQEngine` | schema → corpus availability → approved-source filter → retrieval | `CORPUS_UNAVAILABLE`, `SCHEMA_VALIDATION_ERROR` | engine error; ≤3; `true` | query + top_k digest | `EV_FAQ_QUERY` / `[]` |
-| `skill.care.lookup_order` | READ | `API-001.OrderConnector` | schema → server-resolved identity + verification record → order-owner match → adapter | `ORDER_NOT_FOUND`, `IDENTITY_UNVERIFIED`, `ORDER_OWNER_MISMATCH`, `SCHEMA_VALIDATION_ERROR` | connector error; ≤3; `true` | (tenant, order, customer) digest | `EV_ORDER_LOOKUP` / `customer_id` |
+| `skill.care.lookup_order` | READ | `API-001.OrderConnector` | schema → server-resolved identity + verification record → owner-scoped read → response projection | `IDENTITY_UNVERIFIED`, `AUTHORITATIVE_SOURCE_UNAVAILABLE`, `SCHEMA_VALIDATION_ERROR` | connector/source error; ≤3; `true` | (tenant, order, customer) digest | `EV_ORDER_LOOKUP` / `customer_id` |
 | `skill.care.track_shipping` | READ | `LogisticsConnector` (`ADPT-TW-001` optional) | schema → carrier supported → checksum → carrier call | `CARRIER_TRACKING_NOT_FOUND`, `SCHEMA_VALIDATION_ERROR` | carrier error; ≤3; `true` | (carrier, tracking number) digest | `EV_SHIPPING_TRACK` / `[]` |
 | `skill.care.manage_case` | INTERNAL | `PostgreSQL.CaseManagementStore` | schema → tenant/customer binding → action requires `case_id` → FSM legality → optimistic version → write | `CASE_NOT_FOUND`, `INVALID_FSM_TRANSITION`, `SCHEMA_VALIDATION_ERROR` | transport; ≤3; `false` (re-read by `(tenant_id, case_id)` first) | case version + action digest | `EV_SUPPORT_CASE` / `customer_id` |
 | `skill.care.initiate_return` | APPROVAL | `ReverseLogisticsConnector` (`ADPT-TW-001` optional) | schema → approval existence + `effect_key` + digest binding → return window → RMA dispatch | `RETURN_WINDOW_EXPIRED`, `APPROVAL_REQUIRED`, `APPROVAL_PAYLOAD_MISMATCH`, `PROHIBITED_ACTION` | provider error; ≤1; `false` | `effect_key` | `EV_RMA_INITIATION` / `evidence_images` |
@@ -2510,7 +2532,7 @@ Each row instantiates the five baseline cases of §5 with this skill's own schem
 | `skill.sales.create_order` | One ERP order; `order_number` returned | Total ≠ pricing quote, unsupported payment method, or unlisted agent → refused before dispatch; 0 ERP calls | Missing `effect_key`/address → `SCHEMA_VALIDATION_ERROR` / `EFFECT_KEY_REQUIRED` | `EFFECT_UNKNOWN`; reservation stays `RESERVED`; reconcile finds the order or proves absence before retry | Same key + same payload → `REPLAY` with the stored order; exactly one order in ERP; changed payload → `IDEMPOTENCY_CONFLICT` |
 | `skill.sales.send_message` | One provider send; `message_id` + `provider_reference` | Missing/withdrawn consent → `CONSENT_REQUIRED` (`allowed=false`); human holds the mutex → refused; 0 sends | Missing channel/content or `effect_key` → `SCHEMA_VALIDATION_ERROR` / `EFFECT_KEY_REQUIRED` | `EFFECT_UNKNOWN`; no second send before reconciliation | Same key + same payload → `REPLAY` with the stored `message_id`; one provider send; changed payload → `IDEMPOTENCY_CONFLICT` |
 | `skill.care.search_faq` | Approved answers with `source_file` citations | No approved match → empty `answers`; nothing synthesized | Empty `query_text` or `top_k > 5` → `SCHEMA_VALIDATION_ERROR` | `CORPUS_UNAVAILABLE` after ≤3; no partial citation presented | Read-only: identical result; no corpus write |
-| `skill.care.lookup_order` | Verified identity → order, line items, tracking | Caller-asserted identity or non-VERIFIED reference → `IDENTITY_UNVERIFIED`/`ORDER_OWNER_MISMATCH`; 0 order FACTs | Missing `verification_status` → `SCHEMA_VALIDATION_ERROR` | Connector error ≤3 → `AUTHORITATIVE_SOURCE_UNAVAILABLE`; exhaustion refuses, never a partial order | Read-only: identical result; no order mutation |
+| `skill.care.lookup_order` | Verified identity → authoritative order status and any provider-supplied details | Caller-asserted identity or non-VERIFIED reference → `IDENTITY_UNVERIFIED`; 0 order FACTs | Missing `verification_status` → `SCHEMA_VALIDATION_ERROR` | Connector error ≤3 → `AUTHORITATIVE_SOURCE_UNAVAILABLE`; exhaustion refuses, never a partial order | Read-only: identical result; no order mutation |
 | `skill.care.track_shipping` | Carrier scan events for a valid tracking number | Checksum failure/unsupported carrier → validation failure; unknown number → `CARRIER_TRACKING_NOT_FOUND` | Missing `carrier`/`tracking_number` → `SCHEMA_VALIDATION_ERROR` | Carrier error ≤3; exhaustion fabricates no scan events | Read-only: identical result; no event written |
 | `skill.care.manage_case` | Legal transition persisted once with status, SLA, evidence refs; receipt committed to `service_case_events` | Illegal transition → `INVALID_FSM_TRANSITION`; stale version → `CASE_VERSION_CONFLICT`; missing SLA → `CASE_SLA_POLICY_UNAVAILABLE`; missing evidence on resolve → `CASE_EVIDENCE_REQUIRED`; `AUTH-2` → `INSUFFICIENT_AUTHORITY` | Missing `case_id` or `expected_case_version` for non-CREATE action → `SCHEMA_VALIDATION_ERROR` | `retry_on_timeout:false` → lookup receipt by `(tenant_id, effect_key)`; if absent, re-read by `(tenant_id, case_id)` before retry; timed-out CREATE without receipt → `CASE_EFFECT_NOT_COMMITTED` | Matching `effect_key` replay returns exact receipt; conflicting fingerprint → `IDEMPOTENCY_CONFLICT`; `REOPEN` returns `IN_PROGRESS` preserving `case_number`, SLA history, evidence |
 | `skill.care.initiate_return` | Approved RMA with label URL; `EV_RMA_INITIATION` | No bound approval → `REQUIRE_HUMAN_APPROVAL`/`APPROVAL_REQUIRED`; digest mismatch → `APPROVAL_PAYLOAD_MISMATCH`; outside window → `RETURN_WINDOW_EXPIRED` | Missing `effect_key`/images → `SCHEMA_VALIDATION_ERROR` / `EFFECT_KEY_REQUIRED` | Provider accepted, response lost → `EFFECT_UNKNOWN`; reconcile by `effect_key`; no second RMA | Same key + same payload → `REPLAY` with the same RMA; no duplicate label |

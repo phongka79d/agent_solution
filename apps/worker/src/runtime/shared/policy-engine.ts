@@ -10,7 +10,6 @@
  *    the canonical `ApprovalGateResult` verdict (`AUTO_APPROVED` | `AWAITING_HUMAN_APPROVAL` | `DENIED`).
  */
 
-import { randomUUID } from 'node:crypto';
 import type {
   ActionDraft,
   ApprovalGateResult,
@@ -24,7 +23,6 @@ import {
   type ApprovalQueuePort,
   type AutonomyAdmissionPort,
   type ConsentSource,
-  type PendingApprovalRequest,
   type PolicyActionProposal,
   type PolicyEnforcementOptions,
   type PolicyRegistryAgent,
@@ -36,6 +34,7 @@ import {
 export interface DomainPolicyEngineOptions {
   readonly skills: Readonly<Record<string, PolicyRegistrySkill>>;
   readonly allowed_payload_fields: Readonly<Record<string, Readonly<Record<string, true>>>>;
+  readonly normalizeActionInput?: IPolicyEngine['normalizeActionInput'];
   readonly pep?: PolicyEnforcementPoint | undefined;
   readonly autonomy?: AutonomyAdmissionPort | undefined;
   readonly resolveGrant?: ((tenant_id: string, agent_id: string) => Promise<AssignableAuthority | null>) | undefined;
@@ -52,11 +51,13 @@ export class DomainPolicyEngine implements IPolicyEngine {
   protected readonly allowedPayloadFields: Readonly<Record<string, Readonly<Record<string, true>>>>;
   protected readonly pep: PolicyEnforcementPoint;
   protected readonly resolveGrantFn: (tenant_id: string, agent_id: string) => Promise<AssignableAuthority | null>;
+  protected readonly normalizeInputFn: IPolicyEngine['normalizeActionInput'];
   protected readonly agentGrantCache = new Map<string, AssignableAuthority>();
 
   constructor(options: DomainPolicyEngineOptions) {
     this.skills = options.skills;
     this.allowedPayloadFields = options.allowed_payload_fields;
+    this.normalizeInputFn = options.normalizeActionInput;
 
     const defaultGrant = options.defaultGrant;
     this.resolveGrantFn = options.resolveGrant ?? (async (_tenant_id, agent_id) => {
@@ -99,15 +100,9 @@ export class DomainPolicyEngine implements IPolicyEngine {
         },
       };
 
-      const defaultApprovals: ApprovalQueuePort = options.approvals ?? {
-        async createOrReadPending(_req: PendingApprovalRequest): Promise<{ readonly approval_id: string }> {
-          return { approval_id: `appr_${randomUUID().slice(0, 8)}` };
-        },
-      };
-
       this.pep = new PolicyEnforcementPoint({
         registry: registryPort,
-        approvals: defaultApprovals,
+        ...(options.approvals === undefined ? {} : { approvals: options.approvals }),
         ...(options.autonomy ? { autonomy: options.autonomy } : {}),
         ...(options.consent ? { consent: options.consent } : {}),
         ...(options.audit ? { audit: options.audit } : {}),
@@ -117,6 +112,11 @@ export class DomainPolicyEngine implements IPolicyEngine {
     }
   }
 
+  normalizeActionInput(skill_id: string, input: Record<string, unknown>): unknown {
+    return this.normalizeInputFn === undefined
+      ? input
+      : this.normalizeInputFn(skill_id, input);
+  }
   async validateAction(action: ActionDraft, context: HydratedContext): Promise<ActionDraft> {
     const allowedFields = this.allowedPayloadFields[action.skill_id];
     if (!allowedFields) {

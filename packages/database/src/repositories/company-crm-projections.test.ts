@@ -29,6 +29,37 @@ describe('CompanyCrmProjectionRepository', () => {
     expect(tenants).toEqual([TENANT]);
   });
 
+  it.each(['TEST', 'DEMO', 'PRODUCTION'])('selects and preserves the customer root class %s on list and profile reads', async (data_class) => {
+    const { repository, calls, tenants } = harness([{
+      customer_id: CUSTOMER,
+      tenant_id: TENANT,
+      data_class,
+      created_at: '2026-01-01T00:00:00.000Z',
+    }]);
+
+    const page = await repository.listCustomers({ tenant_id: TENANT });
+    const profile = await repository.getCustomerProfile(TENANT, CUSTOMER);
+
+    expect(page.items[0]?.data_class).toBe(data_class);
+    expect(profile?.data_class).toBe(data_class);
+    expect(tenants).toEqual([TENANT, TENANT]);
+    expect(calls[0]?.sql).toContain('c.data_class::text AS data_class');
+    expect(calls[1]?.sql).toContain('c.data_class::text AS data_class');
+    expect(calls[1]?.params).toEqual([TENANT, CUSTOMER]);
+  });
+
+  it('returns computed inactive audiences inside the requested tenant context', async () => {
+    const { repository, calls, tenants } = harness([]);
+    await expect(repository.listCampaignSegments(TENANT)).resolves.toEqual([]);
+    expect(tenants).toEqual([TENANT]);
+    expect(calls[0]?.params).toEqual([TENANT]);
+    expect(calls[0]?.sql).toContain('agentos.customer_360_profiles');
+    expect(calls[0]?.sql).toContain("VALUES (30), (60), (90), (180)");
+    expect(calls[0]?.sql).toContain('last_paid_purchase_at');
+    expect(calls[0]?.sql).toContain('consent.consent_type =');
+  });
+
+
   it('binds campaign list reads to the tenant and durable marketing task source', async () => {
     const { repository, calls, tenants } = harness();
     await repository.listCampaigns({ tenant_id: TENANT, limit: 10 });

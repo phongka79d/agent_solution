@@ -1,197 +1,230 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { can } from '@agentos/ui-foundation/auth';
+import { statusView } from '@agentos/ui-foundation/status';
 import { t } from '@agentos/ui-foundation/i18n';
 import {
   ActivityTimeline,
   AgentCard,
   AttentionCard,
   EmptyState,
-  ErrorState,
-  LoadingState,
+  ErrorBanner,
   MetricCard,
   PageHeader,
   SectionHeader,
+  Skeleton,
 } from '@agentos/ui-foundation/react';
-import type {
-  CompanyActivityItem,
-  CompanyAiTeamAgent,
-  CompanyAttentionItem,
-} from '../../lib/types/tenant-console';
+import type { CompanyOverviewResponse } from '../../lib/types/tenant-console';
 import { tenantConsoleClient } from '../../lib/tenant-console-client';
 import { useSession } from '../auth/SessionProvider';
+import { companyActivitySentence } from './company-activity';
 
-type OverviewState = 'loading' | 'ready' | 'error';
-
-type MetricEntry = [string, number];
-
-function translationParams(params: Readonly<Record<string, string | number | boolean>>): Record<string, string | number> {
-  return Object.fromEntries(Object.entries(params).map(([key, value]) => [key, typeof value === 'boolean' ? String(value) : value]));
-}
-
-function formatActivityTime(value: string): string {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
-}
+type Overview = CompanyOverviewResponse;
+type AttentionGroup = Overview['attention'][number];
+type AiTeamEntry = Overview['ai_team'][number];
+type TodayMetric = NonNullable<Overview['today']>['metrics'][number];
 
 function domainLabel(domain: string): string {
-  const key = domain === 'marketing' || domain === 'sales' || domain === 'care' ? `aiTeam.${domain}.name` : 'nav.overview';
-  return t(key);
-}
-
-function agentName(domain: string): string {
   return domain === 'marketing' || domain === 'sales' || domain === 'care'
     ? t(`aiTeam.${domain}.name`)
-    : t('aiTeam.title');
+    : t('nav.overview');
 }
 
-function agentPurpose(domain: string): string {
-  return domain === 'marketing' || domain === 'sales' || domain === 'care'
-    ? t(`aiTeam.${domain}.purpose`)
-    : t('aiTeam.description');
+function formatTime(value: string | undefined): string {
+  if (value === undefined) return '';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
 }
 
-function agentHref(domain: string): string | undefined {
-  return domain === 'marketing' || domain === 'sales' || domain === 'care' ? `/ai-team/${domain}` : undefined;
+function todayMetricLabel(metric: TodayMetric): string {
+  if (metric.key === 'campaigns_by_state') {
+    const state = String(metric.params?.['state'] ?? '');
+    return t('overview.metric.campaigns_by_state', { state: t(statusView('campaign', state).label_key) });
+  }
+  return t(`overview.metric.${metric.key}`);
 }
 
-function metricLabel(key: string): string | undefined {
-  if (key === 'runs' || key === 'completed_runs' || key === 'revenue') return t(`overview.metric.${key}`);
-  return undefined;
+function SectionError({ onRetry }: { readonly onRetry: () => void }) {
+  return <ErrorBanner error={{ retryable: true, message: t('overview.section.error') }} onRetry={onRetry} />;
+}
+
+function aiTeamCounter(entry: AiTeamEntry): string | undefined {
+  if (entry.counter_key === undefined || entry.counter_value === undefined) return undefined;
+  return t(`overview.ai_team.counter.${entry.counter_key}`, { count: entry.counter_value });
 }
 
 export function CompanyOverview() {
   const session = useSession();
   const allowed = can(session, 'telemetry:read');
-  const canReadRuns = can(session, 'run:read');
-  const [state, setState] = useState<OverviewState>('loading');
-  const [attention, setAttention] = useState<readonly CompanyAttentionItem[]>([]);
-  const [agents, setAgents] = useState<readonly CompanyAiTeamAgent[]>([]);
-  const [activity, setActivity] = useState<readonly CompanyActivityItem[]>([]);
-  const [metrics, setMetrics] = useState<readonly MetricEntry[]>([]);
-  const [failed, setFailed] = useState(false);
+  const [overview, setOverview] = useState<Overview | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    setError(null);
+    tenantConsoleClient.getCompanyOverview()
+      .then((response) => {
+        setOverview(response);
+        setLoading(false);
+      })
+      .catch((cause: unknown) => {
+        setError(cause);
+        setLoading(false);
+      });
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
     if (!allowed) {
-      setState('ready');
-      return () => { cancelled = true; };
+      setLoading(false);
+      return;
     }
-    setState('loading');
-    setFailed(false);
-    const activityRequest = canReadRuns
-      ? tenantConsoleClient.getCompanyActivity({ limit: 20 })
-      : Promise.resolve({ items: [], next_cursor: null });
-    void Promise.allSettled([
-      tenantConsoleClient.getCompanyAttention(),
-      tenantConsoleClient.getCompanyAiTeam(),
-      activityRequest,
-    ]).then(([attentionResult, agentsResult, activityResult]) => {
-      if (cancelled) return;
-      let hadSuccess = false;
-      if (attentionResult.status === 'fulfilled') {
-        setAttention(attentionResult.value.items);
-        hadSuccess = true;
-      }
-      if (agentsResult.status === 'fulfilled') {
-        setAgents(agentsResult.value.agents);
-        hadSuccess = true;
-      }
-      if (activityResult.status === 'fulfilled') {
-        setActivity(activityResult.value.items);
-        hadSuccess = true;
-      }
-      if (!hadSuccess) setFailed(true);
-      setState('ready');
-    });
-    return () => { cancelled = true; };
-  }, [allowed, canReadRuns]);
+    load();
+  }, [allowed, load]);
 
-  useEffect(() => {
-    let cancelled = false;
-    if (!allowed) return () => { cancelled = true; };
-    void tenantConsoleClient.getCompanyOverview().then((response) => {
-      if (!cancelled && response.metrics) {
-        setMetrics(Object.entries(response.metrics).filter((entry): entry is MetricEntry => metricLabel(entry[0]) !== undefined));
-      }
-    }).catch(() => undefined);
-    return () => { cancelled = true; };
-  }, [allowed]);
+  const companyName = session?.membership.tenant_name ?? '';
+  const sections = overview?.sections;
 
-  const activityItems = useMemo(() => activity.map((item) => {
-    const href = canReadRuns && item.run_id ? `/runs/${encodeURIComponent(item.run_id)}` : undefined;
-    return {
-      id: `${item.kind}-${item.run_id}-${item.occurred_at}`,
-      time: formatActivityTime(item.occurred_at),
-      title: t(item.sentence_key, translationParams(item.params)),
-      ...(href === undefined ? {} : { href }),
-      description: domainLabel(item.domain),
-    };
-  }), [activity, canReadRuns]);
+  const attention = useMemo(() => overview?.attention ?? [], [overview]);
+  const aiTeam = useMemo(() => overview?.ai_team ?? [], [overview]);
+  const metrics = useMemo(() => overview?.today?.metrics ?? [], [overview]);
+  const activity = useMemo(() => overview?.activity ?? [], [overview]);
+  const workspace = overview?.workspace;
 
-  if (state === 'loading') return <LoadingState label={t('common.loading')} />;
-  if (!allowed) return <ErrorState message={t('auth.forbidden')} />;
+  const activityItems = useMemo(() => activity.map((item) => ({
+    id: `${item.kind}-${item.run_id}-${item.occurred_at}`,
+    time: formatTime(item.occurred_at),
+    title: companyActivitySentence(item),
+    href: `/runs/${encodeURIComponent(item.run_id)}`,
+    description: t('overview.activity.href'),
+  })), [activity]);
+
+  if (!allowed) return <ErrorBanner error={new Error(t('auth.forbidden'))} />;
+  if (loading) {
+    return (
+      <div className="space-y-8" aria-busy="true">
+        <Skeleton variant="text" lines={2} />
+        <Skeleton variant="card" />
+        <Skeleton variant="metric" lines={4} />
+      </div>
+    );
+  }
+  if (error !== null) return <ErrorBanner error={error} onRetry={load} />;
+  if (overview === null) return <ErrorBanner error={new Error(t('common.error'))} onRetry={load} />;
+
+  const attentionTitle = (group: AttentionGroup) =>
+    t(group.title_key, Object.fromEntries(Object.entries(group.params).map(([key, value]) => [key, typeof value === 'boolean' ? String(value) : value])));
 
   return (
     <div className="space-y-8" aria-label={t('nav.overview')}>
       <PageHeader
         eyebrow={t('auth.company_workspace')}
         title={t('overview.welcome', { name: session?.identity.display_name ?? '' })}
-        description={t('overview.description')}
+        description={companyName}
       />
-
-      {failed ? <ErrorState message={t('common.error')} /> : null}
-
-      {metrics.length > 0 ? (
-        <section aria-labelledby="overview-metrics-heading">
-          <SectionHeader title={t('overview.metrics.title')} />
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            {metrics.map(([key, value]) => <MetricCard key={key} label={metricLabel(key)} value={value} />)}
-          </div>
-        </section>
-      ) : null}
 
       <section aria-labelledby="overview-attention-heading">
         <SectionHeader title={t('overview.attention.title')} />
-        {attention.length === 0
-          ? <EmptyState title={t('overview.attention.empty')} description={t('common.empty')} status="NO_DATA" />
-          : <div className="space-y-2">{attention.map((item) => (
-            <AttentionCard
-              key={`${item.type}-${item.source_ref}`}
-              severity={item.severity}
-              title={t(item.title_key, translationParams(item.params))}
-              href={item.href}
-              domain={domainLabel(item.domain)}
-            />
-          ))}</div>}
+        {sections?.attention === 'ERROR' ? (
+          <SectionError onRetry={load} />
+        ) : attention.length === 0 ? (
+          <EmptyState title={t('overview.attention.all_clear')} />
+        ) : (
+          <div className="space-y-2">
+            {attention.map((group) => (
+              <AttentionCard
+                key={group.type}
+                severity={group.severity}
+                title={attentionTitle(group)}
+                href={group.href}
+                domain={domainLabel(group.domain)}
+                actions={<span className="ui-attention-card__cta">{t(group.cta_key)}</span>}
+              />
+            ))}
+          </div>
+        )}
       </section>
 
       <section aria-labelledby="overview-ai-heading">
         <SectionHeader title={t('overview.ai_team.title')} description={t('overview.ai_team.description')} />
-        {agents.length === 0
-          ? <EmptyState title={t('common.empty')} status="NO_DATA" />
-          : <div className="grid gap-3 md:grid-cols-3">{agents.map((agent) => (
-            <AgentCard
-              key={agent.domain}
-              name={agentName(agent.domain)}
-              purpose={agentPurpose(agent.domain)}
-              status={agent.status}
-              {...(agent.runs_today === undefined ? {} : { metric: `${agent.runs_today}` })}
-              {...(() => {
-                const href = agentHref(agent.domain);
-                return href === undefined ? {} : { href };
-              })()}
-            />
-          ))}</div>}
+        {sections?.ai_team === 'ERROR' ? (
+          <SectionError onRetry={load} />
+        ) : (
+          <div className="grid gap-3 md:grid-cols-3">
+            {aiTeam.map((entry) => {
+              const counter = aiTeamCounter(entry);
+              return (
+                <AgentCard
+                  key={entry.domain}
+                  name={domainLabel(entry.domain)}
+                  purpose={t('aiTeam.description')}
+                  status={entry.status}
+                  {...(counter === undefined ? {} : { metric: counter })}
+                  footer={t(entry.reason_key)}
+                  href={`/ai-team/${entry.domain}`}
+                />
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <section aria-labelledby="overview-today-heading">
+        <SectionHeader
+          title={t('overview.today.title')}
+          {...(overview.today === undefined ? {} : { description: t('overview.today.updated', { time: formatTime(overview.today.updated_at) }) })}
+        />
+        {sections?.today === 'ERROR' ? (
+          <SectionError onRetry={load} />
+        ) : metrics.length === 0 ? (
+          <EmptyState title={t('overview.today.empty')} />
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {metrics.map((metric) => (
+              <MetricCard
+                key={`${metric.key}-${String(metric.params?.['state'] ?? '')}`}
+                label={todayMetricLabel(metric)}
+                value={metric.count}
+                detail={t('overview.today.updated', { time: formatTime(metric.updated_at) })}
+              />
+            ))}
+          </div>
+        )}
       </section>
 
       <section aria-labelledby="overview-activity-heading" className="ui-section-card p-5">
         <SectionHeader title={t('overview.activity.title')} />
-        {activityItems.length === 0
-          ? <EmptyState title={t('overview.activity.empty')} status="NO_DATA" />
-          : <ActivityTimeline items={activityItems} />}
+        {sections?.activity === 'ERROR' ? (
+          <SectionError onRetry={load} />
+        ) : activityItems.length === 0 ? (
+          <EmptyState title={t('overview.activity.empty')} />
+        ) : (
+          <ActivityTimeline items={activityItems} />
+        )}
       </section>
+
+      {workspace !== undefined ? (
+        <section aria-labelledby="overview-workspace-heading" className="ui-section-card p-5">
+          <SectionHeader
+            title={t('overview.workspace.title')}
+            description={t('overview.workspace.status', { status: t(statusView('tenant', workspace.status).label_key) })}
+          />
+          {sections?.workspace === 'ERROR' ? (
+            <SectionError onRetry={load} />
+          ) : (
+            <ul className="space-y-2">
+              {workspace.checklist.map((item) => (
+                <li key={item.key}>
+                  <a href={item.href} className="ui-focus-ring">
+                    <span aria-hidden="true">{item.done ? '✓' : '○'}</span> {t(item.label_key)}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      ) : null}
     </div>
   );
 }

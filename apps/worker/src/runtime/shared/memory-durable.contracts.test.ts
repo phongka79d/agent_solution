@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { EffectReservationRepository, DurableWorkflowRepository, ApprovalRepository } from '@agentos/database';
+import {
+  ApprovalRepository,
+  AuditRepository,
+  ConversationRepository,
+  DurableWorkflowRepository,
+  EffectReservationRepository,
+  EvidenceRepository,
+} from '@agentos/database';
 import {
   EFFECT_RESERVATION_TTL_MS,
   EffectGuard,
@@ -9,7 +16,7 @@ import {
   MemoryWorkflowEngine,
   OrchestratorError,
   computeEffectKey,
-  computeRequestFingerprint,
+  approvalPayloadDigest,
   type ActionDraft,
   type DurableTaskCheckpoint,
   type IEffectGuard,
@@ -17,12 +24,20 @@ import {
   type PersistedErrorClass,
 } from '@agentos/core-engine';
 
+import { createDurableAdapters } from './adapters.js';
+
 const TENANT = '11111111-1111-4111-8111-111111111111';
 const OTHER_TENANT = '22222222-2222-4222-8222-222222222222';
 const RUN = 'run-contract-1';
 const REQUEST_ID = 'request-contract-1';
 const START = '2026-09-22T00:00:00.000Z';
 const ACTION_ID = '33333333-3333-4333-8333-333333333333';
+
+const APPROVAL_PAYLOAD = { message: 'review me' };
+const APPROVAL_DIGEST = approvalPayloadDigest({
+  skill_id: 'skill.contract.send',
+  payload: APPROVAL_PAYLOAD,
+});
 
 const ACTION: ActionDraft = {
   action_id: ACTION_ID,
@@ -38,7 +53,10 @@ const ACTION: ActionDraft = {
   action_revision: 0,
   effect_key: 'effect-contract-v0',
   required_authority: 'AUTH-4',
-  payload: { message: 'review me' },
+  approval_payload: APPROVAL_PAYLOAD,
+  approval_digest_version: 1,
+  approval_payload_digest: APPROVAL_DIGEST,
+  payload: APPROVAL_PAYLOAD,
 };
 
 const CHECKPOINT: DurableTaskCheckpoint = {
@@ -99,6 +117,10 @@ interface FakeReservationRow {
 class FakeReservationPgClient {
   private readonly rows = new Map<string, FakeReservationRow>();
   private readonly now: () => Date;
+  private readonly savepoints: {
+    readonly name: string;
+    readonly rows: Map<string, FakeReservationRow>;
+  }[] = [];
 
   constructor(now: () => Date) {
     this.now = now;
@@ -108,6 +130,32 @@ class FakeReservationPgClient {
     sql: string,
     values: readonly unknown[] = [],
   ): Promise<{ rows: R[]; rowCount: number }> {
+    const control = /^(SAVEPOINT|ROLLBACK TO SAVEPOINT|RELEASE SAVEPOINT) ([a-z_][a-z0-9_]*)$/.exec(sql);
+    if (control !== null) {
+      const operation = control[1];
+      const name = control[2];
+      if (name === undefined) throw new Error(`FAKE_RESERVATION_SAVEPOINT_INVALID: ${sql}`);
+      if (operation === 'SAVEPOINT') {
+        this.savepoints.push({
+          name,
+          rows: new Map([...this.rows].map(([rowKey, row]) => [rowKey, { ...row }])),
+        });
+      } else {
+        let index = this.savepoints.length - 1;
+        while (index >= 0 && this.savepoints[index]?.name !== name) index -= 1;
+        const savepoint = this.savepoints[index];
+        if (savepoint === undefined) throw new Error(`3B001: savepoint ${name} does not exist`);
+        if (operation === 'ROLLBACK TO SAVEPOINT') {
+          this.rows.clear();
+          for (const [rowKey, row] of savepoint.rows) this.rows.set(rowKey, { ...row });
+          // PostgreSQL retains the target for another rollback, but discards younger savepoints.
+          this.savepoints.splice(index + 1);
+        } else {
+          this.savepoints.splice(index);
+        }
+      }
+      return { rows: [], rowCount: 0 };
+    }
     const key = `${String(values[0])}|${String(values[1])}`;
     if (sql.startsWith('INSERT INTO agentos.effect_reservations')) {
       if (this.rows.has(key)) return { rows: [], rowCount: 0 };
@@ -289,6 +337,7 @@ interface FakeWorkflowApproval {
   effect_key: string;
   authority_required: 'AUTH-4';
   payload: unknown;
+  digest_version: number;
   reason: string;
   operator_id: string | null;
   decision: 'PENDING' | 'APPROVED' | 'MODIFIED' | 'REJECTED' | 'CANCELLED';
@@ -389,7 +438,8 @@ class FakeWorkflowPgClient {
         effect_key: String(values[3]),
         authority_required: 'AUTH-4',
         payload: this.parse(values[4]),
-        reason: String(values[5]),
+        digest_version: Number(values[5]),
+        reason: String(values[6]),
         operator_id: null,
         decision: 'PENDING',
         is_paused: false,
@@ -451,7 +501,8 @@ class FakeWorkflowPgClient {
     if (row === undefined) return { rows: [], rowCount: 0 };
     if (sql.includes('retry_count = retry_count + 1')) {
       row.retry_count += 1;
-      row.state = 'queued';
+      // `$6` is the complete-checkpoint flag: a resumable run waits for its retry timer (T5.5).
+      row.state = values[5] === true ? 'waiting' : 'queued';
       row.last_error_class = String(values[2]) as 'RETRYABLE' | 'FATAL';
     } else if (sql.includes("SET state = 'failed'")) {
       row.state = 'failed';
@@ -486,49 +537,18 @@ class FakeWorkflowPgClient {
   }
 }
 
+/** The production worker binding over the repositories, so the contract covers what the worker resumes with. */
 function durableWorkflowEngine(): IStatefulWorkflowEngine {
   const client = new FakeWorkflowPgClient();
   const runner = async <T>(_tenant_id: string, work: (pgClient: unknown) => Promise<T>): Promise<T> => await work(client);
-  const workflows = new DurableWorkflowRepository(runner as never);
-  const approvals = new ApprovalRepository(runner as never);
-  return {
-    async createTask(task) {
-      await workflows.createTask(task);
-    },
-    async updateTaskProgress(tenant_id, run_id, stepIndex, checkpointPayload, guard) {
-      await workflows.updateTaskProgress(tenant_id, run_id, stepIndex, checkpointPayload, guard as never);
-    },
-    async transitionTask(tenant_id, run_id, state, reason, checkpointPayload, guard) {
-      await workflows.transitionTask(tenant_id, run_id, state, reason, checkpointPayload, guard as never);
-    },
-    async getTask(tenant_id, run_id) {
-      const row = await workflows.getTask(tenant_id, run_id);
-      return row === null ? null : {
-        task_version: row.task_version,
-        state: row.state,
-        correlation_id: row.correlation_id,
-        state_payload: row.state_payload as DurableTaskCheckpoint | null,
-      };
-    },
-    async pauseForApproval(params) {
-      const result = await approvals.pauseForApproval(params as never);
-      return { approval_id: result.approval_id };
-    },
-    async claimApprovalAndResume(params) {
-      const result = await approvals.claimApprovalAndResume(params as never);
-      return { claimed: result.claimed };
-    },
-    async recordFailure(params) {
-      const result = await workflows.recordFailure(params as never);
-      return { requeued: result.requeued };
-    },
-    async queueHandoffEvidence(params) {
-      return workflows.queueHandoffEvidence(params);
-    },
-    async clearHandoffEvidence(params) {
-      return workflows.clearHandoffEvidence(params);
-    },
-  };
+  return createDurableAdapters({
+    workflowRepository: new DurableWorkflowRepository(runner as never),
+    approvalRepository: new ApprovalRepository(runner as never),
+    evidenceRepository: new EvidenceRepository(runner as never),
+    auditRepository: new AuditRepository(runner as never),
+    conversationRepository: new ConversationRepository(runner as never),
+    auditSecret: 'contract-audit-secret',
+  }).workflowEngine;
 }
 
 const workflowFactories: readonly WorkflowFactory[] = [
@@ -553,14 +573,28 @@ describe.each(workflowFactories)('E11 workflow and approval contract: %s', (_nam
       run_id: RUN,
       expected_task_version: (await workflow.getTask(TENANT, RUN))?.task_version ?? 0,
       checkpoint: CHECKPOINT,
-      approval: { action_id: ACTION.action_id, effect_key: ACTION.effect_key, payload: ACTION.payload, reason: 'AUTH-4 review' },
+      approval: {
+        action_id: ACTION.action_id,
+        effect_key: ACTION.effect_key,
+        payload: ACTION.payload,
+        payload_sha256: approvalPayloadDigest(ACTION),
+        digest_version: 1,
+        reason: 'AUTH-4 review',
+      },
     });
     const replay = await workflow.pauseForApproval({
       tenant_id: TENANT,
       run_id: RUN,
       expected_task_version: (await workflow.getTask(TENANT, RUN))?.task_version ?? 0,
       checkpoint: CHECKPOINT,
-      approval: { action_id: ACTION.action_id, effect_key: ACTION.effect_key, payload: ACTION.payload, reason: 'AUTH-4 review' },
+      approval: {
+        action_id: ACTION.action_id,
+        effect_key: ACTION.effect_key,
+        payload: ACTION.payload,
+        payload_sha256: approvalPayloadDigest(ACTION),
+        digest_version: 1,
+        reason: 'AUTH-4 review',
+      },
     });
     expect(replay.approval_id).toBe(paused.approval_id);
 
@@ -569,7 +603,7 @@ describe.each(workflowFactories)('E11 workflow and approval contract: %s', (_nam
       run_id: RUN,
       approval_id: paused.approval_id,
       effect_key: ACTION.effect_key,
-      expected_payload_sha256: computeRequestFingerprint(ACTION.payload),
+      expected_payload_sha256: approvalPayloadDigest(ACTION),
       authorized_action: ACTION,
       decision: 'APPROVED',
       operator_id: 'operator-contract',
@@ -579,7 +613,10 @@ describe.each(workflowFactories)('E11 workflow and approval contract: %s', (_nam
     expect((await workflow.getTask(TENANT, RUN))?.state).toBe('running');
 
     expect(await workflow.recordFailure({ tenant_id: TENANT, run_id: RUN, error_class: 'RETRYABLE' as PersistedErrorClass, error_details: { code: 'TIMEOUT' } })).toEqual({ requeued: true });
-    expect((await workflow.getTask(TENANT, RUN))?.state).toBe('queued');
+    const waiting = await workflow.getTask(TENANT, RUN);
+    expect(waiting?.state).toBe('waiting');
+    // A retry timer resume is accepted only for this generation, so the binding must expose it.
+    expect(waiting?.retry_count).toBe(1);
     expect(await workflow.getTask(OTHER_TENANT, RUN)).toBeNull();
   });
 });

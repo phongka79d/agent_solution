@@ -124,6 +124,8 @@ interface IssuedStatement {
  */
 class ScriptedClient {
   readonly statements: IssuedStatement[] = [];
+  readonly transactionStatements: string[] = [];
+  private transactionAborted = false;
 
   private readonly answers: ScriptedAnswers;
 
@@ -135,6 +137,12 @@ class ScriptedClient {
     sql: string,
     params: readonly unknown[] = [],
   ): Promise<QueryResult<R>> {
+    if (/^(?:SAVEPOINT|ROLLBACK TO SAVEPOINT|RELEASE SAVEPOINT) /.test(sql)) {
+      this.transactionStatements.push(sql);
+      if (sql.startsWith('ROLLBACK TO SAVEPOINT')) this.transactionAborted = false;
+      return { rows: [], rowCount: null, command: '', oid: 0, fields: [] };
+    }
+    if (this.transactionAborted) throw new Error('25P02: transaction is aborted');
     const kind = classify(sql);
     this.statements.push({ kind, sql, params });
 
@@ -147,6 +155,10 @@ class ScriptedClient {
     const answer = typeof scripted === 'function' ? scripted(params) : scripted;
 
     if (answer.fails !== undefined) {
+      if (typeof answer.fails === 'object' && answer.fails !== null
+        && 'code' in answer.fails && answer.fails.code === '23505') {
+        this.transactionAborted = true;
+      }
       throw answer.fails;
     }
 
@@ -323,6 +335,52 @@ describe('EffectReservationRepository.reserve', () => {
 
     expect(client.statements.map((statement) => statement.kind)).toEqual(['insert', 'lock']);
   });
+  it('re-reads the winner receipt when a simultaneous second insert hits the request-identity unique index', async () => {
+    const receipt = { task_id: RUN_ID, correlation_id: 'winner-correlation', request_fingerprint: FINGERPRINT };
+    let inserts = 0;
+    const { repository, client } = harnessFor({
+      insert: () => {
+        inserts += 1;
+        return inserts === 1
+          ? { rows: [reservationRow()] }
+          : { fails: { code: '23505', constraint: 'uq_effect_reservation_request' } };
+      },
+      lock: { rows: [reservationRow({ status: 'SUCCEEDED', response_receipt: receipt })] },
+    });
+
+    const [winner, loser] = await Promise.all([
+      repository.reserve(reservationRequest()),
+      repository.reserve(reservationRequest({ run_id: 'losing-run' })),
+    ]);
+    expect(winner).toEqual({ kind: 'RESERVED' });
+    expect(loser).toEqual({ kind: 'REPLAY', receipt });
+    expect(inserts).toBe(2);
+    expect(client.transactionStatements).toEqual([
+      'SAVEPOINT insert_effect_reservation',
+      'SAVEPOINT insert_effect_reservation',
+      'RELEASE SAVEPOINT insert_effect_reservation',
+      'ROLLBACK TO SAVEPOINT insert_effect_reservation',
+      'RELEASE SAVEPOINT insert_effect_reservation',
+    ]);
+    expect(client.statements.map(({ kind }) => kind)).toEqual(['insert', 'insert', 'lock', 'lock']);
+  });
+
+  it('reports CONFLICT rather than replaying different bytes after a unique-index race', async () => {
+    const { repository } = harnessFor({
+      insert: { fails: { code: '23505', constraint: 'uq_effect_reservation_request' } },
+      lock: { rows: [reservationRow({ request_fingerprint: OTHER_FINGERPRINT, status: 'SUCCEEDED' })] },
+    });
+    await expect(repository.reserve(reservationRequest())).resolves.toEqual({ kind: 'CONFLICT' });
+  });
+
+  it('waits for the same-key winner still in flight after a unique-index race', async () => {
+    const { repository } = harnessFor({
+      insert: { fails: { code: '23505', constraint: 'uq_effect_reservation_request' } },
+      lock: { rows: [reservationRow()] },
+    });
+    await expect(repository.reserve(reservationRequest())).resolves.toEqual({ kind: 'IN_FLIGHT' });
+  });
+
 
   it('replays a settled success that stored no receipt as null', async () => {
     const { repository } = harnessFor({
@@ -400,6 +458,7 @@ describe('EffectReservationRepository.reserve', () => {
           { code: '23505', constraint },
         ),
       },
+      lock: { rows: [] },
     });
 
     const refusal = await refusalOf(repository.reserve(reservationRequest()));

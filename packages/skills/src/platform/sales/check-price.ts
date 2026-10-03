@@ -12,7 +12,7 @@ import type { PlatformSkillDependencies, PlatformSkillRow } from '../../contract
 export interface InputSalesCheckPrice {
   tenant_id: string;
   sku_id: string;
-  customer_id: string;
+  customer_id?: string;
   requested_discount_percent?: number;
   proposed_price?: number;
 }
@@ -25,8 +25,8 @@ export interface OutputSalesCheckPrice {
   p_floor: number;
   discount_allowed: boolean;
   currency: string;
-  quote_token: string;
-  quote_expires_at: string;
+  quote_token?: string;
+  quote_expires_at?: string;
 }
 
 /** Immutable identifier of this row (§4.2 skill 10). */
@@ -36,7 +36,7 @@ export const SALES_CHECK_PRICE_SKILL_ID = 'skill.sales.check_price';
 const input_schema: Record<string, unknown> = {
   $schema: 'https://json-schema.org/draft/2020-12/schema',
   type: 'object',
-  required: ['tenant_id', 'sku_id', 'customer_id'],
+  required: ['tenant_id', 'sku_id'],
   properties: {
     tenant_id: { type: 'string' },
     sku_id: { type: 'string' },
@@ -58,8 +58,6 @@ const output_schema: Record<string, unknown> = {
     'p_floor',
     'discount_allowed',
     'currency',
-    'quote_token',
-    'quote_expires_at',
   ],
   properties: {
     sku_id: { type: 'string' },

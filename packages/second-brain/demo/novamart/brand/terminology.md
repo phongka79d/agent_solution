@@ -20,5 +20,5 @@ synthetic: true
 ## Commercial and Policy Terms
 
 - **Currency Format:** Express monetary amounts in Vietnamese Dong as `VND` (for example, `18,900,000 VND` or `18.900.000 VND` in `vi-VN` copy). Never use `TWD` or unverified USD conversions.
-- **Fulfillment Hubs:** Refer to regional warehouses as `WH-HCM` (Ho Chi Minh City) and `WH-HN` (Hanoi).
+- **Fulfillment Centres:** Refer to regional distribution centres as `Ho Chi Minh City` (the southern hub) and `Hanoi` (the northern hub).
 - **Service Commitments:** State `14-day unopened return policy` (`đổi trả trong 14 ngày đối với sản phẩm nguyên seal/chưa mở hộp`), `2–4 business days standard shipping` (`giao hàng tiêu chuẩn 2–4 ngày làm việc`), and `12-month limited hardware warranty` (`bảo hành phần cứng chính hãng 12 tháng`).

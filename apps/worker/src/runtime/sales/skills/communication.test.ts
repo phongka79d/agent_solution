@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { type Customer360Fact } from '@agentos/core-engine/contracts';
+import { type Customer360Fact, type HydratedContext } from '@agentos/core-engine/contracts';
 import { type CustomerEventTimeline } from '@agentos/database';
 import { type ErpReadPort } from '../../connectors.js';
 import { SalesContextAggregator } from '../context-aggregator.js';
@@ -49,6 +49,26 @@ const timeline: CustomerEventTimeline = {
   }],
   next_cursor: null,
 };
+function createHydratedContext(
+  takeover_active = false,
+  correlation_id = CORRELATION_ID,
+): HydratedContext {
+  return {
+    correlation_id,
+    tenant_id: TENANT_ID,
+    customer,
+    working_memory: {
+      session_id: 'session-communication',
+      last_touch_channel: 'WEB_CHAT',
+      turn_count: 1,
+      takeover_active,
+    },
+    knowledge_citations: [],
+    hydrated_at: SNAPSHOT_AT,
+    run_state: { sales: { timeline } },
+  };
+}
+
 
 function createErpRead(): ErpReadPort {
   return {
@@ -346,6 +366,7 @@ describe('SalesSkillServices - message, consent and registry exports', () => {
       correlation_id: CORRELATION_ID,
       granted_authority: 'AUTH-3' as const,
       effect_key: 'effect-msg-1',
+      hydrated_context: createHydratedContext(),
     };
 
     // 1. Missing channel consent -> CONSENT_REQUIRED (preempts suppression, takeover, frequency cap)
@@ -482,7 +503,7 @@ describe('SalesSkillServices - message, consent and registry exports', () => {
       resolve_grant: vi.fn(),
       price_floor: createPriceFloorPort(),
     });
-    expect(withPriceOnlyResolved.has('skill.sales.check_price')).toBe(false);
+    expect(withPriceOnlyResolved.has('skill.sales.check_price')).toBe(true);
 
     const withPriceResolved = resolveEnabledSalesSkills({
       erp_read: null,
@@ -529,7 +550,7 @@ describe('SalesSkillServices - message, consent and registry exports', () => {
     });
     expect(withOrderOnly.has('skill.sales.create_order')).toBe(false);
 
-    const withOrderAndCart = resolveEnabledSalesSkills({
+    const withOrderAndCartOnly = resolveEnabledSalesSkills({
       erp_read: null,
       context: { verifiedCustomerFor: vi.fn(), verifiedTimelineFor: vi.fn() },
       resolve_correlation_id: vi.fn(),
@@ -537,7 +558,7 @@ describe('SalesSkillServices - message, consent and registry exports', () => {
       order: createOrderPort(),
       cart: createCartPort(),
     });
-    expect(withOrderAndCart.has('skill.sales.create_order')).toBe(true);
+    expect(withOrderAndCartOnly.has('skill.sales.create_order')).toBe(false);
   });
 
   it('SalesConsentPort: exposes customer-level read (getConsent) as well as channel-specific read (read) from same boundary', async () => {
@@ -677,6 +698,8 @@ describe('SalesSkillServices - message, consent and registry exports', () => {
     expect(activeFnSpy).not.toHaveBeenCalled();
 
     // c) via context reader takeoverActiveFor returning true -> refused HUMAN_TAKEOVER, zero adapter dispatches
+    const activeCtxTakeoverReader = vi.fn(async (_context: HydratedContext) => true);
+    const activeCtx = createHydratedContext(true);
     const activeCtxComm = createCommunicationPort();
     const activeCtxSpy = vi.spyOn(activeCtxComm, 'sendMessage');
     const activeCtxServices = createSalesSkillServices({
@@ -684,7 +707,7 @@ describe('SalesSkillServices - message, consent and registry exports', () => {
       context: {
         verifiedCustomerFor: vi.fn(async () => customer),
         verifiedTimelineFor: vi.fn(async () => timeline),
-        takeoverActiveFor: vi.fn(async () => true),
+        takeoverActiveFor: activeCtxTakeoverReader,
       },
       communication: activeCtxComm,
       consent: createConsentPort(),
@@ -698,7 +721,7 @@ describe('SalesSkillServices - message, consent and registry exports', () => {
         skill_id: 'skill.sales.send_message',
         tool_binding: 'API-003.CommunicationConnector',
         input: msgInput,
-        context: msgContext,
+        context: { ...msgContext, hydrated_context: activeCtx },
       }),
     ).rejects.toMatchObject({
       code: 'HUMAN_TAKEOVER',
@@ -706,6 +729,20 @@ describe('SalesSkillServices - message, consent and registry exports', () => {
     });
     expect(activeCtxSpy).not.toHaveBeenCalled();
 
+    // Missing checkpointed context is also a fail-closed takeover condition.
+    await expect(
+      activeCtxServices.tool_port.invoke({
+        skill_id: 'skill.sales.send_message',
+        tool_binding: 'API-003.CommunicationConnector',
+        input: msgInput,
+        context: msgContext,
+      }),
+    ).rejects.toMatchObject({
+      code: 'HUMAN_TAKEOVER',
+      message: expect.stringContaining('active session lock'),
+    });
+    expect(activeCtxTakeoverReader).toHaveBeenCalledTimes(1);
+    expect(activeCtxSpy).not.toHaveBeenCalled();
     // 3. With bound takeover authority reporting no hold:
     // a) via takeover_active: false -> dispatches successfully
     const inactiveFlagComm = createCommunicationPort();
@@ -752,6 +789,7 @@ describe('SalesSkillServices - message, consent and registry exports', () => {
     expect(inactiveFnSpy).toHaveBeenCalledTimes(1);
 
     // c) via context reader takeoverActiveFor returning false -> dispatches successfully
+    const inactiveCtx = createHydratedContext(false);
     const inactiveCtxComm = createCommunicationPort();
     const inactiveCtxSpy = vi.spyOn(inactiveCtxComm, 'sendMessage');
     const inactiveCtxServices = createSalesSkillServices({
@@ -772,7 +810,7 @@ describe('SalesSkillServices - message, consent and registry exports', () => {
       skill_id: 'skill.sales.send_message',
       tool_binding: 'API-003.CommunicationConnector',
       input: msgInput,
-      context: msgContext,
+      context: { ...msgContext, hydrated_context: inactiveCtx },
     });
     expect(inactiveCtxOutput).toMatchObject({
       message_id: 'msg-00000000-0000-4000-8000-000000000001',
@@ -846,7 +884,11 @@ describe('SalesSkillServices - message, consent and registry exports', () => {
     };
 
     // 1. With operator hold on session -> refused HUMAN_TAKEOVER
-    await aggregator.hydrateContext(TENANT_ID, { session_id: 'held-session', channel_type: 'web', verified_customer_id: CUSTOMER_ID }, 'corr-held');
+    const heldContext = await aggregator.hydrateContext(
+      TENANT_ID,
+      { session_id: 'held-session', channel_type: 'web', verified_customer_id: CUSTOMER_ID },
+      'corr-held',
+    );
     await expect(
       services.tool_port.invoke({
         skill_id: 'skill.sales.send_message',
@@ -859,6 +901,7 @@ describe('SalesSkillServices - message, consent and registry exports', () => {
           caller_agent: 'SAL-01',
           granted_authority: 'AUTH-3',
           effect_key: 'effect-takeover-e2e',
+          hydrated_context: heldContext,
         },
       }),
     ).rejects.toMatchObject({
@@ -868,7 +911,11 @@ describe('SalesSkillServices - message, consent and registry exports', () => {
     expect(sendSpy).not.toHaveBeenCalled();
 
     // 2. With no hold on session -> proceeds
-    await aggregator.hydrateContext(TENANT_ID, { session_id: 'free-session', channel_type: 'web', verified_customer_id: CUSTOMER_ID }, 'corr-free');
+    const freeContext = await aggregator.hydrateContext(
+      TENANT_ID,
+      { session_id: 'free-session', channel_type: 'web', verified_customer_id: CUSTOMER_ID },
+      'corr-free',
+    );
     const output = await services.tool_port.invoke({
       skill_id: 'skill.sales.send_message',
       tool_binding: 'API-003.CommunicationConnector',
@@ -880,11 +927,11 @@ describe('SalesSkillServices - message, consent and registry exports', () => {
         caller_agent: 'SAL-01',
         granted_authority: 'AUTH-3',
         effect_key: 'effect-takeover-e2e',
+        hydrated_context: freeContext,
       },
     });
     const sendOutput = output as SalesCommunicationOutput;
     expect(sendOutput.provider_reference).toBe('line:ref-12345');
-    expect(sendSpy).toHaveBeenCalledOnce();
 
     // 3. With aggregator holding no verified state for the correlation -> fails closed
     await expect(

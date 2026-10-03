@@ -1,18 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AuthEnvironment } from './auth/session';
 import { POST as signInRoute } from '../app/api/auth/sign-in/route';
 import { POST as signOutRoute } from '../app/api/auth/sign-out/route';
 import { GET as sessionRoute } from '../app/api/auth/session/route';
 import {
   createDemoAuthProvider,
   isAllowedProxyPath,
-  proxyPlatformApi,
 } from './auth/demo-provider';
+import { authGateResponse, authProviderSelection, createConfiguredAuthProvider, proxyPlatformApi } from './auth/selection';
 import {
   clearSessionCookieHeaders,
   clearSessionsForTests,
   signSessionCookie,
   verifySessionCookie,
-  type AuthEnvironment,
 } from './auth/session';
 
 const ROLE = ['account', 'admin'].join('_');
@@ -86,6 +86,29 @@ async function createLogin(fetchImpl: typeof fetch = upstreamFetch()): Promise<{
   })();
   return { response, cookies: cookiePair(response) };
 }
+
+describe('platform auth provider selection', () => {
+  it('refuses explicit and default demo auth in production', () => {
+    const production = { ...ENV, APP_ENV: 'production' };
+    expect(() => authProviderSelection(production)).toThrow('AUTH_PROVIDER_PRODUCTION_REQUIRES_DB');
+    expect(() => createConfiguredAuthProvider({ env: { ...production, AUTH_PROVIDER: 'demo' } }))
+      .toThrow('AUTH_PROVIDER_PRODUCTION_REQUIRES_DB');
+    expect(() => authGateResponse({ ...production, AUTH_PROVIDER: 'demo' }))
+      .toThrow('AUTH_PROVIDER_PRODUCTION_REQUIRES_DB');
+  });
+
+  it('accepts durable auth in production', () => {
+    const env = { ...ENV, APP_ENV: 'production', NODE_ENV: 'production', AUTH_PROVIDER: 'db' };
+    expect(authProviderSelection(env)).toBe('db');
+    expect(authGateResponse(env)).toBeNull();
+  });
+
+  it.each(['local', 'ci'])('retains default demo auth in APP_ENV=%s with the production Node runtime', (appEnv) => {
+    const env = { ...ENV, APP_ENV: appEnv, NODE_ENV: 'production' };
+    expect(authProviderSelection(env)).toBe('demo');
+    expect(authGateResponse(env)).toBeNull();
+  });
+});
 
 describe('platform auth cookie and BFF boundary', () => {
   beforeEach(() => {
@@ -167,7 +190,30 @@ describe('platform auth cookie and BFF boundary', () => {
     expect(await provider.getSession(new Request(`${ORIGIN}/api/auth/session`, { headers: { cookie: `agentos_platform_session=${first.cookieValue}` } }))).toBeNull();
     expect(await provider.getSession(new Request(`${ORIGIN}/api/auth/session`, { headers: { cookie: `agentos_platform_session=${second.cookieValue}` } }))).not.toBeNull();
     expect(isAllowedProxyPath('GET', 'runs')).toBe(true);
+    expect(isAllowedProxyPath('GET', 'platform/health')).toBe(true);
+    expect(isAllowedProxyPath('GET', 'platform/admins')).toBe(true);
+    expect(isAllowedProxyPath('GET', 'platform/companies/c1/overview')).toBe(true);
+    expect(isAllowedProxyPath('POST', 'platform/companies/c1/overview')).toBe(false);
+    expect(isAllowedProxyPath('POST', 'platform/admins')).toBe(true);
+    expect(isAllowedProxyPath('GET', 'platform/audit')).toBe(true);
+    expect(isAllowedProxyPath('GET', 'platform/runs')).toBe(true);
+    expect(isAllowedProxyPath('GET', 'platform/runs/summary')).toBe(true);
+    expect(isAllowedProxyPath('GET', 'platform/runs/reconciliation')).toBe(true);
+    expect(isAllowedProxyPath('GET', 'platform/companies/c1/runs/r1')).toBe(true);
+    expect(isAllowedProxyPath('GET', 'platform/companies/c1/users')).toBe(true);
+    expect(isAllowedProxyPath('POST', 'platform/companies/c1/invitations')).toBe(true);
+    expect(isAllowedProxyPath('POST', 'platform/companies/c1/users')).toBe(false);
+    expect(isAllowedProxyPath('POST', 'platform/companies/c1/runs/r1/retry')).toBe(true);
+    expect(isAllowedProxyPath('POST', 'platform/companies/c1/runs/r1/reconcile')).toBe(true);
+    expect(isAllowedProxyPath('GET', 'platform/companies/c1/runs')).toBe(false);
     expect(isAllowedProxyPath('POST', 'admin/autonomy/pause')).toBe(true);
+    expect(isAllowedProxyPath('PUT', 'platform/providers/openai')).toBe(true);
+    expect(isAllowedProxyPath('POST', 'platform/providers/openai/test')).toBe(true);
+    expect(isAllowedProxyPath('POST', 'auth/password')).toBe(true);
+    expect(isAllowedProxyPath('GET', 'platform/skill-catalog')).toBe(true);
+    expect(isAllowedProxyPath('PUT', 'platform/skill-catalog/skill.sales.propose/entitlement/tenant-1')).toBe(true);
+    expect(isAllowedProxyPath('PUT', 'platform/providers')).toBe(false);
+    expect(isAllowedProxyPath('DELETE', 'platform/providers/openai')).toBe(false);
     expect(isAllowedProxyPath('GET', 'admin/users')).toBe(false);
   });
 

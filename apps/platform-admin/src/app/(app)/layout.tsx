@@ -36,7 +36,7 @@ export default async function AppLayout({ children }: { readonly children: React
 
   return (
     <SessionProvider session={session}>
-      <PlatformShell>{children}</PlatformShell>
+      <PlatformShell subscriptionsEnabled={process.env.PLATFORM_FEATURE_SUBSCRIPTIONS === 'true'}>{children}</PlatformShell>
     </SessionProvider>
   );
 }

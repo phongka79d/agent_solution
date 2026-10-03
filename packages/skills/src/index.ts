@@ -13,4 +13,5 @@ export * from './platform/index.js';
 export * from './registry.js';
 export { assertRegistrable } from './registration.js';
 export * from './runtime/index.js';
+export * from './derive.js';
 export * from './schema/index.js';

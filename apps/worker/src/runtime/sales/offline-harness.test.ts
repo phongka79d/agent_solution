@@ -1,13 +1,27 @@
 import { computeEffectKey } from '@agentos/core-engine';
-import type { ActionDraft } from '@agentos/core-engine/contracts';
+import type { ActionDraft, HydratedContext } from '@agentos/core-engine/contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
   createSalesOfflineHarness,
   PILOT_02_OFFLINE_FIXTURE,
   SALES_P2_DISABLED_SKILLS,
-} from './index.js';
+} from './offline-harness.js';
 
+const hydrated_context: HydratedContext = {
+  correlation_id: PILOT_02_OFFLINE_FIXTURE.correlation_id,
+  tenant_id: PILOT_02_OFFLINE_FIXTURE.tenant_id,
+  customer: PILOT_02_OFFLINE_FIXTURE.customer,
+  working_memory: {
+    session_id: 'session-pilot-02',
+    last_touch_channel: 'web',
+    turn_count: 1,
+    takeover_active: false,
+  },
+  knowledge_citations: [],
+  hydrated_at: PILOT_02_OFFLINE_FIXTURE.observed_at,
+  run_state: { sales: { timeline: PILOT_02_OFFLINE_FIXTURE.timeline } },
+};
 const readContext = {
   run_id: 'run-pilot-02',
   tenant_id: PILOT_02_OFFLINE_FIXTURE.tenant_id,
@@ -15,6 +29,7 @@ const readContext = {
   correlation_id: PILOT_02_OFFLINE_FIXTURE.correlation_id,
   granted_authority: 'AUTH-0' as const,
   effect_key: 'effect-pilot-02-read',
+  hydrated_context,
 };
 
 function disabledMutationAction(): ActionDraft {
@@ -127,9 +142,8 @@ describe('SalesOfflineHarness', () => {
         verified_model: 'pilot-02-owner-model',
       },
       eligibility: {
-        stock_available: true,
-        consent_verified: true,
-        suppression_cleared: true,
+        consent_verified: null,
+        suppression_cleared: null,
       },
       expected_outcome: {
         conversion_probability: 0.7,
@@ -149,8 +163,9 @@ describe('SalesOfflineHarness', () => {
     })).rejects.toMatchObject({
       code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE',
     });
-    expect(harness.context.verifiedCustomerFor(foreignTenant, PILOT_02_OFFLINE_FIXTURE.correlation_id)).toBeNull();
-    expect(harness.context.verifiedTimelineFor(foreignTenant, PILOT_02_OFFLINE_FIXTURE.correlation_id)).toBeNull();
+    const foreignContext = { ...hydrated_context, tenant_id: foreignTenant };
+    expect(harness.context.verifiedCustomerFor(foreignContext)).toBeNull();
+    expect(harness.context.verifiedTimelineFor(foreignContext)).toBeNull();
     expect(harness.read_calls).toEqual([
       { tenant_id: foreignTenant, resource: 'products' },
     ]);
@@ -213,7 +228,7 @@ describe('SalesOfflineHarness', () => {
     expect(harness.effect_dispatches).toEqual([]);
   });
 
-  it('refuses recommendation when the owner-approved revenue source is unbound', async () => {
+  it('returns a grounded recommendation with no expected outcome when revenue evidence is unbound', async () => {
     const harness = createSalesOfflineHarness({ revenue_evidence_available: false });
     const services = harness.createSkillServices();
 
@@ -226,7 +241,12 @@ describe('SalesOfflineHarness', () => {
         current_cart_skus: [],
       },
       context: { ...readContext, caller_agent: 'SAL-03', granted_authority: 'AUTH-1' as const },
-    })).rejects.toMatchObject({ code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE' });
+    })).resolves.toMatchObject({
+      customer: 'cust-a',
+      product: { sku: 'SKU-OK', price: 1000, currency: 'TWD' },
+      expected_outcome: null,
+      evidence: { revenue_data_status: 'Chưa có dữ liệu doanh thu' },
+    });
     expect(harness.effect_dispatches).toEqual([]);
   });
 });

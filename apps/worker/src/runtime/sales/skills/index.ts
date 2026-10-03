@@ -1,4 +1,4 @@
-import { computeEffectKey, computeRequestFingerprint, evaluateAuthorityVerdict } from '@agentos/core-engine';
+import { approvalPayloadDigest, computeEffectKey, evaluateAuthorityVerdict } from '@agentos/core-engine';
 import { createSalesSkills, createSkillRegistry, createSkillRuntimeEngine } from '@agentos/skills';
 
 import { createSalesSkillDispatcher } from './dispatcher.js';
@@ -101,13 +101,11 @@ export function resolveEnabledSalesSkills(
     enabled.add('skill.sales.recommend_product');
   }
 
-  // Check price requires SalesPriceFloorPort
+  // Plain price reads require an authoritative floor source, not quote signing.
   const priceFloorPort = options.price_floor;
-  // A quote without its signing secret cannot be proven, so the row stays unbound rather than
-  // enabled-but-unusable: enablement and the unbound report must agree.
   const quoteSigningBound = typeof options.quote_signing_secret === 'string'
     && options.quote_signing_secret.trim().length > 0;
-  if (gateAllowlist.has('skill.sales.check_price') && Boolean(priceFloorPort) && quoteSigningBound) {
+  if (gateAllowlist.has('skill.sales.check_price') && Boolean(priceFloorPort)) {
     enabled.add('skill.sales.check_price');
   }
 
@@ -126,6 +124,7 @@ export function resolveEnabledSalesSkills(
     && Boolean(orderPort)
     && quoteBound
     && paymentPolicyBound
+    && quoteSigningBound
   ) {
     enabled.add('skill.sales.create_order');
   }
@@ -175,10 +174,13 @@ export function createSalesSkillServices(options: SalesSkillOptions): SalesSkill
   }
   const engine = createSkillRuntimeEngine({
     registry,
-    digestPayload: (payload) => computeRequestFingerprint(payload as Record<string, unknown>),
     deriveEffectKey: (identity) => computeEffectKey(identity),
     evaluateAuthority: (granted, required) => evaluateAuthorityVerdict(granted, required),
+    approvalDigest: (action) => approvalPayloadDigest(action),
+    ...(options.llm === undefined ? {} : { llm: options.llm }),
     ...(options.now === undefined ? {} : { now: () => options.now!().getTime() }),
+    ...(options.gate === undefined ? {} : { gate: options.gate }),
+    ...(options.breakers === undefined ? {} : { breakers: options.breakers }),
   });
   const dispatcher = createSalesSkillDispatcher({
     engine,
@@ -193,15 +195,12 @@ export function createSalesSkillServices(options: SalesSkillOptions): SalesSkill
   if (options.erp_read === null) {
     unbound.push('API-001 catalog/inventory: no ERP read connector is bound');
   }
-  if (options.revenue_evidence === undefined) {
-    unbound.push('Core.RecommendationEngine revenue evidence: no owner-approved revenue model is bound');
-  }
   const priceFloorPort = options.price_floor;
   if (!priceFloorPort) {
     unbound.push('API-001.PricingEngine: no pricing engine port is bound; skill.sales.check_price refuses');
   }
   if (!options.quote_signing_secret || options.quote_signing_secret.trim().length === 0) {
-    unbound.push('QuoteSigningSecret: no quote signing secret is bound; skill.sales.check_price refuses');
+    unbound.push('QuoteSigningSecret: no quote signing secret is bound; skill.sales.create_order refuses');
   }
   const cartPort = options.cart;
   if (!cartPort) {

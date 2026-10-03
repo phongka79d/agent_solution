@@ -10,8 +10,7 @@ const OWNER_INPUTS = 'agentos.unresolved_owner_inputs';
 const TASKS = 'agentos.platform_durable_tasks';
 const RESERVATIONS = 'agentos.effect_reservations';
 const AGENTS = 'agentos.agents';
-const RESPONSES = 'agentos.run_responses';
-const STAGES = 'agentos.run_stage_events';
+const AUTONOMY_POLICIES = 'agentos.autonomy_policies';
 
 export interface CompanyApprovalProjectionSource {
   readonly id: string;
@@ -41,6 +40,14 @@ export interface CompanyOwnerInputProjectionSource {
   readonly status: 'UNRESOLVED' | string;
 }
 
+/** A draft-gated MINIMUM policy or durable waiting run: "Bản nháp chờ bạn duyệt". */
+export interface CompanyParkedDraftProjectionSource {
+  readonly skill_id: string;
+  readonly policy_version: string;
+  /** Present when the observed source is a waiting task rather than an autonomy policy. */
+  readonly run_id?: string;
+}
+
 export interface CompanyReconciliationProjectionSource {
   readonly run_id: string;
   readonly state: string;
@@ -53,21 +60,40 @@ export interface CompanyAgentProjectionSource {
   readonly code: string;
   readonly domain: string;
   readonly is_active: boolean;
+  readonly activation_status?: 'NOT_ACTIVATED' | 'ACTIVE' | 'PAUSED';
 }
 
 export interface CompanyRunProjectionSource {
   readonly run_id: string;
   readonly domain: string | null;
+  readonly state: string;
   readonly occurred_at: string;
 }
 
+/** One conversation observed today; drives the Overview "Hôm nay" conversation metric. */
+export interface CompanyConversationProjectionSource {
+  readonly conversation_id: string;
+  readonly state: string;
+  readonly occurred_at: string;
+}
+
+/** One campaign updated today; drives the Overview campaigns-by-state metric. */
+export interface CompanyCampaignProjectionSource {
+  readonly state: string;
+  readonly updated_at: string;
+}
+
 export interface CompanyActivityProjectionSource {
-  readonly kind: 'RUN_RESPONSE' | 'RUN_STAGE' | 'APPROVAL_DECIDED';
+  readonly kind: 'RUN_OUTCOME';
   readonly run_id: string;
   readonly domain: string | null;
-  readonly stage: string | null;
-  readonly decision: string | null;
+  readonly state: string;
   readonly occurred_at: string;
+}
+
+export interface CompanyActivityPageOptions {
+  readonly limit?: number;
+  readonly cursor?: string;
 }
 
 export interface CompanyProjectionSources {
@@ -76,9 +102,13 @@ export interface CompanyProjectionSources {
   readonly connectors: readonly CompanyConnectorProjectionSource[];
   readonly owner_inputs: readonly CompanyOwnerInputProjectionSource[];
   readonly reconciliations: readonly CompanyReconciliationProjectionSource[];
+  readonly parked_drafts: readonly CompanyParkedDraftProjectionSource[];
   readonly agents: readonly CompanyAgentProjectionSource[];
   readonly runs_today: readonly CompanyRunProjectionSource[];
+  readonly conversations_today: readonly CompanyConversationProjectionSource[];
+  readonly campaigns_today: readonly CompanyCampaignProjectionSource[];
   readonly activity: readonly CompanyActivityProjectionSource[];
+  readonly activity_next_cursor?: string | null;
 }
 
 interface ApprovalRow extends QueryResultRow {
@@ -104,6 +134,11 @@ interface OwnerInputRow extends QueryResultRow {
   input_id: string;
   status: string;
 }
+interface ParkedDraftRow extends QueryResultRow {
+  skill_id: string;
+  policy_version: string;
+  run_id: string | null;
+}
 interface ReconciliationRow extends QueryResultRow {
   run_id: string;
   state: string;
@@ -115,28 +150,28 @@ interface AgentRow extends QueryResultRow {
   code: string;
   domain: string;
   is_active: boolean;
+  activation_status: NonNullable<CompanyAgentProjectionSource['activation_status']>;
 }
 interface RunRow extends QueryResultRow {
   run_id: string;
   domain: string | null;
+  state: string;
   occurred_at: Date | string;
 }
-interface ResponseActivityRow extends QueryResultRow {
-  run_id: string;
+interface ConversationRow extends QueryResultRow {
+  conversation_id: string;
+  state: string;
   occurred_at: Date | string;
-  domain: string | null;
 }
-interface StageActivityRow extends QueryResultRow {
-  run_id: string;
-  entered_at: Date | string;
-  stage: string;
-  domain: string | null;
+interface CampaignRow extends QueryResultRow {
+  state: string;
+  updated_at: Date | string;
 }
-interface ApprovalActivityRow extends QueryResultRow {
+interface ActivityRow extends QueryResultRow {
   run_id: string;
-  decided_at: Date | string;
-  decision: string;
   domain: string | null;
+  state: string;
+  occurred_at: Date | string;
 }
 
 function iso(value: Date | string): string {
@@ -146,6 +181,24 @@ function nullableIso(value: Date | string | null | undefined): string | null {
   if (value === null || value === undefined) return null;
   const date = value instanceof Date ? value : new Date(value);
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+function decodeActivityCursor(cursor: string | undefined): { readonly occurred_at: string | null; readonly run_id: string | null } {
+  if (cursor === undefined || cursor.length === 0) return { occurred_at: null, run_id: null };
+  try {
+    const decoded = Buffer.from(cursor, 'base64url').toString('utf8');
+    const separator = decoded.indexOf('\n');
+    if (separator < 0) return { occurred_at: null, run_id: null };
+    const occurred_at = new Date(decoded.slice(0, separator));
+    const run_id = decoded.slice(separator + 1);
+    if (!Number.isFinite(occurred_at.getTime()) || run_id.length === 0) return { occurred_at: null, run_id: null };
+    return { occurred_at: occurred_at.toISOString(), run_id };
+  } catch {
+    return { occurred_at: null, run_id: null };
+  }
+}
+
+function encodeActivityCursor(occurred_at: string, run_id: string): string {
+  return Buffer.from(`${occurred_at}\n${run_id}`, 'utf8').toString('base64url');
 }
 
 function mapApproval(row: ApprovalRow): CompanyApprovalProjectionSource {
@@ -177,7 +230,7 @@ function mapReconciliation(row: ReconciliationRow): CompanyReconciliationProject
   };
 }
 function mapRun(row: RunRow): CompanyRunProjectionSource {
-  return { run_id: row.run_id, domain: row.domain, occurred_at: iso(row.occurred_at) };
+  return { run_id: row.run_id, domain: row.domain, state: row.state, occurred_at: iso(row.occurred_at) };
 }
 
 const SELECT_APPROVALS = `SELECT a.id::text AS id, a.run_id, ac.skill_name, a.decision,
@@ -206,44 +259,71 @@ const SELECT_RECONCILIATIONS = `SELECT t.run_id, t.state::text AS state,
   WHERE t.tenant_id = $1
     AND (t.state = 'waiting' OR r.status IN ('FAILED', 'EXPIRED'))
   ORDER BY t.updated_at ASC, t.run_id ASC`;
-const SELECT_AGENTS = `SELECT code, domain, is_active
+const SELECT_AGENTS = `SELECT code, domain, is_active, activation_status
   FROM ${AGENTS}
   WHERE tenant_id = $1
   ORDER BY code ASC`;
+// Absent autonomy policies also park draft-gated skills. parkTask persists the pending action
+// directly in the waiting task checkpoint, so policy rows are not a prerequisite for attention.
+// Prefer the policy source when both exist, but publish only one item per draft-gated skill.
+const SELECT_PARKED_DRAFTS = `SELECT DISTINCT ON (skill_id) skill_id, policy_version, run_id
+  FROM (
+    SELECT skill_id, policy_version, NULL::text AS run_id, 0 AS source_priority
+    FROM ${AUTONOMY_POLICIES}
+    WHERE tenant_id = $1 AND state = 'MINIMUM'
+      AND skill_id IN ('skill.mkt.generate_content', 'skill.mkt.segment_audience')
+    UNION ALL
+    SELECT t.state_payload->'pending_action'->>'skill_id' AS skill_id,
+      ''::text AS policy_version, t.run_id, 1 AS source_priority
+    FROM ${TASKS} t
+    WHERE t.tenant_id = $1 AND t.state = 'waiting'
+      AND t.state_payload->'pending_action'->>'skill_id'
+        IN ('skill.mkt.generate_content', 'skill.mkt.segment_audience')
+  ) parked
+  ORDER BY skill_id ASC, source_priority ASC, policy_version ASC, run_id ASC`;
 const SELECT_RUNS_TODAY = `SELECT DISTINCT t.run_id,
-    NULLIF(t.state_payload->>'domain', '') AS domain,
+    t.domain AS domain,
+    t.state::text AS state,
     t.updated_at AS occurred_at
   FROM ${TASKS} t
   WHERE t.tenant_id = $1
     AND t.updated_at >= CURRENT_DATE
   ORDER BY t.updated_at DESC, t.run_id ASC`;
-const SELECT_RESPONSE_ACTIVITY = `SELECT rr.run_id, rr.created_at AS occurred_at,
-    NULLIF(t.state_payload->>'domain', '') AS domain
-  FROM ${RESPONSES} rr
-  LEFT JOIN ${TASKS} t ON t.tenant_id = rr.tenant_id AND t.run_id = rr.run_id
-  WHERE rr.tenant_id = $1
-  ORDER BY rr.created_at DESC, rr.run_id ASC`;
-const SELECT_STAGE_ACTIVITY = `SELECT e.run_id, e.entered_at, e.stage::text AS stage,
-    NULLIF(e.detail->>'domain', '') AS domain
-  FROM ${STAGES} e
-  WHERE e.tenant_id = $1
-  ORDER BY e.entered_at DESC, e.run_id ASC, e.step_index DESC`;
-const SELECT_APPROVAL_ACTIVITY = `SELECT a.run_id, a.decided_at, a.decision,
-    NULLIF(split_part(ac.skill_name, '.', 2), '') AS domain
-  FROM ${APPROVALS} a
-  LEFT JOIN ${ACTIONS} ac ON ac.tenant_id = a.tenant_id AND ac.id = a.action_id
-  WHERE a.tenant_id = $1 AND a.decision <> 'PENDING' AND a.decided_at IS NOT NULL
-  ORDER BY a.decided_at DESC, a.id ASC`;
+const SELECT_CONVERSATIONS_TODAY = `SELECT cv.id::text AS conversation_id,
+    cv.state,
+    COALESCE(cv.last_message_at, cv.created_at) AS occurred_at
+  FROM agentos.conversations cv
+  WHERE cv.tenant_id = $1
+    AND COALESCE(cv.last_message_at, cv.created_at) >= CURRENT_DATE
+  ORDER BY occurred_at DESC, cv.id ASC`;
+const SELECT_CAMPAIGNS_TODAY = `SELECT c.status AS state, c.updated_at
+  FROM agentos.campaigns c
+  WHERE c.tenant_id = $1
+    AND c.updated_at >= CURRENT_DATE
+  ORDER BY c.updated_at DESC, c.id ASC`;
+// The generated domain column also resolves admission signals and completed plan checkpoints.
+const SELECT_ACTIVITY = `SELECT t.run_id, t.domain AS domain,
+    t.state::text AS state, t.updated_at AS occurred_at
+  FROM ${TASKS} t
+  WHERE t.tenant_id = $1
+    AND t.state IN ('completed', 'failed', 'stopped', 'waiting', 'awaiting_human')
+    AND ($2::timestamptz IS NULL OR t.updated_at < $2::timestamptz
+      OR (t.updated_at = $2::timestamptz AND t.run_id < $3))
+  ORDER BY t.updated_at DESC, t.run_id DESC
+  LIMIT $4`;
 
 /** Read-only tenant projection source repository. Every method binds one tenant transaction. */
 export class CompanyProjectionRepository {
   constructor(private readonly runInTenantTransaction: TenantTransactionRunner = withTenantContext) {}
 
-  async getSources(tenant_id: string): Promise<CompanyProjectionSources> {
+  async getSources(tenant_id: string, activityPage: CompanyActivityPageOptions = {}): Promise<CompanyProjectionSources> {
     assertTenantContext(tenant_id);
+    const requestedLimit = activityPage.limit ?? 50;
+    const limit = Math.max(1, Math.min(200, Math.trunc(Number.isFinite(requestedLimit) ? requestedLimit : 50)));
+    const cursor = decodeActivityCursor(activityPage.cursor);
     return this.runInTenantTransaction(tenant_id, async (client) => {
       const [approvals, handoffs, connectors, owner_inputs, reconciliations, agents, runs_today,
-        responses, stages, decisions] = await Promise.all([
+        conversations_today, campaigns_today, activityRows] = await Promise.all([
         client.query<ApprovalRow>(SELECT_APPROVALS, [tenant_id]),
         client.query<HandoffRow>(SELECT_HANDOFFS, [tenant_id]),
         client.query<ConnectorRow>(SELECT_CONNECTORS, [tenant_id]),
@@ -251,45 +331,50 @@ export class CompanyProjectionRepository {
         client.query<ReconciliationRow>(SELECT_RECONCILIATIONS, [tenant_id]),
         client.query<AgentRow>(SELECT_AGENTS, [tenant_id]),
         client.query<RunRow>(SELECT_RUNS_TODAY, [tenant_id]),
-        client.query<ResponseActivityRow>(SELECT_RESPONSE_ACTIVITY, [tenant_id]),
-        client.query<StageActivityRow>(SELECT_STAGE_ACTIVITY, [tenant_id]),
-        client.query<ApprovalActivityRow>(SELECT_APPROVAL_ACTIVITY, [tenant_id]),
+        client.query<ConversationRow>(SELECT_CONVERSATIONS_TODAY, [tenant_id]),
+        client.query<CampaignRow>(SELECT_CAMPAIGNS_TODAY, [tenant_id]),
+        client.query<ActivityRow>(SELECT_ACTIVITY, [tenant_id, cursor.occurred_at, cursor.run_id, limit + 1]),
       ]);
-      const activity: CompanyActivityProjectionSource[] = [
-        ...responses.rows.map((row) => ({
-          kind: 'RUN_RESPONSE' as const,
-          run_id: row.run_id,
-          domain: row.domain,
-          stage: null,
-          decision: null,
-          occurred_at: iso(row.occurred_at),
-        })),
-        ...stages.rows.map((row) => ({
-          kind: 'RUN_STAGE' as const,
-          run_id: row.run_id,
-          domain: row.domain,
-          stage: row.stage,
-          decision: null,
-          occurred_at: iso(row.entered_at),
-        })),
-        ...decisions.rows.map((row) => ({
-          kind: 'APPROVAL_DECIDED' as const,
-          run_id: row.run_id,
-          domain: row.domain,
-          stage: null,
-          decision: row.decision,
-          occurred_at: iso(row.decided_at),
-        })),
-      ].sort((left, right) => right.occurred_at.localeCompare(left.occurred_at));
+      const parkedDrafts = await client.query<ParkedDraftRow>(SELECT_PARKED_DRAFTS, [tenant_id]);
+      const hasMoreActivity = activityRows.rows.length > limit;
+      const selectedActivity = activityRows.rows.slice(0, limit);
+      const lastActivity = selectedActivity.at(-1);
+      const activity_next_cursor = hasMoreActivity && lastActivity !== undefined
+        ? encodeActivityCursor(iso(lastActivity.occurred_at), lastActivity.run_id)
+        : null;
+      const activity: CompanyActivityProjectionSource[] = selectedActivity.map((row) => ({
+        kind: 'RUN_OUTCOME',
+        run_id: row.run_id,
+        domain: row.domain,
+        state: row.state,
+        occurred_at: iso(row.occurred_at),
+      }));
       return {
         approvals: approvals.rows.map(mapApproval),
         handoffs: handoffs.rows.map(mapHandoff),
         connectors: connectors.rows.map((row) => ({ connector_id: row.connector_id, status: row.status })),
         owner_inputs: owner_inputs.rows.map((row) => ({ input_id: row.input_id, status: row.status })),
         reconciliations: reconciliations.rows.map(mapReconciliation),
-        agents: agents.rows.map((row) => ({ code: row.code, domain: row.domain, is_active: row.is_active })),
+        parked_drafts: parkedDrafts.rows.map((row) => ({
+          skill_id: row.skill_id,
+          policy_version: row.policy_version,
+          ...(row.run_id == null ? {} : { run_id: row.run_id }),
+        })),
+        agents: agents.rows.map((row) => ({
+          code: row.code,
+          domain: row.domain,
+          is_active: row.is_active,
+          activation_status: row.activation_status,
+        })),
         runs_today: runs_today.rows.map(mapRun),
+        conversations_today: conversations_today.rows.map((row) => ({
+          conversation_id: row.conversation_id,
+          state: row.state,
+          occurred_at: iso(row.occurred_at),
+        })),
+        campaigns_today: campaigns_today.rows.map((row) => ({ state: row.state, updated_at: iso(row.updated_at) })),
         activity,
+        activity_next_cursor,
       };
     });
   }

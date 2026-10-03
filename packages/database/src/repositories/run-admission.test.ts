@@ -1,7 +1,7 @@
 import type { PoolClient, QueryResult, QueryResultRow } from 'pg';
 import { describe, expect, it } from 'vitest';
+import type { AdmitCareTurnInput } from './run-admission.js';
 import {
-  type AdmitCareTurnInput,
   admitCareTurn,
   CONVERSATION_TURN_SKILL,
 } from './run-admission.js';
@@ -11,6 +11,7 @@ const EFFECT_KEY = 'EK-CARE-TEST-1';
 const REQUEST_ID = 'REQ-CARE-1';
 const RUN_ID = 'RUN-CARE-1';
 const CORRELATION_ID = 'CORR-CARE-1';
+const CONVERSATION_ID = '01920000-0000-7000-8000-0000000000a3';
 const FINGERPRINT = 'a'.repeat(64);
 const OTHER_FINGERPRINT = 'b'.repeat(64);
 /**
@@ -30,8 +31,13 @@ interface ScriptedStatement {
 
 function createScriptedRunner(handler: (sql: string, params: readonly unknown[]) => Promise<QueryResultRow[]>) {
   const issued: ScriptedStatement[] = [];
+  const transactionStatements: string[] = [];
   const client: PoolClient = {
     async query<R extends QueryResultRow>(sql: string, params: readonly unknown[] = []): Promise<QueryResult<R>> {
+      if (/^(?:SAVEPOINT|ROLLBACK TO SAVEPOINT|RELEASE SAVEPOINT) /.test(sql)) {
+        transactionStatements.push(sql);
+        return { rows: [], rowCount: null, command: '', oid: 0, fields: [] };
+      }
       issued.push({ sql, params });
       const rows = (await handler(sql, params)) as R[];
       return {
@@ -48,7 +54,7 @@ function createScriptedRunner(handler: (sql: string, params: readonly unknown[])
     return work(client);
   };
 
-  return { runner, issued };
+  return { runner, issued, transactionStatements };
 }
 
 function mockReservationRow(overrides: Partial<QueryResultRow> = {}): QueryResultRow {
@@ -139,6 +145,95 @@ describe('admitCareTurn', () => {
     expect(issued[1]!.params[3]).toBe(0); // current_step = 0
     expect(issued[1]!.params[4]).toBe('queued'); // state = queued
   });
+
+  it('writes the customer message before the durable task in the winning admission transaction', async () => {
+    const { runner, issued } = createScriptedRunner(async (sql) => {
+      if (sql.includes('INSERT INTO agentos.effect_reservations')) return [mockReservationRow()];
+      if (sql.includes('UPDATE agentos.conversations')) return [{ id: CONVERSATION_ID }];
+      if (sql.includes('INSERT INTO agentos.conversation_messages')) return [{ id: 'message-1' }];
+      if (sql.includes('INSERT INTO agentos.platform_durable_tasks')) return [mockTaskRow()];
+      throw new Error(`Unexpected query: ${sql}`);
+    });
+
+    const outcome = await admitCareTurn({
+      tenant_id: TENANT,
+      effect_key: EFFECT_KEY,
+      request_id: REQUEST_ID,
+      request_fingerprint: FINGERPRINT,
+      run_id: RUN_ID,
+      correlation_id: CORRELATION_ID,
+      signal: { message: 'hello' },
+      reservation_ttl_ms: RESERVATION_TTL_MS,
+      customer_message: {
+        conversation_id: CONVERSATION_ID,
+        sender_id: 'widget-session',
+        content: 'hello',
+        request_id: REQUEST_ID,
+      },
+      now: () => NOW,
+    }, runner);
+
+    expect(outcome.kind).toBe('ADMITTED');
+    expect(issued.map(({ sql }) => {
+      if (sql.includes('INSERT INTO agentos.effect_reservations')) return 'reservation';
+      if (sql.includes('UPDATE agentos.conversations')) return 'conversation';
+      if (sql.includes('INSERT INTO agentos.conversation_messages')) return 'customer_message';
+      if (sql.includes('INSERT INTO agentos.platform_durable_tasks')) return 'task';
+      return 'unexpected';
+    })).toEqual(['reservation', 'conversation', 'customer_message', 'task']);
+    expect(issued[2]?.params).toEqual([
+      TENANT,
+      CONVERSATION_ID,
+      'customer',
+      'widget-session',
+      'hello',
+      REQUEST_ID,
+    ]);
+  });
+  it('inserts a campaign row linked to the run inside the admission transaction', async () => {
+    const { runner, issued } = createScriptedRunner(async (sql) => {
+      if (sql.includes('INSERT INTO agentos.effect_reservations')) return [mockReservationRow()];
+      if (sql.includes('INSERT INTO agentos.platform_durable_tasks')) return [mockTaskRow()];
+      if (sql.includes('INSERT INTO agentos.campaigns')) return [];
+      throw new Error(`Unexpected query: ${sql}`);
+    });
+    await admitCareTurn({
+      tenant_id: TENANT,
+      effect_key: EFFECT_KEY,
+      request_id: REQUEST_ID,
+      request_fingerprint: FINGERPRINT,
+      run_id: RUN_ID,
+      correlation_id: CORRELATION_ID,
+      signal: { payload: { module: 'marketing' } },
+      reservation_ttl_ms: RESERVATION_TTL_MS,
+      campaign: {
+        campaign_id: '01920000-0000-7000-8000-0000000000ca',
+        name: '90-day reactivation',
+        objective: 'winback',
+        channels: ['EMAIL_HTML'],
+        audience_count: 23,
+      },
+      now: () => NOW,
+    }, runner);
+
+    expect(issued).toHaveLength(3);
+    expect(JSON.parse(String(issued[1]?.params[6]))).toEqual({
+      signal: { payload: { module: 'marketing' } },
+      campaign_name: '90-day reactivation',
+    });
+    expect(issued[2]?.sql).toContain('INSERT INTO agentos.campaigns');
+    expect(issued[2]?.sql).toContain("'DRAFTING'");
+    expect(issued[2]?.params).toEqual([
+      '01920000-0000-7000-8000-0000000000ca',
+      TENANT,
+      RUN_ID,
+      '90-day reactivation',
+      'winback',
+      '["EMAIL_HTML"]',
+      23,
+    ]);
+  });
+
 
   it('duplicate admission with same key+fingerprint returns the SAME run_id (IN_FLIGHT) and writes no second task', async () => {
     const { runner, issued } = createScriptedRunner(async (sql) => {
@@ -245,6 +340,63 @@ describe('admitCareTurn', () => {
     });
     expect(issued).toHaveLength(2);
   });
+  it('returns the winning task receipt after the second reservation insert raises 23505, without another message or task', async () => {
+    const receipt = { task_id: RUN_ID, conversation_id: CONVERSATION_ID, status: 'accepted',
+      task_version: 1, correlation_id: CORRELATION_ID, request_fingerprint: FINGERPRINT };
+    let inserts = 0;
+    const { runner, issued, transactionStatements } = createScriptedRunner(async (sql) => {
+      if (sql.includes('INSERT INTO agentos.effect_reservations')) {
+        inserts += 1;
+        if (inserts === 1) return [mockReservationRow()];
+        throw Object.assign(new Error('concurrent identity collision'), {
+          code: '23505', constraint: 'uq_effect_reservation_request',
+        });
+      }
+      if (sql.includes('FOR UPDATE')) {
+        return [mockReservationRow({ status: 'SUCCEEDED', response_receipt: receipt })];
+      }
+      if (sql.includes('UPDATE agentos.conversations')) return [{ id: CONVERSATION_ID }];
+      if (sql.includes('INSERT INTO agentos.conversation_messages')) return [{ id: 'message-1' }];
+      if (sql.includes('INSERT INTO agentos.platform_durable_tasks')) return [mockTaskRow()];
+      throw new Error(`Unexpected query: ${sql}`);
+    });
+    const input: AdmitCareTurnInput = {
+      tenant_id: TENANT, effect_key: EFFECT_KEY, request_id: REQUEST_ID,
+      request_fingerprint: FINGERPRINT, run_id: RUN_ID, correlation_id: CORRELATION_ID,
+      signal: { message: 'hello' }, reservation_ttl_ms: RESERVATION_TTL_MS, now: () => NOW,
+      customer_message: { conversation_id: CONVERSATION_ID, sender_id: 'widget-session',
+        content: 'hello', request_id: REQUEST_ID },
+    };
+    await expect(admitCareTurn(input, runner)).resolves.toMatchObject({ kind: 'ADMITTED', run_id: RUN_ID });
+    await expect(admitCareTurn({ ...input, run_id: 'losing-run' }, runner)).resolves.toEqual({
+      kind: 'REPLAY', run_id: RUN_ID, receipt,
+    });
+    expect(issued.filter(({ sql }) => sql.includes('INSERT INTO agentos.platform_durable_tasks'))).toHaveLength(1);
+    expect(issued.filter(({ sql }) => sql.includes('INSERT INTO agentos.conversation_messages'))).toHaveLength(1);
+    expect(inserts).toBe(2);
+    expect(transactionStatements).toEqual([
+      'SAVEPOINT insert_effect_reservation', 'RELEASE SAVEPOINT insert_effect_reservation',
+      'SAVEPOINT insert_effect_reservation', 'ROLLBACK TO SAVEPOINT insert_effect_reservation',
+      'RELEASE SAVEPOINT insert_effect_reservation',
+    ]);
+  });
+
+  it('keeps different-byte admission a conflict after a request-identity unique-index race', async () => {
+    const { runner, issued } = createScriptedRunner(async (sql) => {
+      if (sql.includes('INSERT INTO agentos.effect_reservations')) {
+        throw Object.assign(new Error('concurrent identity collision'), { code: '23505' });
+      }
+      if (sql.includes('FOR UPDATE')) return [mockReservationRow({ request_fingerprint: OTHER_FINGERPRINT })];
+      throw new Error(`Unexpected query: ${sql}`);
+    });
+    await expect(admitCareTurn({
+      tenant_id: TENANT, effect_key: EFFECT_KEY, request_id: REQUEST_ID,
+      request_fingerprint: FINGERPRINT, run_id: 'losing-run', correlation_id: CORRELATION_ID,
+      signal: { message: 'hello' }, reservation_ttl_ms: RESERVATION_TTL_MS,
+    }, runner)).resolves.toEqual({ kind: 'CONFLICT' });
+    expect(issued.some(({ sql }) => sql.includes('INSERT INTO agentos.platform_durable_tasks'))).toBe(false);
+  });
+
 
   it('returns RECONCILE_REQUIRED when reservation is expired or failed without receipt', async () => {
     const { runner: runnerExpired } = createScriptedRunner(async (sql) => {
@@ -297,6 +449,9 @@ describe('admitCareTurn', () => {
     const runner = async <T>(_tenant: string, work: (c: PoolClient) => Promise<T>): Promise<T> => {
       const client = {
         async query<R extends QueryResultRow>(sql: string): Promise<QueryResult<R>> {
+          if (/^(?:SAVEPOINT|RELEASE SAVEPOINT) /.test(sql)) {
+            return { rows: [], rowCount: null, command: '', oid: 0, fields: [] };
+          }
           if (sql.includes('INSERT INTO agentos.effect_reservations')) {
             return {
               rows: [mockReservationRow()] as unknown as R[],

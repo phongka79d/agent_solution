@@ -29,13 +29,5 @@ export type PlatformProvider = components['schemas']['PlatformProvider'];
 export type PlatformTenantsResponse = components['schemas']['PlatformTenantsResponse'];
 export type PlatformUsageResponse = components['schemas']['PlatformUsageResponse'];
 export type PlatformProvidersResponse = components['schemas']['PlatformProvidersResponse'];
-export type ApiPath = keyof paths;
-
-/** Fetches one documented API path while leaving transport policy to the caller. */
-export async function apiFetch<TResponse>(path: ApiPath, init?: RequestInit): Promise<TResponse> {
-  const response = await fetch(path, init);
-  if (!response.ok) throw new Error(`API request failed with status ${response.status}`);
-  return await response.json() as TResponse;
-}
 
 export type ApiComponents = components['schemas'];

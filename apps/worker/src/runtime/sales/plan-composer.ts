@@ -1,5 +1,5 @@
 import type { PlannedStep, PlatformAgentId } from '@agentos/core-engine/contracts';
-import type { SkillEffectClass } from '@agentos/skills';
+import { effectPolicyOf, plannedSkillMetadata, type SkillEffectClass } from '@agentos/skills';
 import type { SkillRegistryRowMetadata } from './intent-classifier.js';
 
 /**
@@ -13,18 +13,7 @@ export interface DerivedEffectPolicy {
 }
 
 export function deriveEffectPolicy(effectClass: SkillEffectClass): DerivedEffectPolicy {
-  switch (effectClass) {
-    case 'READ':
-      return { mutating: false, idempotent: true, price_bearing: false };
-    case 'INTERNAL':
-      return { mutating: true, idempotent: false, price_bearing: false };
-    case 'EFFECT':
-      return { mutating: true, idempotent: false, price_bearing: false };
-    case 'APPROVAL':
-      return { mutating: true, idempotent: false, price_bearing: false };
-    default:
-      return { mutating: false, idempotent: true, price_bearing: false };
-  }
+  return effectPolicyOf({ effect_class: effectClass, tool_binding: '' });
 }
 
 /** Builds one canonical execution-plan step without changing its input fields. */
@@ -35,7 +24,11 @@ export function buildPlannedStep(
   inputParameters: Record<string, unknown>,
   dependsOnSteps: readonly number[],
 ): PlannedStep {
-  const policy = deriveEffectPolicy(row.effect_class);
+  const policy = effectPolicyOf({
+    effect_class: row.effect_class,
+    tool_binding: row.tool_binding ?? '',
+  });
+  const metadata = plannedSkillMetadata(row.skill_id);
   return {
     step_index: stepIndex,
     agent_id: agentId,
@@ -47,6 +40,12 @@ export function buildPlannedStep(
     price_bearing: row.price_bearing ?? policy.price_bearing,
     idempotent: row.idempotent ?? policy.idempotent,
     timeout_ms: row.timeout_ms,
+    ...(metadata === undefined ? {} : { dispatch_timeout_ms: metadata.dispatch_timeout_ms }),
+    completion: metadata?.completion ?? 'SYNC',
+    ...(metadata?.idempotency_input_field === undefined
+      ? {}
+      : { idempotency_input_field: metadata.idempotency_input_field }),
+    ...(row.audit_spec === undefined ? {} : { audit_spec: row.audit_spec }),
     depends_on_steps: [...dependsOnSteps],
   };
 }

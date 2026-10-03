@@ -1,3 +1,11 @@
+import {
+  renderResponseTemplate,
+  RESPONSE_KINDS,
+  TEMPLATE_KEYS,
+  TEMPLATE_SOURCE,
+  type ResponseKind,
+  type TemplateKey,
+} from '@agentos/core-engine';
 import { RunResponseRepository, type RunResponseRecord } from '@agentos/database';
 import {
   OrchestratorError,
@@ -6,6 +14,7 @@ import {
   type IResponseFinalizer,
   type IRunResponseStore,
   type ResponseFinalizationInput,
+  type ResponseOutcome,
   type RunResponseSource,
   type VerifiedStepReceipt,
 } from '@agentos/core-engine/contracts';
@@ -14,7 +23,8 @@ import { computeQuoteToken, timingSafeCompare } from '../sales/skills/quote-paym
 /** A domain that is allowed to expose a terminal response to a caller. */
 export type ResponseDomain = 'support' | 'sales' | 'marketing';
 
-const FAQ_SOURCE_FILE = 'customer-care/faq.md';
+const FAQ_SOURCE_FILE = 'customer-care/faq';
+const FAQ_SOURCE_PREFIX = 'customer-care/';
 const ORDER_SOURCE_FILE = 'API-001.OrderConnector';
 const QUOTE_SOURCE_FILE = 'API-001.PricingEngine';
 const INVENTORY_SOURCE_FILE = 'API-001.InventoryConnector';
@@ -22,7 +32,23 @@ const CATALOG_SOURCE_FILE = 'API-001.CatalogConnector';
 const RECOMMENDATION_SOURCE_FILE = 'Core.RecommendationEngine';
 const DRAFT_SOURCE_FILE = 'Marketing.DraftReceipt';
 const SHA256 = /^[a-f0-9]{64}$/i;
-const ORDER_STATUSES = new Set(['PENDING', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED', 'RETURNED']);
+const ORDER_STATUS_LABELS: Readonly<Record<string, string>> = {
+  PENDING: 'Đang chờ xử lý',
+  PROCESSING: 'Đang xử lý',
+  SHIPPED: 'Đã gửi hàng',
+  DELIVERED: 'Đã giao hàng',
+  CANCELLED: 'Đã hủy',
+  RETURNED: 'Đã hoàn trả',
+};
+const TEMPLATE_RESPONSE_KINDS: readonly ResponseKind[] = ['CLARIFICATION', 'REFUSAL', 'NO_ANSWER', 'HANDOFF_ACK'];
+const EVIDENCE_SOURCE = 'Core.Evidence@1';
+const RESPONSE_OUTCOME_BY_KIND: Record<ResponseKind, ResponseOutcome> = {
+  ANSWER: 'ANSWERED',
+  CLARIFICATION: 'CLARIFIED',
+  REFUSAL: 'REFUSED',
+  NO_ANSWER: 'NO_ANSWER',
+  HANDOFF_ACK: 'HANDOFF_ACK',
+};
 
 function record(value: unknown): Record<string, unknown> | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
@@ -165,10 +191,6 @@ function citation(
   };
 }
 
-function isFaqFile(file: string): boolean {
-  return file === FAQ_SOURCE_FILE;
-}
-
 function canonicalReceiptShape(receipt: ExecutionReceipt): boolean {
   return receipt.adapter_status === 'SUCCESS'
     && record(receipt.response_payload) !== null
@@ -183,7 +205,7 @@ function sameReceipt(left: ExecutionReceipt, right: ExecutionReceipt): boolean {
     && JSON.stringify(left.response_payload) === JSON.stringify(right.response_payload);
 }
 
-function assertTrustedInput(input: ResponseFinalizationInput): readonly VerifiedStepReceipt[] {
+function assertTrustedContext(input: ResponseFinalizationInput): void {
   if (!['support', 'sales', 'marketing'].includes(input.domain)) {
     refusal('RESPONSE_DOMAIN_UNSUPPORTED', `Unsupported response domain '${input.domain}'.`);
   }
@@ -193,6 +215,10 @@ function assertTrustedInput(input: ResponseFinalizationInput): readonly Verified
   if (input.context.tenant_id !== input.tenant_id) {
     refusal('RESPONSE_TENANT_MISMATCH', 'Response context is not bound to the requested tenant.');
   }
+}
+
+function assertTrustedInput(input: ResponseFinalizationInput): readonly VerifiedStepReceipt[] {
+  assertTrustedContext(input);
   if (input.successful_receipts.length === 0) {
     refusal('RESPONSE_EVIDENCE_MISSING', 'A response requires at least one successful immutable receipt.');
   }
@@ -216,6 +242,41 @@ function assertTrustedInput(input: ResponseFinalizationInput): readonly Verified
   return input.successful_receipts;
 }
 
+function templateResponse(
+  response_kind: Exclude<ResponseKind, 'ANSWER'>,
+  template_key: Parameters<typeof renderResponseTemplate>[0],
+  reason_code: string,
+): FinalResponse {
+  const rendered = renderResponseTemplate(template_key);
+  return {
+    response_kind,
+    text: rendered.text,
+    source: TEMPLATE_SOURCE,
+    template_key: rendered.template_key,
+    reason_code,
+    sources: [],
+  };
+}
+
+function assertTemplateResponse(response: FinalResponse): FinalResponse {
+  const sources = response.sources ?? [];
+  if (
+    response.response_kind === 'ANSWER'
+    || !TEMPLATE_RESPONSE_KINDS.includes(response.response_kind)
+    || response.source !== TEMPLATE_SOURCE
+    || response.template_key === undefined
+    || !Array.isArray(sources)
+    || sources.length !== 0
+  ) {
+    refusal('RESPONSE_TEMPLATE_INVALID', 'Template response is not an allowlisted non-answer terminal reply.');
+  }
+  const rendered = renderResponseTemplate(response.template_key);
+  if (response.text !== rendered.text || response.source !== rendered.source) {
+    refusal('RESPONSE_TEMPLATE_INVALID', 'Template response text does not match its approved template.');
+  }
+  return { ...response, sources };
+}
+
 function structuredText(payload: Record<string, unknown>): string | undefined {
   return nonEmpty(payload['answer']) ?? nonEmpty(payload['reply_text']);
 }
@@ -224,7 +285,12 @@ function finalResponse(answer: string, sources: readonly RunResponseSource[]): F
   if (answer.trim().length === 0 || sources.length === 0) {
     refusal('RESPONSE_UNGROUNDED', 'A response cannot be exposed without grounded text and a source citation.');
   }
-  return { answer, sources };
+  return {
+    response_kind: 'ANSWER',
+    text: answer,
+    source: EVIDENCE_SOURCE,
+    sources,
+  };
 }
 
 function finalizerRefusal(domain: ResponseDomain): never {
@@ -244,10 +310,39 @@ function faqResponse(
   if (top === null) return undefined;
   const answer = nonEmpty(top['approved_answer']) ?? nonEmpty(top['answer']);
   const file = nonEmpty(top['source_file']) ?? sourceFile(payload);
-  if (answer === undefined || file === undefined || !isFaqFile(file) || !SHA256.test(String(payload['source_version'] ?? ''))) return undefined;
+  if (
+    answer === undefined
+    || file === undefined
+    || !file.startsWith(FAQ_SOURCE_PREFIX)
+    || file.length <= FAQ_SOURCE_PREFIX.length
+    || !SHA256.test(String(payload['source_version'] ?? ''))
+  ) return undefined;
   const faqId = nonEmpty(top['faq_id']);
-  const enriched = faqId === undefined ? payload : { ...payload, faq_id: faqId };
+  const enriched = {
+    ...payload,
+    source_file: file,
+    ...(faqId === undefined ? {} : { faq_id: faqId }),
+  };
   return finalResponse(answer, [citation(enriched, evidence.evidence, FAQ_SOURCE_FILE)]);
+}
+function faqNoAnswerResponse(payload: Record<string, unknown>): FinalResponse | undefined {
+  if (
+    !Array.isArray(payload['answers'])
+    || payload['answers'].length !== 0
+    || payload['match_confidence'] !== 0
+    || !SHA256.test(String(payload['source_version'] ?? ''))
+  ) {
+    return undefined;
+  }
+  return templateResponse('NO_ANSWER', 'care.faq_no_answer_offer_handoff', 'CARE_FAQ_NO_ANSWER');
+}
+
+function orderNotFoundResponse(
+  payload: Record<string, unknown>,
+  hasVerifiedCustomer: boolean,
+): FinalResponse | undefined {
+  if (payload['result'] !== 'ORDER_NOT_FOUND' || !hasVerifiedCustomer) return undefined;
+  return templateResponse('NO_ANSWER', 'care.order_not_found', 'ORDER_NOT_FOUND');
 }
 
 function orderResponse(
@@ -257,9 +352,14 @@ function orderResponse(
 ): FinalResponse | undefined {
   const orderId = nonEmpty(payload['order_id']);
   const status = nonEmpty(payload['status'])?.toUpperCase();
-  if (orderId === undefined || status === undefined || !ORDER_STATUSES.has(status) || !hasVerifiedCustomer) return undefined;
+  const customerStatus = status === undefined ? undefined : ORDER_STATUS_LABELS[status];
+  if (orderId === undefined || customerStatus === undefined || !hasVerifiedCustomer) return undefined;
   const sourcePayload = sourceFile(payload) === undefined ? { ...payload, source_file: ORDER_SOURCE_FILE } : payload;
-  return finalResponse(`Order ${orderId} status: ${status}.`, [citation(sourcePayload, evidence.evidence, ORDER_SOURCE_FILE)]);
+  const rendered = renderResponseTemplate('care.order_status', {
+    order_id: escapeRenderedText(orderId),
+    status: customerStatus,
+  });
+  return finalResponse(rendered.text, [citation(sourcePayload, evidence.evidence, ORDER_SOURCE_FILE)]);
 }
 
 function quoteResponse(
@@ -305,6 +405,45 @@ function quoteResponse(
   const sourcePayload = sourceFile(payload) === undefined ? { ...payload, source_file: QUOTE_SOURCE_FILE } : payload;
   return finalResponse(
     `Quote for ${escapeRenderedText(sku)}: ${escapeRenderedText(currency)} ${String(finalPrice)} (valid until ${escapeRenderedText(expiry)}).`,
+    [citation(sourcePayload, evidence.evidence, QUOTE_SOURCE_FILE)],
+  );
+}
+
+/** Validates an unsigned ERP price without downgrading an invalid signed quote. */
+function unsignedListPrice(payload: Record<string, unknown>): number | undefined {
+  // Never downgrade a malformed, expired or invalid signed quote to an unsigned price.
+  if (payload['quote_token'] !== undefined || payload['quote_expires_at'] !== undefined) return undefined;
+  const currency = nonEmpty(payload['currency']);
+  const listPrice = payload['list_price'];
+  const finalPrice = payload['final_price'];
+  const floor = payload['p_floor'];
+  if (
+    currency === undefined
+    || !/^[A-Z]{3}$/.test(currency)
+    || !finiteNumber(listPrice)
+    || listPrice < 0
+    || !finiteNumber(finalPrice)
+    || !finiteNumber(floor)
+    || floor < 0
+    || finalPrice < floor
+    || finalPrice > listPrice
+  ) return undefined;
+  return listPrice;
+}
+
+/** A read-only ERP list price is not a customer-bound quote and needs no quote token. */
+function listPriceResponse(
+  payload: Record<string, unknown>,
+  evidence: VerifiedStepReceipt,
+): FinalResponse | undefined {
+  const sku = nonEmpty(payload['sku_id']);
+  const currency = nonEmpty(payload['currency']);
+  const listPrice = unsignedListPrice(payload);
+  if (sku === undefined || currency === undefined || listPrice === undefined) return undefined;
+  const sourcePayload = sourceFile(payload) === undefined ? { ...payload, source_file: QUOTE_SOURCE_FILE } : payload;
+  const price = new Intl.NumberFormat('vi-VN', { style: 'currency', currency }).format(listPrice);
+  return finalResponse(
+    `Giá niêm yết ERP của ${escapeRenderedText(sku)}: ${price}.`,
     [citation(sourcePayload, evidence.evidence, QUOTE_SOURCE_FILE)],
   );
 }
@@ -362,25 +501,54 @@ function catalogResponse(
 }
 
 /**
- * Grounded recommendation answer for `skill.sales.recommend_product`: the product, its price and
- * currency come from the same verified recommendation receipt, whose evidence a reviewer can open.
+ * Grounded recommendation answer: join the selected SKU to its verified ERP list-price receipt.
+ * Non-advisor recommendations can still use their authoritative catalog-backed product price.
  */
 function recommendationResponse(
   payload: Record<string, unknown>,
   evidence: VerifiedStepReceipt,
+  receipts: readonly VerifiedStepReceipt[],
+  advisor: boolean,
 ): FinalResponse | undefined {
   const product = record(payload['product']);
   if (product === null) return undefined;
   const sku = nonEmpty(product['sku']);
   const name = nonEmpty(product['name']);
+  if (sku === undefined || name === undefined) return undefined;
+  const priceReceipt = receipts.find((verified) =>
+    nonEmpty(verified.receipt.response_payload['sku_id']) === sku
+    && unsignedListPrice(verified.receipt.response_payload) !== undefined);
+  if (priceReceipt !== undefined) {
+    const pricePayload = priceReceipt.receipt.response_payload;
+    const listPrice = unsignedListPrice(pricePayload);
+    const currency = nonEmpty(pricePayload['currency']);
+    if (listPrice === undefined || currency === undefined) return undefined;
+    const renderedPrice = new Intl.NumberFormat('vi-VN', { style: 'currency', currency }).format(listPrice);
+    const expected = record(payload['expected_outcome']);
+    const reason = nonEmpty(payload['reason']);
+    if (reason === undefined) return undefined;
+    const recommendationSource = sourceFile(payload) === undefined
+      ? { ...payload, source_file: RECOMMENDATION_SOURCE_FILE, source_record_id: sku }
+      : payload;
+    const priceSource = sourceFile(pricePayload) === undefined
+      ? { ...pricePayload, source_file: QUOTE_SOURCE_FILE }
+      : pricePayload;
+    return finalResponse(
+      `${escapeRenderedText(name)} (${escapeRenderedText(sku)}) — Giá niêm yết ERP: ${renderedPrice}. ${escapeRenderedText(reason)}${expected === null ? ' Chưa có dữ liệu doanh thu.' : ''}`,
+      [
+        citation(recommendationSource, evidence.evidence, RECOMMENDATION_SOURCE_FILE),
+        citation(priceSource, priceReceipt.evidence, QUOTE_SOURCE_FILE),
+      ],
+    );
+  }
+  if (advisor) return undefined;
   const price = product['price'];
   const expected = record(payload['expected_outcome']);
-  const currency = expected === null ? undefined : nonEmpty(expected['currency']);
+  const currency = nonEmpty(product['currency'])
+    ?? (expected === null ? undefined : nonEmpty(expected['currency']));
   const reason = nonEmpty(payload['reason']);
   if (
-    sku === undefined
-    || name === undefined
-    || currency === undefined
+    currency === undefined
     || !finiteNumber(price)
     || price < 0
     || reason === undefined
@@ -391,7 +559,7 @@ function recommendationResponse(
     ? { ...payload, source_file: RECOMMENDATION_SOURCE_FILE, source_record_id: sku }
     : payload;
   return finalResponse(
-    `${name} (${sku}) — ${currency} ${String(price)}. ${reason}`,
+    `${name} (${sku}) — ${currency} ${String(price)}. ${reason}${expected === null ? ' Chưa có dữ liệu doanh thu.' : ''}`,
     [citation(sourcePayload, evidence.evidence, RECOMMENDATION_SOURCE_FILE)],
   );
 }
@@ -429,7 +597,11 @@ function structuredResponse(
   if (answer === undefined) return undefined;
   const file = sourceFile(payload);
   if (file === undefined) return undefined;
-  if (domain === 'support' && !isFaqFile(file) && file !== ORDER_SOURCE_FILE) return undefined;
+  if (
+    domain === 'support'
+    && !(file.startsWith(FAQ_SOURCE_PREFIX) && file.length > FAQ_SOURCE_PREFIX.length)
+    && file !== ORDER_SOURCE_FILE
+  ) return undefined;
   if (domain === 'support' && file === ORDER_SOURCE_FILE && !hasVerifiedCustomer) return undefined;
   if (
     domain === 'sales'
@@ -455,26 +627,43 @@ export class VerifiedResponseFinalizer implements IResponseFinalizer {
   ) {}
 
   async finalize(input: ResponseFinalizationInput): Promise<FinalResponse> {
+    if (input.terminal_response !== undefined) {
+      assertTrustedContext(input);
+      return assertTemplateResponse(input.terminal_response);
+    }
+
     const receipts = assertTrustedInput(input);
     const domain = input.domain as ResponseDomain;
+    let faqNoAnswer: FinalResponse | undefined;
     for (const verified of receipts) {
       const payload = verified.receipt.response_payload;
       if (domain === 'support') {
         const faq = faqResponse(payload, verified);
         if (faq !== undefined) return faq;
+        faqNoAnswer = faqNoAnswerResponse(payload) ?? faqNoAnswer;
+        const orderNotFound = orderNotFoundResponse(payload, input.context.customer !== null);
+        if (orderNotFound !== undefined) return orderNotFound;
         const order = orderResponse(payload, verified, input.context.customer !== null);
         if (order !== undefined) return order;
       } else if (domain === 'sales') {
-        // The customer answer prefers the richest grounded projection this run holds: an
-        // owner-approved quote, then the evidenced recommendation, then availability, then the
-        // catalog list. Only text copied from one of those receipts is ever exposed.
+        // Prefer signed quotes, recommendations, then read-only ERP list prices, availability
+        // and catalog results. Every amount comes from a successful immutable receipt.
         const quote = firstProjection(receipts, (verified) =>
           quoteResponse(verified.receipt.response_payload, verified, input, this.now, this.quoteSigningSecret, receipts));
         if (quote !== undefined) return quote;
 
         const recommendation = firstProjection(receipts, (verified) =>
-          recommendationResponse(verified.receipt.response_payload, verified));
+          recommendationResponse(
+            verified.receipt.response_payload,
+            verified,
+            receipts,
+            input.context.run_state?.sales?.advisor_requirements !== undefined,
+          ));
         if (recommendation !== undefined) return recommendation;
+
+        const listPrice = firstProjection(receipts, (verified) =>
+          listPriceResponse(verified.receipt.response_payload, verified));
+        if (listPrice !== undefined) return listPrice;
 
         const availability = firstProjection(receipts, (verified) =>
           stockResponse(verified.receipt.response_payload, verified));
@@ -490,7 +679,7 @@ export class VerifiedResponseFinalizer implements IResponseFinalizer {
       const structured = structuredResponse(payload, verified, domain, input.context.customer !== null);
       if (structured !== undefined) return structured;
     }
-    return finalizerRefusal(domain);
+    return faqNoAnswer ?? finalizerRefusal(domain);
   }
 }
 
@@ -498,7 +687,14 @@ export class VerifiedResponseFinalizer implements IResponseFinalizer {
 export const GroundedResponseFinalizer = VerifiedResponseFinalizer;
 
 function readStoredResponse(recordValue: RunResponseRecord): FinalResponse {
-  if (typeof recordValue.answer !== 'string' || recordValue.answer.trim().length === 0 || !Array.isArray(recordValue.sources)) {
+  if (
+    typeof recordValue.answer !== 'string'
+    || recordValue.answer.trim().length === 0
+    || !Array.isArray(recordValue.sources)
+    || nonEmpty(recordValue.source) === undefined
+    || !RESPONSE_KINDS.includes(recordValue.response_kind)
+    || recordValue.outcome !== RESPONSE_OUTCOME_BY_KIND[recordValue.response_kind]
+  ) {
     refusal('RESPONSE_STORE_INVALID', 'Durable response row is malformed; refusing to expose it.');
   }
   const sources = recordValue.sources as unknown[];
@@ -513,7 +709,30 @@ function readStoredResponse(recordValue: RunResponseRecord): FinalResponse {
       refusal('RESPONSE_STORE_INVALID', 'Durable response row contains an invalid source citation.');
     }
   }
-  return { answer: recordValue.answer, sources: sources as RunResponseSource[] };
+
+  if (recordValue.response_kind === 'ANSWER') {
+    if (sources.length === 0 || recordValue.source !== EVIDENCE_SOURCE || recordValue.template_key !== null) {
+      refusal('RESPONSE_STORE_INVALID', 'Durable answer is missing evidence provenance.');
+    }
+    return {
+      response_kind: 'ANSWER',
+      text: recordValue.answer,
+      source: recordValue.source,
+      sources: sources as RunResponseSource[],
+    };
+  }
+
+  if (recordValue.template_key === null || !TEMPLATE_KEYS.includes(recordValue.template_key as TemplateKey)) {
+    refusal('RESPONSE_STORE_INVALID', 'Durable template response has no allowlisted template key.');
+  }
+  return assertTemplateResponse({
+    response_kind: recordValue.response_kind,
+    text: recordValue.answer,
+    source: recordValue.source,
+    template_key: recordValue.template_key as TemplateKey,
+    ...(recordValue.reason_code === null ? {} : { reason_code: recordValue.reason_code }),
+    sources: sources as RunResponseSource[],
+  });
 }
 
 /** Adapts the database repository's atomic response/message transaction to the core port. */
@@ -529,14 +748,23 @@ export class RunResponseStoreAdapter implements IRunResponseStore {
     tenant_id: string;
     run_id: string;
     conversation_id?: string;
+    outcome: ResponseOutcome;
     sender_id: string;
     response: FinalResponse;
   }): Promise<void> {
+    if (input.outcome !== RESPONSE_OUTCOME_BY_KIND[input.response.response_kind]) {
+      refusal('RESPONSE_OUTCOME_INVALID', 'Durable response outcome does not match its response kind.');
+    }
     await this.repository.save({
       tenant_id: input.tenant_id,
       run_id: input.run_id,
-      answer: input.response.answer,
+      answer: input.response.text,
       sources: input.response.sources,
+      response_kind: input.response.response_kind,
+      outcome: input.outcome,
+      source: input.response.source,
+      ...(input.response.template_key === undefined ? {} : { template_key: input.response.template_key }),
+      ...(input.response.reason_code === undefined ? {} : { reason_code: input.response.reason_code }),
       ...(input.conversation_id === undefined ? {} : { conversation_id: input.conversation_id }),
       sender_id: input.sender_id,
     });

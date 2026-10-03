@@ -37,6 +37,7 @@ import {
   SELECT_APPROVAL,
   SELECT_APPROVAL_BY_EFFECT_KEY_FOR_UPDATE,
   SELECT_APPROVAL_FOR_UPDATE,
+  SELECT_DECIDED_APPROVALS,
   SELECT_PENDING_APPROVALS,
   STOP_TASK,
 } from './approvals.sql.js';
@@ -128,9 +129,11 @@ export interface ApprovalActionDraft {
   readonly step_index: number;
   readonly request_id: string;
   readonly action_revision: number;
-  readonly effect_key: string;
   readonly required_authority: string;
+  readonly effect_key: string;
   readonly approval_payload_digest?: string;
+  readonly approval_payload?: Record<string, unknown>;
+  readonly approval_digest_version?: number;
   readonly payload: Record<string, unknown>;
 }
 
@@ -142,14 +145,20 @@ export interface ApprovalRecord {
   readonly action_id: string;
   /** Null until campaigns land (P1): the column is present and the FK is deferred. */
   readonly campaign_id: string | null;
+  /** Campaign display name resolved from the approval's durable run, when one exists. */
+  readonly campaign_name?: string | null;
   readonly effect_key: string;
   readonly authority_required: 'AUTH-4';
+  /** Schema-normalized skill input reviewed and authorized by this approval. */
   readonly payload: unknown;
-  /**
-   * SHA-256 of the RFC 8785 canonical `payload`, computed on read. It is not a column: the digest
-   * is derived from the reviewed bytes, and every decision compares against the same derivation.
-   */
+  /** SHA-256 of canonical normalized skill input. */
   readonly payload_sha256: string;
+  /** Version of the approval payload digest contract persisted with the row. */
+  readonly digest_version: number;
+  /** First reviewed normalized payload; absent when no original snapshot was persisted. */
+  readonly original_payload?: unknown;
+  readonly original_payload_sha256?: string;
+  readonly original_digest_version?: number;
   readonly reason: string;
   readonly operator_id: string | null;
   readonly decision: ApprovalStatus;
@@ -222,6 +231,8 @@ export interface PauseForApprovalInput {
     readonly action_id: string;
     readonly effect_key: string;
     readonly payload: unknown;
+    readonly payload_sha256: string;
+    readonly digest_version: number;
     readonly reason: string;
   };
 }
@@ -429,6 +440,73 @@ export class ApprovalRepository {
         next_cursor:
           result.rows.length > limit
             ? `${last.created_at.toISOString()}${CURSOR_SEPARATOR}${last.id}`
+            : null,
+      };
+    });
+  }
+
+  /**
+   * Reads one page of the DECIDED (processed) approval history (`T6.8`, spec §7.7).
+   *
+   * The page is the complement of the pending queue: every row whose `decision` is no longer
+   * `PENDING` - a human decision or the durable EXPIRED transition - newest decision first. The
+   * keyset is `(COALESCE(decided_at, created_at), id)` descending, so a resumed page continues
+   * strictly below the last published row; each item still carries the action the approval bound.
+   *
+   * @param input Tenant, page size (default 50, maximum 200) and the resume cursor.
+   * @returns The page, newest decision first, each item carrying its action.
+   * @throws Error `APPROVAL_TENANT_ID_REQUIRED` when the tenant is blank or padded.
+   * @throws Error `APPROVAL_LIMIT_INVALID` when `limit` is not an integer in 1..200.
+   * @throws Error `APPROVAL_CURSOR_INVALID` when the cursor is not one this module published.
+   * @throws Error `APPROVAL_ACTION_MISSING` when a listed approval's action is not visible.
+   */
+  async listDecided(input: ApprovalListInput): Promise<ApprovalQueuePage> {
+    assertIdentifier(input.tenant_id, 'tenant_id', 36, 'APPROVAL_TENANT_ID_REQUIRED');
+    const limit = input.limit === undefined ? DEFAULT_PENDING_LIMIT : input.limit;
+
+    if (
+      typeof limit !== 'number' ||
+      !Number.isInteger(limit) ||
+      limit < 1 ||
+      limit > MAX_PENDING_LIMIT
+    ) {
+      throw new Error(
+        `APPROVAL_LIMIT_INVALID: limit must be an integer between 1 and ${MAX_PENDING_LIMIT} ` +
+          `(default ${DEFAULT_PENDING_LIMIT}); received ${String(input.limit)}.`,
+      );
+    }
+
+    const cursor = input.cursor === undefined ? null : parsePendingCursor(input.cursor);
+
+    return this.runInTenantTransaction(input.tenant_id, async (client) => {
+      const result = await client.query<ApprovalRow>(SELECT_DECIDED_APPROVALS, [
+        input.tenant_id,
+        cursor === null ? null : cursor.created_at,
+        cursor === null ? null : cursor.approval_id,
+        limit + 1,
+      ]);
+      const rows = result.rows.slice(0, limit);
+      const last = rows[rows.length - 1];
+
+      if (last === undefined) {
+        return { items: [], next_cursor: null };
+      }
+
+      const actions = await this.readActionsByIds(
+        client,
+        input.tenant_id,
+        rows.map((row) => row.action_id),
+      );
+
+      return {
+        items: rows.map((row) => {
+          const approval = toApprovalRecord(row);
+          const action = requireAction(actions, approval.action_id);
+          return { approval, action };
+        }),
+        next_cursor:
+          result.rows.length > limit
+            ? `${(last.decided_at ?? last.created_at).toISOString()}${CURSOR_SEPARATOR}${last.id}`
             : null,
       };
     });
@@ -699,19 +777,23 @@ export class ApprovalRepository {
     }
 
     if (
-      existing.id !== prepared.action_id ||
-      existing.action_revision !== prepared.action_revision ||
-      sha256CanonicalJson(existing.action_payload) !== prepared.payload_sha256
+      existing.id === prepared.action_id &&
+      existing.action_revision === prepared.action_revision &&
+      sha256CanonicalJson(existing.action_payload) === prepared.payload_sha256
     ) {
-      throw new Error(
-        `ACTION_EFFECT_KEY_CONFLICT: effect_key ${prepared.effect_key} already names action ` +
-          `${existing.id} (revision ${existing.action_revision}) with a different payload; a ` +
-          'deterministic key that maps two commands would let a replay dispatch the wrong one ' +
-          '(BR-005).',
-      );
+      // Re-saving the persisted pending action is an idempotent replay, not a new command.
+      return existing;
     }
 
-    return existing;
+    throw Object.assign(
+      new Error(
+        `ACTION_EFFECT_KEY_CONFLICT: effect_key ${prepared.effect_key} already names action ` +
+          `${existing.id} (revision ${existing.action_revision}) with a different identity or payload; a ` +
+          'deterministic key that maps two commands would let a replay dispatch the wrong one ' +
+          '(BR-005).',
+      ),
+      { code: 'ACTION_EFFECT_KEY_CONFLICT' },
+    );
   }
 
   /**
@@ -733,6 +815,7 @@ export class ApprovalRepository {
       action.id,
       prepared.effect_key,
       prepared.payload,
+      prepared.digest_version,
       prepared.reason,
     ]);
     const [inserted] = result.rows;
@@ -930,7 +1013,8 @@ export class ApprovalRepository {
         }
         return {
           approval_id: approval.id,
-          task_id: task.task_id,
+          // The public task identifier is the run id: `/tasks/:task_id` and admission receipts use it.
+          task_id: prepared.run_id,
           status: 'QUEUED',
           queued_at: task.updated_at,
         };
@@ -953,7 +1037,7 @@ export class ApprovalRepository {
 
       return {
         approval_id: approval.id,
-        task_id: queued.task_id,
+        task_id: prepared.run_id,
         status: 'QUEUED',
         queued_at: queued.updated_at,
       };
@@ -1174,11 +1258,16 @@ export class ApprovalRepository {
         );
       }
 
-      if (sha256CanonicalJson(authorized.payload) !== prepared.reviewed_digest) {
+      if (
+        authorized.approval_payload === undefined
+        || sha256CanonicalJson(authorized.approval_payload) !== prepared.reviewed_digest
+        || authorized.approval_payload_digest !== prepared.reviewed_digest
+        || authorized.approval_digest_version !== approval.digest_version
+      ) {
         throw new Error(
-          'APPROVAL_BINDING_MISMATCH: the payload of the approved action is not the payload the ' +
-            `operator reviewed (${prepared.reviewed_digest}); an approval authorizes the bytes that ` +
-            'were read back, never a payload that arrived with the decision (implement/08 §4.2).',
+          'APPROVAL_BINDING_MISMATCH: the normalized input and digest version of the approved action ' +
+            `do not match the reviewed payload ${prepared.reviewed_digest}; an approval authorizes ` +
+            'the exact skill input the runtime will execute (implement/08 §4.2).',
         );
       }
     }
@@ -1316,7 +1405,20 @@ export class ApprovalRepository {
 
     const revision = action.action_revision + 1;
     const payload = serializeJsonb(authorized.payload, 'APPROVAL_PAYLOAD_UNSERIALIZABLE');
-    const authorizedPayloadDigest = sha256CanonicalJson(authorized.payload);
+    const approvalPayload = authorized.approval_payload;
+    const digestVersion = authorized.approval_digest_version;
+    if (
+      approvalPayload === undefined
+      || digestVersion === undefined
+      || sha256CanonicalJson(approvalPayload) !== authorized.approval_payload_digest
+    ) {
+      throw new Error(
+        'APPROVAL_BINDING_MISMATCH: the modified action must carry its canonical normalized skill ' +
+          'input and the matching digest version before it can replace the reviewed revision.',
+      );
+    }
+    const authorizedPayloadDigest = sha256CanonicalJson(approvalPayload);
+    const normalizedPayload = serializeJsonb(approvalPayload, 'APPROVAL_PAYLOAD_UNSERIALIZABLE');
     let revised_action: ActionRow | undefined;
     let decided: ApprovalRecord;
 
@@ -1338,7 +1440,9 @@ export class ApprovalRepository {
           prepared.operator_id,
           prepared.review_comment,
           authorized.effect_key,
-          payload,
+          normalizedPayload,
+          digestVersion,
+          prepared.reviewed_digest,
         ]),
         prepared.approval_id,
       );

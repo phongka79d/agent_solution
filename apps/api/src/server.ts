@@ -3,12 +3,13 @@ import { fileURLToPath } from 'node:url';
 
 import { packageName as adaptersPackageName } from '@agentos/adapters';
 import { packageName as coreEnginePackageName } from '@agentos/core-engine';
-import { packageName as databasePackageName } from '@agentos/database';
-import { packageName as skillsPackageName } from '@agentos/skills';
+import { checkSchema, SkillCatalogRefusal, syncSkillCatalogAtBoot, packageName as databasePackageName } from '@agentos/database';
+import { PLATFORM_SKILL_ROWS, skillCatalogManifest, packageName as skillsPackageName } from '@agentos/skills';
 import Fastify, { type FastifyInstance } from 'fastify';
 import fastifySwagger from '@fastify/swagger';
 
 import { registerRoutes, type RouteDependencies } from './routes/index.js';
+import { healthRouteSchema } from './routes/v1/openapi-schemas.js';
 import { createGatewayComposition } from './runtime/composition.js';
 import {
   CORRELATION_HEADER,
@@ -16,12 +17,10 @@ import {
   correlationIdOf,
   failureFor,
   replyFailure,
-  toErrorResponse,
 } from './gateway/http.js';
 import type { GatewayFailure } from './gateway/contracts.js';
 import { installRawBodyPreservation } from './gateway/raw-body.js';
 import { installCors } from './gateway/cors.js';
-import { registerWebSocketStream } from './gateway/websocket.js';
 
 export const DEFAULT_PORT = 4000;
 
@@ -67,6 +66,10 @@ export const FASTIFY_REDACT_PATHS = [
   'req.body.phone',
   'req.body.customer.email',
   'req.body.customer.phone',
+  '*.secret',
+  '*.api_key',
+  '*.password',
+  '*.plaintext',
 ] as const;
 
 
@@ -86,8 +89,9 @@ export function buildServer(
 ): FastifyInstance {
   const app = Fastify({
     logger: {
-      // Unit tests stay silent unless they capture the stream to assert on redaction.
-      enabled: options?.loggerStream !== undefined || process.env.NODE_ENV !== 'test',
+      // Vitest runs stay silent unless they capture the stream to assert on redaction. The `ci`
+      // profile also runs with NODE_ENV=test, and its containers must still log 5xx diagnostics.
+      enabled: options?.loggerStream !== undefined || process.env.VITEST === undefined,
       level: process.env.LOG_LEVEL ?? 'info',
       redact: {
         paths: [...FASTIFY_REDACT_PATHS],
@@ -143,17 +147,14 @@ export function buildServer(
     const correlation_id = correlationIdOf(request, deps.runtime);
     const client_error = clientFailure(error);
 
-    if (client_error !== undefined) {
-      return reply
-        .status(client_error.http_status)
-        .header('content-type', 'application/json; charset=utf-8')
-        .send(toErrorResponse(client_error, correlation_id));
-    }
-
-    return replyFailure(reply, error, correlation_id);
+    return replyFailure(
+      reply,
+      client_error === undefined ? error : new GatewayFailureError(client_error),
+      correlation_id,
+    );
   });
 
-  app.get('/health', async () => ({
+  app.get('/health', { schema: healthRouteSchema }, async () => ({
     status: 'ok',
     service: 'api',
     dependencies: [...DEPENDENCIES],
@@ -166,10 +167,6 @@ export function buildServer(
   // R04 verifies the signature over the bytes the caller actually sent, so the preserving parser is
   // installed by the composition root before any route can read a delivery (`06` §8.1.1).
   installRawBodyPreservation(app);
-
-  // R10 is a WebSocket operation (`06` §1.1, §8.1.2) and therefore never a Fastify route: its
-  // handshake rides the HTTP server Fastify already owns, so it is mounted here beside the routes.
-  registerWebSocketStream(app, { runtime: deps.runtime, credentials: deps.credentials });
 
   registerRoutes(app, deps);
 
@@ -190,8 +187,13 @@ export function buildServer(
 function clientFailure(error: unknown): GatewayFailure | undefined {
   if (error instanceof GatewayFailureError) return undefined;
 
-  const status = (error as { readonly statusCode?: unknown }).statusCode;
-  if (typeof status !== 'number' || status < 400 || status >= 500) return undefined;
+  const status = typeof error === 'object' && error !== null && 'statusCode' in error
+    ? error.statusCode
+    : undefined;
+
+  // The raw-body parser uses this stable sentinel for JSON.parse failures, which lacks statusCode.
+  const malformedJson = error instanceof Error && error.message === 'INVALID_JSON';
+  if (!malformedJson && (typeof status !== 'number' || status < 400 || status >= 500)) return undefined;
 
   // A delivery rejected for its size is one condition, whether the gateway's own parser caught it or
   // the framework's body limit did, so both are named the same in `details`.
@@ -200,7 +202,7 @@ function clientFailure(error: unknown): GatewayFailure | undefined {
     (error instanceof Error && error.message === 'RAW_BODY_TOO_LARGE') ||
     (error as { readonly code?: unknown }).code === 'FST_ERR_CTP_BODY_TOO_LONG';
 
-  return failureFor('VALIDATION_FAILED', 'the delivery could not be read as a request', {
+  return failureFor('VALIDATION_FAILED', 'Không thể đọc yêu cầu được gửi đến.', {
     reason: oversized ? 'RAW_BODY_TOO_LARGE' : 'MALFORMED_REQUEST',
   });
 }
@@ -272,7 +274,13 @@ interface ProbesModule {
  * the boot log, so anything else — a probe that threw, for instance — is replaced: a raw message
  * could carry a host or a credential.
  */
-const REASON_TOKENS: readonly string[] = ['unreachable', 'auth_failed', 'unhealthy'];
+const REASON_TOKENS: readonly string[] = [
+  'unreachable',
+  'auth_failed',
+  'unhealthy',
+  'SCHEMA_BEHIND',
+  'PLATFORM_ROLE_MISSING',
+];
 const DEFAULT_REASON = 'unreachable';
 
 /**
@@ -411,6 +419,10 @@ export async function startServer(): Promise<FastifyInstance> {
     new URL(`${CORE_ENGINE_CONFIG_DIR}readiness.mjs`, import.meta.url),
   );
   const { realProbes } = await loadModule<ProbesModule>(probesUrl());
+  const readinessProbes = {
+    ...realProbes,
+    schemaCheck: () => checkSchema(),
+  };
 
   const composition = createGatewayComposition(process.env);
   const app = buildServer(composition);
@@ -423,7 +435,7 @@ export async function startServer(): Promise<FastifyInstance> {
   const port = Number.parseInt(process.env.PORT ?? '', 10) || DEFAULT_PORT;
 
   app.get('/ready', async (_request, reply) => {
-    const readiness = await probeReadiness(checkReadiness, env, realProbes);
+    const readiness = await probeReadiness(checkReadiness, env, readinessProbes);
     if (readiness.ready) return { status: 'ready' };
 
     reply.code(503);
@@ -451,7 +463,7 @@ export async function startServer(): Promise<FastifyInstance> {
   const intervalMs = nonNegativeInt(process.env.READINESS_INTERVAL_MS, DEFAULT_READINESS_INTERVAL_MS);
   const gate: ReadinessGate =
     attempts > 0
-      ? await readinessGate(checkReadiness, env, realProbes, attempts, intervalMs)
+      ? await readinessGate(checkReadiness, env, readinessProbes, attempts, intervalMs)
       : { ready: null, failures: [] };
 
   if (gate.ready === false) {
@@ -460,6 +472,16 @@ export async function startServer(): Promise<FastifyInstance> {
     fatalExit(
       `FATAL: startup aborted; dependencies not ready: ${names.length > 0 ? names.join(', ') : 'unknown'}`,
     );
+  }
+
+  // Phase 4 — skill catalog. Registration runs after the dependencies are proven and before the
+  // process serves: a contract digest that moved without a version bump aborts the boot (§10.2).
+  try {
+    await syncSkillCatalogAtBoot(skillCatalogManifest(PLATFORM_SKILL_ROWS));
+  } catch (error) {
+    const refusal = error instanceof SkillCatalogRefusal ? ` (${error.code} ${error.skill_id})` : '';
+    fatalExit(`FATAL: skill catalog sync refused${refusal}`);
+    throw error;
   }
 
   return app;

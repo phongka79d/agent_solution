@@ -17,6 +17,8 @@ import {
   type RedisInjectedClient,
 } from '@agentos/database';
 
+import { fail } from '../../gateway/http.js';
+
 import type { ChannelId } from '../../gateway/contracts.js';
 import type {
   CareHandoffPort,
@@ -159,10 +161,24 @@ export function createConversationPort(
     },
 
     listMessages: (input) => repository.listMessages(input),
+    listWidgetMessages: (input) => repository.listWidgetMessages(input),
+    handoffState: (tenant_id, conversation_id) => repository.handoffState(tenant_id, conversation_id),
 
-    setState: async (tenant_id, conversation_id, state, takeover_operator_id) => {
-      await repository.setState(tenant_id, conversation_id, state, takeover_operator_id);
-    },
+    setState: (
+      tenant_id,
+      conversation_id,
+      expected_state,
+      expected_takeover_operator_id,
+      state,
+      takeover_operator_id,
+    ) => repository.setState(
+      tenant_id,
+      conversation_id,
+      expected_state,
+      expected_takeover_operator_id,
+      state,
+      takeover_operator_id,
+    ),
     clearTakeoverIfOwned: (tenant_id, conversation_id, operator_id) =>
       repository.clearTakeoverIfOwned(tenant_id, conversation_id, operator_id),
 
@@ -198,17 +214,73 @@ export function createConversationPort(
   };
 }
 
+const REDIS_CONNECTION_ERROR_CODES: Readonly<Record<string, true>> = Object.freeze({
+  ECONNABORTED: true,
+  ECONNREFUSED: true,
+  ECONNRESET: true,
+  EAI_AGAIN: true,
+  EHOSTUNREACH: true,
+  ENETDOWN: true,
+  ENETUNREACH: true,
+  ENOTFOUND: true,
+  EPIPE: true,
+  ETIMEDOUT: true,
+});
+
+function isRedisConnectionError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+
+  const code = 'code' in error && typeof error.code === 'string' ? error.code : '';
+  if (REDIS_CONNECTION_ERROR_CODES[code] === true || error.name === 'MaxRetriesPerRequestError') return true;
+
+  const message = error.message.toLowerCase();
+  return message.includes("stream isn't writeable")
+    || message.includes('connection is closed')
+    || message.includes('socket closed unexpectedly');
+}
+
+function rethrowRedisFailure(error: unknown): never {
+  if (isRedisConnectionError(error)) {
+    fail('CAPABILITY_UNAVAILABLE', 'Dịch vụ quyền tiếp quản tạm thời không khả dụng. Vui lòng thử lại.');
+  }
+  throw error;
+}
+
+
 /** Binds SCR-005 to the canonical tenant/conversation-scoped Redis lease helpers. */
 export function createTakeoverLeasePort(
   redis: RedisInjectedClient,
   now: () => Date = systemClock,
 ): TakeoverLeasePort {
   return {
-    acquire: async (input) => acquireSessionTakeover(redis, input, now),
-    renew: async (input) => renewSessionTakeover(redis, input, now),
-    release: async (input) => releaseSessionTakeover(redis, input),
-    holder: async (tenant_id, conversation_id) =>
-      readSessionTakeover(redis, tenant_id, conversation_id, now),
+    acquire: async (input) => {
+      try {
+        return await acquireSessionTakeover(redis, input, now);
+      } catch (error) {
+        rethrowRedisFailure(error);
+      }
+    },
+    renew: async (input) => {
+      try {
+        return await renewSessionTakeover(redis, input, now);
+      } catch (error) {
+        rethrowRedisFailure(error);
+      }
+    },
+    release: async (input) => {
+      try {
+        return await releaseSessionTakeover(redis, input);
+      } catch (error) {
+        rethrowRedisFailure(error);
+      }
+    },
+    holder: async (tenant_id, conversation_id) => {
+      try {
+        return await readSessionTakeover(redis, tenant_id, conversation_id, now);
+      } catch (error) {
+        rethrowRedisFailure(error);
+      }
+    },
   };
 }
 

@@ -45,6 +45,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import { ensureIntegrationTenant } from './tenant-fixtures.mjs';
+import { createIntegrationErpConnectors } from './erp-fixtures.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -315,7 +316,7 @@ before(async () => {
   const apiComposition = await loadBuild('../../apps/api/dist/runtime/composition.js', 'the gateway composition');
   const apiPrincipal = await loadBuild('../../apps/api/dist/gateway/principal.js', 'the gateway credential store');
   const apiServer = await loadBuild('../../apps/api/dist/server.js', 'the gateway server');
-  const workerConnectors = await loadBuild('../../apps/worker/dist/runtime/connectors.js', 'the worker connector binding');
+  const adapters = await loadBuild('../../packages/adapters/dist/index.js', 'the API-001 connector and HTTP transport');
   const workerHmac = await loadBuild('../../apps/worker/dist/runtime/hmac.js', 'the worker HMAC primitive');
   const workerEntry = await loadBuild('../../apps/worker/dist/worker.js', 'the worker execution path');
   const salesGraph = await loadBuild('../../apps/worker/dist/runtime/sales/index.js', 'the Sales orchestrator graph');
@@ -358,16 +359,13 @@ before(async () => {
     { credentials },
   );
 
-  const connectors = workerConnectors.createWorkerConnectors(
-    {
-      APP_ENV: app_env,
-      CARE_TENANT_IDS: tenant_id,
-      MOCK_ERP_ENABLED: 'true',
-      ERP_API_BASE_URL: provider_base,
-      MOCK_SECRET_KEY: provider_secret,
-    },
-    { hmac: workerHmac.nodeHmacSha256Hex },
-  );
+  const connectors = createIntegrationErpConnectors(adapters, {
+    app_env,
+    tenant_id,
+    base_url: provider_base,
+    secret: provider_secret,
+    hmac: workerHmac.nodeHmacSha256Hex,
+  });
 
   const context_worker_id = `smoke_sales_worker_${randomUUID().slice(0, 8)}`;
 
@@ -377,6 +375,9 @@ before(async () => {
 
   const orchestratorFactory = salesFactory({
     workerId: context_worker_id,
+    // Explicit durable repositories install the production finalizer and tenant-scoped response store.
+    workflowRepository: new db.DurableWorkflowRepository(),
+    runResponseRepository: new db.RunResponseRepository(),
     erp_read: connectors.erp_read,
     auditSecret: audit_secret,
   });
@@ -403,7 +404,6 @@ before(async () => {
     app: null,
     composition,
     connectors,
-    workerConnectors,
     salesGraph,
     salesFactory,
     domainRegistry: domainRegistryModule,

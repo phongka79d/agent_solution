@@ -1,162 +1,106 @@
 /**
- * Keyboard-accessible query filter controls for R16 agent run history.
+ * Vietnamese-labeled run filters with native date pickers (T8.3).
+ *
+ * Dates are entered in the operator's local day and serialized server-side (end-of-day `before`
+ * bound); the console never asks for a raw ISO string.
+ * Explicit label associations keep captions independent of select options; filter actions stay
+ * available while results refresh.
  */
 
-import type { KeyboardEvent } from 'react';
+'use client';
+
+import { t } from '@agentos/ui-foundation/i18n';
+import { useId } from 'react';
 import type { RunFilters } from './types';
+
+const STATE_OPTIONS: readonly { readonly value: string; readonly label: string }[] = [
+  { value: '', label: 'Tất cả trạng thái' },
+  { value: 'queued', label: 'Đang chờ' },
+  { value: 'running', label: 'Đang chạy' },
+  { value: 'waiting', label: 'Chờ xử lý' },
+  { value: 'awaiting_human', label: 'Chờ người duyệt' },
+  { value: 'completed', label: 'Hoàn tất' },
+  { value: 'failed', label: 'Thất bại' },
+  { value: 'stopped', label: 'Đã dừng' },
+];
+
+const DOMAIN_OPTIONS: readonly { readonly value: string; readonly label: string }[] = [
+  { value: '', label: 'Tất cả lĩnh vực' },
+  { value: 'sales', label: 'Bán hàng' },
+  { value: 'marketing', label: 'Marketing' },
+  { value: 'support', label: 'CSKH' },
+  { value: 'unknown', label: 'Chưa xác định' },
+];
 
 interface RunFilterControlsProps {
   readonly filters: RunFilters;
+  readonly isLoading: boolean;
   readonly onChange: (filters: RunFilters) => void;
   readonly onApply: () => void;
   readonly onReset: () => void;
-  readonly isLoading: boolean;
 }
 
-const LIFECYCLE_STATES = [
-  'accepted',
-  'queued',
-  'running',
-  'waiting',
-  'awaiting_human',
-  'completed',
-  'stopped',
-  'failed',
-] as const;
-
-const EXECUTION_STATUSES = [
-  'pending',
-  'executing',
-  'success',
-  'failed',
-  'denied',
-  'aborted',
-] as const;
-
-export function RunFilterControls({
-  filters,
-  onChange,
-  onApply,
-  onReset,
-  isLoading,
-}: RunFilterControlsProps) {
-  const handleKeyDown = (e: KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      onApply();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      onReset();
-    }
-  };
-
+export function RunFilterControls({ filters, isLoading, onChange, onApply, onReset }: RunFilterControlsProps) {
+  const filterId = useId();
+  const update = (patch: Partial<RunFilters>) => onChange({ ...filters, ...patch });
   return (
     <form
-      aria-label="Filter Agent Runs"
-      onSubmit={(e) => {
-        e.preventDefault();
-        onApply();
-      }}
-      onKeyDown={handleKeyDown}
-      className="platform-card p-4"
+      className="platform-card grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-5"
+      onSubmit={(event) => { event.preventDefault(); onApply(); }}
+      aria-label="Bộ lọc lượt chạy"
     >
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
-        <div>
-          <label htmlFor="filter-agent-id" className="mb-1 block text-xs font-medium text-ink-body">
-            Agent ID
-          </label>
-          <input
-            id="filter-agent-id"
-            type="text"
-            value={filters.agent_id}
-            onChange={(e) => onChange({ ...filters, agent_id: e.target.value })}
-            placeholder="e.g. AGENT-SALES-01"
-            className="ui-input w-full font-mono text-xs"
-          />
-        </div>
-
-        <div>
-          <label htmlFor="filter-state" className="mb-1 block text-xs font-medium text-ink-body">
-            Task State
-          </label>
-          <select
-            id="filter-state"
-            value={filters.state}
-            onChange={(e) => onChange({ ...filters, state: e.target.value })}
-            className="ui-select w-full font-mono text-xs"
-          >
-            <option value="">All States</option>
-            {LIFECYCLE_STATES.map((st) => <option key={st} value={st}>{st}</option>)}
-          </select>
-        </div>
-
-        <div>
-          <label htmlFor="filter-status" className="mb-1 block text-xs font-medium text-ink-body">
-            Step Status
-          </label>
-          <select
-            id="filter-status"
-            value={filters.status}
-            onChange={(e) => onChange({ ...filters, status: e.target.value })}
-            className="ui-select w-full font-mono text-xs"
-          >
-            <option value="">All Statuses</option>
-            {EXECUTION_STATUSES.map((stat) => <option key={stat} value={stat}>{stat}</option>)}
-          </select>
-        </div>
-
-        <div>
-          <label htmlFor="filter-from" className="mb-1 block text-xs font-medium text-ink-body">
-            From Timestamp
-          </label>
-          <input
-            id="filter-from"
-            type="text"
-            value={filters.from}
-            onChange={(e) => onChange({ ...filters, from: e.target.value })}
-            placeholder="YYYY-MM-DDTHH:mm:ssZ"
-            className="ui-input w-full font-mono text-xs"
-          />
-        </div>
-
-        <div>
-          <label htmlFor="filter-to" className="mb-1 block text-xs font-medium text-ink-body">
-            To Timestamp
-          </label>
-          <input
-            id="filter-to"
-            type="text"
-            value={filters.to}
-            onChange={(e) => onChange({ ...filters, to: e.target.value })}
-            placeholder="YYYY-MM-DDTHH:mm:ssZ"
-            className="ui-input w-full font-mono text-xs"
-          />
-        </div>
-
-        <div>
-          <label htmlFor="filter-limit" className="mb-1 block text-xs font-medium text-ink-body">
-            Page Limit
-          </label>
-          <select
-            id="filter-limit"
-            value={filters.limit}
-            onChange={(e) => onChange({ ...filters, limit: Number(e.target.value) || 20 })}
-            className="ui-select w-full font-mono text-xs"
-          >
-            <option value="10">10 per page</option>
-            <option value="20">20 per page</option>
-            <option value="50">50 per page</option>
-            <option value="100">100 per page</option>
-          </select>
-        </div>
+      <div className="flex flex-col gap-1 text-xs font-medium text-ink sm:col-span-2">
+        <label htmlFor={`${filterId}-search`}>Tìm kiếm</label>
+        <input
+          id={`${filterId}-search`}
+          className="ui-input ui-focus-ring"
+          type="search"
+          value={filters.search}
+          placeholder="Mã lượt chạy hoặc mã tương quan"
+          onChange={(event) => update({ search: event.target.value })}
+        />
       </div>
-
-      <div className="mt-3 flex items-center justify-end gap-2 border-t border-line pt-3">
-        <button type="button" onClick={onReset} disabled={isLoading} className="ui-button ui-button--ghost ui-button--sm" aria-label="Reset filters">
-          Reset Filters
+      <div className="flex flex-col gap-1 text-xs font-medium text-ink">
+        <label htmlFor={`${filterId}-company`}>Công ty</label>
+        <input
+          id={`${filterId}-company`}
+          className="ui-input ui-focus-ring"
+          type="text"
+          value={filters.company_id}
+          placeholder="Mã hoặc tên công ty"
+          onChange={(event) => update({ company_id: event.target.value })}
+        />
+      </div>
+      <div className="flex flex-col gap-1 text-xs font-medium text-ink">
+        <label htmlFor={`${filterId}-state`}>Trạng thái</label>
+        <select id={`${filterId}-state`} className="ui-select ui-focus-ring" value={filters.state} onChange={(event) => update({ state: event.target.value })}>
+          {STATE_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </select>
+      </div>
+      <div className="flex flex-col gap-1 text-xs font-medium text-ink">
+        <label htmlFor={`${filterId}-domain`}>Lĩnh vực</label>
+        <select id={`${filterId}-domain`} className="ui-select ui-focus-ring" value={filters.domain} onChange={(event) => update({ domain: event.target.value })}>
+          {DOMAIN_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </select>
+      </div>
+      <div className="flex flex-col gap-1 text-xs font-medium text-ink">
+        <label htmlFor={`${filterId}-from`}>Từ ngày</label>
+        <input id={`${filterId}-from`} className="ui-input ui-focus-ring" type="date" value={filters.from} onChange={(event) => update({ from: event.target.value })} />
+      </div>
+      <div className="flex flex-col gap-1 text-xs font-medium text-ink">
+        <label htmlFor={`${filterId}-to`}>Đến ngày</label>
+        <input id={`${filterId}-to`} className="ui-input ui-focus-ring" type="date" value={filters.to} onChange={(event) => update({ to: event.target.value })} />
+      </div>
+      <div className="flex items-end gap-2 sm:col-span-2 xl:col-span-5">
+        <button type="submit" className="ui-button ui-button--primary ui-button--compact">
+          {isLoading ? t('common.loading') : 'Áp dụng bộ lọc'}
         </button>
-        <button type="submit" disabled={isLoading} className="ui-button ui-button--primary ui-button--sm">
-          {isLoading ? 'Loading...' : 'Apply Filters'}
+        <button type="button" className="ui-button ui-button--secondary ui-button--compact" onClick={() => onReset()} data-testid="run-filters-reset">
+          Xóa bộ lọc
         </button>
       </div>
     </form>

@@ -27,13 +27,26 @@ function signedSessionToken(input: {
   return `${payload}.${signature}`;
 }
 
+type TaskReadFixture = {
+  run_id: string;
+  task_version: number;
+  lifecycle_state: 'completed' | 'failed';
+  correlation_id: string;
+  conversation_id: string;
+  session_id: string;
+  answer?: string;
+  sources?: readonly unknown[];
+  error: { code: string; class: string | null } | null;
+};
+
 function harness() {
   const start = vi.fn(async (input: { correlation_id: string }) => ({
     run_id: 'run-a', task_version: 1, lifecycle_state: 'queued', correlation_id: input.correlation_id,
   }));
-  const read = vi.fn(async () => ({
+  const read = vi.fn(async (): Promise<TaskReadFixture> => ({
     run_id: 'run-a', task_version: 2, lifecycle_state: 'completed', correlation_id: 'corr-a',
     conversation_id: CONVERSATION, session_id: 'thread-a', answer: 'Approved answer', sources: [],
+    error: null,
   }));
   const runtime = {
     runs: { start, read },
@@ -83,6 +96,23 @@ function harness() {
 }
 
 describe('conversation turn routing and task ownership', () => {
+  it('maps a non-UUID conversation path parameter to VALIDATION_FAILED', async () => {
+    const { app } = harness();
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/conversations/not-a-uuid/messages',
+        headers: { authorization: 'Bearer owner' },
+        payload: { message: 'Where is my order?', module: 'support', idempotency_key: 'bad-id' },
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toMatchObject({ error_code: 'VALIDATION_FAILED' });
+    } finally {
+      await app.close();
+    }
+  });
+
   it('routes auto product advice to Sales but an order complaint to Care', async () => {
     const { app, start } = harness();
     try {
@@ -237,6 +267,7 @@ describe('conversation turn routing and task ownership', () => {
         });
         expect(response.statusCode).toBe(200);
         expect(response.json().answer).toBe('Approved answer');
+        expect(response.json().error).toBeNull();
       }
       for (const [token, expected] of [['other', 404], ['non-reader', 403], ['unknown', 401]]) {
         const response = await app.inject({ method: 'GET', url: '/tasks/run-a', headers: { authorization: `Bearer ${token}` } });
@@ -244,6 +275,33 @@ describe('conversation turn routing and task ownership', () => {
         expect(response.json().answer).toBeUndefined();
       }
       expect(read).toHaveBeenCalledTimes(4);
+    } finally { await app.close(); }
+  });
+  it('returns only a sanitized code and class for a failed task', async () => {
+    const { app, read } = harness();
+    read.mockImplementationOnce(async () => ({
+      run_id: 'run-a',
+      task_version: 3,
+      lifecycle_state: 'failed',
+      correlation_id: 'corr-failed',
+      conversation_id: CONVERSATION,
+      session_id: 'thread-a',
+      error: { code: 'R1', class: 'FATAL' },
+    }));
+    try {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/tasks/run-a',
+        headers: { authorization: 'Bearer owner' },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        status: 'failed',
+        error: { code: 'R1', class: 'FATAL' },
+      });
+      expect(response.json()).not.toHaveProperty('error_details');
+      expect(response.json().error).not.toHaveProperty('message');
+      expect(Object.keys(response.json().error).sort()).toEqual(['class', 'code']);
     } finally { await app.close(); }
   });
 });

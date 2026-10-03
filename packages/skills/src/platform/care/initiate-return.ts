@@ -67,6 +67,7 @@ const spec: Omit<PlatformRowSpec, 'skill_id'> = {
   allowed_agents: ['CS-01'],
   required_authority: 'AUTH-4',
   tool_binding: 'ReverseLogisticsConnector',
+  requires_verified_identity: true,
   validation_rules: [
     'order must be within return window (e.g. 7 days for TW)',
     "must be approved in SCR-003: the approval row must be bound to this run's effect_key and authorize exactly one RMA (BR-007)",

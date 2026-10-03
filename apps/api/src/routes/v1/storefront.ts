@@ -44,6 +44,7 @@ import type { TurnIntentPort } from '../../runtime/bindings/turn-intent.js';
 /** Audit operation names; each route spells its own once. */
 const STREAM_OPERATION = 'POST /api/v1/storefront/stream';
 const EVENT_OPERATION = 'POST /api/v1/storefront/events';
+const WIDGET_MESSAGES_OPERATION = 'GET /api/v1/storefront/conversations/{id}/messages';
 
 /** The widget channel: a storefront turn and a storefront event are both Web Chat traffic. */
 const WIDGET_CHANNEL = 'WEB_CHAT';
@@ -246,7 +247,7 @@ function readTurn(
 
   const requestedModule = stringField(body, 'module');
   if (requestedModule !== null && !AGENT_MODULES.some((member) => member === requestedModule)) {
-    fail('VALIDATION_FAILED', 'module must be one of the declared agent modules (06 §1)');
+    fail('VALIDATION_FAILED', 'Mô-đun không hợp lệ; hãy chọn marketing, sales, support hoặc auto.');
   }
   const module = classifyTurnModule(message, requestedModule === null ? undefined : requestedModule as AgentModule);
   const enabledModules = configuredModules ?? parseEnabledAgentModules(process.env.ENABLED_AGENT_MODULES);
@@ -529,13 +530,27 @@ async function handleEvent(
         : deps.normalizer.canonicalEventOf(event.event_type);
     const stored_event_name = derived === null ? event.event_type : derived.stored_event_name;
 
+    // The event's `customer_id` is bound from a server-side identity resolution of the widget
+    // session — never from the delivered payload — so an event lands on a customer only when the
+    // session is verifiably that customer (`04` §5). An unresolved session stores `null` and the
+    // event stays an anonymous signal instead of being attributed to a guess.
+    const customer_id =
+      runtime.identity === undefined
+        ? null
+        : (await runtime.identity.resolveCustomer({
+            tenant_id: principal.tenant_id,
+            session_id: event.session_id,
+            channel_type: WIDGET_CHANNEL,
+            channel_identifier: event.session_id,
+          })).customer_id;
+
     const appended = await runtime.events.append({
       tenant_id: principal.tenant_id,
       source_event_id: event.event_id,
       event_name: stored_event_name,
       session_id: event.session_id,
       channel: WIDGET_CHANNEL,
-      customer_id: null,
+      customer_id,
       occurred_at: event.occurred_at,
       payload: { ...event.payload, payload_sha256: digest },
     });
@@ -599,4 +614,62 @@ export function registerStorefrontRoutes(app: FastifyInstance, deps: StorefrontR
   app.post('/storefront/events', { preHandler: authenticate(routeDeps) }, (request, reply) =>
     handleEvent(request, reply, routeDeps),
   );
+  app.get<{
+    Params: { id: string };
+    Querystring: { after?: string };
+  }>('/storefront/conversations/:id/messages', { preHandler: authenticate(routeDeps) }, async (request, reply) => {
+    const runtime = routeDeps.runtime;
+    const correlation_id = correlationIdOf(request, runtime);
+    try {
+      const principal = requireWidgetSession(request);
+      const conversation_id = request.params.id;
+      if (typeof principal.session_id !== 'string' || principal.session_id.length === 0) {
+        fail('AUTHENTICATION_FAILED', 'the widget session carries no session identifier');
+      }
+      const conversation = await runtime.conversations.get(principal.tenant_id, conversation_id);
+      if (
+        conversation === null ||
+        conversation.channel !== WIDGET_CHANNEL ||
+        conversation.external_thread_id !== principal.session_id
+      ) {
+        fail('CONVERSATION_NOT_FOUND', 'this widget session holds no conversation with that identifier');
+      }
+
+      const after: unknown = request.query.after;
+      if (after !== undefined && typeof after !== 'string') {
+        fail('VALIDATION_FAILED', 'after must be one message UUID');
+      }
+      const page = await runtime.conversations.listWidgetMessages({
+        tenant_id: principal.tenant_id,
+        conversation_id,
+        ...(after === undefined ? {} : { after }),
+      });
+      await runtime.audit.record({
+        tenant_id: principal.tenant_id,
+        correlation_id,
+        operation: WIDGET_MESSAGES_OPERATION,
+        principal_kind: principal.kind,
+        outcome: 'ACCEPTED',
+        detail: { conversation_id, message_count: page.messages.length, next_cursor: page.next_cursor },
+      });
+      return reply.code(200).send({
+        messages: page.messages.map((message) => ({
+          message_id: message.message_id,
+          role: message.sender_type,
+          text: message.content,
+          created_at: message.created_at,
+          ...(message.delivery_status === undefined ? {} : { delivery_status: message.delivery_status }),
+        })),
+        next_cursor: page.next_cursor,
+      });
+    } catch (error) {
+      await refuseOperation({
+        request,
+        reply,
+        runtime,
+        operation: WIDGET_MESSAGES_OPERATION,
+        error,
+      });
+    }
+  });
 }

@@ -110,6 +110,12 @@ export function createErpHttpTransport(options: ErpHttpTransportOptions): ErpTra
       if (input.method === 'POST') {
         headers['content-type'] = 'application/json';
       }
+      if (input.idempotency_key !== undefined) {
+        if (input.method !== 'POST' || input.idempotency_key.trim().length === 0) {
+          return failure('PROVIDER_REJECTED', null);
+        }
+        headers['idempotency-key'] = input.idempotency_key;
+      }
 
       // A host-side deadline. It is passed to the transport rather than enforced by a timer here, so
       // a hung provider surfaces as an aborted call whose outcome is indeterminate — never as a

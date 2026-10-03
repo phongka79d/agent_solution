@@ -57,7 +57,56 @@ describe('OpenAICompatibleLLMAdapter', () => {
     expect(result.value).toEqual({ intent: 'sales' });
     expect(result.usage).toEqual({ prompt_tokens: 12, completion_tokens: 8 });
     expect(result.provider).toBe('openai-compatible');
-    expect(result.request_id).toBe('header-request-1');
+    expect(result.attempts).toBe(1);
+  });
+
+  it('retries 429 once and reports total attempts', async () => {
+    let calls = 0;
+    const fetchImpl: typeof fetch = async () => {
+      calls += 1;
+      return calls === 1
+        ? new Response(JSON.stringify({ error: { type: 'rate_limit_error', code: 'rate_limited', message: 'private detail' } }), { status: 429 })
+        : new Response(JSON.stringify({ choices: [{ message: { content: '{"intent":"sales"}' } }] }));
+    };
+    const result = await adapter(fetchImpl).completeStructured({
+      ...baseRequest,
+      validate: (value) => value as { intent: string },
+    });
+
+    expect(calls).toBe(2);
+    expect(result.attempts).toBe(2);
+  });
+
+  it('honors Retry-After before retrying', async () => {
+    let calls = 0;
+    let retryStartedAt = 0;
+    const firstStartedAt = Date.now();
+    const fetchImpl: typeof fetch = async () => {
+      calls += 1;
+      if (calls === 1) {
+        return new Response('{}', { status: 429, headers: { 'Retry-After': '0.05' } });
+      }
+      retryStartedAt = Date.now();
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }));
+    };
+    const result = await adapter(fetchImpl).completeText(baseRequest);
+
+    expect(result.attempts).toBe(2);
+    expect(retryStartedAt - firstStartedAt).toBeGreaterThanOrEqual(45);
+  });
+
+  it('does not retry invalid provider JSON', async () => {
+    let calls = 0;
+    const fetchImpl: typeof fetch = async () => {
+      calls += 1;
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'not-json' } }] }));
+    };
+
+    await expect(adapter(fetchImpl).completeStructured({
+      ...baseRequest,
+      validate: (value) => value,
+    })).rejects.toMatchObject({ code: 'LLM_INVALID_RESPONSE', attempts: 1 });
+    expect(calls).toBe(1);
   });
 
   it('supports explicit json-schema mode only when configured', async () => {
@@ -85,13 +134,22 @@ describe('OpenAICompatibleLLMAdapter', () => {
     [500, 'LLM_UNAVAILABLE'],
   ])('maps provider status %s without exposing the body', async (status, code) => {
     const secretBody = 'provider-secret-response-must-not-leak';
-    const fetchImpl: typeof fetch = async () => new Response(secretBody, { status });
+    const fetchImpl: typeof fetch = async () => new Response(
+      JSON.stringify({ error: { type: 'server_error', code: 'upstream_failure', message: secretBody } }),
+      { status },
+    );
 
     const error = await adapter(fetchImpl).completeText(baseRequest).catch((value: unknown) => value);
 
     expect(error).toBeInstanceOf(OpenAICompatibleLLMError);
     expect((error as OpenAICompatibleLLMError).code).toBe(code);
+    expect((error as OpenAICompatibleLLMError).attempts).toBe(status === 401 ? 1 : 3);
     expect(String(error)).not.toContain(secretBody);
+    expect((error as OpenAICompatibleLLMError).provider_error).toEqual({
+      status,
+      type: 'server_error',
+      code: 'upstream_failure',
+    });
   });
 
   it('maps malformed envelopes, invalid structured output, and oversized bodies', async () => {

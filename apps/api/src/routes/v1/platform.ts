@@ -8,6 +8,7 @@ import type {
   PlatformProvidersPort,
 } from '../../gateway/ports.js';
 import type { CredentialStore } from '../../gateway/principal.js';
+import type { LlmConfigurationPort } from './company-llm.js';
 import {
   platformProvidersRouteSchema,
   platformReadinessRouteSchema,
@@ -20,6 +21,7 @@ import {
 export interface PlatformRouteDependencies {
   readonly platform: PlatformDirectoryPort;
   readonly providers: PlatformProvidersPort;
+  readonly llmConfiguration: LlmConfigurationPort;
   readonly credentials: CredentialStore;
   readonly runtime: GatewayRuntime;
 }
@@ -32,9 +34,19 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 
 function hasTenantAssertion(request: FastifyRequest): boolean {
   if (request.headers['x-tenant-id'] !== undefined) return true;
-  const query = isPlainRecord(request.query) && request.query['tenant_id'] !== undefined;
-  const body = isPlainRecord(request.body) && request.body['tenant_id'] !== undefined;
-  return query || body;
+  const query = request.query;
+  const body = request.body;
+  const hasQueryTenantId = typeof query === 'object' && query !== null
+    && (query as Record<string, unknown>)['tenant_id'] !== undefined;
+  const hasBodyTenantId = typeof body === 'object' && body !== null
+    && (body as Record<string, unknown>)['tenant_id'] !== undefined;
+  return hasQueryTenantId || hasBodyTenantId;
+}
+
+function hasTenantQueryAssertion(request: FastifyRequest): boolean {
+  const query = request.query;
+  return typeof query === 'object' && query !== null
+    && (query as Record<string, unknown>)['tenant_id'] !== undefined;
 }
 
 function tenantIdParam(request: FastifyRequest): string {
@@ -55,9 +67,12 @@ function requirePlatformAdmin(request: FastifyRequest) {
 }
 
 function usageWindow(request: FastifyRequest): { readonly from: string; readonly to: string } {
-  const query = isPlainRecord(request.query) ? request.query : {};
-  const from = query['from'];
-  const to = query['to'];
+  const query = request.query;
+  const values = typeof query === 'object' && query !== null
+    ? query as Record<string, unknown>
+    : {};
+  const from = values['from'];
+  const to = values['to'];
   if (typeof from !== 'string' || typeof to !== 'string') {
     fail('VALIDATION_FAILED', 'from and to are required');
   }
@@ -73,14 +88,19 @@ function usageWindow(request: FastifyRequest): { readonly from: string; readonly
 export function registerPlatformRoutes(app: FastifyInstance, deps: PlatformRouteDependencies): void {
   registerOpenApiSchemas(app);
   const authenticateRequest = authenticate(deps);
-  const preHandler = async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+  const preValidation = async (request: FastifyRequest): Promise<void> => {
+    if (hasTenantQueryAssertion(request)) {
+      fail('INSUFFICIENT_AUTHORITY', 'platform routes do not accept tenant-scoped query parameters');
+    }
     if (hasTenantAssertion(request)) {
       fail('VALIDATION_FAILED', 'platform routes do not accept tenant binding assertions');
     }
+  };
+  const preHandler = async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     await authenticateRequest(request, reply);
   };
 
-  app.get('/platform/tenants', { preHandler, schema: platformTenantsRouteSchema }, async (request, reply) => {
+  app.get('/platform/tenants', { preValidation, preHandler, schema: platformTenantsRouteSchema }, async (request, reply) => {
     const runtime = deps.runtime;
     try {
       requirePlatformAdmin(request);
@@ -91,7 +111,7 @@ export function registerPlatformRoutes(app: FastifyInstance, deps: PlatformRoute
     }
   });
 
-  app.get('/platform/tenants/:id', { preHandler, schema: platformTenantRouteSchema }, async (request, reply) => {
+  app.get('/platform/tenants/:id', { preValidation, preHandler, schema: platformTenantRouteSchema }, async (request, reply) => {
     const runtime = deps.runtime;
     try {
       requirePlatformAdmin(request);
@@ -103,7 +123,7 @@ export function registerPlatformRoutes(app: FastifyInstance, deps: PlatformRoute
     }
   });
 
-  app.get('/platform/tenants/:id/readiness', { preHandler, schema: platformReadinessRouteSchema }, async (request, reply) => {
+  app.get('/platform/tenants/:id/readiness', { preValidation, preHandler, schema: platformReadinessRouteSchema }, async (request, reply) => {
     const runtime = deps.runtime;
     try {
       requirePlatformAdmin(request);
@@ -115,7 +135,7 @@ export function registerPlatformRoutes(app: FastifyInstance, deps: PlatformRoute
     }
   });
 
-  app.get('/platform/usage', { preHandler, schema: platformUsageRouteSchema }, async (request, reply) => {
+  app.get('/platform/usage', { preValidation, preHandler, schema: platformUsageRouteSchema }, async (request, reply) => {
     const runtime = deps.runtime;
     try {
       requirePlatformAdmin(request);
@@ -127,12 +147,15 @@ export function registerPlatformRoutes(app: FastifyInstance, deps: PlatformRoute
     }
   });
 
-  app.get('/platform/providers', { preHandler, schema: platformProvidersRouteSchema }, async (request, reply) => {
+  app.get('/platform/providers', { preValidation, preHandler, schema: platformProvidersRouteSchema }, async (request, reply) => {
     const runtime = deps.runtime;
     try {
       requirePlatformAdmin(request);
-      const items = await deps.providers.list();
-      return reply.code(200).send({ items });
+      const [items, providers] = await Promise.all([
+        deps.providers.list(),
+        deps.llmConfiguration.listPlatformProviders(),
+      ]);
+      return reply.code(200).send({ items, providers });
     } catch (error) {
       return replyFailure(reply, error, correlationIdOf(request, runtime));
     }

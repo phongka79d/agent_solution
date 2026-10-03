@@ -19,7 +19,12 @@ const DEMO_PACK_PATH = fileURLToPath(new URL('../src/demo/novamart.json', import
 
 const nodeHmacSha256Hex = (secret, message) => createHmac('sha256', secret).update(message, 'utf8').digest('hex');
 
-function post(server, path, body, { secret = SECRET, tenant = TENANT_ID, signature } = {}) {
+function post(server, path, body, {
+  secret = SECRET,
+  tenant = TENANT_ID,
+  signature,
+  idempotencyKey,
+} = {}) {
   const raw = JSON.stringify(body);
   const sig = signature === undefined ? signRequest(secret, 'POST', path, raw) : signature;
   const { port } = server.address();
@@ -34,6 +39,7 @@ function post(server, path, body, { secret = SECRET, tenant = TENANT_ID, signatu
         'content-length': Buffer.byteLength(raw),
         'x-mock-signature': sig,
         'x-tenant-id': tenant,
+        ...(idempotencyKey === undefined ? {} : { 'idempotency-key': idempotencyKey }),
       },
     }, (res) => {
       const chunks = [];
@@ -493,6 +499,232 @@ test('NovaMart order and customer reads stay tenant and customer scoped', async 
       customer_id: '99000000-0000-4000-8000-000000000005',
     });
     assert.equal(crossTenantHistory.status, 404);
+  } finally {
+    server.close();
+  }
+});
+
+test('signed simulator seed provisions tenant-scoped catalog, prices, stock and TEST orders', async () => {
+  const server = await start();
+  const seededTenant = 'cafe0000-0000-4000-8000-000000000001';
+  const otherTenant = 'cafe0000-0000-4000-8000-000000000002';
+  const skuId = 'SKU-SEEDED-TENANT-1';
+  try {
+    const invalid = await post(server, '/__sim/seed', {
+      tenant_id: seededTenant,
+      customers: [],
+      orders: [],
+      products: [{ sku_id: skuId, name: 'Seeded product', list_price: 900, original_list_price: 1000, floor_price: 700, currency: 'USD' }],
+      inventory: [{ sku_id: 'SKU-UNKNOWN', available_quantity: 8 }],
+    }, { tenant: seededTenant });
+    assert.equal(invalid.status, 422);
+    const unseeded = await get(server, '/api/v1/catalog/items', { tenant: seededTenant });
+    assert.equal(unseeded.status, 404);
+
+    const seeded = await post(server, '/__sim/seed', {
+      tenant_id: seededTenant,
+      customers: [{ customer_id: 'customer-seeded-tenant', name: 'Synthetic tenant customer' }],
+      orders: [],
+      products: [{
+        sku_id: skuId,
+        name: 'Seeded product',
+        brand: 'Test Brand',
+        category: 'Test Category',
+        description: 'Tenant-scoped test fixture',
+        list_price: 900,
+        original_list_price: 1000,
+        floor_price: 700,
+        currency: 'USD',
+      }],
+      inventory: [{ sku_id: skuId, available_quantity: 8, physical_qty: 10, reserved_qty: 2, warehouse_id: 'TEST-WH' }],
+    }, { tenant: seededTenant });
+    assert.equal(seeded.status, 200);
+    assert.equal(seeded.body.products_seeded, 1);
+    assert.equal(seeded.body.inventory_seeded, 1);
+
+    const catalog = await get(server, '/api/v1/catalog/items', { tenant: seededTenant });
+    assert.equal(catalog.status, 200);
+    assert.equal(catalog.body.items.length, 1);
+    assert.equal(catalog.body.items[0].sku_id, skuId);
+    assert.equal(catalog.body.items[0].list_price, 900);
+    assert.equal(catalog.body.items[0].original_list_price, 1000);
+
+    const inventory = await post(server, '/api/v1/inventory/lookup', {
+      tenant_id: seededTenant,
+      sku_ids: [skuId],
+    }, { tenant: seededTenant });
+    assert.equal(inventory.status, 200);
+    assert.equal(inventory.body.items[0].available_quantity, 8);
+    assert.equal(inventory.body.items[0].reserved_qty, 2);
+
+    const price = await post(server, '/api/v1/prices/lookup', {
+      tenant_id: seededTenant,
+      sku_id: skuId,
+    }, { tenant: seededTenant });
+    assert.equal(price.status, 200);
+    assert.equal(price.body.floor_price, 700);
+    assert.equal(price.body.currency, 'USD');
+    const { signature, quote_signature, ...unsignedQuote } = price.body;
+    assert.equal(signature, quote_signature);
+    assert.equal(signature, signRequest(SECRET, 'POST', '/api/v1/prices/lookup', JSON.stringify(unsignedQuote)));
+
+    const order = await post(server, '/api/v1/orders', {
+      tenant_id: seededTenant,
+      cart_id: 'cart-seeded-tenant',
+      customer_id: 'customer-seeded-tenant',
+      shipping_address: { line1: '1 Test Street' },
+      payment_method: 'CREDIT_CARD',
+      items: [{ sku_id: skuId, quantity: 2 }],
+    }, { tenant: seededTenant, idempotencyKey: 'order-seeded-tenant' });
+    assert.equal(order.status, 201);
+    assert.equal(order.body.total_amount, 1800);
+    const depletedInventory = await post(server, '/api/v1/inventory/lookup', {
+      tenant_id: seededTenant,
+      sku_ids: [skuId],
+    }, { tenant: seededTenant });
+    assert.equal(depletedInventory.body.items[0].available_quantity, 6);
+
+    const crossTenantCatalog = await get(server, '/api/v1/catalog/items', { tenant: otherTenant });
+    assert.equal(crossTenantCatalog.status, 404);
+    const crossTenantInventory = await post(server, '/api/v1/inventory/lookup', {
+      tenant_id: otherTenant,
+      sku_ids: [skuId],
+    }, { tenant: otherTenant });
+    assert.equal(crossTenantInventory.status, 404);
+    const crossTenantPrice = await post(server, '/api/v1/prices/lookup', {
+      tenant_id: otherTenant,
+      sku_id: skuId,
+    }, { tenant: otherTenant });
+    assert.equal(crossTenantPrice.status, 404);
+
+    const reset = await post(server, '/__sim/reset', { tenant_id: seededTenant }, { tenant: seededTenant });
+    assert.equal(reset.status, 200);
+    const resetCatalog = await get(server, '/api/v1/catalog/items', { tenant: seededTenant });
+    assert.equal(resetCatalog.status, 404);
+  } finally {
+    server.close();
+  }
+});
+
+test('signed simulator seeds TEST rows, controls chaos, creates idempotent stocked orders, and resets TEST data', async () => {
+  const server = await start();
+  try {
+    const unsigned = await post(server, '/__sim/reset', {}, { signature: '' });
+    assert.equal(unsigned.status, 401);
+
+    const seeded = await post(server, '/__sim/seed', {
+      tenant_id: TENANT_ID,
+      customers: [{
+        tenant_id: TENANT_ID,
+        customer_id: 'customer-test-1',
+        name: 'Synthetic test customer',
+      }],
+      orders: [{
+        tenant_id: TENANT_ID,
+        order_id: 'seeded-test-order',
+        customer_id: 'customer-test-1',
+        data_class: 'PRODUCTION',
+        status: 'SEEDED',
+      }],
+    });
+    assert.equal(seeded.status, 200);
+    assert.equal(seeded.body.data_class, 'TEST');
+    assert.equal(seeded.body.customers_seeded, 1);
+    assert.equal(seeded.body.orders_seeded, 1);
+
+    const seededStatus = await post(server, '/api/v1/orders/status', {
+      tenant_id: TENANT_ID,
+      key: 'seeded-test-order',
+      customer_id: 'customer-test-1',
+    });
+    assert.equal(seededStatus.status, 200);
+    assert.equal(seededStatus.body.data_class, 'TEST');
+
+    const controlled = await post(server, '/__sim/control', {
+      tenant_id: TENANT_ID,
+      failure_rate: 1,
+      latency_ms: 0,
+      swallow_after_write: true,
+    });
+    assert.equal(controlled.status, 200);
+    assert.deepEqual(controlled.body.control, {
+      failure_rate: 1,
+      latency_ms: 0,
+      swallow_after_write: true,
+    });
+    const chaos = await post(server, '/api/v1/inventory/lookup', {
+      tenant_id: TENANT_ID,
+      sku_ids: ['SKU-LOCAL-1'],
+    });
+    assert.equal(chaos.status, 504);
+    assert.equal(chaos.body.outcome, 'UNKNOWN');
+
+    const orderBody = {
+      tenant_id: TENANT_ID,
+      cart_id: 'cart-test-1',
+      customer_id: 'customer-test-1',
+      shipping_address: { line1: '1 Test Street' },
+      payment_method: 'CREDIT_CARD',
+      items: [{ sku_id: 'SKU-LOCAL-1', quantity: 1 }],
+    };
+    await post(server, '/__sim/control', {
+      tenant_id: TENANT_ID,
+      failure_rate: 0,
+      latency_ms: 0,
+      swallow_after_write: true,
+    });
+    const lost = await post(server, '/api/v1/orders', orderBody, { idempotencyKey: 'test-order-1' });
+    assert.equal(lost.status, 504);
+    const reconciled = await post(server, '/api/v1/orders/reconcile', {
+      tenant_id: TENANT_ID,
+      idempotency_key: 'test-order-1',
+    });
+    assert.equal(reconciled.status, 200);
+    assert.equal(reconciled.body.order_id, lost.body.order_id);
+    const replay = await post(server, '/api/v1/orders', orderBody, { idempotencyKey: 'test-order-1' });
+    assert.equal(replay.status, 201);
+    assert.equal(replay.body.data_class, 'TEST');
+    assert.equal(replay.body.order_id, lost.body.order_id);
+
+    const conflict = await post(server, '/api/v1/orders', {
+      ...orderBody,
+      items: [{ sku_id: 'SKU-LOCAL-1', quantity: 2 }],
+    }, { idempotencyKey: 'test-order-1' });
+    assert.equal(conflict.status, 409);
+    assert.equal(conflict.body.code, 'IDEMPOTENCY_CONFLICT');
+
+    const status = await post(server, '/api/v1/orders/status', {
+      tenant_id: TENANT_ID,
+      key: replay.body.order_id,
+      customer_id: 'customer-test-1',
+    });
+    assert.equal(status.status, 200);
+    assert.equal(status.body.status, 'CREATED');
+    assert.equal(status.body.data_class, 'TEST');
+    const stock = await post(server, '/api/v1/inventory/lookup', {
+      tenant_id: TENANT_ID,
+      sku_ids: ['SKU-LOCAL-1'],
+    });
+    assert.equal(stock.body.items[0].available_quantity, 4);
+
+    const reset = await post(server, '/__sim/reset', { tenant_id: TENANT_ID });
+    assert.deepEqual(reset.body.reset, { customers: 1, orders: 2 });
+    const missing = await post(server, '/api/v1/orders/status', {
+      tenant_id: TENANT_ID,
+      key: replay.body.order_id,
+      customer_id: 'customer-test-1',
+    });
+    assert.equal(missing.status, 404);
+    const missingReconciliation = await post(server, '/api/v1/orders/reconcile', {
+      tenant_id: TENANT_ID,
+      idempotency_key: 'test-order-1',
+    });
+    assert.equal(missingReconciliation.status, 404);
+    const restoredStock = await post(server, '/api/v1/inventory/lookup', {
+      tenant_id: TENANT_ID,
+      sku_ids: ['SKU-LOCAL-1'],
+    });
+    assert.equal(restoredStock.body.items[0].available_quantity, 5);
   } finally {
     server.close();
   }

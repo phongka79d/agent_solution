@@ -15,6 +15,15 @@ export type AutonomyEligibilityCode =
   | 'AUTHORITY_NOT_AUTONOMOUS'
   | 'LATENCY_COST_PROVENANCE_REQUIRED'
 
+const DRAFT_GATED_SKILLS: Readonly<Record<string, true>> = {
+  'skill.mkt.generate_content': true,
+  'skill.mkt.segment_audience': true,
+};
+
+export function isDraftGatedSkill(skill_id: string): boolean {
+  return Object.hasOwn(DRAFT_GATED_SKILLS, skill_id.trim());
+}
+
 export interface AutonomyEligibility {
   readonly eligible: boolean;
   readonly code: AutonomyEligibilityCode;

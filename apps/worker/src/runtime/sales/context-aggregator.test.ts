@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { SignalSubject } from '@agentos/core-engine/contracts';
-import type { CustomerEventTimeline, CustomerProfileRow } from '@agentos/database';
+import type { ConversationRecord, CustomerEventTimeline, CustomerProfileRow } from '@agentos/database';
 
 import { SalesContextAggregator } from './context-aggregator.js';
 
@@ -13,6 +13,7 @@ const NOW = new Date('2026-09-24T10:00:00.000Z');
 const subject = (verified_customer_id?: string, conversation_id?: string): SignalSubject => ({
   session_id: 'session-1',
   channel_type: 'web',
+  channel_identifier: 'session-1',
   ...(verified_customer_id === undefined ? {} : { verified_customer_id }),
   ...(conversation_id === undefined ? {} : { conversation_id }),
 });
@@ -65,38 +66,81 @@ describe('SalesContextAggregator', () => {
       limit: 100,
     });
     expect(context.customer).toMatchObject({ customer_id: CUSTOMER_ID, tenant_id: TENANT_ID, total_spent: 120.5 });
-    expect(aggregator.verifiedCustomerFor(TENANT_ID, CORRELATION_ID)).toEqual(context.customer);
-    expect(aggregator.verifiedTimelineFor(TENANT_ID, CORRELATION_ID)?.items[0]?.event_id).toBe('event-verified-1');
+    expect(aggregator.verifiedCustomerFor(context)).toEqual(context.customer);
+    expect(aggregator.verifiedTimelineFor(context)?.items[0]?.event_id).toBe('event-verified-1');
+  });
+  it('carries only a valid default shipping address from the verified customer profile', async () => {
+    const defaultShippingAddress = {
+      recipient_name: 'Test Buyer',
+      phone: '+15551234567',
+      postal_code: '10001',
+      city: 'Metro',
+      district: 'Central',
+      address_line1: '10 Main Street',
+    };
+    const aggregator = new SalesContextAggregator({
+      repositories: {
+        getProfile: async () => profile({ default_shipping_address: defaultShippingAddress }),
+        listTimeline: async () => timeline,
+      },
+    });
+
+    const context = await aggregator.hydrateContext(TENANT_ID, subject(CUSTOMER_ID), 'order-address-corr');
+    expect(context.run_state?.sales?.default_shipping_address).toEqual(defaultShippingAddress);
+
+    const malformedAggregator = new SalesContextAggregator({
+      repositories: {
+        getProfile: async () => profile({
+          default_shipping_address: { ...defaultShippingAddress, unexpected: 'untrusted' },
+        }),
+        listTimeline: async () => timeline,
+      },
+    });
+    const malformedContext = await malformedAggregator.hydrateContext(
+      TENANT_ID,
+      subject(CUSTOMER_ID),
+      'order-address-malformed-corr',
+    );
+    expect(malformedContext.run_state?.sales?.default_shipping_address).toBeUndefined();
+  });
+  it('rehydrates verified customer, timeline, and takeover from checkpoint context in a fresh instance', async () => {
+    const original = new SalesContextAggregator({
+      repositories: { getProfile: async () => profile(), listTimeline: async () => timeline },
+      sessionControl: { isTakenOver: async () => true },
+    });
+    const context = await original.hydrateContext(TENANT_ID, subject(CUSTOMER_ID), CORRELATION_ID);
+    const checkpointContext = JSON.parse(JSON.stringify(context)) as typeof context;
+    const reclaimed = new SalesContextAggregator();
+
+    expect(reclaimed.verifiedCustomerFor(checkpointContext)).toEqual(context.customer);
+    expect(reclaimed.verifiedTimelineFor(checkpointContext)?.items[0]?.event_id).toBe('event-verified-1');
+    expect(reclaimed.takeoverActiveFor(checkpointContext)).toBe(true);
   });
 
-  it('does not query profile or timeline when identity is absent or malformed', async () => {
+  it('leaves anonymous subjects empty and rejects malformed verified customer ids', async () => {
     const getProfile = vi.fn(async () => profile());
     const listTimeline = vi.fn(async () => timeline);
     const aggregator = new SalesContextAggregator({ repositories: { getProfile, listTimeline } });
 
     const anonymous = await aggregator.hydrateContext(TENANT_ID, subject(), 'anonymous-corr');
-    const malformed = await aggregator.hydrateContext(TENANT_ID, subject('not-a-customer-uuid'), 'malformed-corr');
+    await expect(aggregator.hydrateContext(TENANT_ID, subject('not-a-customer-uuid'), 'malformed-corr'))
+      .rejects.toMatchObject({ code: 'SUBJECT_BINDING_MISMATCH' });
 
     expect(anonymous.customer).toBeNull();
-    expect(malformed.customer).toBeNull();
     expect(getProfile).not.toHaveBeenCalled();
     expect(listTimeline).not.toHaveBeenCalled();
   });
 
-  it('does not disclose a missing or foreign-tenant profile and never loads its timeline', async () => {
+  it('rejects a missing or foreign-tenant verified profile without loading its timeline', async () => {
     const getProfile = vi.fn(async () => profile({ tenant_id: OTHER_TENANT_ID }));
     const listTimeline = vi.fn(async () => timeline);
     const aggregator = new SalesContextAggregator({ repositories: { getProfile, listTimeline } });
 
-    const context = await aggregator.hydrateContext(TENANT_ID, subject(CUSTOMER_ID), 'foreign-corr');
-
-    expect(context.customer).toBeNull();
-    expect(aggregator.verifiedCustomerFor(TENANT_ID, 'foreign-corr')).toBeNull();
-    expect(aggregator.verifiedTimelineFor(TENANT_ID, 'foreign-corr')).toBeNull();
+    await expect(aggregator.hydrateContext(TENANT_ID, subject(CUSTOMER_ID), 'foreign-corr'))
+      .rejects.toMatchObject({ code: 'SUBJECT_BINDING_MISMATCH' });
     expect(listTimeline).not.toHaveBeenCalled();
   });
-
-  it('isolates same-correlation cache entries by tenant', async () => {
+  it('keeps hydrated customer state isolated between tenants', async () => {
     const aggregator = new SalesContextAggregator({
       repositories: {
         getProfile: async (tenant_id) => profile({
@@ -107,26 +151,26 @@ describe('SalesContextAggregator', () => {
       },
     });
 
-    await aggregator.hydrateContext(TENANT_ID, subject(CUSTOMER_ID), CORRELATION_ID);
-    await aggregator.hydrateContext(
+    const firstContext = await aggregator.hydrateContext(TENANT_ID, subject(CUSTOMER_ID), CORRELATION_ID);
+    const secondContext = await aggregator.hydrateContext(
       OTHER_TENANT_ID,
       subject('bbbbbbbb-0000-4000-8000-00000000000b'),
       CORRELATION_ID,
     );
 
-    expect(aggregator.verifiedCustomerFor(TENANT_ID, CORRELATION_ID)?.customer_id).toBe(CUSTOMER_ID);
-    expect(aggregator.verifiedCustomerFor(OTHER_TENANT_ID, CORRELATION_ID)?.customer_id)
+    expect(aggregator.verifiedCustomerFor(firstContext)?.customer_id).toBe(CUSTOMER_ID);
+    expect(aggregator.verifiedCustomerFor(secondContext)?.customer_id)
       .toBe('bbbbbbbb-0000-4000-8000-00000000000b');
   });
 
-  it('fails closed when profile retrieval fails', async () => {
+
+  it('propagates profile retrieval failures without exposing partial context', async () => {
     const getProfile = vi.fn(async () => { throw new Error('private DB error'); });
     const listTimeline = vi.fn(async () => timeline);
     const aggregator = new SalesContextAggregator({ repositories: { getProfile, listTimeline } });
 
-    const context = await aggregator.hydrateContext(TENANT_ID, subject(CUSTOMER_ID), 'failed-corr');
-
-    expect(context.customer).toBeNull();
+    await expect(aggregator.hydrateContext(TENANT_ID, subject(CUSTOMER_ID), 'failed-corr'))
+      .rejects.toThrow('private DB error');
     expect(listTimeline).not.toHaveBeenCalled();
   });
 
@@ -144,17 +188,13 @@ describe('SalesContextAggregator', () => {
     const context = await aggregator.hydrateContext(TENANT_ID, subject(CUSTOMER_ID), CORRELATION_ID);
     expect(isTakenOver).toHaveBeenCalledWith(TENANT_ID, 'session-1');
     expect(context.working_memory.takeover_active).toBe(false);
-    expect(aggregator.takeoverActiveFor(TENANT_ID, CORRELATION_ID)).toBe(false);
+    expect(aggregator.takeoverActiveFor(context)).toBe(false);
 
     // When session is taken over, reports true
     isTakenOver.mockResolvedValueOnce(true);
     const takenOverContext = await aggregator.hydrateContext(TENANT_ID, subject(CUSTOMER_ID), 'corr-taken-over');
     expect(takenOverContext.working_memory.takeover_active).toBe(true);
-    expect(aggregator.takeoverActiveFor(TENANT_ID, 'corr-taken-over')).toBe(true);
-
-    // When correlation is unknown or foreign tenant, fails closed
-    expect(aggregator.takeoverActiveFor(TENANT_ID, 'unverified-correlation')).toBe(true);
-    expect(aggregator.takeoverActiveFor(OTHER_TENANT_ID, CORRELATION_ID)).toBe(true);
+    expect(aggregator.takeoverActiveFor(takenOverContext)).toBe(true);
   });
 
   it('fails closed with takeover_active true and records unbound capability when sessionControl is not bound', async () => {
@@ -168,7 +208,7 @@ describe('SalesContextAggregator', () => {
 
     const context = await aggregator.hydrateContext(TENANT_ID, subject(CUSTOMER_ID), CORRELATION_ID);
     expect(context.working_memory.takeover_active).toBe(true);
-    expect(aggregator.takeoverActiveFor(TENANT_ID, CORRELATION_ID)).toBe(true);
+    expect(aggregator.takeoverActiveFor(context)).toBe(true);
   });
 
   it('fails closed with takeover_active true when bound sessionControl check throws', async () => {
@@ -411,15 +451,34 @@ describe('SalesContextAggregator', () => {
     });
   });
 
-  it('carries the gateway-bound conversation into working memory', async () => {
-    const aggregator = new SalesContextAggregator({ repositories: { getProfile: vi.fn(async () => profile()) } });
+  it('carries only the verified gateway conversation into working memory', async () => {
+    const conversation_id = '33333333-3333-4333-8333-333333333333';
+    const conversation: ConversationRecord = {
+      conversation_id,
+      tenant_id: TENANT_ID,
+      customer_id: CUSTOMER_ID,
+      channel: 'web',
+      external_thread_id: 'session-1',
+      active_agent: 'CS-01',
+      state: 'open',
+      takeover_operator_id: null,
+      last_message_at: '2026-01-01T00:00:00.000Z',
+      created_at: '2025-01-01T00:00:00.000Z',
+    };
+    const aggregator = new SalesContextAggregator({
+      repositories: {
+        getProfile: vi.fn(async () => profile()),
+        getConversation: vi.fn(async () => conversation),
+        listTimeline: async () => timeline,
+      },
+    });
 
     const bound = await aggregator.hydrateContext(
       TENANT_ID,
-      subject(CUSTOMER_ID, '33333333-3333-4333-8333-333333333333'),
+      subject(CUSTOMER_ID, conversation_id),
       'conversation-corr',
     );
-    expect(bound.working_memory.conversation_id).toBe('33333333-3333-4333-8333-333333333333');
+    expect(bound.working_memory.conversation_id).toBe(conversation_id);
 
     const unbound = await aggregator.hydrateContext(TENANT_ID, subject(), 'session-only-corr');
     expect(unbound.working_memory.conversation_id).toBeUndefined();

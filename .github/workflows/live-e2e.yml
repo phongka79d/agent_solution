@@ -1,0 +1,164 @@
+name: Live Environment Safety Gate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-e2e
+  cancel-in-progress: false
+
+jobs:
+  live-preflight:
+    name: Run protected live-provider suite
+    runs-on: ubuntu-latest
+    environment: live
+    timeout-minutes: 60
+    env:
+      LIVE_ENV_FILE: ${{ runner.temp }}/agentos-live.env
+      COMPOSE_PROJECT_NAME: agentos_live_${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install the frozen workspace
+        run: pnpm install --frozen-lockfile
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Write masked live environment file
+        env:
+          LIVE_DATABASE_URL: ${{ secrets.LIVE_DATABASE_URL }}
+          LIVE_DEMO_TENANT_ID: ${{ secrets.LIVE_DEMO_TENANT_ID }}
+          LIVE_DEMO_COMPANY_ADMIN_EMAIL: ${{ secrets.LIVE_DEMO_COMPANY_ADMIN_EMAIL }}
+          LIVE_DEMO_COMPANY_ADMIN_PASSWORD: ${{ secrets.LIVE_DEMO_COMPANY_ADMIN_PASSWORD }}
+          LIVE_DEMO_PLATFORM_ADMIN_EMAIL: ${{ secrets.LIVE_DEMO_PLATFORM_ADMIN_EMAIL }}
+          LIVE_DEMO_PLATFORM_ADMIN_PASSWORD: ${{ secrets.LIVE_DEMO_PLATFORM_ADMIN_PASSWORD }}
+          LIVE_OPENAI_API_KEY: ${{ secrets.LIVE_OPENAI_API_KEY }}
+          LIVE_OPENAI_BASE_URL: ${{ secrets.LIVE_OPENAI_BASE_URL }}
+          LIVE_PRIMARY_REASONING_MODEL: ${{ secrets.LIVE_PRIMARY_REASONING_MODEL }}
+          LIVE_MAX_LLM_CALLS: ${{ secrets.LIVE_MAX_LLM_CALLS }}
+          LIVE_ALLOWED_LLM_HOSTS: ${{ secrets.LIVE_ALLOWED_LLM_HOSTS }}
+        run: |
+          umask 077
+          node --input-type=module <<'NODE'
+          import { randomBytes } from 'node:crypto';
+          import { chmodSync, writeFileSync } from 'node:fs';
+
+          let databaseUrl;
+          try {
+            databaseUrl = new URL(process.env.LIVE_DATABASE_URL ?? '');
+          } catch {
+            throw new Error('LIVE_DATABASE_URL must be a loopback PostgreSQL URL for an isolated live/test database');
+          }
+          const databaseName = decodeURIComponent(databaseUrl.pathname.slice(1));
+          const appRolePassword = decodeURIComponent(databaseUrl.password);
+          if (
+            !['postgres:', 'postgresql:'].includes(databaseUrl.protocol)
+            || !['localhost', '127.0.0.1', '[::1]'].includes(databaseUrl.hostname)
+            || databaseUrl.username !== 'agentos_app'
+            || databaseUrl.hash !== ''
+            || !/(?:^|[_-])(?:live|test)(?:[_-]|$)/i.test(databaseName)
+            || !/^[A-Za-z0-9._~-]{16,}$/.test(appRolePassword)
+          ) {
+            throw new Error('LIVE_DATABASE_URL must target a loopback agentos_app live/test database with a URL-safe password');
+          }
+          const randomSecret = () => randomBytes(32).toString('hex');
+          const platformRolePassword = randomSecret();
+          const port = databaseUrl.port || '5432';
+          const platformDatabaseUrl =
+            `postgresql://agentos_platform_login:${platformRolePassword}@127.0.0.1:${port}/${databaseName}?schema=agentos`;
+          const entries = [
+            ['APP_ENV', 'local'],
+            ['NODE_ENV', 'development'],
+            ['BIND_ADDRESS', '127.0.0.1'],
+            ['POSTGRES_DB', databaseName],
+            ['POSTGRES_USER', 'postgres'],
+            ['POSTGRES_PASSWORD', randomSecret()],
+            ['POSTGRES_PORT', port],
+            ['APP_ROLE_PASSWORD', appRolePassword],
+            ['MIGRATOR_ROLE_PASSWORD', randomSecret()],
+            ['PLATFORM_ROLE_PASSWORD', platformRolePassword],
+            ['DATABASE_URL', process.env.LIVE_DATABASE_URL],
+            ['PLATFORM_DATABASE_URL', platformDatabaseUrl],
+            ['API_BASE_URL', 'http://127.0.0.1:4000'],
+            ['WEB_BASE_URL', 'http://127.0.0.1:3000'],
+            ['PORT', '4000'],
+            ['WEB_PORT', '3000'],
+            ['PLATFORM_ADMIN_PORT', '3001'],
+            ['NEXT_PUBLIC_API_URL', 'http://127.0.0.1:4000'],
+            ['NEXTAUTH_URL', 'http://127.0.0.1:3000'],
+            ['PLATFORM_ADMIN_URL', 'http://127.0.0.1:3001'],
+            ['CORS_ALLOWED_ORIGINS', 'http://127.0.0.1:3000,http://127.0.0.1:3001,http://127.0.0.1:4000'],
+            ['DEMO_MODE', 'true'],
+            ['DEMO_PROVIDER_MODE', 'live'],
+            ['DEMO_TENANT_ID', process.env.LIVE_DEMO_TENANT_ID],
+            ['DEMO_TENANT_NAME', 'NovaMart Live Test'],
+            ['DEMO_COMPANY_ADMIN_EMAIL', process.env.LIVE_DEMO_COMPANY_ADMIN_EMAIL],
+            ['DEMO_COMPANY_ADMIN_PASSWORD', process.env.LIVE_DEMO_COMPANY_ADMIN_PASSWORD],
+            ['DEMO_PLATFORM_ADMIN_EMAIL', process.env.LIVE_DEMO_PLATFORM_ADMIN_EMAIL],
+            ['DEMO_PLATFORM_ADMIN_PASSWORD', process.env.LIVE_DEMO_PLATFORM_ADMIN_PASSWORD],
+            ['DEMO_WIDGET_ORIGINS', 'http://127.0.0.1:3000'],
+            ['OPENAI_API_KEY', process.env.LIVE_OPENAI_API_KEY],
+            ['OPENAI_BASE_URL', process.env.LIVE_OPENAI_BASE_URL],
+            ['DEFAULT_LLM_PROVIDER', 'openai-compatible'],
+            ['PRIMARY_REASONING_MODEL', process.env.LIVE_PRIMARY_REASONING_MODEL],
+            ['LIVE_MAX_LLM_CALLS', process.env.LIVE_MAX_LLM_CALLS],
+            ['LIVE_ALLOWED_LLM_HOSTS', process.env.LIVE_ALLOWED_LLM_HOSTS],
+            ['JWT_SECRET', randomSecret()],
+            ['SESSION_SECRET', randomSecret()],
+            ['INTERNAL_API_KEY', randomSecret()],
+            ['WEBHOOK_HMAC_SECRET', randomSecret()],
+            ['PLATFORM_SECRET', randomSecret()],
+            ['AUDIT_HMAC_SECRET', randomSecret()],
+            ['ENCRYPTION_KEY_AES256', randomSecret()],
+            ['TENANT_COOKIE_HMAC_KEY', randomSecret()],
+            ['PLATFORM_COOKIE_HMAC_KEY', randomSecret()],
+            ['TENANT_NEXTAUTH_SECRET', randomSecret()],
+            ['PLATFORM_NEXTAUTH_SECRET', randomSecret()],
+            ['REDIS_PASSWORD', randomSecret()],
+            ['QDRANT_API_KEY', randomSecret()],
+            ['MOCK_SECRET_KEY', randomSecret()],
+            ['EVENT_INGESTION_HMAC_SECRET', randomSecret()],
+            ['MOCK_ERP_ENABLED', 'true'],
+            ['MOCK_ERP_DEMO_PACK', 'novamart'],
+            ['WORKER_TENANT_IDS', process.env.LIVE_DEMO_TENANT_ID],
+            ['KNOWLEDGE_TENANT_IDS', process.env.LIVE_DEMO_TENANT_ID],
+            ['KNOWLEDGE_ROOT', '/repo/packages/second-brain/demo/novamart'],
+            ['ENABLED_AGENT_MODULES', 'sales,support,marketing'],
+            ['SALES_SIGNAL_SOURCE_CHANNELS', 'WEB_CHAT'],
+            ['SALES_SIGNAL_EVENT_TYPES', 'message.received'],
+            ['MARKETING_SIGNAL_SOURCE_CHANNELS', 'MARKETING_CAMPAIGN'],
+            ['MARKETING_SIGNAL_EVENT_TYPES', 'campaign.requested'],
+          ];
+          for (const [key, value] of entries) {
+            if (typeof value !== 'string' || value.trim() === '' || /[\r\n]/.test(value)) {
+              throw new Error(`Missing or multiline protected value for ${key}`);
+            }
+            process.stdout.write(`::add-mask::${value.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A')}\n`);
+          }
+          writeFileSync(process.env.LIVE_ENV_FILE, entries.map(([key, value]) => `${key}=${value}`).join('\n') + '\n', { mode: 0o600 });
+          chmodSync(process.env.LIVE_ENV_FILE, 0o600);
+          NODE
+      - name: Run live preflight
+        run: node scripts/live/preflight.mjs --env-file "$LIVE_ENV_FILE"
+      - name: Start isolated live stack
+        run: pnpm demo:up -- --env-file "$LIVE_ENV_FILE" --profile live
+      - name: Run test:live
+        run: pnpm test:live
+      - name: Run live:scan
+        if: always()
+        run: pnpm live:scan -- --env-file "$LIVE_ENV_FILE"
+      - name: Stop isolated live stack
+        if: always()
+        run: |
+          if [ -f "$LIVE_ENV_FILE" ]; then
+            docker compose --project-name "$COMPOSE_PROJECT_NAME" --env-file "$LIVE_ENV_FILE" down --remove-orphans
+          fi
+      - name: Remove protected environment file
+        if: always()
+        run: rm -f -- "$LIVE_ENV_FILE"

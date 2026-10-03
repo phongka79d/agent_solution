@@ -4,14 +4,22 @@ import type { FastifyInstance } from 'fastify';
 import { signMockRequest } from '@agentos/adapters';
 import { correlationIdOf, fail, replyFailure } from '../../gateway/http.js';
 import { authenticate, requireOperator } from '../../gateway/principal.js';
+import type { CredentialStore } from '../../gateway/principal.js';
 import type { GatewayRuntime } from '../../gateway/ports.js';
-import { DEMO_TENANT_ID, type DemoCredentialStore } from '../../runtime/demo-auth.js';
+import { DEMO_TENANT_ID } from '../../runtime/demo-auth.js';
+import type { WidgetSessionInput, WidgetSessionIssue } from '../../runtime/widget-sessions.js';
 import { nodeHmacSha256Hex } from '../../runtime/adapters.js';
 
 type DemoEnvironment = Readonly<Record<string, string | undefined>>;
 
+export interface DemoWidgetSessionIssuer {
+  issue(input: WidgetSessionInput): WidgetSessionIssue;
+  isDemoTenant(tenant_id: string): Promise<boolean>;
+}
+
 interface WidgetMintDependencies {
-  readonly demoAuth: DemoCredentialStore;
+  readonly credentials: CredentialStore;
+  readonly widgetSessions: DemoWidgetSessionIssuer;
   readonly runtime: GatewayRuntime;
   /** Read environment at request time so a long-lived process cannot pin stale demo gating. */
   readonly env?: () => DemoEnvironment;
@@ -78,13 +86,17 @@ function projectCatalogItem(value: unknown): CatalogItem | null {
 
 /** An operator may launch only a fresh anonymous session or a seeded, verified C05/C06 persona. */
 export function registerDemoWidgetRoutes(app: FastifyInstance, deps: WidgetMintDependencies): void {
-  app.post('/demo/widget-session', { preHandler: authenticate({ credentials: deps.demoAuth, runtime: deps.runtime }) },
+  app.post('/demo/widget-session', { preHandler: authenticate({ credentials: deps.credentials, runtime: deps.runtime }) },
     async (request, reply) => {
       try {
         const env = deps.env?.() ?? process.env;
         const principal = requireOperator(request, 'conversation:takeover');
+        if (principal.scope !== 'company') fail('INSUFFICIENT_AUTHORITY', 'the demo widget requires a company operator');
         requireDemoEnvironment(env);
         requireCanonicalDemoTenant(principal.tenant_id);
+        if (!await deps.widgetSessions.isDemoTenant(principal.tenant_id)) {
+          fail('CAPABILITY_NOT_ENABLED', 'the demo widget is restricted to DEMO data');
+        }
         const allowed = (env.DEMO_WIDGET_ORIGINS ?? '').split(',').map((value) => value.trim());
         const origin = request.headers.origin;
         if (typeof origin !== 'string' || !allowed.includes(origin) || !/^https?:\/\/[^/]+$/.test(origin)) {
@@ -97,19 +109,23 @@ export function registerDemoWidgetRoutes(app: FastifyInstance, deps: WidgetMintD
         }
         const persona = 'persona' in body ? body.persona : undefined;
         const session_id = sessionIdForPersona(persona);
-        const issued = deps.demoAuth.issueWidget(session_id, origin);
+        const issued = deps.widgetSessions.issue({ tenant_id: principal.tenant_id, session_id, origin });
         return reply.code(201).header('cache-control', 'no-store').send(issued);
       } catch (error) {
         return replyFailure(reply, error, correlationIdOf(request, deps.runtime));
       }
     });
-  app.get('/demo/catalog', { preHandler: authenticate({ credentials: deps.demoAuth, runtime: deps.runtime }) },
+  app.get('/demo/catalog', { preHandler: authenticate({ credentials: deps.credentials, runtime: deps.runtime }) },
     async (request, reply) => {
       try {
         const env = deps.env?.() ?? process.env;
         const principal = requireOperator(request, 'conversation:takeover');
+        if (principal.scope !== 'company') fail('INSUFFICIENT_AUTHORITY', 'the demo catalog requires a company operator');
         requireDemoEnvironment(env);
         requireCanonicalDemoTenant(principal.tenant_id);
+        if (!await deps.widgetSessions.isDemoTenant(principal.tenant_id)) {
+          fail('CAPABILITY_NOT_ENABLED', 'the demo catalog is restricted to DEMO data');
+        }
         const secret = env.MOCK_SECRET_KEY;
         const configured = env.ERP_API_BASE_URL;
         if (!secret || !configured || env.MOCK_ERP_ENABLED !== 'true') {

@@ -29,6 +29,12 @@ export type SkillErrorCode =
   | 'SKILL_NOT_FOUND'
   /** The row exists but is not enabled for this gate/tenant (§7 enablement flag). */
   | 'SKILL_DISABLED'
+  /**
+   * The live availability gate refused (PLAN T4.3): the tenant setting, entitlement, connector
+   * binding, agent activation, autonomy state, breaker or an unresolved owner input denied the skill.
+   * The explanatory message names the reason; a gate outage fails closed with this same code.
+   */
+  | 'SKILL_UNAVAILABLE'
   /** The invocation did not arrive from the Revenue Orchestrator, which owns all skill execution. */
   | 'UNBROKERED_INVOCATION'
   /** A server-resolved dispatch field (`run_id`, `tenant_id`, `correlation_id`, request identity). */
@@ -93,11 +99,12 @@ export class SkillError extends Error {
    * @param message Explanatory text; carries no contract.
    * @param skill_id The row the refusal belongs to, when known.
    */
-  public constructor(code: SkillErrorCode, message: string, skill_id?: string) {
+  public constructor(code: SkillErrorCode, message: string, skill_id?: string, cause?: unknown) {
     super(skill_id === undefined ? `${code}: ${message}` : `${code} [${skill_id}]: ${message}`);
     this.name = 'SkillError';
     this.code = code;
     this.skill_id = skill_id;
+    if (cause !== undefined) Object.defineProperty(this, 'cause', { value: cause, configurable: true });
   }
 }
 

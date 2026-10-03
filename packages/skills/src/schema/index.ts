@@ -8,7 +8,7 @@
  */
 
 export { assertSupportedSchema } from './assert-supported.js';
-export { stableJson } from './canonical.js';
+export { canonicalizeJson } from '@agentos/core-engine/canonical-json';
 export { matchesFormat } from './formats.js';
 export {
   SUPPORTED_FORMATS,

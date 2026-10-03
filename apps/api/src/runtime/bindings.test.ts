@@ -92,6 +92,11 @@ const OTHER_TENANT = '22222222-2222-4222-8222-222222222222';
 function response(overrides: Partial<RunResponseRecord> = {}): RunResponseRecord {
   return {
     tenant_id: TENANT,
+    response_kind: 'ANSWER',
+    outcome: 'ANSWERED',
+    source: 'agent',
+    template_key: null,
+    reason_code: null,
     run_id: RUN,
     answer: 'The approved answer.',
     sources: [{
@@ -170,8 +175,183 @@ class FakeRedis implements RedisInjectedClient {
 }
 
 describe('createDurableRunPort', () => {
+  it('projects campaign operator ownership without weakening conversation ownership checks', async () => {
+    const campaignSignal = {
+      tenant_id: TENANT,
+      source_channel: 'MARKETING_CAMPAIGN',
+      event_type: 'campaign.requested',
+      subject: {
+        session_id: 'operator-a',
+        channel_type: 'MARKETING_CAMPAIGN',
+        channel_identifier: 'operator-a',
+      },
+      payload: { module: 'marketing', skill_id: 'skill.mkt.generate_content' },
+    };
+    const chatSignal = {
+      tenant_id: TENANT,
+      source_channel: 'WEB_CHAT',
+      event_type: 'message.received',
+      subject: {
+        session_id: 'widget-a',
+        channel_type: 'WEB_CHAT',
+        conversation_id: 'conversation-a',
+      },
+      payload: { module: 'sales', conversation_id: 'conversation-a' },
+    };
+    const scenarios = [
+      {
+        name: 'operator-owned campaign without a conversation',
+        signal: campaignSignal,
+        session_id: 'operator-a',
+        conversation_id: undefined,
+      },
+      {
+        name: 'campaign with a mismatched operator identifier',
+        signal: {
+          ...campaignSignal,
+          subject: { ...campaignSignal.subject, channel_identifier: 'operator-b' },
+        },
+        session_id: undefined,
+        conversation_id: undefined,
+      },
+      {
+        name: 'campaign with an empty owner',
+        signal: {
+          ...campaignSignal,
+          subject: { ...campaignSignal.subject, session_id: '', channel_identifier: '' },
+        },
+        session_id: undefined,
+        conversation_id: undefined,
+      },
+      {
+        name: 'non-campaign event without a conversation',
+        signal: { ...campaignSignal, event_type: 'message.received' },
+        session_id: undefined,
+        conversation_id: undefined,
+      },
+      {
+        name: 'campaign signal from another tenant',
+        signal: { ...campaignSignal, tenant_id: 'other-tenant' },
+        session_id: undefined,
+        conversation_id: undefined,
+      },
+      {
+        name: 'chat with matching conversation binding',
+        signal: chatSignal,
+        session_id: 'widget-a',
+        conversation_id: 'conversation-a',
+      },
+      {
+        name: 'chat with mismatched conversation binding',
+        signal: {
+          ...chatSignal,
+          payload: { ...chatSignal.payload, conversation_id: 'conversation-b' },
+        },
+        session_id: undefined,
+        conversation_id: undefined,
+      },
+      {
+        name: 'chat without a conversation binding',
+        signal: {
+          ...chatSignal,
+          subject: { session_id: 'widget-a', channel_type: 'WEB_CHAT' },
+          payload: { module: 'sales' },
+        },
+        session_id: undefined,
+        conversation_id: undefined,
+      },
+    ];
+    for (const scenario of scenarios) {
+      const durable = task({
+        state: 'awaiting_human',
+        state_payload: { signal: scenario.signal },
+        error_details: null,
+        last_error_class: null,
+      });
+      const port = createDurableRunPort(
+        {
+          getTask: async () => durable,
+          listTasks: async () => ({ items: [], next_cursor: null }),
+          requeueFailed: async () => durable,
+        },
+        { readRunLogs: async () => [], readEvidenceChain: async () => [] },
+        { getReservation: async () => null },
+      );
+      const projection = await port.read({ tenant_id: TENANT, run_id: RUN });
+      expect(projection?.session_id, scenario.name).toBe(scenario.session_id);
+      expect(projection?.conversation_id, scenario.name).toBe(scenario.conversation_id);
+    }
+  });
+
+  it('reads DB and demo campaign owners from AUTH-4 checkpoints and refuses unverifiable ownership', async () => {
+    const operatorId = '01a0ffe5-8d46-7915-9868-9ca107295c29';
+    const signal = {
+      tenant_id: TENANT,
+      source_channel: 'MARKETING_CAMPAIGN',
+      event_type: 'campaign.requested',
+      subject: {
+        session_id: operatorId,
+        channel_type: 'MARKETING_CAMPAIGN',
+        channel_identifier: operatorId,
+      },
+      payload: { module: 'marketing' },
+    };
+    const scenarios = [
+      { name: 'DB operator', source: signal, contextTenant: TENANT, taskTenant: TENANT, owner: operatorId },
+      {
+        name: 'demo operator',
+        source: { ...signal, subject: { ...signal.subject, session_id: 'operator-a', channel_identifier: 'operator-a' } },
+        contextTenant: TENANT, taskTenant: TENANT, owner: 'operator-a',
+      },
+      { name: 'missing source', source: undefined, contextTenant: TENANT, taskTenant: TENANT, owner: undefined },
+      { name: 'foreign context', source: signal, contextTenant: 'other-tenant', taskTenant: TENANT, owner: undefined },
+      { name: 'foreign task', source: signal, contextTenant: TENANT, taskTenant: 'other-tenant', owner: undefined },
+      {
+        name: 'foreign source', source: { ...signal, tenant_id: 'other-tenant' },
+        contextTenant: TENANT, taskTenant: TENANT, owner: undefined,
+      },
+      {
+        name: 'missing owner', source: { ...signal, subject: { ...signal.subject, session_id: '', channel_identifier: '' } },
+        contextTenant: TENANT, taskTenant: TENANT, owner: undefined,
+      },
+      {
+        name: 'mismatched owner', source: { ...signal, subject: { ...signal.subject, channel_identifier: 'other-operator' } },
+        contextTenant: TENANT, taskTenant: TENANT, owner: undefined,
+      },
+      {
+        name: 'unrelated signal', source: { ...signal, event_type: 'message.received' },
+        contextTenant: TENANT, taskTenant: TENANT, owner: undefined,
+      },
+    ];
+    for (const scenario of scenarios) {
+      const durable = task({
+        tenant_id: scenario.taskTenant,
+        state: 'awaiting_human',
+        state_payload: {
+          context: {
+            tenant_id: scenario.contextTenant,
+            run_state: { marketing: { source_signal: scenario.source } },
+          },
+        },
+      });
+      const port = createDurableRunPort(
+        {
+          getTask: async () => durable,
+          listTasks: async () => ({ items: [], next_cursor: null }),
+          requeueFailed: async () => durable,
+        },
+        { readRunLogs: async () => [], readEvidenceChain: async () => [] },
+        { getReservation: async () => null },
+      );
+      const projection = await port.read({ tenant_id: TENANT, run_id: RUN });
+      expect(projection?.session_id, scenario.name).toBe(scenario.owner);
+      expect(projection?.conversation_id, scenario.name).toBeUndefined();
+      if (scenario.taskTenant !== TENANT) expect(projection).toBeNull();
+    }
+  });
+
   it('projects PostgreSQL tasks with their per-step operational log', async () => {
-    const durable = task({ state: 'completed', last_error_class: null });
+    const durable = task({ state: 'completed', last_error_class: null, error_details: null });
     const port = createDurableRunPort(
       {
         getTask: async () => durable,
@@ -196,6 +376,7 @@ describe('createDurableRunPort', () => {
       lifecycle_state: 'completed',
       correlation_id: 'corr-a',
       evidence_reference: 'evidence-a',
+      error: null,
     });
     await expect(port.list({ tenant_id: TENANT })).resolves.toEqual({
       items: [
@@ -215,6 +396,31 @@ describe('createDurableRunPort', () => {
       next_cursor: 'next',
     });
   });
+  it('projects only a failed task error code and class', async () => {
+    const failed = task({
+      state: 'failed',
+      last_error_class: 'FATAL',
+      error_details: { code: 'R1', message: 'internal diagnostic' },
+    });
+    const port = createDurableRunPort(
+      {
+        getTask: async () => failed,
+        listTasks: async () => ({ items: [], next_cursor: null }),
+        requeueFailed: async () => failed,
+      },
+      { readRunLogs: async () => [], readEvidenceChain: async () => [] },
+      { getReservation: async () => null },
+    );
+
+    const projection = await port.read({ tenant_id: TENANT, run_id: RUN });
+    expect(projection).toMatchObject({
+      lifecycle_state: 'failed',
+      error: { code: 'R1', class: 'FATAL' },
+    });
+    expect(projection).not.toHaveProperty('error_details');
+    expect(projection?.error).not.toHaveProperty('message');
+  });
+
 
   it('projects a persisted answer and closed source references for a completed task', async () => {
     const completed = task({ state: 'completed', last_error_class: null, error_details: null });
@@ -250,7 +456,7 @@ describe('createDurableRunPort', () => {
   });
 
   it('does not read or project a response while a task is pending', async () => {
-    const pending = task({ state: 'waiting' });
+    const pending = task({ state: 'waiting', last_error_class: null, error_details: null });
     let responseReads = 0;
     const port = createDurableRunPort(
       {
@@ -274,6 +480,7 @@ describe('createDurableRunPort', () => {
       task_version: 4,
       lifecycle_state: 'waiting',
       correlation_id: 'corr-a',
+      error: null,
     });
     expect(responseReads).toBe(0);
   });
@@ -393,6 +600,49 @@ describe('createDurableRunPort', () => {
     ).rejects.toThrow('RUN_RECONCILIATION_REQUIRED');
     expect(requeues).toBe(0);
   });
+
+  it('offers an exhausted LLM provider failure for retry only after its reservation was released', async () => {
+    const exhausted = task({
+      last_error_class: 'RETRYABLE',
+      retry_count: 3,
+      max_retries: 3,
+      error_details: { code: 'LLM_UNAVAILABLE' },
+    });
+    const reservation = (status: 'FAILED' | 'RESERVED') => ({
+      tenant_id: TENANT,
+      effect_key: EFFECT_KEY,
+      request_id: 'request-a',
+      request_fingerprint: 'a'.repeat(64),
+      run_id: RUN,
+      step_index: 2,
+      skill_id: 'skill.mkt.generate_content',
+      status,
+      response_receipt: null,
+      reserved_at: NOW,
+      resolved_at: null,
+      expires_at: '2026-09-26T00:00:00.000Z',
+      expired: false,
+    });
+    const portWith = (status: 'FAILED' | 'RESERVED') => createDurableRunPort(
+      {
+        getTask: async () => exhausted,
+        listTasks: async () => ({ items: [], next_cursor: null }),
+        requeueFailed: async () => task({ state: 'queued' }),
+      },
+      { readRunLogs: async () => [log()], readEvidenceChain: async () => [] },
+      { getReservation: async () => reservation(status) },
+    );
+
+    await expect(portWith('FAILED').classifyRetry(TENANT, RUN)).resolves.toEqual({
+      retryable: true,
+      failure_class: 'PRE_DISPATCH_PROVIDER_REJECTION',
+      effect_key: EFFECT_KEY,
+    });
+    await expect(portWith('RESERVED').classifyRetry(TENANT, RUN)).resolves.toEqual({
+      retryable: false,
+      reason: 'UNKNOWN',
+    });
+  });
 });
 
 describe('createApprovalReadPort', () => {
@@ -406,6 +656,7 @@ describe('createApprovalReadPort', () => {
       effect_key: EFFECT_KEY,
       authority_required: 'AUTH-4' as const,
       payload: { channel: 'EMAIL' },
+      digest_version: 1,
       payload_sha256: 'b'.repeat(64),
       reason: 'human authorization required',
       operator_id: null,
@@ -433,6 +684,7 @@ describe('createApprovalReadPort', () => {
   it('maps the canonical pending row onto queue and detail responses', async () => {
     const port = createApprovalReadPort({
       listPending: async () => ({ items: [detail], next_cursor: null }),
+      listDecided: async () => ({ items: [], next_cursor: null }),
       getDetail: async () => detail,
     });
 
@@ -463,6 +715,7 @@ describe('createApprovalReadPort', () => {
     };
     const port = createApprovalReadPort({
       listPending: async () => ({ items: [], next_cursor: null }),
+      listDecided: async () => ({ items: [], next_cursor: null }),
       getDetail: async () => expired,
     });
 
@@ -472,6 +725,122 @@ describe('createApprovalReadPort', () => {
         expires_at: '2026-09-26T00:00:00.000Z',
       }),
     );
+  });
+
+  it('reads the DECIDED history and publishes the reviewer summary', async () => {
+    const decided = {
+      ...detail,
+      approval: {
+        ...detail.approval,
+        decision: 'APPROVED' as const,
+        is_paused: false,
+        operator_id: 'operator-1',
+        decided_at: NOW,
+        payload: { channel: 'EMAIL', campaign_name: 'Winback tháng 10', audience_size: 320, evidence: ['ev-1'] },
+      },
+    };
+    const listDecided = vi.fn(async () => ({ items: [decided], next_cursor: null }));
+    const port = createApprovalReadPort({
+      listPending: async () => ({ items: [], next_cursor: null }),
+      listDecided,
+      getDetail: async () => decided,
+    });
+
+    const page = await port.list({ tenant_id: TENANT, status: 'DECIDED' });
+    expect(listDecided).toHaveBeenCalledWith({ tenant_id: TENANT });
+    expect(page.items[0]).toMatchObject({
+      status: 'APPROVED',
+      summary: {
+        title_key: 'approvals.title.campaign',
+        domain: 'sales',
+        requesting_agent_key: 'skill.sales.send_message',
+        risk: 'high',
+        evidence_count: 1,
+        params: { campaign_name: 'Winback tháng 10', audience_size: 320, channel: 'EMAIL' },
+      },
+    });
+  });
+
+  it('exposes the persisted original and modified flat campaign payloads in history and detail', async () => {
+    const before = { campaign_name: 'October winback', channel: 'EMAIL', audience_size: 320 };
+    const after = { ...before, audience_size: 240 };
+    const modified = {
+      ...detail,
+      approval: {
+        ...detail.approval,
+        decision: 'MODIFIED' as const,
+        payload: after,
+        original_payload: before,
+        is_paused: false,
+        decided_at: NOW,
+      },
+      action: {
+        ...detail.action,
+        skill_name: 'skill.mkt.dispatch_campaign',
+        action_payload: after,
+      },
+    };
+    const port = createApprovalReadPort({
+      listPending: async () => ({ items: [], next_cursor: null }),
+      listDecided: async () => ({ items: [modified], next_cursor: null }),
+      getDetail: async () => modified,
+    });
+
+    const page = await port.list({ tenant_id: TENANT, status: 'DECIDED' });
+    expect(page.items[0]?.summary.modification).toEqual({ before, after });
+    const response = await port.detail(TENANT, detail.approval.id);
+    expect(response?.summary.modification).toEqual({ before, after });
+  });
+
+  it('omits a legacy modification original instead of guessing from payload or action fields', async () => {
+    const after = {
+      campaign_name: 'October winback',
+      audience_size: 240,
+      before: { audience_size: 999 },
+      after: { audience_size: 999 },
+    };
+    const modified = {
+      ...detail,
+      approval: {
+        ...detail.approval,
+        decision: 'MODIFIED' as const,
+        payload: after,
+        original_payload: null,
+      },
+      action: { ...detail.action, action_payload: { audience_size: 888 } },
+    };
+    const port = createApprovalReadPort({
+      listPending: async () => ({ items: [], next_cursor: null }),
+      listDecided: async () => ({ items: [modified], next_cursor: null }),
+      getDetail: async () => modified,
+    });
+
+    const page = await port.list({ tenant_id: TENANT, status: 'DECIDED' });
+    expect(page.items[0]?.summary.modification).toEqual({ after });
+    const response = await port.detail(TENANT, detail.approval.id);
+    expect(response?.summary.modification).toEqual({ after });
+  });
+  it('uses the campaign name linked to a pending approval run', async () => {
+    const campaignDetail = {
+      ...detail,
+      approval: { ...detail.approval, campaign_name: 'Stack UI win-back approval' },
+      action: {
+        ...detail.action,
+        skill_name: 'skill.mkt.dispatch_campaign',
+        action_payload: { campaign_id: 'campaign-1', channel: 'EMAIL', audience_size: 320 },
+      },
+    };
+    const port = createApprovalReadPort({
+      listPending: async () => ({ items: [campaignDetail], next_cursor: null }),
+      listDecided: async () => ({ items: [], next_cursor: null }),
+      getDetail: async () => campaignDetail,
+    });
+
+    const page = await port.list({ tenant_id: TENANT, status: 'PENDING' });
+    expect(page.items[0]?.summary).toMatchObject({
+      title_key: 'approvals.title.campaign',
+      params: { campaign_name: 'Stack UI win-back approval' },
+    });
   });
 
 });
@@ -511,6 +880,30 @@ describe('createTakeoverLeasePort', () => {
 
     now += 60_000;
   });
+  it('maps a Redis connection error to a retryable 503 without recording a lease', async () => {
+    const redis = new FakeRedis(() => Date.parse(NOW));
+    vi.spyOn(redis, 'set').mockRejectedValue(
+      new Error("Stream isn't writeable and enableOfflineQueue options is false"),
+    );
+    const port = createTakeoverLeasePort(redis, () => new Date(NOW));
+
+    await expect(port.acquire({
+      tenant_id: TENANT,
+      conversation_id: 'conversation-a',
+      operator_id: 'operator-a',
+      ttl_seconds: 60,
+    })).rejects.toMatchObject({
+      name: 'GatewayFailureError',
+      failure: {
+        error_code: 'CAPABILITY_UNAVAILABLE',
+        http_status: 503,
+        message: 'Dịch vụ quyền tiếp quản tạm thời không khả dụng. Vui lòng thử lại.',
+        retryable: true,
+      },
+    });
+    expect(redis.values.size).toBe(0);
+  });
+
 });
 
 describe('createIdentityPort', () => {

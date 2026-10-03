@@ -74,6 +74,7 @@ const spec: Omit<
   allowed_agents: ['CS-02'],
   required_authority: 'AUTH-1',
   tool_binding: 'Customer360.AnalyticsLayer',
+  requires_verified_identity: true,
   validation_rules: [
     'result MUST be tagged with classification: HYPOTHESIS',
     'cannot overwrite FACT',

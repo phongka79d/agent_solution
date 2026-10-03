@@ -332,7 +332,13 @@ describe('P5 disaster recovery', () => {
 
     expect(paused[0]?.state).toBe('PAUSED');
     expect(parked.workflow).toBe('PARKED_DRAFT');
-    expect(otherTenant.workflow).toBe('UNCHANGED');
+    // The pause is tenant-scoped: another tenant is neither paused nor globally promoted. It keeps
+    // running the READ skill at MINIMUM baseline authority (D2), not via TENANT's promotion.
+    const otherInspection = await inspect(service, OTHER_TENANT);
+    expect(otherInspection.paused).toBe(false);
+    expect(otherInspection.current).toHaveLength(0);
+    expect(otherTenant.workflow).toBe('AUTO_EXECUTE');
+    expect(otherTenant.reason).toContain('MINIMUM authority');
     expect(audit.some((event) => event.event === 'PAUSED' && event.reason.includes('Operator pause'))).toBe(true);
   });
 });

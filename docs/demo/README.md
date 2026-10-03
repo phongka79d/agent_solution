@@ -41,6 +41,7 @@ completion summary prints the console URLs:
 ```bash
 pnpm demo:up
 pnpm demo:up -- --env-file .env.demo
+pnpm demo:up -- --live   # DEMO_PROVIDER_MODE=live: preflight and smoke require and exercise the provider
 ```
 
 The default env file is `.env`. Tear the stack down while keeping named volumes,
@@ -57,21 +58,21 @@ the account environment-variable names.
 ### Compose
 
 For direct Compose commands, `.env` is used by default. When using another file,
-pass `--env-file` explicitly so the Compose up/down commands resolve the same values:
+pass `--env-file` explicitly so Compose up/down resolve the same values.
+The host-run API and worker use `PLATFORM_DATABASE_URL`; Compose configures the matching
+internal URL from `PLATFORM_ROLE_PASSWORD`. If `PLATFORM_DATABASE_URL` is unset, platform
+transactions fall back to `DATABASE_URL` for legacy databases. Configure the dedicated login
+after migration 0052. The worker's knowledge indexer likewise uses `INDEXER_DATABASE_URL`
+(Compose builds it from `INDEXER_ROLE_PASSWORD`, migration 0060); with it unset, approved
+knowledge never becomes AVAILABLE.
 
 ```bash
 cp .env.example .env
-# edit .env: DEMO_MODE=true, the two DEMO_* email/password pairs, the two cookie HMAC keys,
-# DEMO_WIDGET_ORIGINS, WORKER_TENANT_IDS, KNOWLEDGE_TENANT_IDS, KNOWLEDGE_ROOT (absolute),
-# ENABLED_AGENT_MODULES, and the SALES_/MARKETING_ signal vars.
-docker compose up -d --build
-# Compose creates the extensions and least-privilege roles only; apply the schema before seeding.
-# Use the bootstrap (superuser) URL, exactly as the CI database gates do: the first migrations
-# create the least-privilege roles, which the application role itself may not do.
-DATABASE_URL=postgresql://postgres:<POSTGRES_PASSWORD>@localhost:5432/agentos_dev?schema=agentos pnpm db:migrate:rehearse
-pnpm demo:preflight
-pnpm demo:seed
-pnpm demo:smoke
+# edit .env: DEMO_MODE=true, demo account credentials, cookie HMAC keys, and local knowledge/
+# signal settings. Keep PLATFORM_ROLE_PASSWORD and INDEXER_ROLE_PASSWORD set for the dedicated
+# platform and knowledge-indexer logins.
+# demo:up rehearses migrations using the bootstrap URL, then runs preflight, seed, and smoke.
+pnpm demo:up
 ```
 
 The mock ERP is reachable only in local/CI demo mode. `QUOTE_SIGNING_SECRET` is required for
@@ -92,12 +93,14 @@ real key for scenario B.
 
 ### Demo wiring
 
-- `ENABLED_AGENT_MODULES=sales,support,marketing` (API and worker) admits the three domains.
+- `ENABLED_AGENT_MODULES=sales,support,marketing` enables these domains for the API. The worker
+  discovers active tenants and their enabled domains from the database; `ENABLED_AGENT_MODULES`
+  and `WORKER_TENANT_IDS` are optional worker debug filters that intersect with that database set.
 - `SALES_SIGNAL_SOURCE_CHANNELS=WEB_CHAT` and `SALES_SIGNAL_EVENT_TYPES=message.received` bind the
   Sales domain contract; `MARKETING_SIGNAL_SOURCE_CHANNELS=MARKETING_CAMPAIGN` with
   `MARKETING_SIGNAL_EVENT_TYPES=campaign.requested` binds the company-account campaign contract.
-  `WORKER_TENANT_IDS` scopes the worker schedule and `KNOWLEDGE_ROOT`/`KNOWLEDGE_TENANT_IDS`
-  point Care and Marketing at the approved synthetic corpus (tenant-checked at read time).
+  `KNOWLEDGE_ROOT`/`KNOWLEDGE_TENANT_IDS` point Care and Marketing at the approved synthetic
+  corpus (tenant-checked at read time).
 - `MOCK_ERP_DEMO_PACK=novamart` makes the mock system of record serve only the NovaMart tenant.
 - `demo:seed` promotes the six canonical low-risk skills (`skill.sales.check_stock`,
   `skill.sales.search_product`, `skill.sales.retrieve_customer`, `skill.care.search_faq`,
@@ -149,9 +152,18 @@ one agent message are recorded per admitted conversational run.
 
 ### Verification status for this branch
 
-No live-provider acceptance run is claimed here. Docker health smoke, offline demo smoke, and
-PostgreSQL/RLS rehearsal cover local wiring; they do not establish live Sales, Care, or Marketing
-provider success.
+A live-provider acceptance run against a real OpenAI-compatible endpoint passed on this branch
+(see "Verified live" below). Docker health smoke, offline demo smoke, and PostgreSQL/RLS rehearsal
+cover local wiring only; they do not by themselves establish provider success.
+
+#### Verified live
+
+- `node scripts/demo/up.mjs --env-file <live env> --profile live` exited 0 on an isolated compose
+  project: the Sales turn completed, the Care turn completed, and the Marketing campaign reached
+  `awaiting_human` with a pending approval.
+- `node scripts/live/run-tests.mjs` passed 3/3 API tests (Sales usage, grounded Care FAQ usage,
+  Marketing approval usage) and 2/2 UI tests (Try assistant, campaign approval).
+- `node scripts/live/scan-artifacts.mjs` reported no secret in the run artifacts.
 
 #### Verified locally
 
@@ -171,10 +183,9 @@ provider success.
 - `pnpm test:integration` passed against an isolated PostgreSQL application role; Care,
   cross-domain handoff, and Sales scenarios verified idempotency conflicts, retry recovery,
   tenant/customer ownership, durable evidence, and the three-leg handoff journey.
-- On a disposable PostgreSQL container, the 22 currently shipped migration files (`0000`–`0022`, with
-  `0008` intentionally skipped/never shipped) applied from empty state and replayed idempotently;
-  the RLS policy/rehearsal checks passed, and `pnpm demo:seed` passed twice with the seeded demo
-  fixtures.
+- On a disposable PostgreSQL container, the 62 currently shipped migration files (`0000`–`0062`, with
+  `0008` intentionally skipped/never shipped) applied from empty state in the real-stack harness,
+  and `pnpm demo:seed` passed with the seeded demo fixtures.
 - `pnpm docker:smoke` built, inspected, started, health-checked, and tore down API, Worker, Tenant
   Console, and Platform Admin images.
 - `pnpm demo:smoke` passed against a fresh API/mock-ERP stack. It accepted the Sales turn and
@@ -189,8 +200,8 @@ provider success.
 
 #### Not verified
 
-- Sales, Care, and Marketing live-provider acceptance against a real OpenAI-compatible endpoint.
-- Live operator reply after escalation, and live campaign-content generation.
+- Live operator reply after escalation, live Care order lookup, and a live AUTH-4 ERP order; the
+  live suite covers Sales advice, Care FAQ, and Marketing draft/approval only.
 
 #### Blocked prerequisites
 
@@ -218,3 +229,25 @@ platform runtime code.
   to the customer happens through the run response above, never through a fabricated send.
 - Provider/API keys are server-only. A missing LLM, ERP, event, consent, communication, or quote
   binding produces a typed refusal or an explicit readiness state.
+
+## Current runtime settings and real-stack tests
+
+This section supplements the earlier NovaMart runbook and verification record with current environment and database-backed controls (`docs/demo/README.md`).
+
+- `AUTH_PROVIDER` accepts `demo` or `db` and defaults to `demo`; `db` uses durable accounts and sessions and requires `DATABASE_URL` (`apps/api/src/runtime/composition.ts`, `.env.example`).
+- `SESSION_SECRET` signs API sessions; `ENCRYPTION_KEY_AES256` protects database-backed provider secrets, with `ENCRYPTION_KEY_AES256_PREVIOUS` available for reads during key rotation (`apps/api/src/runtime/composition.ts`, `packages/core-engine/src/secrets/cipher.ts`, `packages/database/src/repositories/secrets.ts`).
+- `OPENAI_API_KEY` and `OPENAI_BASE_URL` are server-only, not `NEXT_PUBLIC_*` settings (`.env.example`).
+- `DEMO_TENANT_NAME` optionally sets the demo company's display name; the fallback is `Demo` (`apps/api/src/runtime/composition.ts`).
+- `PLATFORM_FEATURE_SUBSCRIPTIONS=true` enables subscriptions navigation and the subscriptions route (`apps/platform-admin/src/app/(app)/layout.tsx`, `apps/platform-admin/src/app/(dashboard)/subscriptions/page.tsx`).
+- Test-data enablement is the tenant setting `tenant_governance_settings.test_data_enabled`, not an environment variable; the Test Customer Lab accepts `DEMO`/`TEST` tenants directly, while other data classes require that setting (`packages/database/migrations/0045_test_data_enabled.sql`, `packages/database/src/repositories/test-customers.ts`, `apps/api/src/routes/v1/testing.ts`).
+- `OPENAI_BASE_URL` and stored LLM provider URLs are checked by `assertSafeProviderUrl`: HTTP is allowed only for `llm-stub`, `localhost`, `127.0.0.1`, `::1`, or `host.docker.internal` in `local`/`ci`; the other permitted endpoints use HTTPS and public hosts (`.env.example`, `packages/core-engine/src/llm/url-guard.ts`, `packages/core-engine/src/llm/resolver.ts`).
+
+The historical verification count above records the 22 migration files in the 0000–0022 range (with 0008 skipped); the repository also contains the checked-in SQL files 0023–0048, listed in the [architecture reference](../architecture/README.md) (`packages/database/migrations/`).
+
+Run the isolated end-to-end stack suite with `pnpm test:stack` from the repository root (`package.json`, `tests/stack/README.md`). It creates its own Compose project and automatically removes that project's services and volumes unless `STACK_KEEP=1` is set (`tests/stack/global-setup.mjs`, `tests/stack/README.md`). Remove a retained test stack with:
+
+```bash
+docker compose --project-name agentos_stacktest --file docker-compose.yml --file tests/stack/compose.stack.yml down --volumes --remove-orphans
+```
+
+The command targets the project's configured Compose files and removes volumes (`tests/stack/global-setup.mjs`).

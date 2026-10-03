@@ -1,9 +1,6 @@
-import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { listApprovedKnowledge } from '@agentos/core-engine';
 import type { SkillToolInvocation } from '@agentos/skills';
 
+import type { AvailableKnowledgeDocument, KnowledgeStore } from '../../shared/knowledge-store.js';
 import { CareSkillToolError } from './errors.js';
 import { parseFaqMarkdown, scoreFaqMatch } from './faq-parser.js';
 
@@ -34,62 +31,56 @@ function readFaqQuery(input: Record<string, unknown>): string {
   return candidates.find((value) => !/^(faq|faq[_-]search)$/i.test(value)) ?? candidates[0] ?? '';
 }
 
-/** Handles the approved SecondBrain FAQ lookup without changing the tool-port contract. */
+/** Handles the current AVAILABLE FAQ revision without changing the tool-port contract. */
 export async function handleFaqEngine<TOutput>(
   invocation: SkillToolInvocation<unknown>,
-  knowledgeRoot: string,
+  knowledge: Pick<KnowledgeStore, 'listAvailable'>,
 ): Promise<TOutput> {
   const input = (invocation.input ?? {}) as Record<string, unknown>;
+  const tenant_id = input['tenant_id'];
+  if (typeof tenant_id !== 'string' || tenant_id.trim().length === 0) {
+    throw new CareSkillToolError('INVALID_TENANT', 'FAQ lookup requires a non-empty server-bound tenant ID');
+  }
+  const contextTenant = invocation.context?.tenant_id;
+  if (typeof contextTenant !== 'string' || contextTenant.trim().length === 0 || tenant_id.trim() !== contextTenant.trim()) {
+    throw new CareSkillToolError('TENANT_SCOPE_MISMATCH', 'FAQ lookup tenant must match the server-resolved execution tenant');
+  }
   const query_text = readFaqQuery(input).toLowerCase().trim();
 
-  // 1. Approve-filtered corpus check
-  let approvedDocs: readonly { path: string; status: string }[];
+  let availableDocs: readonly AvailableKnowledgeDocument[];
   try {
-    approvedDocs = await listApprovedKnowledge(knowledgeRoot);
+    availableDocs = await knowledge.listAvailable(tenant_id, 'customer-care');
   } catch {
-    throw new CareSkillToolError('CORPUS_UNAVAILABLE', `Knowledge corpus unavailable at ${knowledgeRoot}`);
+    throw new CareSkillToolError('CORPUS_UNAVAILABLE', 'Available customer-care knowledge is unavailable');
+  }
+  if (availableDocs.length === 0) {
+    throw new CareSkillToolError('CORPUS_UNAVAILABLE', 'No available customer-care FAQ document found');
+  }
+  const faqDocuments = availableDocs
+    .map((document) => ({
+      document,
+      entries: parseFaqMarkdown(document.body, `${document.namespace}/${document.slug}`).entries,
+    }))
+    .filter(({ entries }) => entries.length > 0);
+  if (faqDocuments.length === 0) {
+    throw new CareSkillToolError('CORPUS_UNAVAILABLE', 'Available FAQ document contains no parseable entries');
   }
 
-  const approvedFaq = approvedDocs.find(
-    (doc) => doc.path === 'customer-care/faq.md' && doc.status === 'approved',
-  );
-
-  if (!approvedFaq) {
-    throw new CareSkillToolError(
-      'CORPUS_UNAVAILABLE',
-      'No approved customer-care/faq.md document found in second-brain corpus',
-    );
-  }
-
-  // 2. Read and parse approved FAQ
-  let rawContent: string;
-  try {
-    rawContent = await readFile(join(knowledgeRoot, approvedFaq.path), 'utf8');
-  } catch {
-    throw new CareSkillToolError('CORPUS_UNAVAILABLE', `Could not read approved FAQ file at ${approvedFaq.path}`);
-  }
-
-  const corpus = parseFaqMarkdown(rawContent, approvedFaq.path);
-  const source_version = createHash('sha256').update(rawContent).digest('hex');
-  if (corpus.entries.length === 0) {
-    throw new CareSkillToolError('CORPUS_UNAVAILABLE', 'Approved FAQ file contains no parseable entries');
-  }
-
-  // 3. Deterministic search
   const tokens = query_text
     .split(/[\s,?.!;:()\[\]{}"']+/)
     .map((t) => t.trim())
     .filter((t) => t.length >= 2);
-
-  const scored = corpus.entries.map((faq) => ({
+  const scored = faqDocuments.flatMap(({ document, entries }) => entries.map((faq) => ({
+    document,
     faq,
     score: scoreFaqMatch(faq, tokens, query_text),
-  }));
-
+  })));
   const matching = scored
     .filter((item) => item.score > 0.25)
     .sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
+      const documentOrder = a.document.document_id.localeCompare(b.document.document_id);
+      if (documentOrder !== 0) return documentOrder;
       return a.faq.faq_id.localeCompare(b.faq.faq_id);
     });
 
@@ -97,17 +88,20 @@ export async function handleFaqEngine<TOutput>(
     return {
       answers: [],
       match_confidence: 0,
-      source_version,
+      source_version: faqDocuments[0]!.document.content_sha256,
     } as TOutput;
   }
 
+  const sourceDocument = matching[0]!.document;
   const topK = Math.max(1, typeof input['top_k'] === 'number' ? input['top_k'] : 5);
-  const topMatches = matching.slice(0, topK);
+  const topMatches = matching
+    .filter((item) => item.document.document_id === sourceDocument.document_id)
+    .slice(0, topK);
   const highestConfidence = Number(topMatches[0]!.score.toFixed(2));
 
   return {
-    answers: topMatches.map((m) => m.faq),
+    answers: topMatches.map((item) => item.faq),
     match_confidence: highestConfidence,
-    source_version,
+    source_version: sourceDocument.content_sha256,
   } as TOutput;
 }

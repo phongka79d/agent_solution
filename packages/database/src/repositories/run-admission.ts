@@ -4,7 +4,7 @@
  * Invariant: Exactly one reservation row in `agentos.effect_reservations` arbitrates admission of a
  * conversational turn. On winning the race (first insert), exactly one durable task in
  * `agentos.platform_durable_tasks` is created in the SAME transaction at current_step = 0,
- * state = 'queued', state_payload = { signal }.
+ * state = 'queued', state_payload = { signal, campaign_name? }.
  *
  * Why a refusal exists:
  * If an effect key was already claimed for a different payload fingerprint, admission is refused
@@ -25,8 +25,17 @@ import {
   insertReservationRow,
   lockReservationRow,
 } from './effect-reservations.js';
+import { appendConversationMessageInTransaction } from './conversations.js';
 
 export const CONVERSATION_TURN_SKILL = 'conversation.turn';
+
+export interface CampaignAdmission {
+  readonly campaign_id: string;
+  readonly name: string;
+  readonly objective: string;
+  readonly channels: readonly string[];
+  readonly audience_count: number;
+}
 
 export interface AdmitCareTurnInput {
   readonly tenant_id: string;
@@ -38,6 +47,13 @@ export interface AdmitCareTurnInput {
   readonly signal: Record<string, unknown>;
   readonly skill_id?: string;
   readonly step_index?: number;
+  readonly campaign?: CampaignAdmission;
+  readonly customer_message?: {
+    readonly conversation_id: string;
+    readonly sender_id: string;
+    readonly content: string;
+    readonly request_id?: string;
+  };
   /**
    * Length of the durable idempotency/reconciliation window, in milliseconds. Required: the
    * window is a platform policy owned by the effect guard (`EFFECT_RESERVATION_TTL_MS` in
@@ -48,6 +64,29 @@ export interface AdmitCareTurnInput {
   readonly expires_at?: Date | string;
   readonly now?: () => Date;
 }
+
+async function insertCampaignRow(
+  client: PoolClient,
+  input: CampaignAdmission,
+  tenant_id: string,
+  run_id: string,
+): Promise<void> {
+  await client.query(
+    `INSERT INTO agentos.campaigns
+       (id, tenant_id, run_id, name, objective, channels, budget_limit, target_count, status)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb, 0, $7, 'DRAFTING')`,
+    [
+      input.campaign_id,
+      tenant_id,
+      run_id,
+      input.name,
+      input.objective,
+      JSON.stringify(input.channels),
+      input.audience_count,
+    ],
+  );
+}
+
 
 export type AdmissionOutcome =
   | {
@@ -117,15 +156,33 @@ export async function admitCareTurn(
     });
 
     if (insertedReservation !== null) {
-      // Won the race: write the durable task in the same transaction
+      // Won the race: write the durable task and any campaign row in the same transaction.
+      if (input.customer_message !== undefined) {
+        await appendConversationMessageInTransaction(client, {
+          tenant_id: input.tenant_id,
+          conversation_id: input.customer_message.conversation_id,
+          sender_type: 'customer',
+          sender_id: input.customer_message.sender_id,
+          content: input.customer_message.content,
+          ...(input.customer_message.request_id === undefined
+            ? {}
+            : { request_id: input.customer_message.request_id }),
+        });
+      }
+
       const task = await insertDurableTask(client, {
         tenant_id: input.tenant_id,
         run_id: input.run_id,
         correlation_id: input.correlation_id,
-        state: 'queued',
         current_step: 0,
-        state_payload: { signal: input.signal },
+        state_payload: {
+          signal: input.signal,
+          ...(input.campaign === undefined ? {} : { campaign_name: input.campaign.name }),
+        },
       });
+      if (input.campaign !== undefined) {
+        await insertCampaignRow(client, input.campaign, input.tenant_id, input.run_id);
+      }
 
       return {
         kind: 'ADMITTED',

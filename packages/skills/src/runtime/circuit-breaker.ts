@@ -123,6 +123,22 @@ export class CircuitBreaker {
   }
 
   /**
+   * Reports whether a call would be admitted right now, without consuming anything.
+   *
+   * Waiting for the reset window makes this `true` exactly when the next {@link CircuitBreaker.canExecute}
+   * would flip the breaker to `HALF_OPEN` and admit its single probe; a `HALF_OPEN` breaker reports
+   * `true` only while no probe is in flight. The availability resolver reads this, so observing a
+   * breaker never steals the one probe a caller was owed.
+   *
+   * @returns `true` when an admitted call would proceed.
+   */
+  public wouldAdmit(): boolean {
+    if (this.state === 'CLOSED') return true;
+    if (this.state === 'HALF_OPEN') return !this.halfOpenProbeInFlight;
+    return this.now() - this.lastStateChangedAt >= this.resetTimeoutMs;
+  }
+
+  /**
    * Reports the recorded state. It never advances the machine by itself: only `canExecute()` opens
    * the window, so an observer cannot consume the one half-open probe a caller was owed.
    *

@@ -5,18 +5,19 @@ import { buildInsertQuery, requireRow } from './sql.js';
 
 /** FACT columns of the `agentos.customer_360_profiles` projection. */
 const PROFILE_COLUMNS = [
-  'customer_id',
-  'tenant_id',
-  'verified_phone',
-  'verified_email',
-  'total_spent',
-  'order_count',
-  'rfm_segment_hypothesis',
-  'consent_marketing',
-  'consent_updated_at',
-  'suppression_active',
-  'line_user_id',
-  'created_at',
+  'p.customer_id',
+  'p.tenant_id',
+  'p.verified_phone',
+  'p.verified_email',
+  'p.total_spent',
+  'p.order_count',
+  'p.rfm_segment_hypothesis',
+  'p.consent_marketing',
+  'p.consent_updated_at',
+  'p.suppression_active',
+  'p.line_user_id',
+  'p.created_at',
+  "c.metadata -> 'default_shipping_address' AS default_shipping_address",
 ].join(', ');
 
 /** Own property that would smuggle a derived RFM hypothesis into the FACT store. */
@@ -37,8 +38,10 @@ export async function getProfile(
 ): Promise<CustomerProfileRow | null> {
   return withTenantContext(tenantId, async (client) => {
     const result = await client.query(
-      `SELECT ${PROFILE_COLUMNS} FROM agentos.customer_360_profiles
-        WHERE tenant_id = $1 AND customer_id = $2`,
+      `SELECT ${PROFILE_COLUMNS}
+         FROM agentos.customer_360_profiles p
+         JOIN agentos.customers c ON c.tenant_id = p.tenant_id AND c.id = p.customer_id
+        WHERE p.tenant_id = $1 AND p.customer_id = $2`,
       [tenantId, customerId],
     );
 

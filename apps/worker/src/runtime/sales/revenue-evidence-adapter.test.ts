@@ -24,7 +24,11 @@ describe('createSalesRevenueEvidencePort', () => {
     const { runInTenantTransaction } = runnerReturning([
       { order_count: 1, average_total: '790000.00', currency: 'VND' },
     ]);
-    const port = createSalesRevenueEvidencePort({ runInTenantTransaction });
+    const port = createSalesRevenueEvidencePort({
+      model_id: 'sales-realized-orders-v1',
+      provenance: 'finance:realized-orders:v1',
+      runInTenantTransaction,
+    });
 
     const evidence = await port.read({
       tenant_id: TENANT,
@@ -40,13 +44,17 @@ describe('createSalesRevenueEvidencePort', () => {
       conversion_probability: 0.1,
       expected_revenue: 790_000,
       currency: 'VND',
-      model_id: 'novamart-demo-orders-v1',
-      provenance_reference: `agentos.orders:${TENANT}:${CUSTOMER}:1`,
+      model_id: 'sales-realized-orders-v1',
+      provenance_reference: `finance:realized-orders:v1;agentos.orders:${TENANT}:${CUSTOMER}:1`,
     });
   });
 
   it('refuses a customer with no realized order or a currency the recorded orders do not use', async () => {
-    const empty = createSalesRevenueEvidencePort({ runInTenantTransaction: runnerReturning([]).runInTenantTransaction });
+    const empty = createSalesRevenueEvidencePort({
+      model_id: 'sales-realized-orders-v1',
+      provenance: 'finance:realized-orders:v1',
+      runInTenantTransaction: runnerReturning([]).runInTenantTransaction,
+    });
     await expect(empty.read({
       tenant_id: TENANT,
       customer_id: CUSTOMER,
@@ -58,7 +66,10 @@ describe('createSalesRevenueEvidencePort', () => {
     })).rejects.toThrow('REVENUE_EVIDENCE_UNAVAILABLE');
 
     const usd = createSalesRevenueEvidencePort({
-      runInTenantTransaction: runnerReturning([{ order_count: 2, average_total: '10.00', currency: 'USD' }]).runInTenantTransaction,
+      model_id: 'sales-realized-orders-v1',
+      provenance: 'finance:realized-orders:v1',
+      runInTenantTransaction: runnerReturning([{ order_count: 2, average_total: '10.00', currency: 'USD' }])
+        .runInTenantTransaction,
     });
     await expect(usd.read({
       tenant_id: TENANT,

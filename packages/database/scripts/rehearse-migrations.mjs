@@ -38,8 +38,25 @@ const TRANSACTION_GROUPS = [
   ['0002_rls_policies.sql'],
 ];
 
-/** Helpers the schema promises to a tenant-scoped session. */
-const REQUIRED_FUNCTIONS = ['uuid_generate_v7', 'prevent_immutable_table_modification', 'current_tenant_id'];
+/** Agentos functions that migrations and boot checks require to exist. */
+const REQUIRED_FUNCTIONS = [
+  'uuid_generate_v7',
+  'prevent_immutable_table_modification',
+  'current_tenant_id',
+  'schema_applied_migrations',
+  'platform_append_audit',
+  'inherit_data_class',
+  'reset_test_data',
+  'auth_find_user_by_email',
+  'auth_create_session',
+  'auth_touch_session',
+  'auth_revoke_session',
+  'auth_record_failed_login',
+  'auth_consume_invitation',
+  'auth_find_active_memberships',
+  'auth_find_user_by_id',
+  'auth_update_password',
+];
 const REQUIRED_PUBLIC_FUNCTIONS = ['uuid_generate_v5', 'uuid_ns_url'];
 
 const SCHEMA_FILE = '0000_agentos_schema.sql';
@@ -243,6 +260,151 @@ async function assertAppliedSchema(client, schemaSql) {
         AND conname = 'uq_audit_records_tenant_chain_seq'
         AND contype = 'u'`,
   );
+  const { rows: missingTenantColumns } = await client.query(
+    `SELECT expected.table_name, expected.column_name
+       FROM (VALUES
+         ('tenants', 'data_class'),
+         ('customers', 'data_class'), ('customer_identities', 'data_class'), ('consents', 'data_class'),
+         ('orders', 'data_class'), ('customer_events', 'data_class'), ('conversations', 'data_class'),
+         ('conversation_messages', 'data_class'), ('service_cases', 'data_class'), ('care_handoffs', 'data_class'),
+         ('campaigns', 'data_class'), ('platform_durable_tasks', 'data_class'),
+         ('effect_reservations', 'data_class'), ('approvals', 'data_class'),
+         ('connector_configurations', 'secret_id'), ('connector_configurations', 'bound_at'),
+         ('connector_configurations', 'probe_outcome'), ('connector_configurations', 'probe_latency_ms'),
+         ('connector_configurations', 'probe_http_status'), ('connector_configurations', 'probe_error_class'),
+         ('connector_configurations', 'probed_at'), ('connector_configurations', 'version'),
+         ('unresolved_owner_inputs', 'resolved_value'), ('unresolved_owner_inputs', 'resolved_value_ref'),
+         ('unresolved_owner_inputs', 'resolved_by'), ('unresolved_owner_inputs', 'resolved_at'),
+        ('tenant_profiles', 'tenant_id'), ('tenant_profiles', 'company_name'),
+        ('users', 'email'), ('users', 'password_hash'),
+        ('tenant_memberships', 'role_bundle'), ('tenant_memberships', 'status'),
+        ('auth_sessions', 'token_hash'), ('auth_sessions', 'idle_expires_at'), ('auth_sessions', 'absolute_expires_at'),
+        ('invitations', 'token_hash'), ('invitations', 'expires_at'), ('invitations', 'consumed_at')
+       ) AS expected(table_name, column_name)
+       LEFT JOIN information_schema.columns AS actual
+         ON actual.table_schema = 'agentos'
+        AND actual.table_name = expected.table_name
+        AND actual.column_name = expected.column_name
+      WHERE actual.column_name IS NULL`,
+  );
+  const { rows: testDataSecurityRows } = await client.query(
+    `SELECT
+       EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'agentos_test_reset') AS reset_role_present,
+       COALESCE((SELECT NOT rolsuper AND NOT rolbypassrls AND NOT rolcanlogin
+                   FROM pg_catalog.pg_roles WHERE rolname = 'agentos_test_reset'), FALSE) AS reset_role_constrained,
+       COALESCE(pg_catalog.pg_has_role(
+         (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'agentos_app'),
+         (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'agentos_test_reset'),
+         'MEMBER'
+       ), FALSE) AS app_can_set_reset_role,
+       COALESCE(pg_catalog.has_function_privilege(
+         (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'agentos_test_reset'),
+         pg_catalog.to_regprocedure('agentos.reset_test_data(uuid,text,boolean)'), 'EXECUTE'
+       ), FALSE) AS reset_role_can_execute,
+       COALESCE((SELECT prosecdef FROM pg_catalog.pg_proc
+                   WHERE oid = pg_catalog.to_regprocedure('agentos.reset_test_data(uuid,text,boolean)')), FALSE) AS reset_is_definer,
+       (SELECT count(*)::integer FROM pg_catalog.pg_trigger
+         WHERE tgname = 'inherit_data_class' AND NOT tgisinternal) AS data_class_trigger_count`,
+  );
+  const { rows: platformSecurityRows } = await client.query(
+    `SELECT
+       EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'agentos_platform') AS platform_role_present,
+       COALESCE((SELECT NOT rolsuper AND NOT rolbypassrls AND NOT rolcanlogin
+                   FROM pg_catalog.pg_roles WHERE rolname = 'agentos_platform'), FALSE) AS platform_role_constrained,
+       EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'agentos_platform_login') AS platform_login_present,
+       COALESCE((SELECT NOT rolsuper AND NOT rolbypassrls AND rolcanlogin AND NOT rolinherit
+                        AND NOT rolcreatedb AND NOT rolcreaterole AND NOT rolreplication
+                   FROM pg_catalog.pg_roles WHERE rolname = 'agentos_platform_login'), FALSE) AS platform_login_constrained,
+       COALESCE(pg_catalog.pg_has_role(
+         (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'agentos_app'),
+         (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'agentos_platform'),
+         'SET'
+       ), FALSE) AS app_can_set_platform_role,
+       COALESCE(pg_catalog.pg_has_role(
+         (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'agentos_platform_login'),
+         (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'agentos_platform'),
+         'USAGE'
+       ), FALSE) AS platform_login_inherits_role,
+       COALESCE(pg_catalog.pg_has_role(
+         (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'agentos_platform_login'),
+         (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'agentos_platform'),
+         'SET'
+       ), FALSE) AS platform_login_can_set_role`,
+  );
+  const { rows: indexerSecurityRows } = await client.query(
+    `SELECT
+       EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'agentos_indexer') AS indexer_role_present,
+       COALESCE((SELECT NOT rolsuper AND NOT rolbypassrls AND NOT rolcanlogin
+                   FROM pg_catalog.pg_roles WHERE rolname = 'agentos_indexer'), FALSE) AS indexer_role_constrained,
+       EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'agentos_indexer_login') AS indexer_login_present,
+       COALESCE((SELECT NOT rolsuper AND NOT rolbypassrls AND rolcanlogin AND NOT rolinherit
+                        AND NOT rolcreatedb AND NOT rolcreaterole AND NOT rolreplication
+                   FROM pg_catalog.pg_roles WHERE rolname = 'agentos_indexer_login'), FALSE) AS indexer_login_constrained,
+       COALESCE(pg_catalog.pg_has_role(
+         (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'agentos_app'),
+         (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'agentos_indexer'),
+         'SET'
+       ), FALSE) AS app_can_set_indexer_role,
+       COALESCE(pg_catalog.pg_has_role(
+         (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'agentos_indexer_login'),
+         (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'agentos_indexer'),
+         'USAGE'
+       ), FALSE) AS indexer_login_inherits_role,
+       COALESCE(pg_catalog.pg_has_role(
+         (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'agentos_indexer_login'),
+         (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'agentos_indexer'),
+         'SET'
+       ), FALSE) AS indexer_login_can_set_role`,
+  );
+  const { rows: tenantDeletePrivileges } = await client.query(
+    `SELECT
+       has_table_privilege('agentos_app', 'agentos.connector_configurations', 'DELETE') AS connector_delete,
+       has_table_privilege('agentos_app', 'agentos.unresolved_owner_inputs', 'DELETE') AS owner_input_delete,
+       has_table_privilege('agentos_app', 'agentos.tenant_profiles', 'DELETE') AS profile_delete`,
+  );
+  const { rows: publicTenantFunctions } = await client.query(
+    `SELECT DISTINCT p.proname AS name
+       FROM pg_catalog.pg_proc AS p
+       JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'agentos'
+        AND p.proname = ANY($1::text[])
+        AND EXISTS (
+          SELECT 1
+            FROM pg_catalog.aclexplode(
+              COALESCE(p.proacl, pg_catalog.acldefault('f', p.proowner))
+            ) AS privilege
+           WHERE privilege.grantee = 0 AND privilege.privilege_type = 'EXECUTE'
+        )`,
+    [[
+      'apply_tenant_rls', 'provision_tenant_shell_impl', 'provision_tenant_shell',
+      'provision_tenant_shell_for_id', 'platform_list_tenants', 'platform_get_tenant',
+      'auth_find_user_by_email', 'auth_create_session', 'auth_touch_session',
+      'auth_revoke_session', 'auth_record_failed_login', 'auth_consume_invitation',
+      'inherit_data_class', 'reset_test_data',
+    ]],
+  );
+  const { rows: identitySecurityRows } = await client.query(
+    `SELECT
+       EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'agentos_auth') AS auth_role_present,
+       COALESCE((SELECT rolsuper OR rolbypassrls OR rolcanlogin
+                   FROM pg_catalog.pg_roles WHERE rolname = 'agentos_auth'), TRUE) AS auth_role_overprivileged,
+       has_table_privilege('agentos_app', 'agentos.users', 'SELECT') AS app_reads_users,
+       has_table_privilege('agentos_app', 'agentos.auth_sessions', 'SELECT') AS app_reads_sessions,
+       has_table_privilege('agentos_app', 'agentos.invitations', 'SELECT') AS app_reads_invitations,
+       has_table_privilege('agentos_app', 'agentos.tenant_memberships', 'SELECT') AS app_reads_memberships,
+       (SELECT count(*) FROM pg_catalog.pg_policy AS policy
+         JOIN pg_catalog.pg_class AS relation ON relation.oid = policy.polrelid
+         JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+        WHERE namespace.nspname = 'agentos' AND relation.relname IN ('users', 'auth_sessions')) AS unexpected_global_policies,
+       (SELECT count(*) FROM pg_catalog.pg_proc AS routine
+         JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = routine.pronamespace
+        WHERE namespace.nspname = 'agentos'
+          AND routine.proname = ANY($1::text[]) AND NOT routine.prosecdef) AS non_definer_auth_functions`,
+    [[
+      'auth_find_user_by_email', 'auth_create_session', 'auth_touch_session',
+      'auth_revoke_session', 'auth_record_failed_login', 'auth_consume_invitation',
+    ]],
+  );
 
 
   const present = new Set(relations.map((relation) => relation.name));
@@ -258,6 +420,62 @@ async function assertAppliedSchema(client, schemaSql) {
   const publicRoutineNames = new Set(publicRoutines.map((routine) => routine.name));
   const missingPublicFunctions = REQUIRED_PUBLIC_FUNCTIONS.filter((name) => !publicRoutineNames.has(name));
   const missingFunctions = REQUIRED_FUNCTIONS.filter((name) => !routineNames.has(name));
+  const requiredTenantFunctions = [
+    'apply_tenant_rls',
+    'provision_tenant_shell',
+    'provision_tenant_shell_impl',
+    'provision_tenant_shell_for_id',
+  ];
+  const missingTenantFunctions = requiredTenantFunctions.filter((name) => !routineNames.has(name));
+  const tenantDeletePrivilege = tenantDeletePrivileges[0];
+  const unexpectedTenantDeletePrivileges = Object.entries(tenantDeletePrivilege ?? {})
+    .filter(([, allowed]) => allowed === true)
+    .map(([privilege]) => privilege);
+  const testDataSecurity = testDataSecurityRows[0];
+  const testDataSecurityProblem =
+    testDataSecurity?.reset_role_present !== true
+      || testDataSecurity.reset_role_constrained !== true
+      || testDataSecurity.app_can_set_reset_role !== true
+      || testDataSecurity.reset_role_can_execute !== true
+      || testDataSecurity.reset_is_definer !== true
+      || Number(testDataSecurity.data_class_trigger_count) !== 13
+      ? 'T7.1 reset role, SECURITY DEFINER function, or class inheritance triggers are misconfigured'
+      : undefined;
+  const identitySecurity = identitySecurityRows[0];
+  const identitySecurityProblem =
+    identitySecurity?.auth_role_present !== true
+      || identitySecurity.auth_role_overprivileged !== false
+      || identitySecurity.app_reads_users !== false
+      || identitySecurity.app_reads_sessions !== false
+      || identitySecurity.app_reads_invitations !== false
+      || identitySecurity.app_reads_memberships !== true
+      || Number(identitySecurity.unexpected_global_policies) !== 0
+      || Number(identitySecurity.non_definer_auth_functions) !== 0
+      ? 'identity role, default-deny tables, or SECURITY DEFINER boundaries are misconfigured'
+      : undefined;
+  const platformSecurity = platformSecurityRows[0];
+  const platformSecurityProblem =
+    platformSecurity?.platform_role_present !== true
+      || platformSecurity.platform_role_constrained !== true
+      || platformSecurity.platform_login_present !== true
+      || platformSecurity.platform_login_constrained !== true
+      || platformSecurity.app_can_set_platform_role !== false
+      || platformSecurity.platform_login_inherits_role !== false
+      || platformSecurity.platform_login_can_set_role !== true
+      ? 'T8.1 dedicated platform login, non-inheriting membership, or app role revocation is misconfigured'
+      : undefined;
+  const indexerSecurity = indexerSecurityRows[0];
+  const indexerSecurityProblem =
+    indexerSecurity?.indexer_role_present !== true
+      || indexerSecurity.indexer_role_constrained !== true
+      || indexerSecurity.indexer_login_present !== true
+      || indexerSecurity.indexer_login_constrained !== true
+      || indexerSecurity.app_can_set_indexer_role !== false
+      || indexerSecurity.indexer_login_inherits_role !== false
+      || indexerSecurity.indexer_login_can_set_role !== true
+      ? 'T8.2 dedicated knowledge indexer login, non-inheriting membership, or app role isolation is misconfigured'
+      : undefined;
+
   const auditSequenceColumn = auditSequenceColumns[0];
   const auditSequenceProblem =
     auditSequenceColumn?.data_type !== 'bigint' || auditSequenceColumn.is_nullable !== 'NO'
@@ -273,13 +491,60 @@ async function assertAppliedSchema(client, schemaSql) {
     missingFunctions.length > 0 ? `functions absent after apply: ${missingFunctions.join(', ')}` : undefined,
     missingPublicFunctions.length > 0 ? `public functions absent after apply: ${missingPublicFunctions.join(', ')}` : undefined,
     unforced.length > 0 ? `tables without ENABLE + FORCE ROW LEVEL SECURITY: ${unforced.join(', ')}` : undefined,
+    missingTenantFunctions.length > 0
+      ? `T2.1 functions absent after apply: ${missingTenantFunctions.join(', ')}`
+      : undefined,
+    missingTenantColumns.length > 0
+      ? `T2.1 columns absent after apply: ${missingTenantColumns.map(({ table_name, column_name }) => `${table_name}.${column_name}`).join(', ')}`
+      : undefined,
+    publicTenantFunctions.length > 0
+      ? `T2.1 functions executable by PUBLIC: ${publicTenantFunctions.map(({ name }) => name).join(', ')}`
+      : undefined,
+    unexpectedTenantDeletePrivileges.length > 0
+      ? `T2.1 agentos_app has DELETE on: ${unexpectedTenantDeletePrivileges.join(', ')}`
+      : undefined,
     auditSequenceProblem,
     auditSequenceConstraintProblem,
+    identitySecurityProblem,
+    testDataSecurityProblem,
+    platformSecurityProblem,
+    indexerSecurityProblem,
   ].filter((problem) => problem !== undefined);
 
   if (problems.length > 0) {
     throw new Error(`MIGRATION_VERIFICATION_FAILED: ${problems.join('; ')}.`);
   }
+}
+
+async function configureDedicatedLoginPassword(client, roleName, environmentName) {
+  const { rows } = await client.query(
+    `SELECT EXISTS (
+       SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = $1
+     ) AS present`,
+    [roleName],
+  );
+  if (rows[0]?.present !== true) return;
+
+  const password = process.env[environmentName];
+  if (typeof password !== 'string' || password.length === 0) {
+    throw new Error(
+      `${environmentName}_REQUIRED: set the dedicated database login password in the migration bootstrap environment.`,
+    );
+  }
+
+  const { rows: statements } = await client.query(
+    `SELECT pg_catalog.format(
+       'ALTER ROLE %I PASSWORD %L',
+       $1::text,
+       $2::text
+     ) AS statement`,
+    [roleName, password],
+  );
+  const statement = statements[0]?.statement;
+  if (typeof statement !== 'string') {
+    throw new Error(`${environmentName}_SETUP_FAILED: could not prepare the role credential update.`);
+  }
+  await client.query(statement);
 }
 
 async function main() {
@@ -312,6 +577,8 @@ async function main() {
         throw error;
       }
     }
+    await configureDedicatedLoginPassword(client, 'agentos_platform_login', 'PLATFORM_ROLE_PASSWORD');
+    await configureDedicatedLoginPassword(client, 'agentos_indexer_login', 'INDEXER_ROLE_PASSWORD');
 
     await assertAppliedSchema(client, schemaSql);
     console.log(

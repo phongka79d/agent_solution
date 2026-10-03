@@ -201,11 +201,13 @@ export interface SkillRegistryRowMetadata {
   readonly effect_class: SkillEffectClass;
   readonly guarded_dependency: string;
   readonly required_authority: AuthorityLevel;
+  readonly tool_binding?: string | undefined;
   readonly timeout_ms: number;
   readonly allowed_agents?: readonly string[] | undefined;
   readonly enabled?: boolean | undefined;
   readonly mutating?: boolean | undefined;
   readonly idempotent?: boolean | undefined;
+  readonly audit_spec?: { readonly mask_pii_fields?: readonly string[] } | undefined;
   readonly price_bearing?: boolean | undefined;
 }
 
@@ -298,6 +300,10 @@ export function extractMessageContent(signal: SignalEnvelope): string {
  */
 export function extractSku(text: string): string | null {
   if (!text) return null;
+
+  // Segmented catalog IDs such as AB-C12-DEF (two letters, letter+two digits, three letters).
+  const catalogMatch = text.match(/\b([A-Z]{2}-[A-Z]\d{2}-[A-Z]{3})\b/i);
+  if (catalogMatch?.[1]) return catalogMatch[1].toUpperCase();
 
   // 1. Prefixed canonical IDs: SKU-XXXX, PROD-XXXX, ITEM-XXXX
   const prefixMatch = text.match(/\b((?:SKU|PROD|ITEM)-[A-Za-z0-9_-]+)\b/i);

@@ -1,5 +1,5 @@
 import { AuthProviderError } from '../../../../lib/auth/provider';
-import { createDemoAuthProvider, demoGateResponse } from '../../../../lib/auth/demo-provider';
+import { authGateResponse, createConfiguredAuthProvider } from '../../../../lib/auth/selection';
 import {
   clearSessionCookieHeaders,
   jsonResponse,
@@ -17,12 +17,12 @@ function wantsJson(request: Request): boolean {
 
 export async function POST(request: Request): Promise<Response> {
   const env = process.env as AuthEnvironment;
-  const gate = demoGateResponse(env);
+  const gate = authGateResponse(env);
   if (gate) return gate;
   const found = await readStoredSession(request, env);
   const protection = mutationProtection(request, found?.session ?? null);
   if (protection) return protection;
-  const provider = createDemoAuthProvider({ env });
+  const provider = createConfiguredAuthProvider({ env });
   try {
     await provider.signOut(request);
   } catch (error) {

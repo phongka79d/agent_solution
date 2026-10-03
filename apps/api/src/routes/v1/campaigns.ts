@@ -14,6 +14,7 @@ import type { GatewayRuntime } from '../../gateway/ports.js';
 import type { TaskAcceptedResponse, TaskStoredState } from '../../gateway/contracts.js';
 import { correlationIdOf, fail, replyFailure } from '../../gateway/http.js';
 import { toCampaignProjection } from '../../projections/campaigns.js';
+import { campaignsListRouteSchema } from './openapi-schemas.js';
 
 const CAMPAIGN_DRAFT_SKILL = 'campaign.draft';
 const CAMPAIGN_DRAFT_ENTRY_SKILL = 'skill.mkt.generate_content';
@@ -27,6 +28,7 @@ const CAMPAIGN_SOURCE_CHANNEL = 'MARKETING_CAMPAIGN' as const;
 const MAX_IDEMPOTENCY_KEY_LENGTH = 128;
 const MAX_SEGMENT_ID_LENGTH = 128;
 const MAX_OBJECTIVE_LENGTH = 128;
+const MAX_CAMPAIGN_NAME_LENGTH = 120;
 const MAX_INSTRUCTION_LENGTH = 2000;
 const MAX_CONSTRAINT_TEXT_LENGTH = 256;
 const MAX_PROHIBITED_CLAIMS = 20;
@@ -58,6 +60,7 @@ const CONTENT_CONSTRAINT_KEYS: Record<string, true> = {
 const CAMPAIGN_DRAFT_FIELDS: Record<string, true> = {
   idempotency_key: true,
   segment_id: true,
+  name: true,
   objective: true,
   instruction: true,
   content_constraints: true,
@@ -71,10 +74,12 @@ export interface CampaignRouteDeps {
 
 interface CampaignDraftInput {
   readonly segment_id: string;
+  readonly name: string;
   readonly objective: string;
   readonly instruction?: string;
   readonly content_constraints?: Record<string, unknown>;
 }
+
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
@@ -184,6 +189,7 @@ function validateDraftBody(body: unknown): {
 
   const idempotency_key = requiredString(body, 'idempotency_key', MAX_IDEMPOTENCY_KEY_LENGTH);
   const segment_id = requiredString(body, 'segment_id', MAX_SEGMENT_ID_LENGTH);
+  const name = requiredString(body, 'name', MAX_CAMPAIGN_NAME_LENGTH);
   const objective = requiredString(body, 'objective', MAX_OBJECTIVE_LENGTH).toLowerCase();
   const instruction = optionalString(body, 'instruction', MAX_INSTRUCTION_LENGTH);
   const content_constraints = validateContentConstraints(body['content_constraints']);
@@ -192,6 +198,7 @@ function validateDraftBody(body: unknown): {
     idempotency_key,
     input: {
       segment_id,
+      name,
       objective,
       ...(instruction === undefined ? {} : { instruction }),
       ...(content_constraints === undefined ? {} : { content_constraints }),
@@ -262,7 +269,9 @@ function requireCampaignReader(request: FastifyRequest) {
 function queryString(request: FastifyRequest, key: string): string | undefined {
   if (typeof request.query !== 'object' || request.query === null || Array.isArray(request.query)) return undefined;
   const value = (request.query as Record<string, unknown>)[key];
-  return typeof value === 'string' && value.length > 0 ? value : undefined;
+  if (typeof value === 'string' && value.length > 0) return value;
+  if (typeof value === 'number' && Number.isInteger(value)) return String(value);
+  return undefined;
 }
 
 async function handleCampaignList(
@@ -323,11 +332,37 @@ async function handleCampaignDetail(
     return replyFailure(reply, error, correlationIdOf(request, runtime));
   }
 }
+async function handleCampaignSegments(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  deps: CampaignRouteDeps,
+): Promise<void> {
+  const runtime = deps.runtime;
+  try {
+    const principal = requireCampaignReader(request);
+    const segments = await campaignProjectionPort(runtime).listCampaignSegments(principal.tenant_id);
+    await runtime.audit.record({
+      tenant_id: principal.tenant_id,
+      correlation_id: correlationIdOf(request, runtime),
+      operation: 'GET /api/v1/campaigns/segments',
+      principal_kind: principal.kind,
+      outcome: 'ACCEPTED',
+      ...(principal.operator_id === undefined ? {} : { operator_id: principal.operator_id }),
+      detail: { result_count: segments.length },
+    });
+    return reply.code(200).send({ segments });
+  } catch (error) {
+    return replyFailure(reply, error, correlationIdOf(request, runtime));
+  }
+}
+
 
 export function registerCampaignRoutes(app: FastifyInstance, deps: CampaignRouteDeps): void {
   const preHandler = authenticate(deps);
 
-  app.get('/campaigns', { preHandler }, (request, reply) => handleCampaignList(request, reply, deps));
+  app.get('/campaigns', { preHandler, schema: campaignsListRouteSchema }, (request, reply) => handleCampaignList(request, reply, deps));
+  app.get('/campaigns/segments', { preHandler }, (request, reply) => handleCampaignSegments(request, reply, deps));
+
   app.get<{ Params: { runId: string } }>(
     '/campaigns/:runId',
     { preHandler },
@@ -345,6 +380,11 @@ export function registerCampaignRoutes(app: FastifyInstance, deps: CampaignRoute
       }
 
       const { idempotency_key, input } = validateDraftBody(request.body);
+      const segments = await campaignProjectionPort(runtime).listCampaignSegments(principal.tenant_id);
+      const segment = segments.find((candidate) => candidate.segment_id === input.segment_id);
+      if (segment === undefined) {
+        fail('VALIDATION_FAILED', 'Phân khúc chiến dịch không hợp lệ.');
+      }
       const payload: Record<string, unknown> = {
         module: 'marketing',
         skill_id: CAMPAIGN_DRAFT_ENTRY_SKILL,
@@ -376,17 +416,26 @@ export function registerCampaignRoutes(app: FastifyInstance, deps: CampaignRoute
         return reply.code(202).send(acceptedFromReceipt(stored));
       }
 
+      const campaign_id = runtime.ids();
+      const channel = input.content_constraints?.['channel'];
       const started = await runtime.runs.start({
         tenant_id: principal.tenant_id,
         correlation_id,
-        admission_skill_id: CAMPAIGN_DRAFT_SKILL,
         request_id: idempotency_key,
+        admission_skill_id: CAMPAIGN_DRAFT_SKILL,
         source_channel: CAMPAIGN_SOURCE_CHANNEL,
         event_type: CAMPAIGN_EVENT_TYPE,
         session_id: principal.operator_id,
         channel_type: CAMPAIGN_SOURCE_CHANNEL,
         channel_identifier: principal.operator_id,
         payload,
+        campaign: {
+          campaign_id,
+          name: input.name,
+          objective: input.objective,
+          channels: typeof channel === 'string' ? [channel] : ['EMAIL_HTML'],
+          audience_count: segment.audience_count,
+        },
       });
 
       const receipt = started.receipt ?? receiptForStarted(started);

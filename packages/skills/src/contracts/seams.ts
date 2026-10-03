@@ -1,16 +1,17 @@
 /**
- * @file The canonical primitives the skill layer consumes but never re-implements
- * (implement/05 §1.2). The authority gate, the BR-005 effect-key derivation and the payload digest
- * each have exactly one implementation platform-wide, so a guard and the approval row it checks
- * can never disagree about an identity or a verdict.
+ * @file Canonical authority, BR-005 effect-key and AUTH-4 approval-digest contracts consumed by the
+ * skill layer.
  *
- * Declarations only: this module holds no implementation of any of the three.
+ * Implementations live in core-engine and are injected by each composition root.
  */
 
 import type { AssignableAuthority, AuthorityLevel, AuthorityVerdict } from '@agentos/core-engine/contracts';
 
-/** Canonical payload digest: RFC 8785 canonical JSON + SHA-256. */
-export type PayloadDigestFn = (payload: unknown) => string;
+/**
+ * Canonical AUTH-4 approval digest over one skill's schema-normalized input (core-engine
+ * `approvalPayloadDigest`); the same definition the orchestrator binds at pause time.
+ */
+export type ApprovalDigestFn = (action: { readonly skill_id: string; readonly payload: Record<string, unknown> }) => string;
 
 /**
  * The five immutable identity fields of BR-005. `run_id`, a retry counter, a timestamp and a random
@@ -59,11 +60,11 @@ export interface SkillAuthorityDecision {
 export type AuthorityEvaluator = (granted: unknown, required: unknown) => SkillAuthorityDecision;
 
 /**
- * The three canonical primitives of §1.2. All three are required — a runtime that cannot reach
- * them fails to construct instead of silently skipping an authority, identity or digest check.
+ * The canonical primitives of §1.2. All are required — a runtime that cannot reach them fails to
+ * construct instead of silently skipping an authority, identity or digest check.
  */
 export interface SkillEngineSeams {
-  readonly digestPayload: PayloadDigestFn;
   readonly deriveEffectKey: EffectKeyFn;
   readonly evaluateAuthority: AuthorityEvaluator;
+  readonly approvalDigest: ApprovalDigestFn;
 }

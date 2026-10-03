@@ -1,14 +1,18 @@
 #!/usr/bin/env node
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { createRequire } from 'node:module';
+import { join, relative, sep } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isMainModule } from './lib/main-module.mjs';
 
 const requireDatabaseDependency = createRequire(new URL('../../packages/database/package.json', import.meta.url));
+const requireSkillsDependency = createRequire(new URL('../../packages/skills/package.json', import.meta.url));
 export const NOVAMART_TENANT_ID = '99999999-9999-4999-8999-999999999999';
 const DEMO_IDEMPOTENCY_KEY = 'a9f4074913447922c5577959b02c1b0c934e7f77694473284f22382b621b6064';
 const DEMO_REQUEST_FINGERPRINT = 'e3d62b23859d8d9b5835f81e567683226c077103b0a4d098007e3d97028f789a';
 const PACK_URL = new URL('../../services/mock-erp/src/demo/novamart.json', import.meta.url);
+const NOVAMART_KNOWLEDGE_ROOT = fileURLToPath(new URL('../../packages/second-brain/demo/novamart/', import.meta.url));
 const COUNTS = Object.freeze({ products: 24, skus: 28, customers: 12, orders: 20, events: 53, segments: 2, campaigns: 1, engagement_events: 8, cases: 4 });
 const AGENTS = Object.freeze([
   ...Array.from({ length: 6 }, (_, i) => `MKT-0${i + 1}`),
@@ -100,7 +104,7 @@ export async function loadDemoPack() {
 
 const json = (value) => JSON.stringify(value);
 
-async function seedRows(client, pack) {
+export async function seedRows(client, pack, promoteOnCreate) {
   const tenant = NOVAMART_TENANT_ID;
   const query = (text, values) => client.query(text, values);
   for (const customer of pack.customers) {
@@ -187,11 +191,25 @@ async function seedRows(client, pack) {
   }
   for (const code of AGENTS) {
     await query(`INSERT INTO agentos.agents (tenant_id,code,name,domain,assigned_authority,is_active)
-      VALUES ($1,$2,$2,$3,$4,TRUE) ON CONFLICT (tenant_id,code) DO UPDATE SET assigned_authority=EXCLUDED.assigned_authority,is_active=TRUE`,
+      VALUES ($1,$2,$2,$3,$4,TRUE) ON CONFLICT (tenant_id,code) DO NOTHING`,
       [tenant, code, code.startsWith('MKT') ? 'marketing' : code.startsWith('SAL') ? 'sales' : 'support',
         demoAuthorityFor(code)]);
   }
-  await promoteDemoSkills(query, tenant);
+  if (promoteOnCreate) {
+    // Provisioning creates inactive agents (baseline authority, migration 0067) before demo rows are
+    // seeded. Specialize only agents no operator has touched yet (never activated or paused), once,
+    // so later seed reruns preserve operator assignments.
+    for (const code of AGENTS) {
+      await query(
+        `UPDATE agentos.agents
+            SET assigned_authority = $3, is_active = TRUE
+          WHERE tenant_id = $1 AND code = $2
+            AND activation_status = 'NOT_ACTIVATED' AND is_active = FALSE`,
+        [tenant, code, demoAuthorityFor(code)],
+      );
+    }
+    await promoteDemoSkills(query, tenant);
+  }
 }
 
 /**
@@ -220,12 +238,8 @@ const DEMO_PROMOTED_SKILLS = Object.freeze([
 ]);
 
 /**
- * Promotes the canonical low-risk skills for this demo tenant.
- *
- * Controlled autonomy otherwise parks every listed skill as a draft, which would stop the demo at
- * its first read. Only the six promotable skills are moved; never-promotable actions (cart, order,
- * message, campaign dispatch, retention/return) keep their MINIMUM gate and still need their own
- * approval. The promotion is idempotent and records its demo provenance.
+ * Promotes canonical low-risk skills only while their provisioned baseline policy remains intact.
+ * This is called only for a newly created demo tenant; reruns do not touch operator policy changes.
  */
 async function promoteDemoSkills(query, tenant) {
   await query(
@@ -233,47 +247,221 @@ async function promoteDemoSkills(query, tenant) {
         SET state = 'PROMOTED',
             previous_approved_state = 'MINIMUM',
             approver_id = 'novamart-demo-operator',
-            reason = 'DEMO_PROMOTION',
+            reason = 'Kích hoạt sẵn cho môi trường demo',
             provenance = provenance || '{"promotion":"novamart-demo-v1"}'::jsonb,
             effective_at = CURRENT_TIMESTAMP,
             rollback_state = 'MINIMUM'
       WHERE tenant_id = $1
         AND skill_id = ANY($2::text[])
-        AND state <> 'PROMOTED'`,
+        AND policy_version = 'MINIMUM'
+        AND state = 'MINIMUM'`,
     [tenant, DEMO_PROMOTED_SKILLS],
   );
+}
+
+function demoKnowledgeType(namespace, slug) {
+  if (namespace === 'brand') return 'BRAND_VOICE';
+  if (namespace === 'sales') return 'SALES_GUIDELINE';
+  if (namespace === 'marketing') return 'MARKETING_GUIDELINE';
+  if (namespace === 'policy' || namespace === 'customer-care') {
+    return namespace === 'customer-care' && slug === 'faq' ? 'FAQ' : 'AUTHORITY_POLICY';
+  }
+  if (namespace === 'product' && slug === 'promotion-policy') return 'MARKETING_GUIDELINE';
+  if (namespace === 'company') return 'SALES_GUIDELINE';
+  if (namespace === 'customer') return 'MARKETING_GUIDELINE';
+  return 'SALES_GUIDELINE';
+}
+
+async function loadDemoKnowledge() {
+  const files = [];
+  async function visit(directory) {
+    const entries = await readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      const file = join(directory, entry.name);
+      if (entry.isDirectory()) await visit(file);
+      else if (entry.isFile() && entry.name.endsWith('.md')) files.push(file);
+    }
+  }
+  await visit(NOVAMART_KNOWLEDGE_ROOT);
+
+  return Promise.all(files.sort().map(async (file) => {
+    const relativePath = relative(NOVAMART_KNOWLEDGE_ROOT, file).split(sep).join('/');
+    const [folder, ...slugParts] = relativePath.split('/');
+    if (!folder || slugParts.length === 0) throw new Error('DEMO_KNOWLEDGE_PATH_INVALID');
+    // Customer segmentation notes are marketing guidance; the schema has no `customer` namespace.
+    const namespace = folder === 'customer' ? 'marketing' : folder;
+    const baseSlug = slugParts.join('/').replace(/\.md$/, '');
+    const slug = folder === 'customer' ? `customer-${baseSlug}` : baseSlug;
+    const body = await readFile(file, 'utf8');
+    const markdown = body.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '');
+    const title = /^#\s+(.+)$/m.exec(markdown)?.[1]?.trim() || slug.replace(/[-/]/g, ' ');
+    return {
+      namespace,
+      slug,
+      type: demoKnowledgeType(namespace, slug),
+      title,
+      body,
+      content_sha256: createHash('sha256').update(body, 'utf8').digest('hex'),
+    };
+  }));
+}
+
+async function importDemoKnowledge(client, tenant, documents) {
+  for (const document of documents) {
+    const existing = await client.query(
+      `SELECT document_id FROM agentos.knowledge_documents
+        WHERE tenant_id = $1 AND namespace = $2 AND slug = $3 LIMIT 1`,
+      [tenant, document.namespace, document.slug],
+    );
+    if (existing.rows.length > 0) continue;
+
+    const created = await client.query(
+      `INSERT INTO agentos.knowledge_documents (tenant_id, namespace, document_type, slug)
+       VALUES ($1, $2, $3, $4) RETURNING document_id::text AS document_id`,
+      [tenant, document.namespace, document.type, document.slug],
+    );
+    const document_id = created.rows[0]?.document_id;
+    if (typeof document_id !== 'string') throw new Error('DEMO_KNOWLEDGE_CREATE_FAILED');
+
+    await client.query(
+      `INSERT INTO agentos.knowledge_document_versions
+        (tenant_id, document_id, version, namespace, document_type, slug, title, body, content_sha256, data_class, created_by)
+       VALUES ($1, $2, 1, $3, $4, $5, $6, $7, $8, 'DEMO', 'novamart-demo-bootstrap')`,
+      [tenant, document_id, document.namespace, document.type, document.slug, document.title, document.body, document.content_sha256],
+    );
+    await client.query(
+      `UPDATE agentos.knowledge_documents SET current_version = 1, updated_at = CURRENT_TIMESTAMP
+        WHERE tenant_id = $1 AND document_id = $2`,
+      [tenant, document_id],
+    );
+    await client.query(
+      `INSERT INTO agentos.knowledge_document_events
+        (tenant_id, document_id, version, action, from_status, to_status, actor_kind, actor_id, correlation_id)
+       VALUES ($1, $2, 1, 'CREATE', NULL, 'DRAFT', 'SYSTEM', 'novamart-demo-bootstrap', 'novamart-demo-knowledge-seed')`,
+      [tenant, document_id],
+    );
+
+    await client.query(
+      `UPDATE agentos.knowledge_documents SET status = 'REVIEW', updated_at = CURRENT_TIMESTAMP
+        WHERE tenant_id = $1 AND document_id = $2`,
+      [tenant, document_id],
+    );
+    await client.query(
+      `INSERT INTO agentos.knowledge_document_events
+        (tenant_id, document_id, version, action, from_status, to_status, actor_kind, actor_id, correlation_id)
+       VALUES ($1, $2, 1, 'SUBMIT', 'DRAFT', 'REVIEW', 'SYSTEM', 'novamart-demo-bootstrap', 'novamart-demo-knowledge-seed')`,
+      [tenant, document_id],
+    );
+    await client.query(
+      `UPDATE agentos.knowledge_documents
+          SET status = 'APPROVED', approved_by = 'novamart-demo-knowledge-approver', updated_at = CURRENT_TIMESTAMP
+        WHERE tenant_id = $1 AND document_id = $2`,
+      [tenant, document_id],
+    );
+    await client.query(
+      `INSERT INTO agentos.knowledge_document_events
+        (tenant_id, document_id, version, action, from_status, to_status, actor_kind, actor_id, correlation_id)
+       VALUES ($1, $2, 1, 'APPROVE', 'REVIEW', 'APPROVED', 'SYSTEM', 'novamart-demo-knowledge-approver', 'novamart-demo-knowledge-seed')`,
+      [tenant, document_id],
+    );
+
+    await client.query('SET LOCAL ROLE agentos_indexer');
+    await client.query(
+      `UPDATE agentos.knowledge_documents SET status = 'AVAILABLE', updated_at = CURRENT_TIMESTAMP
+        WHERE tenant_id = $1 AND document_id = $2`,
+      [tenant, document_id],
+    );
+    await client.query(
+      `INSERT INTO agentos.knowledge_document_events
+        (tenant_id, document_id, version, action, from_status, to_status, actor_kind, actor_id, correlation_id)
+       VALUES ($1, $2, 1, 'MAKE_AVAILABLE', 'APPROVED', 'AVAILABLE', 'INDEXER', 'novamart-demo-indexer', 'novamart-demo-knowledge-seed')`,
+      [tenant, document_id],
+    );
+    await client.query('RESET ROLE');
+  }
 }
 
 
 export async function seedNovaMart(env = process.env) {
   validateDemoEnvironment(env);
   const pack = await loadDemoPack();
-  const { Client } = requireDatabaseDependency('pg');
+  const { Client, Pool } = requireDatabaseDependency('pg');
+  const [{ SkillCatalogRepository, withPlatformRole }, { PLATFORM_SKILL_ROWS, skillCatalogManifest }] = await Promise.all([
+    import(pathToFileURL(requireDatabaseDependency.resolve('./dist/index.js')).href),
+    import(pathToFileURL(requireSkillsDependency.resolve('./dist/index.js')).href),
+  ]);
+  const platformPool = new Pool({
+    connectionString: env.PLATFORM_DATABASE_URL?.trim() || env.DATABASE_URL,
+  });
   const client = new Client({ connectionString: env.DATABASE_URL });
+  const catalogRepository = new SkillCatalogRepository({
+    platformTransaction: (work) => withPlatformRole(work, platformPool),
+    tenantTransaction: async (tenantId, work) => {
+      await client.query('SET LOCAL ROLE agentos_app');
+      await client.query('SET LOCAL search_path TO agentos, public');
+      await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
+      try {
+        return await work(client);
+      } finally {
+        await client.query('RESET ROLE');
+      }
+    },
+  });
+  const catalogManifest = skillCatalogManifest(PLATFORM_SKILL_ROWS);
+  const catalogActor = {
+    actor_kind: 'SYSTEM',
+    actor_id: 'novamart-demo-seed',
+    correlation_id: 'novamart-demo-seed',
+  };
   await client.connect();
   try {
+    // An existing demo tenant predates the data class column; mark it DEMO before provisioning.
+    // Autocommitted on purpose: provisioning runs on the platform pool's own connection and locks
+    // the same tenant row, so holding this UPDATE in the seed transaction would deadlock a re-seed.
+    await client.query("UPDATE agentos.tenants SET data_class = 'DEMO' WHERE tenant_id = $1", [NOVAMART_TENANT_ID]);
+    // Read as the bootstrap user: platform and app roles hold no direct SELECT on agentos.tenants.
+    const existingTenant = await client.query(
+      'SELECT tenant_id FROM agentos.tenants WHERE tenant_id = $1',
+      [NOVAMART_TENANT_ID],
+    );
+    const promoteOnCreate = existingTenant.rows.length === 0;
     await client.query('BEGIN');
     try {
+      await catalogRepository.syncCatalog(catalogManifest);
       await client.query('SET LOCAL ROLE agentos_app');
       await client.query('SET LOCAL search_path TO agentos, public');
       await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [NOVAMART_TENANT_ID]);
-      await client.query('SET LOCAL ROLE agentos_platform');
-      const bootstrap = await client.query(
-        'SELECT agentos.provision_tenant_shell_for_id($1::uuid,$2::char(64),$3::char(64),$4::varchar(128)) AS tenant_id',
-        [NOVAMART_TENANT_ID, DEMO_IDEMPOTENCY_KEY, DEMO_REQUEST_FINGERPRINT, 'NovaMart Demo'],
-      );
-      await client.query('SET LOCAL ROLE agentos_app');
+      const bootstrap = await withPlatformRole(async (platformClient) => {
+        await platformClient.query("SELECT set_config('app.current_tenant_id', $1, true)", [NOVAMART_TENANT_ID]);
+        return platformClient.query(
+          'SELECT agentos.provision_tenant_shell_for_id($1::uuid,$2::char(64),$3::char(64),$4::varchar(128),$5::agentos.data_class) AS tenant_id',
+          [NOVAMART_TENANT_ID, DEMO_IDEMPOTENCY_KEY, DEMO_REQUEST_FINGERPRINT, 'NovaMart Demo', 'DEMO'],
+        );
+      }, platformPool);
       if (bootstrap.rows[0]?.tenant_id !== NOVAMART_TENANT_ID) {
         throw new Error('DEMO_TENANT_MISMATCH: bootstrap returned a different tenant');
       }
-      await seedRows(client, pack);
+      await seedRows(client, pack, promoteOnCreate);
+      await catalogRepository.seedDemoSettings(NOVAMART_TENANT_ID, catalogActor);
+      await client.query('RESET ROLE');
+      await importDemoKnowledge(client, NOVAMART_TENANT_ID, await loadDemoKnowledge());
+      // The demo tenant ships with every AI domain switched on, as an activated company would be.
+      await client.query(
+        `UPDATE agentos.tenant_capabilities SET status = 'ENABLED'
+          WHERE tenant_id = $1 AND capability_id IN ('care', 'sales', 'marketing')`,
+        [NOVAMART_TENANT_ID],
+      );
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
     }
   } finally {
-    await client.end();
+    try {
+      await client.end();
+    } finally {
+      await platformPool.end();
+    }
   }
   return { tenant_id: NOVAMART_TENANT_ID, counts: COUNTS, agent_count: AGENTS.length };
 }

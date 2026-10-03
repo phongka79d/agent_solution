@@ -7,6 +7,7 @@ import {
   NOVAMART_TENANT_ID,
   loadDemoPack,
   mapDemoServiceCase,
+  seedRows,
   stableUuid,
   validateDemoEnvironment,
   validateDemoPack,
@@ -202,6 +203,91 @@ describe('scripts/demo/seed pure helpers', () => {
     assert.match(seedSource, /COMMIT/);
     assert.match(seedSource, /ROLLBACK/);
     assert.doesNotMatch(seedSource, /provision_novamart_demo_tenant/);
+  });
+
+  it('keeps a deactivated agent inactive and preserves policy decisions when the demo seed is replayed', async () => {
+    const pack = {
+      customers: [],
+      products: [],
+      skus: [],
+      orders: [],
+      events: [],
+      segments: [],
+      campaigns: [],
+      engagement_events: [],
+      cases: [],
+    };
+    const agentRows = new Map();
+    const autonomyPolicies = [
+      { policy_version: 'MINIMUM', state: 'MINIMUM' },
+      { policy_version: 'CUSTOM', state: 'MINIMUM' },
+      { policy_version: 'MINIMUM', state: 'PAUSED' },
+    ];
+    const agentInserts = [];
+    let policyPromotions = 0;
+    const client = {
+      async query(sql, values) {
+        if (sql.startsWith('INSERT INTO agentos.agents')) {
+          agentInserts.push(sql);
+          const code = values[1];
+          if (!agentRows.has(code)) {
+            // The provisioner creates inactive, never-activated agents (baseline authority) first.
+            agentRows.set(code, { assigned_authority: 'AUTH-1', is_active: false, activation_status: 'NOT_ACTIVATED' });
+          }
+          if (/ON CONFLICT \(tenant_id,code\) DO UPDATE/.test(sql)) {
+            agentRows.set(code, { assigned_authority: values[4], is_active: true, activation_status: 'NOT_ACTIVATED' });
+          }
+          return { rows: [], rowCount: 0 };
+        }
+        if (sql.startsWith('UPDATE agentos.agents')) {
+          const code = values[1];
+          const current = agentRows.get(code);
+          if (current?.activation_status === 'NOT_ACTIVATED' && current.is_active === false) {
+            agentRows.set(code, { ...current, assigned_authority: values[2], is_active: true });
+            return { rows: [], rowCount: 1 };
+          }
+          return { rows: [], rowCount: 0 };
+        }
+        if (sql.startsWith('UPDATE agentos.autonomy_policies')) {
+          policyPromotions += 1;
+          const selectsMinimumVersion = sql.includes("policy_version = 'MINIMUM'");
+          const selectsMinimumState = sql.includes("state = 'MINIMUM'");
+          for (const policy of autonomyPolicies) {
+            if (
+              (!selectsMinimumVersion || policy.policy_version === 'MINIMUM')
+              && (!selectsMinimumState || policy.state === 'MINIMUM')
+            ) {
+              policy.state = 'PROMOTED';
+            }
+          }
+          return { rows: [], rowCount: 0 };
+        }
+        throw new Error(`unexpected seed query: ${sql}`);
+      },
+    };
+
+    await seedRows(client, pack, true);
+    assert.deepEqual(agentRows.get('SAL-01'), { assigned_authority: 'AUTH-3', is_active: true, activation_status: 'NOT_ACTIVATED' });
+    assert.deepEqual(
+      autonomyPolicies.map((policy) => policy.state),
+      ['PROMOTED', 'MINIMUM', 'PAUSED'],
+    );
+    autonomyPolicies[0].state = 'PAUSED';
+    const operatorChangedAgent = agentRows.get('SAL-01');
+    operatorChangedAgent.assigned_authority = 'AUTH-1';
+    operatorChangedAgent.is_active = false;
+    // An operator pause records PAUSED, so the replayed seed must not reactivate the agent.
+    operatorChangedAgent.activation_status = 'PAUSED';
+
+    await seedRows(client, pack, false);
+
+    assert.deepEqual(agentRows.get('SAL-01'), { assigned_authority: 'AUTH-1', is_active: false, activation_status: 'PAUSED' });
+    assert.deepEqual(
+      autonomyPolicies.map((policy) => policy.state),
+      ['PAUSED', 'MINIMUM', 'PAUSED'],
+    );
+    assert.ok(agentInserts.every((sql) => /ON CONFLICT \(tenant_id,code\) DO NOTHING/.test(sql)));
+    assert.equal(policyPromotions, 1);
   });
 
   it('binds exact-tenant RLS in seed source without BYPASSRLS or multi-tenant settings', async () => {

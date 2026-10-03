@@ -1,4 +1,8 @@
 const DEFAULT_TIMEOUT_MS = 30_000;
+const MAX_TOTAL_ATTEMPTS = 3;
+const MAX_RETRY_BUDGET_MS = 20_000;
+const INITIAL_RETRY_DELAY_MS = 250;
+const MAX_RETRY_DELAY_MS = 2_000;
 const DEFAULT_MAX_OUTPUT_TOKENS = 4_096;
 const DEFAULT_MAX_RESPONSE_BYTES = 1_048_576;
 const MAX_MODEL_LENGTH = 256;
@@ -17,10 +21,17 @@ export interface OpenAICompatibleUsage {
   readonly completion_tokens: number;
 }
 
+export interface OpenAICompatibleProviderError {
+  readonly status: number | null;
+  readonly type: string | null;
+  readonly code: string | null;
+}
+
 export interface OpenAICompatibleResult<T> {
   readonly value: T;
   readonly usage: OpenAICompatibleUsage | null;
   readonly latency_ms: number;
+  readonly attempts: number;
   readonly provider: 'openai-compatible';
   readonly model: string;
   readonly request_id: string | null;
@@ -37,12 +48,23 @@ export type OpenAICompatibleErrorCode =
 export class OpenAICompatibleLLMError extends Error {
   readonly code: OpenAICompatibleErrorCode;
   readonly status: number | null;
+  readonly attempts: number;
+  readonly provider_error: OpenAICompatibleProviderError;
 
-  constructor(code: OpenAICompatibleErrorCode, status: number | null = null) {
+  constructor(
+    code: OpenAICompatibleErrorCode,
+    status: number | null = null,
+    options: {
+      readonly attempts?: number;
+      readonly provider_error?: OpenAICompatibleProviderError;
+    } = {},
+  ) {
     super(code);
     this.name = 'OpenAICompatibleLLMError';
     this.code = code;
     this.status = status;
+    this.attempts = options.attempts ?? 0;
+    this.provider_error = options.provider_error ?? { status, type: null, code: null };
   }
 }
 
@@ -56,6 +78,8 @@ interface BaseCompletionRequest {
   readonly messages: readonly OpenAICompatibleMessage[];
   readonly model: string;
   readonly signal?: AbortSignal;
+  /** Absolute Unix deadline in milliseconds; the adapter leaves one second for its caller. */
+  readonly deadline_ms?: number;
   readonly max_tokens: number;
   readonly run_id: string;
   readonly correlation_id: string;
@@ -148,11 +172,79 @@ function normalizedBaseUrl(value: string): string {
   return value.replace(/\/+$/, '');
 }
 
-function providerErrorForStatus(status: number): OpenAICompatibleLLMError {
-  if (status === 401) return new OpenAICompatibleLLMError('LLM_AUTH_FAILED', status);
-  if (status === 429) return new OpenAICompatibleLLMError('LLM_RATE_LIMITED', status);
-  if (status >= 500 && status <= 599) return new OpenAICompatibleLLMError('LLM_UNAVAILABLE', status);
-  return new OpenAICompatibleLLMError('LLM_INVALID_RESPONSE', status);
+function providerErrorForStatus(
+  status: number,
+  provider_error: OpenAICompatibleProviderError,
+  attempts: number,
+): OpenAICompatibleLLMError {
+  if (status === 401) return new OpenAICompatibleLLMError('LLM_AUTH_FAILED', status, { attempts, provider_error });
+  if (status === 429) return new OpenAICompatibleLLMError('LLM_RATE_LIMITED', status, { attempts, provider_error });
+  if (status >= 500 && status <= 599) return new OpenAICompatibleLLMError('LLM_UNAVAILABLE', status, { attempts, provider_error });
+  return new OpenAICompatibleLLMError('LLM_INVALID_RESPONSE', status, { attempts, provider_error });
+}
+
+function safeProviderField(value: unknown): string | null {
+  return typeof value === 'string'
+    && value.length <= 64
+    && /^[A-Za-z0-9_.-]+$/.test(value)
+    ? value
+    : null;
+}
+
+async function readProviderError(response: Response): Promise<OpenAICompatibleProviderError> {
+  let type: string | null = null;
+  let code: string | null = null;
+  try {
+    const raw = await readResponseBody(response, 16 * 1024);
+    const envelope: unknown = JSON.parse(raw);
+    if (envelope !== null && typeof envelope === 'object' && !Array.isArray(envelope)) {
+      const error = (envelope as { readonly error?: unknown }).error;
+      if (error !== null && typeof error === 'object' && !Array.isArray(error)) {
+        const fields = error as { readonly type?: unknown; readonly code?: unknown };
+        type = safeProviderField(fields.type);
+        code = safeProviderField(fields.code);
+      }
+    }
+  } catch {
+    // Error bodies are untrusted and optional; only bounded, allowlisted fields are retained.
+  }
+  return { status: response.status, type, code };
+}
+
+function retryAfterMs(value: string | null, now: number): number | null {
+  if (value === null) return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1_000);
+  const date = Date.parse(value);
+  return Number.isFinite(date) ? Math.max(0, date - now) : null;
+}
+
+function retryable(error: OpenAICompatibleLLMError): boolean {
+  return error.code === 'LLM_TIMEOUT'
+    || ((error.status === 429 || (error.status !== null && error.status >= 500 && error.status <= 599))
+      && error.provider_error.status === error.status);
+}
+
+function retryDelayMs(attempt: number, retryAfter: number | null): number {
+  const ceiling = Math.min(MAX_RETRY_DELAY_MS, INITIAL_RETRY_DELAY_MS * (2 ** (attempt - 1)));
+  return Math.max(retryAfter ?? 0, Math.floor(Math.random() * ceiling));
+}
+
+async function waitBeforeRetry(delayMs: number, signal: AbortSignal | undefined, deadlineAt: number): Promise<void> {
+  if (signal?.aborted) throw new OpenAICompatibleLLMError('LLM_CANCELLED');
+  if (Date.now() + delayMs >= deadlineAt) throw new OpenAICompatibleLLMError('LLM_TIMEOUT');
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, delayMs);
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      reject(new OpenAICompatibleLLMError('LLM_CANCELLED'));
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 async function readResponseBody(response: Response, maxBytes: number): Promise<string> {
@@ -261,13 +353,13 @@ export class OpenAICompatibleLLMAdapter {
     try {
       parsed = JSON.parse(result.value);
     } catch {
-      throw new OpenAICompatibleLLMError('LLM_INVALID_RESPONSE');
+      throw new OpenAICompatibleLLMError('LLM_INVALID_RESPONSE', null, { attempts: result.attempts });
     }
     let value: T;
     try {
       value = request.validate(parsed);
     } catch {
-      throw new OpenAICompatibleLLMError('LLM_INVALID_RESPONSE');
+      throw new OpenAICompatibleLLMError('LLM_INVALID_RESPONSE', null, { attempts: result.attempts });
     }
     return { ...result, value };
   }
@@ -288,6 +380,9 @@ export class OpenAICompatibleLLMAdapter {
     assertBoundedIdentifier(request.run_id, 'run_id');
     assertBoundedIdentifier(request.correlation_id, 'correlation_id');
     if (request.signal?.aborted) throw new OpenAICompatibleLLMError('LLM_CANCELLED');
+    if (request.deadline_ms !== undefined && (!Number.isFinite(request.deadline_ms) || request.deadline_ms <= 0)) {
+      throw new TypeError('deadline_ms must be a positive Unix timestamp.');
+    }
     if (responseFormat?.type === 'json_schema' && this.structuredOutputMode !== 'json_schema') {
       throw new TypeError('json_schema response mode is not enabled.');
     }
@@ -303,62 +398,103 @@ export class OpenAICompatibleLLMAdapter {
     };
     if (responseFormat) body.response_format = responseFormat;
 
-    const controller = new AbortController();
-    let timedOut = false;
-    let callerCancelled = false;
-    const onCallerAbort = () => {
-      callerCancelled = true;
-      controller.abort();
-    };
-    request.signal?.addEventListener('abort', onCallerAbort, { once: true });
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, this.timeoutMs);
     const startedAt = Date.now();
-
-    try {
-      const response = await this.fetchImpl(`${this.baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json',
-          'X-Run-Id': request.run_id,
-          'X-Correlation-Id': request.correlation_id,
-        },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-      if (!response.ok) throw providerErrorForStatus(response.status);
-      const rawBody = await readResponseBody(response, this.maxResponseBytes);
-      let envelope: unknown;
-      try {
-        envelope = JSON.parse(rawBody);
-      } catch {
-        throw new OpenAICompatibleLLMError('LLM_INVALID_RESPONSE', response.status);
+    const deadlineAt = Math.min(
+      startedAt + MAX_RETRY_BUDGET_MS,
+      request.deadline_ms === undefined ? Number.POSITIVE_INFINITY : request.deadline_ms - 1_000,
+    );
+    let lastError: OpenAICompatibleLLMError | null = null;
+    for (let attempt = 1; attempt <= MAX_TOTAL_ATTEMPTS; attempt += 1) {
+      if (request.signal?.aborted) throw new OpenAICompatibleLLMError('LLM_CANCELLED', null, { attempts: attempt - 1 });
+      const remainingMs = deadlineAt - Date.now();
+      if (remainingMs <= 0) {
+        throw lastError ?? new OpenAICompatibleLLMError('LLM_TIMEOUT', null, { attempts: attempt - 1 });
       }
-      if (envelope === null || typeof envelope !== 'object' || Array.isArray(envelope)) {
-        throw new OpenAICompatibleLLMError('LLM_INVALID_RESPONSE', response.status);
-      }
-      const extracted = extractContent(envelope as ProviderEnvelope);
-      const headerRequestId = response.headers.get('x-request-id');
-      return {
-        value: extracted.content,
-        usage: extracted.usage,
-        latency_ms: Math.max(0, Date.now() - startedAt),
-        provider: this.provider,
-        model: request.model,
-        request_id: headerRequestId || extracted.requestId,
+      const controller = new AbortController();
+      let timedOut = false;
+      let callerCancelled = false;
+      let providerRetryAfter: number | null = null;
+      const onCallerAbort = () => {
+        callerCancelled = true;
+        controller.abort();
       };
-    } catch (error) {
-      if (error instanceof OpenAICompatibleLLMError) throw error;
-      if (callerCancelled || request.signal?.aborted) throw new OpenAICompatibleLLMError('LLM_CANCELLED');
-      if (timedOut) throw new OpenAICompatibleLLMError('LLM_TIMEOUT');
-      if (error instanceof ResponseBodyTooLargeError) throw new OpenAICompatibleLLMError('LLM_INVALID_RESPONSE');
-      throw new OpenAICompatibleLLMError('LLM_UNAVAILABLE');
-    } finally {
-      clearTimeout(timeout);
-      request.signal?.removeEventListener('abort', onCallerAbort);
+      request.signal?.addEventListener('abort', onCallerAbort, { once: true });
+      const timeout = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, Math.min(this.timeoutMs, remainingMs));
+      try {
+        const response = await this.fetchImpl(`${this.baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${this.apiKey}`,
+            'Content-Type': 'application/json',
+            'X-Run-Id': request.run_id,
+            'X-Correlation-Id': request.correlation_id,
+          },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          const provider_error = await readProviderError(response);
+          providerRetryAfter = retryAfterMs(response.headers.get('retry-after'), Date.now());
+          throw providerErrorForStatus(response.status, provider_error, attempt);
+        }
+        const rawBody = await readResponseBody(response, this.maxResponseBytes);
+        let envelope: unknown;
+        try {
+          envelope = JSON.parse(rawBody);
+        } catch {
+          throw new OpenAICompatibleLLMError('LLM_INVALID_RESPONSE', response.status, { attempts: attempt });
+        }
+        if (envelope === null || typeof envelope !== 'object' || Array.isArray(envelope)) {
+          throw new OpenAICompatibleLLMError('LLM_INVALID_RESPONSE', response.status, { attempts: attempt });
+        }
+        const extracted = extractContent(envelope as ProviderEnvelope);
+        const headerRequestId = response.headers.get('x-request-id');
+        return {
+          value: extracted.content,
+          usage: extracted.usage,
+          latency_ms: Math.max(0, Date.now() - startedAt),
+          attempts: attempt,
+          provider: this.provider,
+          model: request.model,
+          request_id: headerRequestId || extracted.requestId,
+        };
+      } catch (error) {
+        if (callerCancelled || request.signal?.aborted) {
+          lastError = new OpenAICompatibleLLMError('LLM_CANCELLED', null, { attempts: attempt });
+        } else if (timedOut) {
+          lastError = new OpenAICompatibleLLMError('LLM_TIMEOUT', null, { attempts: attempt });
+        } else if (error instanceof OpenAICompatibleLLMError) {
+          lastError = new OpenAICompatibleLLMError(error.code, error.status, {
+            attempts: attempt,
+            provider_error: error.provider_error,
+          });
+        } else if (error instanceof ResponseBodyTooLargeError) {
+          lastError = new OpenAICompatibleLLMError('LLM_INVALID_RESPONSE', null, { attempts: attempt });
+        } else {
+          lastError = new OpenAICompatibleLLMError('LLM_UNAVAILABLE', null, { attempts: attempt });
+        }
+      } finally {
+        clearTimeout(timeout);
+        request.signal?.removeEventListener('abort', onCallerAbort);
+      }
+
+      if (lastError === null || !retryable(lastError) || attempt === MAX_TOTAL_ATTEMPTS) throw lastError;
+      const delay = retryDelayMs(attempt, providerRetryAfter);
+      try {
+        await waitBeforeRetry(delay, request.signal, deadlineAt);
+      } catch (error) {
+        if (error instanceof OpenAICompatibleLLMError && error.code === 'LLM_CANCELLED') {
+          throw new OpenAICompatibleLLMError('LLM_CANCELLED', null, { attempts: attempt });
+        }
+        throw new OpenAICompatibleLLMError('LLM_TIMEOUT', lastError.status, {
+          attempts: attempt,
+          provider_error: lastError.provider_error,
+        });
+      }
     }
+    throw lastError ?? new OpenAICompatibleLLMError('LLM_UNAVAILABLE');
   }
 }

@@ -1,8 +1,13 @@
+import type { ExecutionReceipt, HydratedContext, ImmutableEvidenceRecord } from '@agentos/core-engine/contracts';
+import { ErpRefusalError } from '@agentos/adapters';
+
 import { describe, expect, it, vi } from 'vitest';
 import type { SkillToolInvocation } from '@agentos/skills';
 
 import type { ErpReadPort } from '../../connectors.js';
 import { handleOrderConnector } from './order-handler.js';
+import { VerifiedResponseFinalizer } from '../../shared/response.js';
+
 
 const TENANT_ID = '11111111-1111-1111-1111-111111111111';
 const CUSTOMER_ID = 'aaaaaaaa-0000-4000-8000-00000000000a';
@@ -84,6 +89,92 @@ describe('handleOrderConnector ERP status mapping', () => {
     );
 
     expect(output.status).toBe(expectedStatus);
+  });
+  it('projects a PAID order through the handler receipt and verified response finalizer', async () => {
+    const output = await handleOrderConnector<Record<string, unknown>>(
+      invocation('PAID'),
+      erpRead('PAID'),
+      async () => IDENTITY,
+    );
+    const receipt: ExecutionReceipt = {
+      execution_id: 'execution-order-1',
+      adapter_status: 'SUCCESS',
+      provider_reference: 'provider-order-1',
+      response_payload: output,
+      latency_ms: 10,
+      token_usage: { prompt: 0, completion: 0, total_cost_usd: 0 },
+    };
+    const evidence: ImmutableEvidenceRecord = {
+      evidence_id: 'evidence-order-1',
+      run_id: 'run-1',
+      tenant_id: TENANT_ID,
+      correlation_id: 'corr-1',
+      step_index: 1,
+      effect_key: 'effect-1',
+      previous_evidence_hash: 'b'.repeat(64),
+      payload_sha256: 'a'.repeat(64),
+      chain_hash: 'c'.repeat(64),
+      signature: 'd'.repeat(64),
+      created_at: '2026-01-01T00:00:00Z',
+      receipt,
+    };
+    const context: HydratedContext = {
+      tenant_id: TENANT_ID,
+      correlation_id: 'corr-1',
+      customer: {
+        customer_id: CUSTOMER_ID,
+        tenant_id: TENANT_ID,
+        verified_phone: null,
+        verified_email: null,
+        total_spent: 0,
+        order_count: 1,
+        rfm_segment_hypothesis: 'HIBERNATING',
+        consent_marketing: false,
+        consent_updated_at: null,
+        suppression_active: false,
+        created_at: '2026-01-01T00:00:00Z',
+      },
+      working_memory: {
+        session_id: 'session-1',
+        conversation_id: 'conversation-1',
+        last_touch_channel: 'WEB_CHAT',
+        turn_count: 1,
+        takeover_active: false,
+      },
+      knowledge_citations: [],
+      hydrated_at: '2026-01-01T00:00:00Z',
+    };
+
+    const response = await new VerifiedResponseFinalizer().finalize({
+      tenant_id: TENANT_ID,
+      run_id: 'run-1',
+      conversation_id: 'conversation-1',
+      domain: 'support',
+      context,
+      successful_receipts: [{ receipt, evidence }],
+    });
+    expect(response.text).toBe('Tình trạng đơn hàng ORD-1: Đang xử lý.');
+  });
+
+
+  it.each(['TIMEOUT', 'UNKNOWN'] as const)('preserves a retryable %s provider read failure', async (failure) => {
+    const port: ErpReadPort = {
+      read: vi.fn().mockRejectedValue(new ErpRefusalError(
+        'INDETERMINATE_OUTCOME', 'API-001', `the orders read outcome is unconfirmed (${failure})`,
+      )),
+    };
+    await expect(handleOrderConnector(invocation('PAID'), port, async () => IDENTITY))
+      .rejects.toMatchObject({ code: 'PROVIDER_UNAVAILABLE' });
+  });
+
+  it('keeps a confirmed non-404 provider rejection unavailable rather than treating it as a miss', async () => {
+    const port: ErpReadPort = {
+      read: vi.fn().mockRejectedValue(new ErpRefusalError(
+        'PROVIDER_REJECTED', 'API-001', 'provider rejected the orders read with status 403',
+      )),
+    };
+    await expect(handleOrderConnector(invocation('PAID'), port, async () => IDENTITY))
+      .rejects.toMatchObject({ code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE' });
   });
 
   it('refuses an unknown ERP status instead of defaulting it', async () => {

@@ -1,7 +1,10 @@
+import { getErrorCatalogEntry, isPreEffectRefusalCode } from '../errors/catalog.js';
+
 import {
   OrchestratorError,
   type ActionDraft,
   type ExecutionReceipt,
+  type HydratedContext,
   type PlannedStep,
 } from '../contracts/index.js';
 import type { IAdapterDispatcher, IEffectGuard } from '../contracts/index.js';
@@ -11,6 +14,7 @@ import { serializeError } from './checkpoint-guards.js';
 export interface ReconciledEffect {
   readonly effect_key: string;
   readonly action_id: string;
+  readonly action_revision: number;
   readonly kind: 'REPLAY' | 'DISPATCH';
   readonly receipt?: unknown;
 }
@@ -31,6 +35,12 @@ export function isConfirmedExecutionReceipt(receipt: unknown): receipt is Execut
     && candidate.provider_reference.trim().length > 0;
 }
 
+/**
+ * In-process LLM targets: the call keeps no provider-side state, and its only durable outcome is
+ * the receipt the orchestrator stores when it settles the reservation SUCCEEDED (seen as REPLAY).
+ * An unsettled reservation therefore proves absence, and a transient provider failure is pre-effect.
+ */
+const IN_PROCESS_LLM_TARGETS: ReadonlySet<string> = new Set(['Core.LLMContentEngine']);
 
 export interface EffectReconciliationDependencies {
   readonly effectGuard: IEffectGuard;
@@ -47,6 +57,7 @@ export async function acquireEffectSlot(
   action: ActionDraft,
   run_id: string,
   reconciledEffect: ReconciledEffect | null = null,
+  request_fingerprint?: string,
 ): Promise<{ kind: 'DISPATCH' } | { kind: 'REPLAY'; receipt: unknown | null } | { kind: 'WAIT'; reason: string }> {
   if (!action.mutating) {
     if (reconciledEffect !== null) {
@@ -62,6 +73,7 @@ export async function acquireEffectSlot(
     if (
       reconciledEffect.effect_key !== action.effect_key
       || reconciledEffect.action_id !== action.action_id
+      || reconciledEffect.action_revision !== action.action_revision
     ) {
       throw new OrchestratorError(
         'RECONCILIATION_BINDING_REQUIRED',
@@ -71,6 +83,13 @@ export async function acquireEffectSlot(
     return reconciledEffect.kind === 'REPLAY'
       ? { kind: 'REPLAY', receipt: reconciledEffect.receipt ?? null }
       : { kind: 'DISPATCH' };
+
+  }
+  if (request_fingerprint === undefined) {
+    throw new OrchestratorError(
+      'EFFECT_FINGERPRINT_REQUIRED',
+      'A mutating action must carry the orchestrator-computed pending-action fingerprint.',
+    );
   }
 
   const outcome = await dependencies.effectGuard.reserve({
@@ -78,7 +97,7 @@ export async function acquireEffectSlot(
     run_id,
     request_id: action.request_id,
     effect_key: action.effect_key,
-    request_fingerprint: dependencies.effectGuard.computeRequestFingerprint(action.payload),
+    request_fingerprint,
     skill_id: action.skill_id,
     step_index: action.step_index,
     action_revision: action.action_revision,
@@ -100,16 +119,21 @@ export async function acquireEffectSlot(
     case 'RECONCILE_REQUIRED': {
       // The guard reads durable reservation state but cannot prove what the provider did.
       const providerReconcile = dependencies.adapterDispatcher.reconcile;
-      if (providerReconcile === undefined) {
+      const inProcessLlm = IN_PROCESS_LLM_TARGETS.has(action.adapter_target);
+      if (!inProcessLlm && providerReconcile === undefined) {
         return { kind: 'WAIT', reason: 'EFFECT_UNKNOWN: provider reconciliation is not bound' };
       }
-      const reconciled = await providerReconcile({
-        tenant_id: action.tenant_id,
-        effect_key: action.effect_key,
-        action_id: action.action_id,
-        adapter_target: action.adapter_target,
-        skill_id: action.skill_id,
-      });
+      // `providerReconcile` is unset here only for an in-process LLM target (returned above otherwise).
+      const reconciled: { outcome: 'SUCCEEDED' | 'FAILED' | 'INDETERMINATE'; receipt?: unknown } =
+        inProcessLlm || providerReconcile === undefined
+          ? { outcome: 'FAILED' }
+          : await providerReconcile({
+            tenant_id: action.tenant_id,
+            effect_key: action.effect_key,
+            action_id: action.action_id,
+            adapter_target: action.adapter_target,
+            skill_id: action.skill_id,
+          });
       if (reconciled.outcome === 'SUCCEEDED') {
         if (!isConfirmedExecutionReceipt(reconciled.receipt)) {
           return { kind: 'WAIT', reason: 'EFFECT_UNKNOWN: provider success proof is incomplete' };
@@ -142,6 +166,40 @@ export async function acquireEffectSlot(
       return { kind: 'WAIT', reason: 'EFFECT_UNKNOWN: provider reconciliation is indeterminate' };
     }
   }
+}
+
+/**
+ * Consumes the sweeper's durable success receipt for the exact pending action. A wake-up event is
+ * not provider proof: missing or unsettled receipts never authorize another dispatch.
+ */
+export async function readReconciledEffect(
+  dependencies: EffectReconciliationDependencies,
+  action: ActionDraft,
+): Promise<ReconciledEffect> {
+  if (!action.mutating) {
+    throw new OrchestratorError(
+      'RECONCILIATION_BINDING_REQUIRED',
+      'Automatic reconciliation requires the persisted pending mutating action.',
+    );
+  }
+  const stored = await dependencies.effectGuard.reconcile({
+    tenant_id: action.tenant_id,
+    effect_key: action.effect_key,
+    skill_id: action.skill_id,
+  });
+  if (stored.outcome !== 'SUCCEEDED' || !isConfirmedExecutionReceipt(stored.receipt)) {
+    throw new OrchestratorError(
+      'RECONCILIATION_PROVIDER_PROOF_REQUIRED',
+      'Automatic reconciliation requires a durable provider success receipt; no dispatch is authorized.',
+    );
+  }
+  return {
+    effect_key: action.effect_key,
+    action_id: action.action_id,
+    action_revision: action.action_revision,
+    kind: 'REPLAY',
+    receipt: stored.receipt,
+  };
 }
 
 /**
@@ -190,6 +248,7 @@ export async function reconcileProviderEffect(
     return {
       effect_key: action.effect_key,
       action_id: action.action_id,
+      action_revision: action.action_revision,
       kind: 'REPLAY',
       receipt: reconciled.receipt,
     };
@@ -211,7 +270,12 @@ export async function reconcileProviderEffect(
         'Provider absence was proven, but the same effect reservation could not be reopened for retry.',
       );
     }
-    return { effect_key: action.effect_key, action_id: action.action_id, kind: 'DISPATCH' };
+    return {
+      effect_key: action.effect_key,
+      action_id: action.action_id,
+      action_revision: action.action_revision,
+      kind: 'DISPATCH',
+    };
   }
 
   throw new OrchestratorError(
@@ -220,19 +284,26 @@ export async function reconcileProviderEffect(
   );
 }
 
-/** Enforces the registry-declared hard deadline around one adapter dispatch. */
+/** Enforces the complete bounded skill invocation deadline around one adapter dispatch. */
 export async function dispatchWithDeadline(
   dependencies: EffectReconciliationDependencies,
   action: ActionDraft,
   step: PlannedStep,
+  request_fingerprint?: string,
+  hydrated_context?: HydratedContext,
 ): Promise<ExecutionReceipt> {
   let deadlineTimer: NodeJS.Timeout | undefined;
+  let dispatchStarted = false;
   const abortController = new AbortController();
   try {
+    const dispatchTimeoutMs = step.dispatch_timeout_ms ?? step.timeout_ms;
     await dependencies.assertExecutionLease?.(action.tenant_id, action.run_id);
+    dispatchStarted = true;
     const inFlight = dependencies.adapterDispatcher.dispatch(action, {
-      timeout_ms: step.timeout_ms,
+      timeout_ms: dispatchTimeoutMs,
       signal: abortController.signal,
+      ...(request_fingerprint === undefined ? {} : { request_fingerprint }),
+      ...(hydrated_context === undefined ? {} : { hydrated_context }),
     });
     // A settlement that arrives after the deadline is late, not unhandled.
     inFlight.catch(() => undefined);
@@ -244,21 +315,73 @@ export async function dispatchWithDeadline(
             abortController.abort();
             reject(new OrchestratorError(
               'DISPATCH_TIMEOUT',
-              `Adapter call for step ${step.step_index} exceeded its ${step.timeout_ms}ms deadline`
+              `Adapter call for step ${step.step_index} exceeded its ${dispatchTimeoutMs}ms bounded-invocation deadline`,
             ));
           },
-          step.timeout_ms
+          dispatchTimeoutMs
         );
       }),
     ]);
   } catch (error) {
+    let code: string | undefined;
     if (error instanceof OrchestratorError) {
-      throw error;
+      code = error.code;
+    } else if (typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string') {
+      code = error.code;
     }
-    throw new OrchestratorError(
-      'PROVIDER_INDETERMINATE',
-      `Adapter call for step ${step.step_index} returned no verifiable outcome (${JSON.stringify(serializeError(error))}).`
-    );
+
+    let failure: unknown;
+    if (error instanceof OrchestratorError) {
+      failure = error;
+    } else if (
+      code !== undefined
+      && (
+        !dispatchStarted
+        || !action.mutating
+        || isPreEffectRefusalCode(code)
+        || getErrorCatalogEntry(code)?.class === 'UNKNOWN'
+      )
+    ) {
+      failure = new OrchestratorError(code, error instanceof Error ? error.message : String(error));
+    } else if (!dispatchStarted) {
+      failure = error;
+    } else {
+      failure = new OrchestratorError(
+        'PROVIDER_INDETERMINATE',
+        `Adapter call for step ${step.step_index} returned no verifiable outcome (${JSON.stringify(serializeError(error))}).`
+      );
+    }
+    // An in-process content engine keeps nothing when its deadline expires (the call is aborted and
+    // only a settled receipt counts), so the expiry is a retryable timeout rather than UNKNOWN.
+    if (IN_PROCESS_LLM_TARGETS.has(action.adapter_target)
+      && failure instanceof OrchestratorError && failure.code === 'DISPATCH_TIMEOUT') {
+      failure = new OrchestratorError('LLM_TIMEOUT', failure.message);
+    }
+
+    const failureCode = failure instanceof OrchestratorError ? failure.code : code;
+    const inProcessLlmTransient = IN_PROCESS_LLM_TARGETS.has(action.adapter_target)
+      && failureCode !== undefined
+      && getErrorCatalogEntry(failureCode)?.class === 'RETRYABLE';
+    if (action.mutating && (
+      !dispatchStarted
+      || inProcessLlmTransient
+      || (failureCode !== undefined && isPreEffectRefusalCode(failureCode))
+    )) {
+      try {
+        await dependencies.effectGuard.resolve({
+          tenant_id: action.tenant_id,
+          effect_key: action.effect_key,
+          status: 'FAILED',
+        });
+      } catch (settlementError) {
+        throw new OrchestratorError(
+          'EFFECT_UNKNOWN',
+          `Pre-effect refusal could not release reservation ${action.effect_key}; reconcile before retry (${JSON.stringify(serializeError(settlementError))}).`
+        );
+      }
+    }
+
+    throw failure;
   } finally {
     clearTimeout(deadlineTimer);
   }

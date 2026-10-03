@@ -12,6 +12,12 @@ import type { GatewayRuntime } from '../../gateway/ports.js';
 import { correlationIdOf, fail } from '../../gateway/http.js';
 import type { ConversationRouteDeps } from './conversations.js';
 
+import {
+  conversationResumeRouteSchema,
+  conversationTakeoverHeartbeatRouteSchema,
+  conversationTakeoverRouteSchema,
+  registerOpenApiSchemas,
+} from './openapi-schemas.js';
 type ConversationPreHandler = (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
 type RequiredString = (body: unknown, field: string, max_length?: number) => string;
 type Refuse = (reply: FastifyReply, request: FastifyRequest, runtime: GatewayRuntime, error: unknown) => FastifyReply;
@@ -34,6 +40,7 @@ export function registerConversationTakeoverRoutes(
   preHandler: ConversationPreHandler,
   helpers: ConversationTakeoverRouteHelpers,
 ): void {
+  registerOpenApiSchemas(app);
   const { requiredString, refuse } = helpers;
 
   // -------------------------------------------------------------------------
@@ -42,7 +49,7 @@ export function registerConversationTakeoverRoutes(
 
   app.post<{ Params: { conversation_id: string } }>(
     '/conversations/:conversation_id/takeover',
-    { preHandler },
+    { preHandler, schema: conversationTakeoverRouteSchema },
     async (request, reply) => {
       const runtime = deps.runtime;
       const correlation_id = correlationIdOf(request, runtime);
@@ -52,7 +59,7 @@ export function registerConversationTakeoverRoutes(
         const operator_id = requireOperatorIdentifier(principal.operator_id);
         const conversation_id = request.params.conversation_id;
 
-        const body = request.body as Record<string, unknown> | undefined;
+        const body = request.body;
         const reason = requiredString(body, 'reason');
         const takeover_mode = requiredString(body, 'takeover_mode');
 
@@ -98,7 +105,17 @@ export function registerConversationTakeoverRoutes(
             operator_id,
           });
           if (handoffClaim === 'NO_HANDOFF') {
-            await runtime.conversations.setState(principal.tenant_id, conversation_id, 'paused_takeover', operator_id);
+            const transition = await runtime.conversations.setState(
+              principal.tenant_id,
+              conversation_id,
+              conversation.state,
+              conversation.takeover_operator_id,
+              'paused_takeover',
+              operator_id,
+            );
+            if (transition === 'CONFLICT') {
+              fail('VERSION_CONFLICT', 'conversation state changed during takeover; reload before retrying');
+            }
           }
         } catch (error) {
           await releaseNewLease();
@@ -140,7 +157,7 @@ export function registerConversationTakeoverRoutes(
 
   app.post<{ Params: { conversation_id: string } }>(
     '/conversations/:conversation_id/takeover/heartbeat',
-    { preHandler },
+    { preHandler, schema: conversationTakeoverHeartbeatRouteSchema },
     async (request, reply) => {
       const runtime = deps.runtime;
       const correlation_id = correlationIdOf(request, runtime);
@@ -150,8 +167,10 @@ export function registerConversationTakeoverRoutes(
         const operator_id = requireOperatorIdentifier(principal.operator_id);
         const conversation_id = request.params.conversation_id;
 
-        const body = request.body as Record<string, unknown> | undefined;
-        const extend_seconds = body?.['extend_seconds'];
+        const body = request.body;
+        const extend_seconds = typeof body === 'object' && body !== null && 'extend_seconds' in body
+          ? body.extend_seconds
+          : undefined;
         if (typeof extend_seconds !== 'number' || !Number.isInteger(extend_seconds) || extend_seconds < 1 || extend_seconds > 300) {
           fail('VALIDATION_FAILED', 'extend_seconds must be an integer between 1 and 300');
         }
@@ -206,7 +225,7 @@ export function registerConversationTakeoverRoutes(
 
   app.post<{ Params: { conversation_id: string } }>(
     '/conversations/:conversation_id/resume',
-    { preHandler },
+    { preHandler, schema: conversationResumeRouteSchema },
     async (request, reply) => {
       const runtime = deps.runtime;
       const correlation_id = correlationIdOf(request, runtime);
@@ -216,8 +235,13 @@ export function registerConversationTakeoverRoutes(
         const operator_id = requireOperatorIdentifier(principal.operator_id);
         const conversation_id = request.params.conversation_id;
 
-        const body = request.body as Record<string, unknown> | undefined;
-        const handoff_summary = typeof body?.['handoff_summary'] === 'string' ? body['handoff_summary'] : null;
+        const body = request.body;
+        const handoff_summary = typeof body === 'object' && body !== null && 'handoff_summary' in body && typeof body.handoff_summary === 'string'
+          ? body.handoff_summary
+          : null;
+        const next_agent_id = typeof body === 'object' && body !== null && 'next_agent_id' in body && typeof body.next_agent_id === 'string'
+          ? body.next_agent_id
+          : undefined;
 
         const conversation = await runtime.conversations.get(principal.tenant_id, conversation_id);
         if (conversation === null) {
@@ -275,7 +299,17 @@ export function registerConversationTakeoverRoutes(
               }
             }
           } else {
-            await runtime.conversations.setState(principal.tenant_id, conversation_id, 'open', null);
+            const transition = await runtime.conversations.setState(
+              principal.tenant_id,
+              conversation_id,
+              conversation.state,
+              conversation.takeover_operator_id,
+              'open',
+              null,
+            );
+            if (transition === 'CONFLICT') {
+              fail('VERSION_CONFLICT', 'conversation state changed during resume; reload before retrying');
+            }
           }
         }
 
@@ -290,7 +324,7 @@ export function registerConversationTakeoverRoutes(
             conversation_id,
             release_outcome: released.outcome,
             ...(handoff_summary === null ? {} : { handoff_summary }),
-            ...(typeof body?.['next_agent_id'] === 'string' ? { next_agent_id: body['next_agent_id'] } : {}),
+            ...(next_agent_id === undefined ? {} : { next_agent_id }),
           },
         });
 

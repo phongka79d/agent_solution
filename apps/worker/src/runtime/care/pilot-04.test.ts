@@ -167,9 +167,7 @@ function toDurableTaskSnapshot(task: MutableDurableTaskRecord): DurableTaskRecor
 }
 
 function toApprovalSnapshot(record: MutableApprovalRecord): ApprovalRecord {
-  return {
-    ...record,
-  };
+  return { digest_version: 1, ...record };
 }
 
 function toConversationSnapshot(record: MutableConversationRecord): ConversationRecord {
@@ -1144,6 +1142,9 @@ describe('PILOT-04 / E2E-OFF-ESC: Complaint Escalation, Operator Takeover & Auth
       resolve_grant: async () => 'AUTH-3',
       skill_enablement: DEFAULT_P1B_CARE_SKILL_ENABLEMENT,
       handoff_repository: handoffRepository,
+      conversation_repository: {
+        appendMessage: vi.fn(async () => 'message-pilot-04'),
+      },
     });
 
     const effectKey = computeEffectKey({
@@ -1177,9 +1178,19 @@ describe('PILOT-04 / E2E-OFF-ESC: Complaint Escalation, Operator Takeover & Auth
         summary_context: 'Deterministic Customer Care classification: complaint.',
       },
     };
+    const requestFingerprint = computeRequestFingerprint(actionDraft.payload as Record<string, unknown>);
+
+    // A missing orchestrator-bound fingerprint is a deterministic refusal, not a retryable failure.
+    await expect(services.dispatcher.dispatch(actionDraft)).rejects.toThrow(
+      /HANDOFF_REQUEST_FINGERPRINT_MISSING after 1 attempts/,
+    );
+    expect(handoffRepository.enqueue).not.toHaveBeenCalled();
+
 
     // 1. First dispatch creates the durable handoff package via SkillRuntimeEngine -> tool-port
-    const receipt1 = await services.dispatcher.dispatch(actionDraft);
+    const receipt1 = await services.dispatcher.dispatch(actionDraft, {
+      request_fingerprint: requestFingerprint,
+    });
     expect(receipt1.adapter_status).toBe('SUCCESS');
     expect(receipt1.provider_reference).toMatch(/^handoff_/);
     expect(handoffStore.size).toBe(1);
@@ -1192,7 +1203,9 @@ describe('PILOT-04 / E2E-OFF-ESC: Complaint Escalation, Operator Takeover & Auth
     expect(firstHandoff?.output.escalated_at).toBe(FROZEN_TIME_ISO);
 
     // 2. Second dispatch (idempotent replay of identical action) returns existing receipt without second queue item
-    const receipt2 = await services.dispatcher.dispatch(actionDraft);
+    const receipt2 = await services.dispatcher.dispatch(actionDraft, {
+      request_fingerprint: requestFingerprint,
+    });
     expect(receipt2.adapter_status).toBe('SUCCESS');
     expect(receipt2.execution_id).toBe(receipt1.execution_id);
     expect(receipt2.provider_reference).toBe(receipt1.provider_reference);
@@ -1203,7 +1216,7 @@ describe('PILOT-04 / E2E-OFF-ESC: Complaint Escalation, Operator Takeover & Auth
     const reconciliation = await handoffRepository.reconcile({
       tenant_id: TENANT_T1,
       effect_key: effectKey,
-      request_fingerprint: computeRequestFingerprint(actionDraft.payload as Record<string, unknown>),
+      request_fingerprint: requestFingerprint,
     });
     expect(reconciliation.state).toBe('COMMITTED');
     if (reconciliation.state === 'COMMITTED') {
@@ -1669,6 +1682,8 @@ describe('PILOT-04 / E2E-OFF-ESC: Complaint Escalation, Operator Takeover & Auth
           action_id: pendingAction.action_id,
           effect_key: effectKeyApproval,
           payload: approvalActionPayload,
+          payload_sha256: 'a'.repeat(64),
+          digest_version: 1,
           reason: 'Requested compensation of 1200 TWD exceeds autonomous threshold',
         },
       }),
@@ -1684,6 +1699,8 @@ describe('PILOT-04 / E2E-OFF-ESC: Complaint Escalation, Operator Takeover & Auth
         action_id: pendingAction.action_id,
         effect_key: effectKeyApproval,
         payload: approvalActionPayload,
+        payload_sha256: 'a'.repeat(64),
+        digest_version: 1,
         reason: 'Requested compensation of 1200 TWD exceeds autonomous threshold (AUTH-4)',
       },
     });
@@ -1856,6 +1873,26 @@ describe('PILOT-04 / E2E-OFF-ESC: Complaint Escalation, Operator Takeover & Auth
       approvalRepository: repos.approvalRepository,
       evidenceRepository: repos.evidenceRepository,
       auditRepository: repos.auditRepository,
+      aggregatorRepositories: {
+        getProfile: async (tenant_id, customer_id) => (
+          tenant_id === TENANT_T1 && customer_id === CUSTOMER_A
+            ? {
+                customer_id: CUSTOMER_A,
+                tenant_id: TENANT_T1,
+                verified_phone: '+84900000001',
+                verified_email: 'cust-a@example.com',
+                total_spent: '2400',
+                order_count: 2,
+                rfm_segment_hypothesis: 'AT_RISK',
+                consent_marketing: true,
+                consent_updated_at: new Date(FROZEN_TIME_ISO),
+                suppression_active: false,
+                line_user_id: null,
+                created_at: new Date(FROZEN_TIME_ISO),
+              }
+            : null
+        ),
+      },
       conversationRepository: repos.conversationRepository,
       sessionControl: adapters.sessionControl,
       skillServices,

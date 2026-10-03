@@ -55,6 +55,7 @@ export interface Environment {
   WEBHOOK_HMAC_SECRET: string;
   AUDIT_HMAC_SECRET: string;
   ENCRYPTION_KEY_AES256: string;
+  ENCRYPTION_KEY_AES256_PREVIOUS?: string;
 
   DATABASE_URL: string;
   DATABASE_POOL_MIN: number;
@@ -81,6 +82,7 @@ export interface Environment {
   FAST_COMPLETION_MODEL: string;
   OPENAI_STRUCTURED_OUTPUT_MODE: OpenAIStructuredOutputMode;
   LLM_REQUEST_TIMEOUT_MS: number;
+  LLM_MAX_OUTPUT_TOKENS_PER_CALL: number;
   MAX_TOKENS_PER_RUN: number;
 
   ERP_API_BASE_URL: string;

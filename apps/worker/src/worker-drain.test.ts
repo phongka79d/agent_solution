@@ -171,6 +171,35 @@ describe('worker polling concurrency and drain', () => {
   });
 });
 
+describe('dynamic tenant polling', () => {
+  it('claims only tenant runtimes present in the latest discovery snapshot', async () => {
+    const registry = { modules: () => ['support'] };
+    let tenantRuntimes = [{ tenant_id: TENANT_A, registry }];
+    const claimedTenants: string[] = [];
+    const claimNextQueuedTask = vi.fn(async ({ tenant_id }: { tenant_id: string }) => {
+      claimedTenants.push(tenant_id);
+      return null;
+    });
+    const poller = createWorkerPoller(pollerOptions({
+      tenantIds: [],
+      getTenantRuntimes: () => tenantRuntimes,
+      workflowRepository: { claimNextQueuedTask },
+    }));
+
+    await poller.pollOnce();
+    tenantRuntimes = [
+      { tenant_id: TENANT_A, registry },
+      { tenant_id: TENANT_B, registry },
+    ];
+    await poller.pollOnce();
+    tenantRuntimes = [{ tenant_id: TENANT_B, registry }];
+    await poller.pollOnce();
+
+    expect(claimedTenants).toEqual([TENANT_A, TENANT_A, TENANT_B, TENANT_B]);
+    await poller.stop();
+  });
+});
+
 describe('worker drain configuration', () => {
   it.each([
     ['WORKER_TENANT_CONCURRENCY', '0'],

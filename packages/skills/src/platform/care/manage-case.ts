@@ -148,6 +148,7 @@ const spec: Omit<PlatformRowSpec, 'skill_id'> = {
   allowed_agents: ['CS-01'],
   required_authority: 'AUTH-3',
   tool_binding: 'PostgreSQL.CaseManagementStore',
+  requires_verified_identity: true,
   validation_rules: [
     'every non-CREATE action requires case_id and expected_case_version; stale versions fail with CASE_VERSION_CONFLICT without mutation',
     'status transitions must strictly follow the SRS §8 7-state FSM matrix; an illegal transition is INVALID_FSM_TRANSITION and leaves the case untouched',

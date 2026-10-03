@@ -90,16 +90,17 @@ export interface DemoReadinessRouteDependencies {
   readonly trace: RunTracePort;
 }
 
-/** Authorizes either platform admin or the narrower run:read operator permission. */
+/** Authorizes a platform-scope platform admin or `run:read` operator. */
 function requireTraceOperator(request: FastifyRequest): GatewayPrincipal {
   const principal = requirePrincipal(request);
   const canReadTrace =
+    principal.scope === 'platform' &&
     principal.kind === 'OPERATOR' &&
     (principal.permissions.includes('platform:admin') || principal.permissions.includes('run:read'));
   if (!canReadTrace) {
     fail(
       'INSUFFICIENT_AUTHORITY',
-      'the authenticated operator must hold platform:admin or run:read for a run trace',
+      'the authenticated platform-scope operator must hold platform:admin or run:read for a run trace',
     );
   }
   return principal;
@@ -242,6 +243,9 @@ export function registerDemoReadinessRoutes(
     const runtime = deps.runtime;
     try {
       const principal = requireOperator(request, 'platform:admin');
+      if (principal.scope !== 'platform') {
+        fail('INSUFFICIENT_AUTHORITY', 'the authenticated operator must have platform scope for demo readiness');
+      }
       if (!deps.demoMode) {
         fail('CAPABILITY_NOT_ENABLED', 'demo readiness is available only when DEMO_MODE is enabled');
       }
@@ -268,7 +272,7 @@ export function registerDemoReadinessRoutes(
     }
   });
 
-  app.get<{ Params: { run_id: string } }>('/runs/:run_id/trace', { preHandler }, async (request, reply) => {
+  app.get<{ Params: { run_id: string } }>('/demo/readiness/runs/:run_id/trace', { preHandler }, async (request, reply) => {
     const runtime = deps.runtime;
     try {
       const principal = requireTraceOperator(request);

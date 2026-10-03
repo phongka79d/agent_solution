@@ -16,6 +16,7 @@ const ACCOUNTS = {
   companyAdminPassword: 'company-password-123',
   platformAdminEmail: 'platform.admin@example.test',
   platformAdminPassword: 'platform-password-123',
+  tenantName: 'NovaMart Demo',
 } as const;
 
 const SECRETS = {
@@ -54,7 +55,13 @@ describe('demo credential store', () => {
     const platform = demo.login(ACCOUNTS.platformAdminEmail, ACCOUNTS.platformAdminPassword, 'platform');
 
     expect(company).toMatchObject({
-      membership: { role: 'company_admin', scope: 'company', tenant_id: DEMO_TENANT_ID, tenant_name: null },
+      membership: {
+        role: 'company_admin',
+        scope: 'company',
+        tenant_id: DEMO_TENANT_ID,
+        tenant_name: 'NovaMart Demo',
+        data_class: 'DEMO',
+      },
     });
     expect(company?.permissions).toEqual([
       'campaign:draft',
@@ -64,12 +71,32 @@ describe('demo credential store', () => {
       'telemetry:read',
       'approval:read',
       'approval:decide',
+      'settings:manage',
+      'integration:manage',
+      'llm:manage',
+      'knowledge:manage',
+      'knowledge:approve',
+      'skills:manage',
+      'agents:manage',
+      'testdata:manage',
+      'run:retry:company',
     ]);
+    expect(company?.permissions).not.toContain('platform:audit:read');
+    expect(company?.permissions).not.toContain('platform:providers:write');
     expect(platform).toMatchObject({
       membership: { role: 'platform_admin', scope: 'platform', tenant_id: DEMO_TENANT_ID },
       identity: { user_id: 'demo-platform-admin', display_name: 'Platform Admin' },
     });
-    expect(platform?.permissions).toEqual(['platform:admin', 'run:read', 'run:retry', 'run:reconcile', 'telemetry:read']);
+    expect(platform?.permissions).toEqual([
+      'platform:admin',
+      'run:read',
+      'run:retry',
+      'run:reconcile',
+      'telemetry:read',
+      'platform:providers:write',
+      'platform:companies:write',
+      'platform:audit:read',
+    ]);
     expect(new Set([company?.access_token, platform?.access_token]).size).toBe(2);
     expect(company?.access_token).not.toContain(ACCOUNTS.companyAdminPassword);
   });
@@ -127,12 +154,15 @@ describe('demo credential store', () => {
     expect(() => createGatewayComposition({
       ...SECRETS,
       APP_ENV: 'production',
+      AUTH_PROVIDER: 'db',
       DEMO_MODE: 'true',
     })).toThrow('DEMO_MODE requires APP_ENV=local or APP_ENV=ci');
 
     const composition = createGatewayComposition({
       ...SECRETS,
       APP_ENV: 'production',
+      AUTH_PROVIDER: 'db',
+      DATABASE_URL: 'postgresql://unused.invalid/test',
       DEMO_MODE: 'false',
     });
     expect(composition.demoAuth).toBeUndefined();
@@ -171,8 +201,17 @@ describe('demo auth routes', () => {
     const issued = login.json() as { access_token: string };
     expect(login.json()).toMatchObject({
       identity: { user_id: 'demo-platform-admin', email: ACCOUNTS.platformAdminEmail, display_name: 'Platform Admin' },
-      membership: { tenant_id: DEMO_TENANT_ID, tenant_name: null, role: 'platform_admin', scope: 'platform' },
-      permissions: ['platform:admin', 'run:read', 'run:retry', 'run:reconcile', 'telemetry:read'],
+      membership: { tenant_id: DEMO_TENANT_ID, tenant_name: 'NovaMart Demo', data_class: 'DEMO', role: 'platform_admin', scope: 'platform' },
+      permissions: [
+        'platform:admin',
+        'run:read',
+        'run:retry',
+        'run:reconcile',
+        'telemetry:read',
+        'platform:providers:write',
+        'platform:companies:write',
+        'platform:audit:read',
+      ],
     });
 
     const session = await app.inject({

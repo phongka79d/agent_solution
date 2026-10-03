@@ -6,6 +6,8 @@
  * stream from reserving a second key or starting a differently shaped worker signal.
  */
 
+import type { RedisInjectedClient } from '@agentos/database';
+
 import type {
   AgentModule,
   GatewayPrincipal,
@@ -100,36 +102,83 @@ const RECEIPT_WAIT_INTERVAL_MS = 250;
 
 const DEFAULT_TURN_RATE_LIMIT_CAPACITY = 10;
 const DEFAULT_TURN_RATE_LIMIT_REFILL_PER_SECOND = 1 / 6;
+const DEFAULT_TURN_RATE_LIMIT_IDLE_TTL_MS = 30 * 60 * 1000;
+const DEFAULT_TURN_RATE_LIMIT_MAX_BUCKETS = 10_000;
 
 /** Admission limiter keyed by the authenticated tenant and channel/widget session. */
 export interface TurnRateLimiter {
-  consume(tenant_id: string, session_id: string): boolean;
+  consume(tenant_id: string, session_id: string): boolean | Promise<boolean>;
 }
 
-export interface InMemoryTurnRateLimiterOptions {
+interface TokenBucketOptions {
   readonly capacity?: number;
   readonly refill_per_second?: number;
+  readonly idle_ttl_ms?: number;
+}
+
+export interface InMemoryTurnRateLimiterOptions extends TokenBucketOptions {
+  readonly max_buckets?: number;
   readonly clock?: () => Date;
 }
+
+export type RedisTurnRateLimiterOptions = TokenBucketOptions;
 
 type TokenBucket = {
   tokens: number;
   last_refill_ms: number;
+  last_access_ms: number;
 };
 
+const REDIS_TURN_RATE_LIMIT_SCRIPT = `
+  -- care_turn_token_bucket
+  local clock = redis.call("TIME")
+  local now_ms = tonumber(clock[1]) * 1000 + math.floor(tonumber(clock[2]) / 1000)
+  local capacity = tonumber(ARGV[1])
+  local refill_per_second = tonumber(ARGV[2])
+  local idle_ttl_ms = tonumber(ARGV[3])
+  local tokens = capacity
+  local last_refill_ms = now_ms
+  local stored = redis.call("GET", KEYS[1])
+  if stored then
+    local separator = string.find(stored, ":", 1, true)
+    if separator then
+      tokens = tonumber(string.sub(stored, 1, separator - 1))
+      last_refill_ms = tonumber(string.sub(stored, separator + 1))
+    end
+  end
+  if tokens == nil or last_refill_ms == nil then
+    tokens = capacity
+    last_refill_ms = now_ms
+  end
+  local elapsed_ms = math.max(0, now_ms - last_refill_ms)
+  tokens = math.min(capacity, tokens + elapsed_ms * refill_per_second / 1000)
+  local allowed = 0
+  if tokens >= 1 then
+    tokens = tokens - 1
+    allowed = 1
+  end
+  redis.call("SET", KEYS[1], string.format("%.17g:%.0f", tokens, now_ms), "PX", idle_ttl_ms)
+  return allowed
+`;
+
+
 /**
- * A small process-local limiter for the expensive intent proposal. Deployments with multiple API
- * processes may inject a shared implementation; this default remains fail-closed per process.
+ * A bounded process-local limiter for intent proposals. Expired buckets are reclaimed first;
+ * pressure evicts the least recently used bucket when the configured maximum is reached.
  */
 export class InMemoryTurnRateLimiter implements TurnRateLimiter {
   private readonly capacity: number;
   private readonly refill_per_second: number;
+  private readonly idle_ttl_ms: number;
+  private readonly max_buckets: number;
   private readonly clock: () => Date;
   private readonly buckets = new Map<string, TokenBucket>();
 
   constructor(options: InMemoryTurnRateLimiterOptions = {}) {
     this.capacity = options.capacity ?? DEFAULT_TURN_RATE_LIMIT_CAPACITY;
     this.refill_per_second = options.refill_per_second ?? DEFAULT_TURN_RATE_LIMIT_REFILL_PER_SECOND;
+    this.idle_ttl_ms = options.idle_ttl_ms ?? DEFAULT_TURN_RATE_LIMIT_IDLE_TTL_MS;
+    this.max_buckets = options.max_buckets ?? DEFAULT_TURN_RATE_LIMIT_MAX_BUCKETS;
     this.clock = options.clock ?? (() => new Date());
     if (!Number.isSafeInteger(this.capacity) || this.capacity < 1) {
       throw new TypeError('turn rate limiter capacity must be a positive integer');
@@ -137,14 +186,21 @@ export class InMemoryTurnRateLimiter implements TurnRateLimiter {
     if (!Number.isFinite(this.refill_per_second) || this.refill_per_second < 0) {
       throw new TypeError('turn rate limiter refill_per_second must be a non-negative finite number');
     }
+    if (!Number.isSafeInteger(this.idle_ttl_ms) || this.idle_ttl_ms < 1) {
+      throw new TypeError('turn rate limiter idle_ttl_ms must be a positive integer');
+    }
+    if (!Number.isSafeInteger(this.max_buckets) || this.max_buckets < 1) {
+      throw new TypeError('turn rate limiter max_buckets must be a positive integer');
+    }
   }
 
   consume(tenant_id: string, session_id: string): boolean {
     const now_ms = this.clock().getTime();
-    const key = `${tenant_id}:${session_id}`;
+    this.evictIdleBuckets(now_ms);
+    const key = `${tenant_id.length}:${tenant_id}${session_id.length}:${session_id}`;
     const previous = this.buckets.get(key);
     const bucket: TokenBucket = previous === undefined
-      ? { tokens: this.capacity, last_refill_ms: now_ms }
+      ? { tokens: this.capacity, last_refill_ms: now_ms, last_access_ms: now_ms }
       : previous;
     const elapsed_ms = Math.max(0, now_ms - bucket.last_refill_ms);
     bucket.tokens = Math.min(
@@ -152,13 +208,66 @@ export class InMemoryTurnRateLimiter implements TurnRateLimiter {
       bucket.tokens + elapsed_ms * this.refill_per_second / 1000,
     );
     bucket.last_refill_ms = now_ms;
-    if (bucket.tokens < 1) {
-      this.buckets.set(key, bucket);
-      return false;
+    bucket.last_access_ms = Math.max(bucket.last_access_ms, now_ms);
+    const allowed = bucket.tokens >= 1;
+    if (allowed) bucket.tokens -= 1;
+
+    if (previous !== undefined) {
+      this.buckets.delete(key);
+    } else if (this.buckets.size >= this.max_buckets) {
+      const leastRecentKey = this.buckets.keys().next().value;
+      if (leastRecentKey !== undefined) this.buckets.delete(leastRecentKey);
     }
-    bucket.tokens -= 1;
     this.buckets.set(key, bucket);
-    return true;
+    return allowed;
+  }
+
+  private evictIdleBuckets(now_ms: number): void {
+    for (const [key, bucket] of this.buckets) {
+      if (now_ms - bucket.last_access_ms <= this.idle_ttl_ms) break;
+      this.buckets.delete(key);
+    }
+  }
+}
+
+/**
+ * Shared token-bucket limiter for deployments with Redis. Lua keeps refill and consumption atomic
+ * across API processes, while an idle TTL bounds the lifetime of abandoned session keys.
+ */
+export class RedisTurnRateLimiter implements TurnRateLimiter {
+  private readonly capacity: number;
+  private readonly refill_per_second: number;
+  private readonly idle_ttl_ms: number;
+
+  constructor(
+    private readonly redis: Pick<RedisInjectedClient, 'eval'>,
+    options: RedisTurnRateLimiterOptions = {},
+  ) {
+    this.capacity = options.capacity ?? DEFAULT_TURN_RATE_LIMIT_CAPACITY;
+    this.refill_per_second = options.refill_per_second ?? DEFAULT_TURN_RATE_LIMIT_REFILL_PER_SECOND;
+    this.idle_ttl_ms = options.idle_ttl_ms ?? DEFAULT_TURN_RATE_LIMIT_IDLE_TTL_MS;
+    if (!Number.isSafeInteger(this.capacity) || this.capacity < 1) {
+      throw new TypeError('turn rate limiter capacity must be a positive integer');
+    }
+    if (!Number.isFinite(this.refill_per_second) || this.refill_per_second < 0) {
+      throw new TypeError('turn rate limiter refill_per_second must be a non-negative finite number');
+    }
+    if (!Number.isSafeInteger(this.idle_ttl_ms) || this.idle_ttl_ms < 1) {
+      throw new TypeError('turn rate limiter idle_ttl_ms must be a positive integer');
+    }
+  }
+
+  async consume(tenant_id: string, session_id: string): Promise<boolean> {
+    const key = `agentos:care-turn:${encodeURIComponent(tenant_id)}:${encodeURIComponent(session_id)}`;
+    const result = await this.redis.eval(
+      REDIS_TURN_RATE_LIMIT_SCRIPT,
+      1,
+      key,
+      this.capacity,
+      this.refill_per_second,
+      this.idle_ttl_ms,
+    );
+    return result === 1 || result === '1';
   }
 }
 function wireStatusOf(state: TaskStoredState): TaskWireStatus {
@@ -226,8 +335,8 @@ async function waitForTurnReceipt(input: {
   fail('RUN_LEASE_HELD', 'another delivery still owns this turn; retry after its durable receipt is settled');
 }
 
-import { salesRequirementsFor, shouldUseSalesAdvisor } from './turn-classifier.js';
-import type { TurnIntentPort } from '../../runtime/bindings/turn-intent.js';
+import { salesOrderRequestFor, salesRequirementsFor, shouldUseSalesAdvisor } from './turn-classifier.js';
+import type { TurnIntentPort, TurnIntentProposal } from '../../runtime/bindings/turn-intent.js';
 
 /**
  * Provider failures raised while proposing a Care intent, mapped onto the gateway's own vocabulary.
@@ -235,9 +344,10 @@ import type { TurnIntentPort } from '../../runtime/bindings/turn-intent.js';
  * refusal or timeout — instead of a generic server fault the caller cannot act on.
  */
 const PROVIDER_FAILURE_CODES: Record<string, {
-  readonly code: 'PROVIDER_REJECTED' | 'PROVIDER_TIMEOUT' | 'RATE_LIMITED';
+  readonly code: 'CAPABILITY_UNAVAILABLE' | 'PROVIDER_REJECTED' | 'PROVIDER_TIMEOUT' | 'RATE_LIMITED';
   readonly message: string;
 }> = {
+  LLM_NOT_CONFIGURED: { code: 'CAPABILITY_UNAVAILABLE', message: 'no LLM provider is configured for this turn' },
   LLM_AUTH_FAILED: { code: 'PROVIDER_REJECTED', message: 'the intent provider rejected the platform credential' },
   LLM_INVALID_RESPONSE: { code: 'PROVIDER_REJECTED', message: 'the intent provider returned an unusable response' },
   LLM_RATE_LIMITED: { code: 'RATE_LIMITED', message: 'the intent provider rate-limited this turn' },
@@ -248,24 +358,45 @@ const PROVIDER_FAILURE_CODES: Record<string, {
   LLM_UNAVAILABLE: { code: 'PROVIDER_TIMEOUT', message: 'the intent provider is currently unreachable' },
 };
 
+type TurnIntentProposalOutcome =
+  | { readonly kind: 'PROPOSED'; readonly proposal: TurnIntentProposal }
+  | { readonly kind: 'REFUSED'; readonly code: 'LLM_INVALID_RESPONSE' };
+
 /** Proposes the Care intent, refusing truthfully when the provider cannot answer. */
 async function proposeCareIntent(
   proposer: TurnIntentPort,
   message: string,
   correlation_id: string,
   scope: { readonly tenant_id: string; readonly run_id: string },
-) {
+): Promise<TurnIntentProposalOutcome> {
   try {
-    return await proposer.propose({ message, correlation_id, tenant_id: scope.tenant_id, run_id: scope.run_id });
+    return {
+      kind: 'PROPOSED',
+      proposal: await proposer.propose({ message, correlation_id, tenant_id: scope.tenant_id, run_id: scope.run_id }),
+    };
   } catch (error) {
-    const code = typeof error === 'object' && error !== null
-      ? (error as { readonly code?: unknown }).code
-      : undefined;
+    let code: unknown;
+    if (typeof error === 'object' && error !== null && 'code' in error) code = error.code;
+    if (code === 'LLM_INVALID_RESPONSE') return { kind: 'REFUSED', code };
     const mapped = typeof code === 'string' ? PROVIDER_FAILURE_CODES[code] : undefined;
     if (mapped === undefined) throw error;
     return fail(mapped.code, `${mapped.message}; the turn is refused rather than answered from an unvalidated classification`);
   }
 }
+
+/** Lets Care's deterministic parser handle an incomplete model order proposal. */
+function careProposalForTurn(proposal: TurnIntentProposal | undefined): TurnIntentProposal | undefined {
+  if (
+    proposal !== undefined
+    && (proposal.intent === 'order_status' || proposal.intent === 'order_lookup')
+    && proposal.requirements.order_reference === undefined
+  ) {
+    return undefined;
+  }
+  return proposal;
+}
+
+
 
 export async function admitCareTurn(input: {
   readonly runtime: GatewayRuntime;
@@ -349,7 +480,7 @@ export async function admitCareTurn(input: {
   }
 
   const session_id = principal.session_id ?? conversation.external_thread_id;
-  if (input.rateLimiter !== undefined && !input.rateLimiter.consume(tenant_id, session_id)) {
+  if (input.rateLimiter !== undefined && !(await input.rateLimiter.consume(tenant_id, session_id))) {
     fail('RATE_LIMITED', 'too many conversational turns for this session; retry after the rate window');
   }
 
@@ -440,16 +571,45 @@ export async function admitCareTurn(input: {
     };
   }
 
-  const intentProposal = input.module !== 'marketing' && input.intentProposer !== undefined
-    ? await proposeCareIntent(input.intentProposer, input.message, input.correlation_id, { tenant_id, run_id: reserved_run_id })
-    : undefined;
-  const careProposal = input.module === 'support' ? intentProposal : undefined;
+  const salesOrderRequest = input.module === 'sales' ? salesOrderRequestFor(input.message) : undefined;
+  let intentProposal: TurnIntentProposal | undefined;
+  let intentProposalFailure: 'LLM_INVALID_RESPONSE' | undefined;
+  try {
+    const intentOutcome = input.module !== 'marketing'
+      && !(input.module === 'sales' && salesOrderRequest !== undefined)
+      && input.intentProposer !== undefined
+      ? await proposeCareIntent(input.intentProposer, input.message, input.correlation_id, {
+          tenant_id,
+          run_id: reserved_run_id,
+        })
+      : undefined;
+    if (intentOutcome?.kind === 'PROPOSED') {
+      intentProposal = intentOutcome.proposal;
+    } else if (intentOutcome?.kind === 'REFUSED') {
+      if (input.module !== 'sales') {
+        const mapped = PROVIDER_FAILURE_CODES[intentOutcome.code] ?? {
+          code: 'PROVIDER_REJECTED',
+          message: 'the intent provider returned an unusable response',
+        };
+        fail(mapped.code, `${mapped.message}; the turn is refused rather than answered from an unvalidated classification`);
+      }
+      intentProposalFailure = intentOutcome.code;
+    }
+  } catch (error) {
+    await runtime.effects.resolve({ tenant_id, effect_key, status: 'FAILED' });
+    throw error;
+  }
+  const careProposal = input.module === 'support' ? careProposalForTurn(intentProposal) : undefined;
   const parsedSalesRequirements = input.module === 'sales'
+    && intentProposalFailure === undefined
+    && salesOrderRequest === undefined
     ? salesRequirementsFor(input.message, intentProposal?.sales_requirements)
     : undefined;
-  const salesRequirements = shouldUseSalesAdvisor(input.message, parsedSalesRequirements)
+  const salesRequirements = intentProposalFailure === undefined
+    && shouldUseSalesAdvisor(input.message, parsedSalesRequirements)
     ? parsedSalesRequirements
     : undefined;
+
 
   const started = await runtime.runs.start({
     tenant_id,
@@ -471,11 +631,22 @@ export async function admitCareTurn(input: {
         care_requirements: careProposal.requirements,
         ...(careProposal.metadata === undefined ? {} : { care_intent_metadata: careProposal.metadata }),
       }),
+      ...(salesOrderRequest === undefined ? {} : {
+        sales_proposal_source: 'API_GATEWAY',
+        sales_intent: 'purchase',
+        sales_order_request: salesOrderRequest,
+      }),
       ...(salesRequirements === undefined ? {} : {
         sales_proposal_source: 'API_GATEWAY',
         sales_intent: 'advisor',
         sales_requirements: salesRequirements,
       }),
+      ...(intentProposalFailure === undefined ? {} : {
+        sales_proposal_source: 'API_GATEWAY',
+        sales_intent_failure: intentProposalFailure,
+      }),
+
+
       ...(input.module === 'sales' && intentProposal?.metadata !== undefined
         ? { sales_intent_metadata: intentProposal.metadata }
         : {}),
@@ -486,6 +657,12 @@ export async function admitCareTurn(input: {
             run_id: reserved_run_id,
             effect_key,
             request_fingerprint,
+            customer_message: {
+              conversation_id,
+              sender_id: session_id,
+              content: input.message,
+              request_id: input.request_id,
+            },
           },
         }
       : {}),
@@ -570,14 +747,6 @@ export async function admitCareTurn(input: {
     request_fingerprint,
   };
 
-  await runtime.conversations.appendMessage({
-    tenant_id,
-    conversation_id,
-    sender_type: 'customer',
-    sender_id: session_id,
-    content: input.message,
-    request_id: input.request_id,
-  });
   await runtime.receipts.storeReceipt(tenant_id, effect_key, receipt);
 
   await runtime.audit.record({

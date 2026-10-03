@@ -74,6 +74,10 @@ test('unready dependencies keep liveness up and readiness down', async () => {
   const probes = {
     postgres: async () => ({ ok: false, reason: 'unreachable' }),
     redis: async () => ({ ok: true }),
+    schemaCheck: async () => ({
+      ready: false,
+      failures: ['SCHEMA_BEHIND', 'PLATFORM_ROLE_MISSING'],
+    }),
   };
   const result = await start(validEnv(), {
     exitOnInvalid: false,
@@ -92,6 +96,8 @@ test('unready dependencies keep liveness up and readiness down', async () => {
     const ready = await get(result.port, '/ready');
     assert.equal(ready.status, 503);
     assert.equal(ready.body.failures.some((failure) => failure.dependency === 'postgres'), true);
+    assert.equal(ready.body.failures.some((failure) => failure.reason === 'SCHEMA_BEHIND'), true);
+    assert.equal(ready.body.failures.some((failure) => failure.reason === 'PLATFORM_ROLE_MISSING'), true);
     assert.equal(ready.text.includes('redis-local-password-8a3d'), false);
   } finally {
     result.server?.close();
@@ -102,8 +108,6 @@ test('command center rejects an API URL that includes /api/v1', async () => {
   const rejected = parseCommandCenterEnv({
     APP_ENV: 'local',
     NODE_ENV: 'development',
-    NEXTAUTH_SECRET: 'abcdefghijklmnopqrstuvwxyz012345',
-    NEXTAUTH_URL: 'http://localhost:3000',
     NEXT_PUBLIC_API_URL: 'http://localhost:4000/api/v1',
   });
   assert.equal(rejected.ok, false);
@@ -112,8 +116,6 @@ test('command center rejects an API URL that includes /api/v1', async () => {
   const accepted = parseCommandCenterEnv({
     APP_ENV: 'local',
     NODE_ENV: 'development',
-    NEXTAUTH_SECRET: 'abcdefghijklmnopqrstuvwxyz012345',
-    NEXTAUTH_URL: 'http://localhost:3000',
     NEXT_PUBLIC_API_URL: 'http://localhost:4000',
   });
   assert.equal(accepted.ok, true);

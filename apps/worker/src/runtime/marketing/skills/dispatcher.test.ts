@@ -2,6 +2,7 @@ import { computeEffectKey, computeRequestFingerprint } from '@agentos/core-engin
 import type { ActionDraft, AssignableAuthority } from '@agentos/core-engine/contracts';
 import { describe, expect, it, vi } from 'vitest';
 
+import type { SkillLlmPort } from '@agentos/skills';
 import type { MarketingAudienceResolver } from './types.js';
 import {
   createMarketingSkillServices,
@@ -535,10 +536,17 @@ describe('Marketing Skill Services and Dispatcher', () => {
       expect(readApproved).not.toHaveBeenCalled();
     });
 
-    it('surfaces configured content provider failures as typed provider errors', async () => {
+    it.each([
+      { providerCode: 'LLM_UNAVAILABLE' },
+      { providerCode: 'LLM_RATE_LIMITED' },
+      { providerCode: 'LLM_TIMEOUT' },
+      { providerCode: 'LLM_AUTH_FAILED' },
+      { providerCode: 'LLM_NOT_CONFIGURED' },
+      { providerCode: 'LLM_INVALID_RESPONSE' },
+    ])('preserves $providerCode from the content provider for retry classification', async ({ providerCode }) => {
       const content_engine: MarketingContentEnginePort = {
         generateContent: vi.fn(async () => {
-          throw Object.assign(new Error('provider unavailable'), { code: 'LLM_UNAVAILABLE' });
+          throw Object.assign(new Error('provider unavailable'), { code: providerCode });
         }),
       };
       const services = createMarketingSkillServices({
@@ -565,10 +573,92 @@ describe('Marketing Skill Services and Dispatcher', () => {
           effect_key: 'effect-content',
         },
       })).rejects.toMatchObject({
-        code: 'PROVIDER_ERROR',
-        details: { provider_code: 'LLM_UNAVAILABLE' },
+        code: providerCode,
+        details: { provider_code: providerCode },
       });
     });
+    it('uses the invocation-bound LLM port when available instead of the content side channel', async () => {
+      const signal = new AbortController().signal;
+      const completeStructured = vi.fn(async () => ({
+        value: {
+          draft_id: 'draft-context-llm',
+          headline: 'Headline',
+          body_content: 'Body',
+          cta_text: 'CTA',
+          channel_payload: { channel_type: 'EMAIL_HTML' },
+        },
+        usage: { prompt_tokens: 12, completion_tokens: 8 },
+      }));
+      const llm: SkillLlmPort = { completeStructured };
+      const content_engine = createMockContentEngine();
+      const services = createServices({ content_engine });
+
+      const output = await services.tool_port.invoke<unknown, { readonly brand_audit_text: string }>({
+        skill_id: 'skill.mkt.generate_content',
+        tool_binding: 'Core.LLMContentEngine',
+        input: {
+          tenant_id: TENANT_ID,
+          campaign_theme: 'theme',
+          channel: 'EMAIL_HTML',
+          locale: 'en-US',
+        },
+        context: {
+          run_id: RUN_ID,
+          tenant_id: TENANT_ID,
+          caller_agent: 'MKT-03',
+          correlation_id: CORRELATION_ID,
+          granted_authority: 'AUTH-3',
+          effect_key: 'effect-content-context-llm',
+          signal,
+          llm,
+        },
+      });
+
+      expect(completeStructured).toHaveBeenCalledTimes(1);
+      expect(completeStructured).toHaveBeenCalledWith(expect.objectContaining({
+        purpose: 'marketing.generate_content',
+        signal,
+      }));
+      expect(content_engine.generateContent).not.toHaveBeenCalled();
+      expect(output.brand_audit_text).toBe('Headline\nBody\nCTA');
+    });
+
+    it.each([
+      { label: 'a loose channel name', channel_payload: { channel_type: 'email' } },
+      { label: 'no channel payload', channel_payload: undefined },
+    ])('drafts for the requested channel when the provider returns $label', async ({ channel_payload }) => {
+      const llm: SkillLlmPort = {
+        completeStructured: vi.fn(async () => ({
+          value: {
+            draft_id: 'draft-loose-channel',
+            headline: 'Headline',
+            body_content: 'Body',
+            cta_text: 'CTA',
+            ...(channel_payload === undefined ? {} : { channel_payload }),
+          },
+          usage: { prompt_tokens: 1, completion_tokens: 1 },
+        })),
+      };
+      const services = createServices({ content_engine: createMockContentEngine() });
+
+      const output = await services.tool_port.invoke<unknown, { readonly channel_payload: { readonly channel_type: string } }>({
+        skill_id: 'skill.mkt.generate_content',
+        tool_binding: 'Core.LLMContentEngine',
+        input: { tenant_id: TENANT_ID, campaign_theme: 'theme', channel: 'EMAIL_HTML', locale: 'en-US' },
+        context: {
+          run_id: RUN_ID,
+          tenant_id: TENANT_ID,
+          caller_agent: 'MKT-03',
+          correlation_id: CORRELATION_ID,
+          granted_authority: 'AUTH-3',
+          effect_key: 'effect-content-loose-channel',
+          llm,
+        },
+      });
+
+      expect(output.channel_payload.channel_type).toBe('EMAIL_HTML');
+    });
+
     it('recomposes the audit surface from every generated copy field', async () => {
       const content_engine = {
         generateContent: vi.fn(async () => ({
@@ -1159,7 +1249,7 @@ describe('Marketing Skill Services and Dispatcher', () => {
       };
 
       await expect(services.dispatcher.dispatch(action)).rejects.toMatchObject({
-        code: 'SKILL_EXECUTION_FAILED',
+        code: 'CONSENT_PORT_REQUIRED',
       });
       expect(dispatchCampaign).not.toHaveBeenCalled();
     });

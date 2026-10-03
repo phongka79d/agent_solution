@@ -11,7 +11,7 @@ const MAX_PASSWORD_LENGTH = 512;
 
 type JsonRecord = Record<string, unknown>;
 
-type FetchLike = typeof fetch;
+export type FetchLike = typeof fetch;
 
 export class ProviderHttpError extends Error {
   readonly status: number;
@@ -122,7 +122,7 @@ function loginResponseSession(value: unknown): { accessToken: string; session: A
   return { accessToken, session };
 }
 
-async function fetchJson(fetchImpl: FetchLike, url: string, init: RequestInit): Promise<{ response: Response; payload: unknown }> {
+export async function fetchJson(fetchImpl: FetchLike, url: string, init: RequestInit): Promise<{ response: Response; payload: unknown }> {
   let response: Response;
   try {
     response = await fetchImpl(url, { ...init, redirect: 'manual', cache: 'no-store' });
@@ -133,7 +133,7 @@ async function fetchJson(fetchImpl: FetchLike, url: string, init: RequestInit): 
   return { response, payload };
 }
 
-async function revokeUpstreamToken(apiToken: string, fetchImpl: FetchLike): Promise<void> {
+export async function revokeUpstreamToken(apiToken: string, fetchImpl: FetchLike): Promise<void> {
   try {
     await fetchJson(fetchImpl, apiV1Url('/demo/logout'), {
       method: 'POST',

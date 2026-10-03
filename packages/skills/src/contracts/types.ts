@@ -7,7 +7,13 @@
  * Declarations only: this module registers nothing, validates nothing and executes nothing.
  */
 
-import type { AssignableAuthority, AuthorityLevel } from '@agentos/core-engine/contracts';
+import type {
+  AssignableAuthority,
+  AuthorityLevel,
+  EpistemicClassification,
+  EpistemicWriteTarget,
+  HydratedContext,
+} from '@agentos/core-engine/contracts';
 
 /**
  * Every label of the SRS §12 authority vocabulary, in ascending order of restriction.
@@ -100,6 +106,8 @@ export const INDETERMINATE_TRANSPORT_ERRORS: readonly string[] = Object.freeze([
   'ECONNRESET',
   'ETIMEDOUT',
   'EPIPE',
+  'TIMEOUT',
+  'DISPATCH_TIMEOUT',
   'PROVIDER_INDETERMINATE',
   'UNPARSABLE_PROVIDER_RESPONSE',
 ]);
@@ -154,7 +162,26 @@ export interface TestCaseSpec {
  */
 export type SkillEffectClass = 'READ' | 'INTERNAL' | 'EFFECT' | 'APPROVAL';
 
+export type SkillAutonomyClass = 'NEVER' | 'PROMOTABLE';
+export type SkillCompletion = 'SYNC' | 'AWAITS_HUMAN';
+
 export interface ISkillContract<TInput = unknown, TOutput = unknown> {
+  /** Stable translation key, derived from the canonical skill id. */
+  readonly display_key: string;
+  /** Domain segment of `skill.<domain>.<action>`. */
+  readonly domain: string;
+  /** Tenant configuration schema; configuration is closed unless explicitly declared. */
+  readonly config_schema: Readonly<Record<string, unknown>>;
+  readonly autonomy_class: SkillAutonomyClass;
+  /** Stable evidence/receipt reference produced by this skill. */
+  readonly receipt_ref: string;
+  readonly completion: SkillCompletion;
+  readonly connector_kinds: readonly string[];
+  /** True when the row's inputs must bind to a server-verified customer identity (BR-003, NFR-008). */
+  readonly requires_verified_identity: boolean;
+  /** True when the row may act only on a customer with an active consent record (BR-004). */
+  readonly requires_consent: boolean;
+
   readonly skill_id: string;
   readonly purpose: string;
   /** Effect behaviour of this row (§6.5); decides whether an `effect_key` is mandatory. */
@@ -190,6 +217,53 @@ export interface ISkillContract<TInput = unknown, TOutput = unknown> {
 }
 
 /**
+ * The subset of a row the PEP registry trusts (§6.1). Declared here, rather than importing the
+ * core-engine root, so this package's dependency edge stays on `@agentos/core-engine/contracts`;
+ * the core-engine `PolicyRegistrySkill` is structurally identical to this projection.
+ */
+export interface PolicyRegistrySkillProjection {
+  readonly skill_id: string;
+  /** Stored requirement; kept as `string` so a corrupt row is refused, not assumed well typed. */
+  readonly required_authority: string;
+  readonly allowed_agents: readonly string[];
+  readonly mutating: boolean;
+  readonly price_bearing: boolean;
+  readonly idempotent: boolean;
+  readonly epistemic_class: EpistemicClassification;
+  readonly write_target: EpistemicWriteTarget;
+  readonly requires_consent: boolean;
+  readonly requires_verified_identity: boolean;
+  readonly timeout_ms: number;
+}
+
+
+/**
+ * Structured LLM completion available to an individual skill invocation.
+ */
+export interface SkillLlmPort {
+  completeStructured(input: {
+    readonly purpose: string;
+    readonly messages: readonly {
+      readonly role: 'system' | 'developer' | 'user' | 'assistant';
+      readonly content: string;
+    }[];
+    readonly schema: Readonly<Record<string, unknown>>;
+    readonly max_output_tokens?: number;
+    readonly signal?: AbortSignal;
+  }): Promise<{
+    readonly value: unknown;
+    readonly usage: {
+      readonly prompt_tokens: number;
+      readonly completion_tokens: number;
+      readonly cached_tokens?: number;
+    } | null;
+  }>;
+}
+
+/** Creates an invocation-scoped LLM port using the trusted execution identity. */
+export type SkillLlmPortFactory = (context: Omit<ExecutionContext, 'llm'>) => SkillLlmPort;
+
+/**
  * Server-resolved execution context of one invocation. Every field is bound by the orchestrator —
  * never read back from a payload, a prompt or a model output — and `granted_authority` stays the
  * clearance the run was started with: no approval and no verdict ever raises it (BR-008).
@@ -207,6 +281,8 @@ export interface ExecutionContext {
    * effect reservation is taken under, and the key a timed-out effect is reconciled by.
    */
   readonly effect_key: string;
+  /** Fingerprint of the full pending action payload stored with the effect reservation. */
+  readonly request_fingerprint?: string;
   /** Bound only when an `AUTH-4` approval authorizes this exact tenant/run/effect tuple. */
   readonly approval_id?: string;
   /**
@@ -214,7 +290,15 @@ export interface ExecutionContext {
    * `(tenant_id, run_id, effect_key, payload_digest)`, so a different digest is a different action.
    */
   readonly approval_payload_digest?: string;
+  /** Read-only, checkpoint-backed hydrated state passed through from the orchestrator. */
+  readonly hydrated_context?: HydratedContext;
+  /** Zero-based attempt ordinal for a retry-safe provider reservation identity. */
+  readonly attempt?: number;
+  /** Position of this skill invocation in the server-created plan. */
+  readonly step_index?: number;
   readonly signal?: AbortSignal;
+  /** Invocation-bound structured-completion port, when the runtime has an LLM provider. */
+  readonly llm?: SkillLlmPort;
 }
 
 /**

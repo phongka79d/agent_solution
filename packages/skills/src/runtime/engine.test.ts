@@ -9,9 +9,9 @@
 
 import { describe, expect, it } from 'vitest';
 
-import type { AssignableAuthority } from '@agentos/core-engine/contracts';
+import type { AssignableAuthority, HydratedContext } from '@agentos/core-engine/contracts';
 
-import type { OrchestratorBroker } from '../contracts/index.js';
+import type { OrchestratorBroker, SkillLlmPort } from '../contracts/index.js';
 import { enforceAuthorityAdmission } from '../runtime/authority.js';
 import {
   createHarness,
@@ -191,6 +191,121 @@ describe('skill runtime dispatch', () => {
       note: null,
     });
   });
+
+  it('binds the reservation fingerprint into the tool execution context', async () => {
+    const harness = createHarness();
+    const requestFingerprint = 'e'.repeat(64);
+
+    await harness.engine.dispatch(dispatchRequest({ request_fingerprint: requestFingerprint }));
+
+    expect(harness.invocations[0]?.context.request_fingerprint).toBe(requestFingerprint);
+  });
+  it('passes the checkpoint hydrated context to the tool execution context unchanged', async () => {
+    const harness = createHarness();
+    const hydrated_context: HydratedContext = {
+      correlation_id: 'corr-1',
+      tenant_id: 'tenant-1',
+      customer: null,
+      working_memory: {
+        session_id: 'session-1',
+        last_touch_channel: 'web',
+        turn_count: 1,
+        takeover_active: false,
+      },
+      knowledge_citations: [],
+      hydrated_at: '2026-09-30T00:00:00.000Z',
+      run_state: { sales: { advisor_candidate_sku: 'SKU-1' } },
+    };
+
+    await harness.engine.dispatch(dispatchRequest({ hydrated_context }));
+
+    expect(harness.invocations[0]?.context.hydrated_context).toBe(hydrated_context);
+  });
+  it('passes the injected LLM port to the skill handler context', async () => {
+    const llm: SkillLlmPort = {
+      async completeStructured() {
+        return { value: { sku_id: 'SKU-1' }, usage: null };
+      },
+    };
+    const harness = createHarness({ engine: { llm: () => llm } });
+
+    await harness.engine.dispatch(dispatchRequest());
+
+    expect(harness.invocations[0]?.context.llm).toBe(llm);
+  });
+
+  it('records one successful structured call and forwards cancellation to an in-flight handler call', async () => {
+    let providerCalls = 0;
+    let usageRecords = 0;
+    let abortNext = false;
+    let observedSignal: AbortSignal | undefined;
+    let signalReady!: () => void;
+    const abortingCallReady = new Promise<void>((resolve) => {
+      signalReady = resolve;
+    });
+    const llm: SkillLlmPort = {
+      async completeStructured({ signal }) {
+        providerCalls += 1;
+        observedSignal = signal;
+        if (signal === undefined) throw new Error('the engine signal was not forwarded');
+        if (abortNext) {
+          abortNext = false;
+          signalReady();
+          await new Promise<never>((_resolve, reject) => {
+            const onAbort = () => {
+              signal.removeEventListener('abort', onAbort);
+              reject(new Error('LLM_CANCELLED'));
+            };
+            if (signal.aborted) {
+              onAbort();
+            } else {
+              signal.addEventListener('abort', onAbort, { once: true });
+            }
+          });
+        }
+        usageRecords += 1;
+        return {
+          value: { sku_id: 'SKU-1' },
+          usage: { prompt_tokens: 1, completion_tokens: 1 },
+        };
+      },
+    };
+    const harness = createHarness({
+      engine: { llm: () => llm },
+      respond: async (invocation) => {
+        const contextLlm = invocation.context.llm;
+        if (contextLlm === undefined) throw new Error('the handler has no LLM port');
+        await contextLlm.completeStructured({
+          purpose: 'fixture.structured_completion',
+          messages: [{ role: 'user', content: 'complete this fixture' }],
+          schema: { type: 'object' },
+          ...(invocation.context.signal === undefined
+            ? {}
+            : { signal: invocation.context.signal }),
+        });
+        return { sku_id: 'SKU-1' };
+      },
+    });
+
+    await harness.engine.dispatch(dispatchRequest());
+    expect(providerCalls).toBe(1);
+    expect(usageRecords).toBe(1);
+
+    const controller = new AbortController();
+    abortNext = true;
+    const cancelled = harness.engine.dispatch(dispatchRequest({
+      run_id: 'run-abort',
+      signal: controller.signal,
+    }));
+    await abortingCallReady;
+    controller.abort();
+    await expectRefusalAsync(cancelled, 'SKILL_EXECUTION_FAILED');
+
+    expect(providerCalls).toBe(2);
+    expect(usageRecords).toBe(1);
+    expect(observedSignal?.aborted).toBe(true);
+  });
+
 
   it('refuses a supplied effect key that is not this dispatch’s derivation', async () => {
     const harness = createHarness();

@@ -77,42 +77,9 @@ export class EffectGuard implements IEffectGuard {
     action_revision: number;
     request_id: string;
   }): string {
-    if (input.tenant_id.trim().length === 0) {
-      throw new OrchestratorError(
-        'TENANT_CONTEXT_REQUIRED',
-        'effect_key cannot be derived without a tenant identity (NFR-006).',
-      );
-    }
-
-    if (input.skill_id.trim().length === 0) {
-      throw new OrchestratorError(
-        'SKILL_ID_REQUIRED',
-        'effect_key cannot be derived without the registry skill id bound to the action (BR-005).',
-      );
-    }
-
-    if (input.request_id.trim().length === 0) {
-      throw new OrchestratorError(
-        'REQUEST_ID_REQUIRED',
-        'effect_key is derived from the immutable inbound request identity (signal_id / message_id / '
-          + 'webhook delivery id); run_id, timestamps and random UUIDs are never inputs (BR-005).',
-      );
-    }
-
-    if (!Number.isInteger(input.step_index) || input.step_index < 0) {
-      throw new OrchestratorError(
-        'STEP_INDEX_INVALID',
-        `effect_key requires a non-negative integer step_index (received ${String(input.step_index)}).`,
-      );
-    }
-
-    if (!Number.isInteger(input.action_revision) || input.action_revision < 0) {
-      throw new OrchestratorError(
-        'ACTION_REVISION_INVALID',
-        `effect_key requires a non-negative integer action_revision (received ${String(input.action_revision)}).`,
-      );
-    }
-
+    // One derivation, one validation: the guard is a binding of BR-005, not a second definition of
+    // it. Re-implementing the checks here is how two callers start disagreeing about which
+    // identities are legal while both "pass their tests".
     return deriveEffectKey(input);
   }
 

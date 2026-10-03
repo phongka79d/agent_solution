@@ -15,8 +15,8 @@ const hasDatabaseUrl =
 
 /**
  * Synthetic tenant fixtures. The ids below are uuid v7-shaped values dedicated to
- * this suite; no seed or registry row is created, and nothing here is a policy
- * default. Every NOT NULL column without a DDL default is supplied explicitly.
+ * this suite; tenant registry rows are created before their children. Nothing here
+ * is a policy default. Every NOT NULL column without a DDL default is supplied explicitly.
  *
  * RLS only applies to non-superusers, so every database case runs as
  * `agentos_app` (NOLOGIN NOBYPASSRLS, created by the migration rehearsal) through
@@ -33,6 +33,9 @@ const PRODUCT_B = '01920000-0000-7000-8000-0000000000b2';
 const CONVERSATION_A = '01920000-0000-7000-8000-0000000000a3';
 const CONVERSATION_B = '01920000-0000-7000-8000-0000000000b3';
 const IDENTITY_B = '01920000-0000-7000-8000-0000000000b4';
+const IDENTITY_USER_A = '01920000-0000-7000-8000-0000000000b5';
+const IDENTITY_USER_B = '01920000-0000-7000-8000-0000000000b6';
+const IDENTITY_INVITE_HASH = 'c'.repeat(64);
 
 const SWEEP_ACTION_A = '01920000-0000-7000-8000-0000000000c1';
 const SWEEP_ACTION_B = '01920000-0000-7000-8000-0000000000c2';
@@ -43,7 +46,7 @@ const FIXTURE_TENANTS: readonly string[] = [TENANT_A, TENANT_B];
 
 const FIXTURE_INSERTS: readonly { readonly text: string; readonly values: readonly unknown[] }[] = [
   {
-    text: 'INSERT INTO agentos.tenants (tenant_id, status, display_name, idempotency_key, request_fingerprint) VALUES ($1, $2, $3, $4, $5)',
+    text: "INSERT INTO agentos.tenants (tenant_id, status, display_name, idempotency_key, request_fingerprint, data_class) VALUES ($1, $2, $3, $4, $5, 'TEST')",
     values: [
       TENANT_A,
       'PROVISIONED',
@@ -53,7 +56,7 @@ const FIXTURE_INSERTS: readonly { readonly text: string; readonly values: readon
     ],
   },
   {
-    text: 'INSERT INTO agentos.tenants (tenant_id, status, display_name, idempotency_key, request_fingerprint) VALUES ($1, $2, $3, $4, $5)',
+    text: "INSERT INTO agentos.tenants (tenant_id, status, display_name, idempotency_key, request_fingerprint, data_class) VALUES ($1, $2, $3, $4, $5, 'TEST')",
     values: [
       TENANT_B,
       'PROVISIONED',
@@ -61,6 +64,26 @@ const FIXTURE_INSERTS: readonly { readonly text: string; readonly values: readon
       'fixture-tenant-b'.padEnd(64, 'a'),
       'fixture-tenant-b'.padEnd(64, 'b'),
     ],
+  },
+  {
+    text: 'INSERT INTO agentos.users (user_id, email, password_hash) VALUES ($1, $2, $3)',
+    values: [IDENTITY_USER_A, 'fixture-identity-a@example.com', 'scrypt$fixture-a'],
+  },
+  {
+    text: 'INSERT INTO agentos.users (user_id, email, password_hash) VALUES ($1, $2, $3)',
+    values: [IDENTITY_USER_B, 'fixture-identity-b@example.com', 'scrypt$fixture-b'],
+  },
+  {
+    text: 'INSERT INTO agentos.tenant_memberships (tenant_id, user_id, role_bundle, status) VALUES ($1, $2, $3, $4)',
+    values: [TENANT_A, IDENTITY_USER_A, 'COMPANY_ADMIN', 'ACTIVE'],
+  },
+  {
+    text: 'INSERT INTO agentos.tenant_memberships (tenant_id, user_id, role_bundle, status) VALUES ($1, $2, $3, $4)',
+    values: [TENANT_B, IDENTITY_USER_B, 'VIEWER', 'ACTIVE'],
+  },
+  {
+    text: 'INSERT INTO agentos.invitations (tenant_id, email, token_hash, role_bundle, created_by) VALUES ($1, $2, $3, $4, $5)',
+    values: [TENANT_B, 'fixture-identity-a@example.com', IDENTITY_INVITE_HASH, 'OPERATOR', IDENTITY_USER_B],
   },
   {
     text: 'INSERT INTO agentos.tenant_governance_settings (tenant_id, require_distinct_approver) VALUES ($1, $2)',
@@ -102,6 +125,8 @@ const FIXTURE_INSERTS: readonly { readonly text: string; readonly values: readon
 
 /** Children before parents so composite ON DELETE RESTRICT edges never block cleanup. */
 const FIXTURE_DELETES: readonly string[] = [
+  'DELETE FROM agentos.invitations WHERE tenant_id = ANY($1::uuid[])',
+  'DELETE FROM agentos.tenant_memberships WHERE tenant_id = ANY($1::uuid[])',
   'DELETE FROM agentos.approvals WHERE tenant_id = ANY($1::uuid[])',
   'DELETE FROM agentos.actions WHERE tenant_id = ANY($1::uuid[])',
   'DELETE FROM agentos.tenant_governance_settings WHERE tenant_id = ANY($1::uuid[])',
@@ -114,6 +139,7 @@ const FIXTURE_DELETES: readonly string[] = [
   'DELETE FROM agentos.products WHERE tenant_id = ANY($1::uuid[])',
   'DELETE FROM agentos.customers WHERE tenant_id = ANY($1::uuid[])',
   'DELETE FROM agentos.tenants WHERE tenant_id = ANY($1::uuid[])',
+  "DELETE FROM agentos.users WHERE email LIKE 'fixture-identity-%@example.com' AND cardinality($1::uuid[]) > 0",
 ];
 
 const INSERT_ORDER =
@@ -146,12 +172,11 @@ type SweepStateRow = {
 };
 
 function sqlStateOf(error: unknown): string | undefined {
-  if (typeof error !== 'object' || error === null) {
+  if (typeof error !== 'object' || error === null || !('code' in error)) {
     return undefined;
   }
 
-  const code = (error as { code?: unknown }).code;
-  return typeof code === 'string' ? code : undefined;
+  return typeof error.code === 'string' ? error.code : undefined;
 }
 
 async function captureFailure(run: () => Promise<unknown>): Promise<unknown> {
@@ -167,6 +192,27 @@ async function captureFailure(run: () => Promise<unknown>): Promise<unknown> {
 function expectSqlState(failure: unknown, code: string): void {
   expect(failure, 'expected the statement to be rejected').toBeDefined();
   expect(sqlStateOf(failure)).toBe(code);
+}
+
+/** 0039's invoker trigger runs before RLS WITH CHECK and cannot see hidden parents. */
+function expectTenantWriteRefusal(failure: unknown): void {
+  expect(failure, 'expected the statement to be rejected').toBeDefined();
+  expect(['42501', '23503']).toContain(sqlStateOf(failure));
+  if (sqlStateOf(failure) === '23503') {
+    expect(String(failure)).toContain('data_class tenant or parent not found');
+    expect(typeof failure === 'object' && failure !== null && 'where' in failure
+      ? failure.where : undefined).toMatch(/inherit_data_class/);
+  } else {
+    expect(String(failure)).toMatch(/row-level security/i);
+  }
+}
+
+/** Check persistence as the fixture owner so RLS cannot conceal an unauthorized write. */
+async function expectCustomerAbsent(pool: Pool, customerId: string): Promise<void> {
+  const result = await pool.query<CountRow>(
+    'SELECT count(*)::int AS total FROM agentos.customers WHERE id = $1', [customerId],
+  );
+  expect(result.rows[0]?.total).toBe(0);
 }
 
 /** Opens a transaction that mirrors the binder's scoping, minus the pool lookup. */
@@ -204,7 +250,7 @@ async function asAppRole<T>(
     client.release();
   }
 }
-/** Opens a transaction as agentos_app, then explicitly enters the non-inheriting platform role. */
+/** Enters the capability role through the rehearsal's dedicated platform connection when configured. */
 async function asPlatformRole<T>(
   pool: Pool,
   work: (client: PoolClient) => Promise<T>,
@@ -213,7 +259,6 @@ async function asPlatformRole<T>(
 
   try {
     await client.query('BEGIN');
-    await client.query('SET LOCAL ROLE agentos_app');
     await client.query('SET LOCAL ROLE agentos_platform');
     await client.query('SET LOCAL search_path TO agentos, public');
     const result = await work(client);
@@ -224,6 +269,28 @@ async function asPlatformRole<T>(
       await client.query('ROLLBACK');
     } catch {
       // The client may already be unusable; preserve the original failure.
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+/** Opens the dedicated non-inheriting identity role for its narrow SECURITY DEFINER function surface. */
+async function asAuthRole<T>(pool: Pool, work: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SET LOCAL ROLE agentos_app');
+    await client.query('SET LOCAL ROLE agentos_auth');
+    await client.query('SET LOCAL search_path TO agentos, public');
+    const result = await work(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch {
+      // Preserve the original identity assertion failure.
     }
     throw error;
   } finally {
@@ -296,6 +363,7 @@ describe('epistemic write boundary (no PostgreSQL required)', () => {
 
 describe.skipIf(!hasDatabaseUrl)('agentos_app RLS rehearsal (real PostgreSQL)', () => {
   let fixturePool: Pool;
+  let platformPool: Pool | undefined;
   let connectionString: string;
 
   beforeAll(async () => {
@@ -310,6 +378,8 @@ describe.skipIf(!hasDatabaseUrl)('agentos_app RLS rehearsal (real PostgreSQL)', 
     // Fixtures are written by the connecting (RLS-exempt) role the rehearsal uses.
     // No assertion below relies on that privilege: every check runs as agentos_app.
     fixturePool = new Pool({ connectionString: url, max: 4 });
+    const platformUrl = process.env.PLATFORM_DATABASE_URL?.trim() || url;
+    platformPool = new Pool({ connectionString: platformUrl, max: 4 });
 
     for (const statement of FIXTURE_DELETES) {
       await fixturePool.query(statement, [FIXTURE_TENANTS]);
@@ -328,6 +398,7 @@ describe.skipIf(!hasDatabaseUrl)('agentos_app RLS rehearsal (real PostgreSQL)', 
 
       await fixturePool.end();
     }
+    await platformPool?.end();
   });
 
   describe('application role hardening', () => {
@@ -388,17 +459,74 @@ describe.skipIf(!hasDatabaseUrl)('agentos_app RLS rehearsal (real PostgreSQL)', 
       expect(observed).toBe('agentos_app');
     });
   });
+  describe('identity role boundary', () => {
+    it('denies direct global identity reads and exposes email lookup only through agentos_auth', async () => {
+      for (const table of ['users', 'auth_sessions', 'invitations']) {
+        const failure = await captureFailure(() =>
+          asAppRole(fixturePool, null, (client) => client.query(`SELECT * FROM agentos.${table}`)),
+        );
+        expectSqlState(failure, '42501');
+      }
+
+      const directFunctionFailure = await captureFailure(() =>
+        asAppRole(fixturePool, null, (client) =>
+          client.query('SELECT * FROM agentos.auth_find_user_by_email($1)', ['fixture-identity-a@example.com']),
+        ),
+      );
+      expectSqlState(directFunctionFailure, '42501');
+
+      // A refused statement aborts its transaction; keep the successful accessor
+      // in a separate transaction rather than masking it with SQLSTATE 25P02.
+      const directTableFailure = await captureFailure(() =>
+        asAuthRole(fixturePool, (client) => client.query('SELECT * FROM agentos.users')),
+      );
+      expectSqlState(directTableFailure, '42501');
+      const result = await asAuthRole(fixturePool, (client) =>
+        client.query('SELECT * FROM agentos.auth_find_user_by_email($1)', ['fixture-identity-a@example.com']),
+      );
+      expect(result.rows.map((row: { email: string }) => row.email)).toEqual(['fixture-identity-a@example.com']);
+    });
+
+    it('isolates tenant membership rows and consumes a matching invitation only once', async () => {
+      const visible = await asAppRole(fixturePool, TENANT_A, (client) =>
+        client.query<{ tenant_id: string; user_id: string; role_bundle: string; status: string }>(
+          'SELECT tenant_id::text AS tenant_id, user_id::text AS user_id, role_bundle, status FROM agentos.tenant_memberships ORDER BY user_id',
+        ),
+      );
+      expect(visible.rows).toEqual([{
+        tenant_id: TENANT_A,
+        user_id: IDENTITY_USER_A,
+        role_bundle: 'COMPANY_ADMIN',
+        status: 'ACTIVE',
+      }]);
+
+      const accepted = await asAuthRole(fixturePool, async (client) => {
+        const first = await client.query(
+          'SELECT * FROM agentos.auth_consume_invitation($1, $2::uuid)',
+          [IDENTITY_INVITE_HASH, IDENTITY_USER_A],
+        );
+        const second = await client.query(
+          'SELECT * FROM agentos.auth_consume_invitation($1, $2::uuid)',
+          [IDENTITY_INVITE_HASH, IDENTITY_USER_A],
+        );
+        return { first: first.rows, second: second.rows };
+      });
+      expect(accepted.first).toEqual([{ tenant_id: TENANT_B, role_bundle: 'OPERATOR' }]);
+      expect(accepted.second).toEqual([]);
+    });
+  });
 
   describe('missing tenant context fails closed', () => {
     it('returns 0 rows and rejects INSERT with no tenant setting at all', async () => {
       const isolated = new Pool({ connectionString, max: 1 });
+      const customerId = randomUUID();
 
       try {
         const outcome = await asAppRole(isolated, null, async (client) => {
           const setting = await tenantSettingOf(client);
           const visible = await visibleFixtureTenants(client);
           const rejectedInsert = await captureFailure(() =>
-            client.query(INSERT_NEW_CUSTOMER, [randomUUID(), TENANT_A, 'fixture-no-context']),
+            client.query(INSERT_NEW_CUSTOMER, [customerId, TENANT_A, 'fixture-no-context']),
           );
 
           return { setting, visible, rejectedInsert };
@@ -406,32 +534,35 @@ describe.skipIf(!hasDatabaseUrl)('agentos_app RLS rehearsal (real PostgreSQL)', 
 
         expect(outcome.setting === null || outcome.setting.trim() === '').toBe(true);
         expect(outcome.visible).toEqual([]);
-        expectSqlState(outcome.rejectedInsert, '42501');
-        expect(String(outcome.rejectedInsert)).toMatch(/row-level security/i);
+        expectTenantWriteRefusal(outcome.rejectedInsert);
+        await expectCustomerAbsent(fixturePool, customerId);
       } finally {
         await isolated.end();
       }
     });
 
     it('treats an empty tenant setting as deny, never allow-all', async () => {
+      const customerId = randomUUID();
       const outcome = await asAppRole(fixturePool, null, async (client) => {
         await client.query("SELECT set_config('app.current_tenant_id', '', false)");
 
         const visible = await visibleFixtureTenants(client);
         const rejectedInsert = await captureFailure(() =>
-          client.query(INSERT_NEW_CUSTOMER, [randomUUID(), TENANT_A, 'fixture-empty-context']),
+          client.query(INSERT_NEW_CUSTOMER, [customerId, TENANT_A, 'fixture-empty-context']),
         );
 
         return { visible, rejectedInsert };
       });
 
       expect(outcome.visible).toEqual([]);
-      expectSqlState(outcome.rejectedInsert, '42501');
+      expectTenantWriteRefusal(outcome.rejectedInsert);
+      await expectCustomerAbsent(fixturePool, customerId);
     });
   });
 
   describe('tenant isolation', () => {
     it('hides tenant B from tenant A and refuses tenant-B writes', async () => {
+      const customerId = randomUUID();
       const outcome = await asAppRole(fixturePool, TENANT_A, async (client) => {
         const visible = await visibleFixtureTenants(client);
         const seesCustomerB = await customerVisible(client, CUSTOMER_B);
@@ -440,7 +571,7 @@ describe.skipIf(!hasDatabaseUrl)('agentos_app RLS rehearsal (real PostgreSQL)', 
           [CUSTOMER_B],
         );
         const rejectedInsert = await captureFailure(() =>
-          client.query(INSERT_NEW_CUSTOMER, [randomUUID(), TENANT_B, 'fixture-cross-insert']),
+          client.query(INSERT_NEW_CUSTOMER, [customerId, TENANT_B, 'fixture-cross-insert']),
         );
 
         return { visible, seesCustomerB, hijackUpdate, rejectedInsert };
@@ -449,10 +580,12 @@ describe.skipIf(!hasDatabaseUrl)('agentos_app RLS rehearsal (real PostgreSQL)', 
       expect(outcome.visible).toEqual([TENANT_A]);
       expect(outcome.seesCustomerB).toBe(false);
       expect(outcome.hijackUpdate.rowCount).toBe(0);
-      expectSqlState(outcome.rejectedInsert, '42501');
+      expectTenantWriteRefusal(outcome.rejectedInsert);
+      await expectCustomerAbsent(fixturePool, customerId);
     });
 
     it('hides tenant A from tenant B and refuses tenant-A writes', async () => {
+      const customerId = randomUUID();
       const outcome = await asAppRole(fixturePool, TENANT_B, async (client) => {
         const visible = await visibleFixtureTenants(client);
         const seesCustomerA = await customerVisible(client, CUSTOMER_A);
@@ -461,7 +594,7 @@ describe.skipIf(!hasDatabaseUrl)('agentos_app RLS rehearsal (real PostgreSQL)', 
           [CUSTOMER_A],
         );
         const rejectedInsert = await captureFailure(() =>
-          client.query(INSERT_NEW_CUSTOMER, [randomUUID(), TENANT_A, 'fixture-cross-insert']),
+          client.query(INSERT_NEW_CUSTOMER, [customerId, TENANT_A, 'fixture-cross-insert']),
         );
 
         return { visible, seesCustomerA, hijackUpdate, rejectedInsert };
@@ -470,7 +603,8 @@ describe.skipIf(!hasDatabaseUrl)('agentos_app RLS rehearsal (real PostgreSQL)', 
       expect(outcome.visible).toEqual([TENANT_B]);
       expect(outcome.seesCustomerA).toBe(false);
       expect(outcome.hijackUpdate.rowCount).toBe(0);
-      expectSqlState(outcome.rejectedInsert, '42501');
+      expectTenantWriteRefusal(outcome.rejectedInsert);
+      await expectCustomerAbsent(fixturePool, customerId);
     });
   });
   describe('customer 360 consent aggregation', () => {
@@ -506,7 +640,7 @@ describe.skipIf(!hasDatabaseUrl)('agentos_app RLS rehearsal (real PostgreSQL)', 
   });
 
   describe('tenant governance settings', () => {
-    it('allows SELECT only and isolates settings rows by tenant', async () => {
+    it('allows tenant-scoped updates only to the governance policy columns', async () => {
       const visibleA = await asAppRole(fixturePool, TENANT_A, (client) =>
         client.query<{ tenant_id: string; require_distinct_approver: boolean }>(
           'SELECT tenant_id::text AS tenant_id, require_distinct_approver FROM agentos.tenant_governance_settings WHERE tenant_id = ANY($1::uuid[]) ORDER BY tenant_id',
@@ -519,6 +653,19 @@ describe.skipIf(!hasDatabaseUrl)('agentos_app RLS rehearsal (real PostgreSQL)', 
           [[TENANT_A, TENANT_B]],
         ),
       );
+      const updated = await asAppRole(fixturePool, TENANT_A, (client) =>
+        client.query(
+          `UPDATE agentos.tenant_governance_settings
+              SET require_distinct_approver = false,
+                  approval_expiry_hours = 48,
+                  takeover_lease_seconds = 180,
+                  version = version + 1,
+                  updated_at = CURRENT_TIMESTAMP
+            WHERE tenant_id = $1
+            RETURNING require_distinct_approver, approval_expiry_hours, takeover_lease_seconds, version`,
+          [TENANT_A],
+        ),
+      );
       const rejectedInsert = await captureFailure(() =>
         asAppRole(fixturePool, TENANT_A, (client) =>
           client.query(
@@ -527,11 +674,11 @@ describe.skipIf(!hasDatabaseUrl)('agentos_app RLS rehearsal (real PostgreSQL)', 
           ),
         ),
       );
-      const rejectedUpdate = await captureFailure(() =>
+      const rejectedTenantIdUpdate = await captureFailure(() =>
         asAppRole(fixturePool, TENANT_A, (client) =>
           client.query(
-            'UPDATE agentos.tenant_governance_settings SET require_distinct_approver = $1 WHERE tenant_id = $2',
-            [false, TENANT_A],
+            'UPDATE agentos.tenant_governance_settings SET tenant_id = $1 WHERE tenant_id = $2',
+            [TENANT_B, TENANT_A],
           ),
         ),
       );
@@ -547,8 +694,14 @@ describe.skipIf(!hasDatabaseUrl)('agentos_app RLS rehearsal (real PostgreSQL)', 
       expect(visibleB.rows).toEqual([
         { tenant_id: TENANT_B, require_distinct_approver: false },
       ]);
+      expect(updated.rows).toEqual([{
+        require_distinct_approver: false,
+        approval_expiry_hours: 48,
+        takeover_lease_seconds: 180,
+        version: 2,
+      }]);
       expectSqlState(rejectedInsert, '42501');
-      expectSqlState(rejectedUpdate, '42501');
+      expectSqlState(rejectedTenantIdUpdate, '42501');
       expectSqlState(rejectedDelete, '42501');
     });
   });
@@ -928,9 +1081,43 @@ describe.skipIf(!hasDatabaseUrl)('agentos_app RLS rehearsal (real PostgreSQL)', 
         expectSqlState(failure, '42501');
       }
     });
+    it('does not allow the application role to assume the platform capability role', async () => {
+      const memberships = await fixturePool.query(
+        `SELECT membership.*
+           FROM pg_catalog.pg_auth_members AS membership
+           JOIN pg_catalog.pg_roles AS capability ON capability.oid = membership.roleid
+           JOIN pg_catalog.pg_roles AS member ON member.oid = membership.member
+          WHERE capability.rolname = 'agentos_platform' AND member.rolname = 'agentos_app'`,
+      );
+      expect(memberships.rows).toEqual([]);
+      const canAssume = await fixturePool.query<{ can_assume: boolean }>(
+        "SELECT pg_catalog.pg_has_role('agentos_app', 'agentos_platform', 'SET') AS can_assume",
+      );
+      expect(canAssume.rows[0]?.can_assume).toBe(false);
+
+      const client = await fixturePool.connect();
+      try {
+        await client.query('BEGIN');
+        // SET ROLE authorization checks session_user, not current_user. Merely
+        // switching a superuser fixture session to app would still allow platform.
+        await client.query('SET LOCAL SESSION AUTHORIZATION agentos_app');
+        const identity = await client.query<{ session_user: string; current_user: string }>(
+          'SELECT session_user, current_user',
+        );
+        expect(identity.rows[0]).toEqual({ session_user: 'agentos_app', current_user: 'agentos_app' });
+        const failure = await captureFailure(() => client.query('SET LOCAL ROLE agentos_platform'));
+        expectSqlState(failure, '42501');
+      } finally {
+        await client.query('ROLLBACK');
+        client.release();
+      }
+    });
+
 
     it('allows the explicit platform role and publishes no customer columns', async () => {
-      const columns = await asPlatformRole(fixturePool, async (client) => {
+      const dedicatedPlatformPool = platformPool;
+      if (dedicatedPlatformPool === undefined) throw new Error('PLATFORM_POOL_NOT_INITIALIZED');
+      const columns = await asPlatformRole(dedicatedPlatformPool, async (client) => {
         const list = await client.query('SELECT * FROM agentos.platform_list_tenants()');
         const tenant = await client.query('SELECT * FROM agentos.platform_get_tenant($1::uuid)', [TENANT_A]);
         const readiness = await client.query('SELECT * FROM agentos.platform_tenant_readiness($1::uuid)', [TENANT_A]);
@@ -946,6 +1133,90 @@ describe.skipIf(!hasDatabaseUrl)('agentos_app RLS rehearsal (real PostgreSQL)', 
         expect(resultColumns).not.toContain('primary_email');
         expect(resultColumns).not.toContain('primary_phone');
         expect(resultColumns).not.toContain('display_name_customer');
+      }
+    });
+
+    it('restricts lifecycle writes to the platform command and its exact tenant context', async () => {
+      const denied = await captureFailure(() => asAppRole(fixturePool, TENANT_A, (client) =>
+        client.query('SELECT * FROM agentos.platform_set_tenant_status($1::uuid, $2::text)', [TENANT_A, 'SUSPENDED']),
+      ));
+      expectSqlState(denied, '42501');
+      const dedicatedPlatformPool = platformPool;
+      if (dedicatedPlatformPool === undefined) throw new Error('PLATFORM_POOL_NOT_INITIALIZED');
+      const mismatch = await captureFailure(() => asPlatformRole(dedicatedPlatformPool, async (client) => {
+        await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [TENANT_A]);
+        return client.query('SELECT * FROM agentos.platform_set_tenant_status($1::uuid, $2::text)', [TENANT_B, 'SUSPENDED']);
+      }));
+      expectSqlState(mismatch, '42501');
+      try {
+        await asPlatformRole(dedicatedPlatformPool, async (client) => {
+          await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [TENANT_B]);
+          const result = await client.query('SELECT * FROM agentos.platform_set_tenant_status($1::uuid, $2::text)', [TENANT_B, 'SUSPENDED']);
+          expect(result.rows).toEqual([{ tenant_id: TENANT_B, status: 'SUSPENDED' }]);
+          const privileges = await client.query(
+            "SELECT has_table_privilege('agentos_app', 'agentos.tenants', 'UPDATE') AS app_update, has_table_privilege('agentos_platform', 'agentos.tenants', 'UPDATE') AS platform_update",
+          );
+          expect(privileges.rows).toEqual([{ app_update: false, platform_update: false }]);
+        });
+      } finally {
+        await asPlatformRole(dedicatedPlatformPool, async (client) => {
+          await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [TENANT_B]);
+          await client.query('SELECT * FROM agentos.platform_set_tenant_status($1::uuid, $2::text)', [TENANT_B, 'ACTIVE']);
+        });
+      }
+    });
+
+    it('seeds contract-derived read and draft clearances only for new agents, without assigning AUTH-4', async () => {
+      const client = await fixturePool.connect();
+      try {
+        await client.query('BEGIN');
+        // Isolate this SQL unit from whichever code-synced catalog the rehearsal started with.
+        // Every catalog, tenant, and grant write in this test is rolled back together.
+        await client.query('UPDATE agentos.skill_catalog SET retired = true');
+        const contracts = [
+          { skill: 'skill.sales.baseline_stock', effect: 'READ', authority: 'AUTH-0', agent: 'SAL-02' },
+          { skill: 'skill.sales.baseline_price', effect: 'READ', authority: 'AUTH-3', agent: 'SAL-02' },
+          { skill: 'skill.marketing.baseline_segment', effect: 'INTERNAL', authority: 'AUTH-1', agent: 'MKT-02' },
+          { skill: 'skill.marketing.baseline_content', effect: 'INTERNAL', authority: 'AUTH-2', agent: 'MKT-03' },
+          { skill: 'skill.marketing.baseline_external', effect: 'EFFECT', authority: 'AUTH-3', agent: 'MKT-03' },
+          { skill: 'skill.marketing.baseline_approval', effect: 'APPROVAL', authority: 'AUTH-4', agent: 'MKT-03' },
+          { skill: 'skill.marketing.baseline_read_approval', effect: 'READ', authority: 'AUTH-4', agent: 'MKT-03' },
+        ];
+        for (const contract of contracts) {
+          await client.query(
+            `INSERT INTO agentos.skill_catalog
+              (skill_id, display_key, domain, effect_class, required_authority, autonomy_class,
+               completion, receipt_ref, tool_binding, allowed_agents, contract_version, contract_digest)
+             VALUES ($1, $1, $2, $3, $4, 'PROMOTABLE', 'SYNC', $1, $1, ARRAY[$5]::text[], 1, $6)`,
+            [contract.skill, contract.skill.startsWith('skill.sales.') ? 'sales' : 'marketing',
+              contract.effect, contract.authority, contract.agent, 'a'.repeat(64)],
+          );
+        }
+        const key = randomUUID().replaceAll('-', '').padEnd(64, '0');
+        const provisionSql = "SELECT agentos.provision_tenant_shell($1::char(64), $1::char(64), 'baseline SQL regression', 'TEST'::agentos.data_class) AS tenant_id";
+        const tenant_id = (await client.query<{ tenant_id: string }>(provisionSql, [key])).rows[0]?.tenant_id;
+        if (tenant_id === undefined) throw new Error('PROVISIONING_TENANT_REQUIRED');
+        const grantsSql = 'SELECT code, assigned_authority, is_active FROM agentos.agents WHERE tenant_id = $1 ORDER BY code';
+        const grants = (await client.query<{ code: string; assigned_authority: string; is_active: boolean }>(grantsSql, [tenant_id])).rows;
+        expect(grants.find((agent) => agent.code === 'SAL-02')?.assigned_authority).toBe('AUTH-3');
+        expect(grants.find((agent) => agent.code === 'MKT-02')?.assigned_authority).toBe('AUTH-1');
+        expect(grants.find((agent) => agent.code === 'MKT-03')?.assigned_authority).toBe('AUTH-2');
+        expect(grants.find((agent) => agent.code === 'SAL-01')?.assigned_authority).toBe('AUTH-0');
+        expect(grants.every((agent) => ['AUTH-0', 'AUTH-1', 'AUTH-2', 'AUTH-3'].includes(agent.assigned_authority))).toBe(true);
+        expect(grants.every((agent) => !agent.is_active)).toBe(true);
+        await client.query("UPDATE agentos.agents SET assigned_authority = 'AUTH-0' WHERE tenant_id = $1 AND code = 'SAL-02'", [tenant_id]);
+        await client.query(provisionSql, [key]);
+        const replayed = await client.query<{ code: string; assigned_authority: string }>(grantsSql, [tenant_id]);
+        expect(replayed.rows.find((agent) => agent.code === 'SAL-02')?.assigned_authority).toBe('AUTH-0');
+        const events = await client.query<{ count: number }>(
+          `SELECT COUNT(*)::int AS count FROM agentos.provisioning_events
+            WHERE tenant_id = $1 AND idempotency_key = $2 AND event_type = 'TENANT_PROVISIONED'`,
+          [tenant_id, key],
+        );
+        expect(events.rows[0]?.count).toBe(1);
+      } finally {
+        await client.query('ROLLBACK');
+        client.release();
       }
     });
   });

@@ -51,8 +51,7 @@ body {
   }
 
   .tenant-brand__mark,
-  .tenant-user__avatar,
-  .tenant-topbar__avatar {
+  .tenant-user-menu__avatar {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -71,8 +70,7 @@ body {
 
   .tenant-brand__name,
   .tenant-brand__context,
-  .tenant-user__copy,
-  .tenant-user__copy small {
+  .tenant-user-menu__name {
     display: block;
   }
 
@@ -83,8 +81,7 @@ body {
   }
 
   .tenant-brand__context,
-  .tenant-sidebar__eyebrow,
-  .tenant-user__copy small {
+  .tenant-sidebar__eyebrow {
     color: var(--color-text-muted);
     font-size: var(--text-label-sm);
   }
@@ -114,25 +111,27 @@ body {
     white-space: nowrap;
   }
 
-  .tenant-workspace__status {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-md);
+  .tenant-workspace > .ui-status {
     margin-top: var(--space-md);
-    color: var(--color-text-muted);
-    font-size: var(--text-label-sm);
-  }
-
-  .tenant-workspace__status span {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--color-success);
   }
 
   .tenant-sidebar__nav {
     flex: 1;
     min-height: 0;
+    overflow-y: auto;
+  }
+
+  .tenant-sidebar__group + .tenant-sidebar__group {
+    margin-top: var(--space-xl);
+  }
+
+  .tenant-sidebar__group-title {
+    margin: 0 0 var(--space-sm);
+    color: var(--color-text-muted);
+    font-size: var(--text-label-sm);
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
   }
 
   .tenant-sidebar__nav ul {
@@ -142,6 +141,20 @@ body {
     margin: 0;
     padding: 0;
     list-style: none;
+  }
+
+  .tenant-nav-link__badge {
+    display: inline-flex;
+    min-width: 20px;
+    align-items: center;
+    justify-content: center;
+    margin-left: auto;
+    padding: 0 var(--space-sm);
+    border-radius: 999px;
+    background: var(--color-primary);
+    color: var(--color-surface);
+    font-size: var(--text-label-sm);
+    font-weight: 600;
   }
 
   .tenant-nav-link {
@@ -183,16 +196,37 @@ body {
     border-top: 1px solid var(--color-border-subtle);
   }
 
-  .tenant-user {
+  .tenant-sidebar__footer ul {
     display: flex;
-    min-width: 0;
-    align-items: center;
-    gap: var(--space-lg);
-    padding-top: var(--space-md);
+    flex-direction: column;
+    gap: var(--space-xs);
+    margin: 0;
+    padding: 0;
+    list-style: none;
   }
 
-  .tenant-user__avatar,
-  .tenant-topbar__avatar {
+  .tenant-user-menu {
+    position: relative;
+  }
+
+  .tenant-user-menu__trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-md);
+    padding: var(--space-sm) var(--space-md);
+    border: 0;
+    border-radius: var(--radius-control);
+    background: transparent;
+    color: var(--color-text);
+    font-size: var(--text-label-md);
+    font-weight: 600;
+  }
+
+  .tenant-user-menu__trigger:hover {
+    background: var(--color-surface-subtle);
+  }
+
+  .tenant-user-menu__avatar {
     width: 30px;
     height: 30px;
     border-radius: 50%;
@@ -200,34 +234,58 @@ body {
     color: var(--color-text);
   }
 
-  .tenant-user__copy {
+  .tenant-user-menu__name {
+    max-width: 12rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .tenant-user-menu__panel {
+    position: absolute;
+    top: calc(100% + var(--space-sm));
+    right: 0;
+    z-index: 30;
+    display: flex;
+    min-width: 15rem;
+    flex-direction: column;
+    gap: var(--space-md);
+    padding: var(--space-lg);
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    box-shadow: var(--elevation-l3);
+  }
+
+  .tenant-user-menu__identity {
+    display: flex;
     min-width: 0;
-    flex: 1;
+    flex-direction: column;
     color: var(--color-text);
     font-size: var(--text-label-md);
     font-weight: 600;
   }
 
-  .tenant-user__copy small {
+  .tenant-user-menu__identity small {
     overflow: hidden;
-    margin-top: var(--space-xs);
+    color: var(--color-text-muted);
+    font-weight: 400;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-weight: 400;
   }
 
-  .tenant-user__logout {
-    flex: 0 0 auto;
-    padding: var(--space-md);
+  .tenant-user-menu__logout {
+    padding: var(--space-md) var(--space-lg);
     border: 0;
     border-radius: var(--radius-control);
-    background: transparent;
-    color: var(--color-text-muted);
-  }
-
-  .tenant-user__logout:hover {
     background: var(--color-surface-subtle);
     color: var(--color-text);
+    font-weight: 600;
+    text-align: left;
+  }
+
+  .tenant-user-menu__logout:hover {
+    background: var(--color-border-subtle);
   }
 
   .tenant-sidebar__close {
@@ -238,46 +296,32 @@ body {
     gap: var(--space-xl);
   }
 
-  .tenant-search {
+  .tenant-breadcrumb ol {
     display: flex;
-    width: min(100%, 420px);
-    min-height: 32px;
     align-items: center;
     gap: var(--space-md);
-    margin: 0 auto;
-    padding: 0 var(--space-lg);
-    border: 1px solid var(--color-border-subtle);
-    border-radius: var(--radius-control);
-    background: var(--color-canvas);
-    color: var(--color-text-muted);
+    margin: 0;
+    padding: 0;
+    list-style: none;
     font-size: var(--text-body-md);
   }
 
-  .tenant-search kbd {
-    margin-left: auto;
-    padding: 1px var(--space-md);
-    border: 1px solid var(--color-border-subtle);
-    border-radius: var(--radius-sm);
-    background: var(--color-surface);
+  .tenant-breadcrumb li + li::before {
+    margin-right: var(--space-md);
     color: var(--color-text-muted);
-    font-family: var(--font-mono);
-    font-size: var(--text-code-sm);
+    content: '/';
   }
 
-  .tenant-topbar__email {
-    display: none;
-    max-width: 14rem;
-    overflow: hidden;
-    color: var(--color-text-muted);
+  .tenant-breadcrumb li[aria-current='page'] {
+    color: var(--color-text);
+    font-weight: 600;
+  }
+
+  .tenant-topbar__expiry {
+    margin: 0;
+    color: var(--color-warning, var(--color-text));
     font-size: var(--text-label-md);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .tenant-topbar__avatar {
-    width: 28px;
-    height: 28px;
-    font-size: var(--text-label-sm);
+    font-weight: 600;
   }
 
   .app-content {
@@ -309,12 +353,6 @@ body {
   }
 }
 
-@media (min-width: 768px) {
-  .tenant-topbar__email {
-    display: block;
-  }
-}
-
 @media (max-width: 767px) {
   .app-shell[data-responsive-shell='true'] .tenant-sidebar {
     display: none;
@@ -331,10 +369,6 @@ body {
     top: var(--space-xl);
     right: var(--space-xl);
     display: inline-flex;
-  }
-
-  .tenant-search {
-    display: none;
   }
 }
 .tenant-code-badge {

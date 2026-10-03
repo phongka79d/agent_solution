@@ -1,3 +1,5 @@
+import { classifyErrorCode } from '../errors/catalog.js';
+
 import {
   OrchestratorError,
   type ActionDraft,
@@ -6,6 +8,8 @@ import {
   type HypothesisRecord,
   type ImmutableEvidenceRecord,
   type RetryClass,
+  type FinalResponse,
+  type PlatformAgentId,
   type SignalEnvelope,
   type TaskLifecycleState,
 } from '../contracts/index.js';
@@ -15,6 +19,8 @@ export interface StepLoopOutcome {
   readonly lifecycle_state: TaskLifecycleState;
   readonly evidence?: ImmutableEvidenceRecord;
   readonly message?: string;
+  readonly terminal_response?: FinalResponse;
+  readonly response_agent_id?: PlatformAgentId;
 }
 
 /** The plan-step cursor a resume must continue from: the ordinal AFTER the last planned step. */
@@ -41,6 +47,32 @@ export function isPlainJsonObject(value: unknown): value is Record<string, unkno
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const prototype = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;
+}
+
+/** A timer retry is valid only for the exact durable retry generation and its persisted schedule. */
+export function isRetryTimerCheckpoint(
+  value: unknown,
+  eventRetryCount: unknown,
+  durableRetryCount: number,
+): boolean {
+  if (!isPlainJsonObject(value)) return false;
+  const retryNotBefore = value['retry_not_before'];
+  return value['wait_reason'] === 'RETRY'
+    && typeof retryNotBefore === 'string'
+    && Number.isFinite(Date.parse(retryNotBefore))
+    && typeof eventRetryCount === 'number'
+    && Number.isSafeInteger(eventRetryCount)
+    && eventRetryCount > 0
+    && eventRetryCount === durableRetryCount;
+}
+
+/** Generic timer events may wake non-mutating waits only; effects require reconciliation proof. */
+export function allowsGenericTimerResume(value: unknown): boolean {
+  if (!isPlainJsonObject(value)) return false;
+  const waitReason = value['wait_reason'];
+  const pendingAction = isPlainJsonObject(value['pending_action']) ? value['pending_action'] : null;
+  return (waitReason === undefined || waitReason === 'OTHER')
+    && pendingAction?.['mutating'] !== true;
 }
 
 /**
@@ -203,28 +235,32 @@ export function verifyFloorPrice(action: ActionDraft): void {
 }
 
 export function classifyFailure(error: unknown): RetryClass {
-  if (error instanceof OrchestratorError) {
-    switch (error.code) {
-      case 'DISPATCH_TIMEOUT':
-      case 'PROVIDER_INDETERMINATE':
-      case 'EFFECT_UNKNOWN':
-        return 'UNKNOWN';
-      case 'PROVIDER_RATE_LIMITED':
-      case 'PROVIDER_UNAVAILABLE':
-      case 'CONCURRENT_TASK_LOCK':
-        return 'RETRYABLE';
-      default:
-        return 'FATAL';
-    }
+  let code: string | null = null;
+  if (typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string') {
+    code = error.code;
   }
+  if (code !== null) return classifyErrorCode(code);
+  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  if (/connection reset/i.test(message)) return 'RETRYABLE';
   return 'FATAL';
 }
 
 export function serializeError(error: unknown): Record<string, unknown> {
-  if (error instanceof OrchestratorError) {
-    return { code: error.code, message: error.message };
+  let code: string | undefined;
+  let rawMessage: unknown;
+  if (typeof error === 'object' && error !== null) {
+    if ('code' in error && typeof error.code === 'string') code = error.code;
+    if ('message' in error) rawMessage = error.message;
   }
-  return { code: 'UNCLASSIFIED', message: error instanceof Error ? error.message : String(error) };
+  const message = error instanceof Error
+    ? error.message
+    : typeof rawMessage === 'string'
+      ? rawMessage
+      : String(error);
+  return {
+    code: code ?? 'UNCLASSIFIED',
+    message,
+  };
 }
 
 /** Copies the optional floor mirrors a plan step actually carries. */

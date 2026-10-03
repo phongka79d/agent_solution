@@ -1,32 +1,184 @@
 /**
- * Main screen component for SCR-003: Approval Center.
- * Handles the R14 approval queue, supplemental detail, and decision contracts.
+ * Vietnamese Approval Console (`T6.8`, spec §7.7).
+ *
+ * Two tabs (Chờ duyệt / Đã xử lý) over the R14 queue and the decided history. Each card states in
+ * one sentence what will happen, who requested it and when it expires; the drawer spells out what
+ * will happen, a preview, the checks, the evidence and - for a modification - the before/after.
+ * Decisions are Duyệt / Từ chối (reason required) / Yêu cầu sửa (structured fields). The payload
+ * digest and raw JSON stay under "Chi tiết kỹ thuật".
  */
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
+import {
+  AdvancedDetails,
+  Button,
+  Drawer,
+  EmptyState,
+  ErrorBanner,
+  Field,
+  Input,
+  KeyValueList,
+  Modal,
+  Select,
+  Skeleton,
+  StatusBadge,
+  Tabs,
+} from '@agentos/ui-foundation/react';
+import { can } from '@agentos/ui-foundation/auth';
+import type { AuthSession } from '@agentos/ui-foundation/auth';
 import { ApiError } from '@agentos/ui-foundation';
-import { can, type AuthSession } from '@agentos/ui-foundation/auth';
+import type { ApprovalQueueItem } from '@agentos/api-contract';
 import { tenantConsoleClient } from '../../lib/tenant-console-client';
+import { QUICK_REJECTION_REASONS } from './types';
 import type {
-  ApprovalItem,
   ApprovalDecision,
-  ApprovalDecisionResponse,
+  ApprovalItem,
   ApprovalStatus,
+  ApprovalSummary,
+  ApprovalTab,
+  ModifyFields,
 } from './types';
-import { ApprovalQueueList } from './ApprovalQueueList';
-import { ApprovalPayloadDiffModal } from './ApprovalPayloadDiffModal';
 
+const CHANNEL_LABELS: Record<string, string> = {
+  email: 'Email',
+  zalo: 'Zalo',
+  messenger: 'Messenger',
+  whatsapp: 'WhatsApp',
+  web_chat: 'Web chat',
+  web: 'Web chat',
+  sms: 'SMS',
+};
 
-function newIdempotencyKey(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return `approval-decision-${crypto.randomUUID()}`;
+const DOMAIN_LABELS: Record<ApprovalSummary['domain'], string> = {
+  marketing: 'Marketing',
+  sales: 'Bán hàng',
+  care: 'Chăm sóc khách hàng',
+  platform: 'Nền tảng',
+};
+const REQUESTER_LABELS: Readonly<Record<string, string>> = {
+  'agentos.unknown_agent': 'Trợ lý AgentOS',
+};
+
+function requestingAgentLabel(key: string): string {
+  if (key.startsWith('skill.marketing.') || key.startsWith('skill.mkt.')) {
+    return 'Chiến dịch Marketing';
   }
-  return `approval-decision-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return REQUESTER_LABELS[key] ?? 'Trợ lý AgentOS';
 }
 
-function decisionKey(id: string, decision: ApprovalDecision): string {
-  return `${id}:${decision}`;
+function channelLabel(channel: unknown): string {
+  // Connector ids (e.g. a provider adapter code) are technical; only known channels get a name.
+  const key = typeof channel === 'string' ? channel.toLowerCase() : '';
+  return CHANNEL_LABELS[key] ?? 'kênh đã chọn';
+}
+
+function ModificationPreview({ value }: { readonly value: unknown }) {
+  const channel = typeof value === 'object' && value !== null && 'channel' in value ? value.channel : null;
+  const audience = typeof value === 'object' && value !== null && 'audience_size' in value ? value.audience_size : null;
+  const message = typeof value === 'object' && value !== null && 'message' in value ? value.message : null;
+  return (
+    <KeyValueList
+      items={[
+        { key: 'channel', label: 'Kênh gửi', value: channel === null ? null : channelLabel(channel) },
+        { key: 'audience', label: 'Số khách', value: typeof audience === 'number' ? String(audience) : null },
+        { key: 'message', label: 'Nội dung', value: typeof message === 'string' ? message : null },
+      ]}
+    />
+  );
+}
+
+/** One sentence stating what the approval will do. */
+function cardSentence(item: ApprovalItem): string {
+  const params = item.summary.params;
+  switch (item.summary.titleKey) {
+    case 'approvals.title.campaign': {
+      const audience = params['audience_size'];
+      const recipients = typeof audience === 'number' ? ` cho ${audience} khách` : '';
+      return `Gửi chiến dịch “${String(params['campaign_name'] ?? 'không tên')}”${recipients} qua ${channelLabel(params['channel'])}`;
+    }
+    case 'approvals.title.customer':
+      return `Gửi đề xuất cho khách hàng qua ${channelLabel(params['channel'])}`;
+    case 'approvals.title.modify':
+      return typeof params['campaign_name'] === 'string'
+        ? `Điều chỉnh chiến dịch “${params['campaign_name']}” trước khi thực hiện`
+        : 'Điều chỉnh đề xuất trước khi thực hiện';
+    default:
+      return 'Đề xuất hành động cần bạn phê duyệt trước khi thực hiện';
+  }
+}
+
+const STATUS_LABELS: Record<ApprovalStatus, string> = {
+  PENDING: 'Chờ phê duyệt',
+  PAUSED: 'Tạm dừng',
+  APPROVED: 'Đã duyệt',
+  MODIFIED: 'Đã duyệt bản chỉnh sửa',
+  REJECTED: 'Đã từ chối',
+  CANCELLED: 'Đã hủy',
+  EXPIRED: 'Hết hạn',
+};
+
+const STATUS_TONES: Record<ApprovalStatus, 'warning' | 'info' | 'success' | 'danger' | 'neutral'> = {
+  PENDING: 'warning',
+  PAUSED: 'neutral',
+  APPROVED: 'success',
+  MODIFIED: 'info',
+  REJECTED: 'danger',
+  CANCELLED: 'neutral',
+  EXPIRED: 'danger',
+};
+
+function normalizeItem(raw: ApprovalQueueItem): ApprovalItem {
+  const summary = raw.summary;
+  const params: Record<string, string | number | boolean> = {};
+  for (const [key, value] of Object.entries(summary.params)) {
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      params[key] = value;
+    }
+  }
+  return {
+    id: raw.approval_id,
+    runId: raw.run_id,
+    actionId: raw.action_id,
+    effectKey: raw.effect_key,
+    reason: raw.reason,
+    payload: raw.payload,
+    payloadSha256: raw.payload_sha256,
+    status: raw.status,
+    isPaused: raw.is_paused,
+    createdAt: raw.created_at,
+    decidedAt: raw.decided_at ?? undefined,
+    decidedBy: raw.decided_by ?? undefined,
+    decisionNotes: raw.decision_notes ?? undefined,
+    summary: {
+      titleKey: summary.title_key,
+      params,
+      requestingAgentKey: summary.requesting_agent_key,
+      domain: summary.domain,
+      campaignId: summary.campaign_id,
+      customerId: summary.customer_id,
+      risk: summary.risk,
+      evidenceCount: summary.evidence_count,
+      modification: summary.modification === null ? null : {
+        before: summary.modification['before'] ?? null,
+        after: summary.modification['after'] ?? null,
+      },
+      expiresAt: summary.expires_at,
+    },
+  };
+}
+
+function expiryLabel(expiresAt: string | null): string | null {
+  if (expiresAt === null || expiresAt === '') return null;
+  const deadline = Date.parse(expiresAt);
+  if (Number.isNaN(deadline)) return null;
+  const remainingMs = deadline - Date.now();
+  if (remainingMs <= 0) return 'Đã hết hạn';
+  const hours = Math.floor(remainingMs / 3_600_000);
+  if (hours >= 24) return `Còn ${Math.floor(hours / 24)} ngày`;
+  const minutes = Math.max(1, Math.floor(remainingMs / 60_000));
+  return hours >= 1 ? `Còn ${hours} giờ` : `Còn ${minutes} phút`;
 }
 
 interface ApprovalCenterProps {
@@ -34,349 +186,406 @@ interface ApprovalCenterProps {
   readonly initialApprovalId?: string | undefined;
 }
 
-export function ApprovalCenter({ onSelectCustomer, initialApprovalId }: ApprovalCenterProps) {
-  const [items, setItems] = useState<Record<string, ApprovalItem>>({});
+type DecisionKind = 'APPROVE' | 'REJECT' | 'MODIFY' | 'PAUSE' | 'CANCEL';
 
-  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+export function ApprovalCenter({ initialApprovalId }: ApprovalCenterProps) {
+  const [tab, setTab] = useState<ApprovalTab>('PENDING');
+  const [items, setItems] = useState<readonly ApprovalItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(initialApprovalId ?? null);
   const [session, setSession] = useState<AuthSession | null>(null);
-  const [operatorId, setOperatorId] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [queueError, setQueueError] = useState<string | null>(null);
-  const [requireDistinctApprover, setRequireDistinctApprover] = useState(false);
-  const decisionKeysRef = useRef(new Map<string, string>());
+  const [banner, setBanner] = useState<string | null>(null);
+  const [decisionKind, setDecisionKind] = useState<DecisionKind | null>(null);
+  const [reason, setReason] = useState('');
+  const [quickReason, setQuickReason] = useState('');
+  const [modify, setModify] = useState<ModifyFields>({ channel: '', audienceSize: '', message: '' });
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     let active = true;
-    void tenantConsoleClient.getAuthSession()
-      .then((currentSession) => {
-        if (!active) return;
-        setSession(currentSession);
-        void tenantConsoleClient.getCompanyGovernance()
-          .then((governance) => {
-            if (active) setRequireDistinctApprover(governance.require_distinct_approver === true);
-          })
-          .catch(() => {
-            if (active) setRequireDistinctApprover(false);
-          });
-        if (!can(currentSession, 'approval:read')) {
-          setQueueError('permission_denied: the current session cannot read approvals.');
-          setOperatorId('');
-          return;
-        }
-        if (!currentSession.identity.user_id.trim()) {
-          setQueueError('permission_denied: authenticated identity is unavailable.');
-          setOperatorId('');
-          return;
-        }
-        setOperatorId(currentSession.identity.user_id);
+    void tenantConsoleClient
+      .getAuthSession()
+      .then((current) => {
+        if (active) setSession(current);
       })
       .catch(() => {
-        if (!active) return;
-        setSession(null);
-        setQueueError('permission_denied: sign in with an authorized session.');
-        setOperatorId('');
+        if (active) setSession(null);
       });
-    return () => { active = false; };
-  }, []);
-  // Normalizes an approval object from R14 list or supplemental detail read
-  const normalizeApprovalItem = useCallback((raw: Record<string, unknown>): ApprovalItem => {
-    const id = String(raw.approval_id || raw.id || '');
-    const runId = String(raw.run_id || raw.runId || '');
-    const actionId = raw.action_id ? String(raw.action_id) : undefined;
-    const tenantId = raw.tenant_id ? String(raw.tenant_id) : undefined;
-    const agentId = String(raw.agent_id || raw.agentId || raw.requesting_agent_id || 'AGENT-UNKNOWN');
-    const requestingAgentName = typeof raw.requesting_agent_name === 'string'
-      ? raw.requesting_agent_name
-      : typeof raw.agent_name === 'string' ? raw.agent_name : undefined;
-    const domain = typeof raw.domain === 'string' ? raw.domain : undefined;
-    const effectKey = raw.effect_key ? String(raw.effect_key) : undefined;
-    const authority = typeof raw.authority === 'string'
-      ? raw.authority
-      : typeof raw.required_authority === 'string' ? raw.required_authority : undefined;
-    const title = String(raw.title || raw.what || `Review: ${agentId} Action`);
-    const reason = String(raw.reason || raw.why || raw.risk_reason || raw.riskReason || 'Human review is required before this action.');
-    const rawPayload = (raw.payload && typeof raw.payload === 'object' && !Array.isArray(raw.payload) ? raw.payload : {}) as Record<string, unknown>;
-    const context = raw.context ?? raw.context_data;
-    const evidence = Array.isArray(raw.evidence) ? raw.evidence : Array.isArray(raw.evidence_ids) ? raw.evidence_ids : undefined;
-    const payloadSha256 = String(raw.payload_sha256 || raw.payloadSha256 || '');
-    const isPaused = Boolean(raw.is_paused ?? raw.isPaused ?? false);
-
-    let status: ApprovalStatus = 'AWAITING_HUMAN';
-    if (isPaused || raw.status === 'PAUSED') {
-      status = 'PAUSED';
-    } else if (raw.status === 'APPROVED') {
-      status = 'APPROVED';
-    } else if (raw.status === 'REJECTED') {
-      status = 'REJECTED';
-    } else if (raw.status === 'MODIFIED') {
-      status = 'MODIFIED';
-    } else if (raw.status === 'CANCELLED') {
-      status = 'CANCELLED';
-    } else if (raw.status === 'QUEUED') {
-      status = 'QUEUED';
-    }
-
-    const createdAt = raw.created_at ? String(raw.created_at) : raw.createdAt ? String(raw.createdAt) : '';
-    const expiresAt = raw.expires_at ? String(raw.expires_at) : raw.expiresAt ? String(raw.expiresAt) : undefined;
-    const queuedAt = raw.queued_at ? String(raw.queued_at) : raw.queuedAt ? String(raw.queuedAt) : undefined;
-    const decidedAt = raw.decided_at ? String(raw.decided_at) : undefined;
-    const decidedBy = raw.decided_by ? String(raw.decided_by) : undefined;
-    const decisionNotes = raw.decision_notes ? String(raw.decision_notes) : undefined;
-    const customerId =
-      typeof rawPayload.customer_id === 'string'
-        ? rawPayload.customer_id
-        : typeof rawPayload.customerId === 'string'
-        ? rawPayload.customerId
-        : undefined;
-
-    return {
-      id,
-      runId,
-      actionId,
-      tenantId,
-      agentId,
-      ...(requestingAgentName === undefined ? {} : { requestingAgentName }),
-      ...(domain === undefined ? {} : { domain }),
-      effectKey,
-      ...(authority === undefined ? {} : { authority }),
-      title,
-      reason,
-      ...(context === undefined ? {} : { context }),
-      ...(evidence === undefined ? {} : { evidence }),
-      payload: rawPayload,
-      payloadSha256,
-      status,
-      isPaused,
-      createdAt,
-      expiresAt,
-      queuedAt,
-      decidedAt,
-      decidedBy,
-      decisionNotes,
-      customerId,
+    return () => {
+      active = false;
     };
   }, []);
 
-  // Fetch pending queue from authoritative R14 route: GET /api/v1/approvals?status=PENDING
-  const fetchQueue = useCallback(async () => {
-    if (!operatorId.trim()) {
-      return;
-    }
-    setIsLoading(true);
-    setQueueError(null);
-
+  const loadQueue = useCallback(async (target: ApprovalTab) => {
+    setLoading(true);
+    setError(null);
     try {
-      const data = await tenantConsoleClient.getApprovals(
-        { status: 'PENDING' },
-      );
-      const rawData: unknown = data;
-      const rawList: Record<string, unknown>[] = [];
-      if (Array.isArray(rawData)) {
-        for (const raw of rawData) {
-          if (raw && typeof raw === 'object') rawList.push(raw as Record<string, unknown>);
-        }
-      } else if (rawData && typeof rawData === 'object' && 'items' in rawData && Array.isArray(rawData.items)) {
-        for (const raw of rawData.items) {
-          if (raw && typeof raw === 'object') rawList.push(raw as Record<string, unknown>);
-        }
-      }
-
-      const mapped: Record<string, ApprovalItem> = {};
-      for (const raw of rawList) {
-        const item = normalizeApprovalItem(raw);
-        if (item.id) {
-          mapped[item.id] = item;
-        }
-      }
-
-      setItems(mapped);
-    } catch (err: unknown) {
-      const message = err instanceof ApiError && (err.status === 401 || err.status === 403)
-        ? `permission_denied: ${err.message}`
-        : err instanceof Error
-        ? err.message
-        : 'Failed to connect to gateway';
-      setQueueError(message);
+      const page = await tenantConsoleClient.getApprovals({ status: target });
+      setItems(page.items.map(normalizeItem));
+    } catch (caught) {
+      setError(caught);
+      setItems([]);
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
+  }, []);
 
-  }, [operatorId, normalizeApprovalItem]);
-
-  // Initial load
   useEffect(() => {
-    if (operatorId.trim()) {
-      fetchQueue();
-    }
-  }, [operatorId, fetchQueue]);
+    void loadQueue(tab);
+  }, [tab, loadQueue]);
 
-  // Fetch supplemental detail when an item is selected (§8.2.1 GET /api/v1/approvals/{id})
-  const handleSelectItem = useCallback(
-    async (id: string) => {
-      setSelectedItemId(id);
-
-      try {
-        const detail = await tenantConsoleClient.getApproval(id);
-        const normalized = normalizeApprovalItem(detail as unknown as Record<string, unknown>);
-        setItems((prev) => ({
-          ...prev,
-          [id]: normalized,
-        }));
-      } catch {
-        // If supplemental detail read fails, the list-level item remains in view
-      }
-    },
-    [normalizeApprovalItem]
+  const selected = useMemo(
+    () => items.find((item) => item.id === selectedId) ?? null,
+    [items, selectedId],
   );
-  useEffect(() => {
-    if (!initialApprovalId || selectedItemId === initialApprovalId || !items[initialApprovalId]) return;
-    void handleSelectItem(initialApprovalId);
-  }, [handleSelectItem, initialApprovalId, items, selectedItemId]);
 
-  // Submit decision to POST /api/v1/approvals/{id}/decision
-  const handleSubmitDecision = useCallback(
-    async (
-      id: string,
-      decision: ApprovalDecision,
-      reason: string,
-      expectedPayloadSha256: string,
-      modifiedPayload?: Record<string, unknown>
-    ): Promise<ApprovalDecisionResponse> => {
-      if (!operatorId || !operatorId.trim() || !can(session, 'approval:decide')) {
-        throw new Error('permission_denied: this session cannot submit approval decisions.');
-      }
-      if (!expectedPayloadSha256.trim()) {
-        throw new Error('The reviewed payload digest is unavailable. Review the approval detail before deciding.');
-      }
+  const canDecide = can(session, 'approval:decide');
 
-      const requestBody = {
+  const submitDecision = useCallback(
+    async (item: ApprovalItem, decision: ApprovalDecision, rationale: string, modified?: Record<string, unknown>) => {
+      await tenantConsoleClient.submitApprovalDecision(item.id, {
         decision,
-        reason,
-        expected_payload_sha256: expectedPayloadSha256,
-        ...(decision === 'MODIFY' && modifiedPayload ? { modified_payload: modifiedPayload } : {}),
-      };
-      const key = decisionKey(id, decision);
-      const idempotencyKey = decisionKeysRef.current.get(key) ?? newIdempotencyKey();
-      decisionKeysRef.current.set(key, idempotencyKey);
-
-      const responseReceipt = await tenantConsoleClient.submitApprovalDecision(
-        id,
-        requestBody,
-        { headers: { 'Idempotency-Key': idempotencyKey, 'x-idempotency-key': idempotencyKey } },
-      );
-
-      // Update local item status based on server receipt.
-      // R05 queue-first contract returns status 'QUEUED' and queued_at.
-      // Do NOT claim decided_at or decided_by: the decision is enqueued for durable
-      // worker handoff and must not render a fake final decision.
-      setItems((prev) => {
-        const existing = prev[id];
-        if (!existing) return prev;
-
-        const nextStatus: ApprovalStatus = responseReceipt.status;
-
-        return {
-          ...prev,
-          [id]: {
-            ...existing,
-            status: nextStatus,
-            queuedAt: responseReceipt.queued_at,
-            payload: decision === 'MODIFY' && modifiedPayload ? modifiedPayload : existing.payload,
-          },
-        };
+        reason: rationale,
+        expected_payload_sha256: item.payloadSha256,
+        ...(modified === undefined ? {} : { modified_payload: modified }),
       });
-
-      return responseReceipt;
     },
-[operatorId, session]
+    [],
   );
 
-  const itemList = Object.values(items);
-  const selectedItem = selectedItemId ? items[selectedItemId] ?? null : null;
+  const runDecision = useCallback(
+    async (item: ApprovalItem, decision: ApprovalDecision, rationale: string, modified?: Record<string, unknown>) => {
+      setSubmitting(true);
+      try {
+        await submitDecision(item, decision, rationale, modified);
+        setDecisionKind(null);
+        setReason('');
+        setQuickReason('');
+        setModify({ channel: '', audienceSize: '', message: '' });
+        setSelectedId(null);
+        setBanner(
+          decision === 'APPROVE'
+            ? 'Đã duyệt · Đang kiểm tra lại nội dung và đồng ý trước khi gửi'
+            : decision === 'REJECT'
+              ? 'Đã từ chối · Đề xuất không được thực hiện'
+              : decision === 'MODIFY'
+                ? 'Đã duyệt bản chỉnh sửa · Đang kiểm tra lại nội dung và đồng ý trước khi gửi'
+                : decision === 'PAUSE'
+                  ? 'Đã tạm dừng đề xuất'
+                  : 'Đã hủy đề xuất',
+        );
+        await loadQueue(tab);
+      } catch (caught) {
+        if (caught instanceof ApiError && (
+          caught.error_code === 'APPROVAL_STALE_PAYLOAD' || caught.error_code === 'APPROVAL_NOT_CLAIMABLE'
+        )) {
+          setDecisionKind(null);
+          setSelectedId(null);
+          setBanner('Đề xuất đã thay đổi, cần xem lại');
+          try {
+            const current = await tenantConsoleClient.getApproval(item.id);
+            const target = current.status === 'PENDING' || current.status === 'PAUSED' ? 'PENDING' : 'DECIDED';
+            if (target === tab) {
+              await loadQueue(target);
+            } else {
+              setTab(target);
+            }
+          } catch (refreshError) {
+            setError(refreshError);
+            setItems([]);
+          }
+        } else {
+          setError(caught);
+        }
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [submitDecision, loadQueue, tab],
+  );
 
-  const awaitingHumanCount = itemList.filter((i) => i.status === 'AWAITING_HUMAN' && !i.isPaused).length;
-  const pausedCount = itemList.filter((i) => i.isPaused || i.status === 'PAUSED').length;
-  const queuedCount = itemList.filter((i) => i.status === 'QUEUED').length;
-  if (!operatorId || !operatorId.trim()) {
+  function openDecision(kind: DecisionKind): void {
+    setDecisionKind(kind);
+    setReason('');
+    setQuickReason('');
+    setModify({ channel: '', audienceSize: '', message: '' });
+  }
+
+  function submitReject(): void {
+    if (selected === null) return;
+    const rationale = reason.trim() !== '' ? reason.trim() : QUICK_REJECTION_REASONS.find((r) => r.code === quickReason)?.label ?? '';
+    if (rationale === '') return;
+    void runDecision(selected, 'REJECT', rationale);
+  }
+
+  function submitModify(): void {
+    if (selected === null) return;
+    const modified: Record<string, unknown> = { ...selected.payload };
+    if (modify.channel.trim() !== '') modified['channel'] = modify.channel.trim();
+    if (modify.audienceSize.trim() !== '') modified['audience_size'] = Number(modify.audienceSize.trim());
+    if (modify.message.trim() !== '') modified['message'] = modify.message.trim();
+    void runDecision(
+      selected,
+      'MODIFY',
+      reason.trim() !== '' ? reason.trim() : 'Yêu cầu điều chỉnh đề xuất',
+      modified,
+    );
+  }
+
+  const activeItems = items;
+
+  function renderCards(): ReactNode {
+    if (loading && activeItems.length === 0) {
+      return <Skeleton variant="table" />;
+    }
+    if (error !== null && activeItems.length === 0) {
+      return <ErrorBanner error={error} onRetry={() => void loadQueue(tab)} />;
+    }
+    if (activeItems.length === 0) {
+      return tab === 'PENDING' ? (
+        <EmptyState title="Không có đề xuất nào đang chờ" description="Khi AI cần bạn phê duyệt, đề xuất sẽ xuất hiện ở đây." />
+      ) : (
+        <EmptyState title="Chưa có đề xuất nào đã xử lý" description="Các đề xuất bạn đã duyệt hoặc từ chối sẽ hiển thị ở đây." />
+      );
+    }
     return (
-      <div
-        data-testid="approval-center-unavailable"
-        role="alert"
-        className="ui-state ui-state--error mx-auto my-12 max-w-2xl text-center"
-      >
-        <div className="tenant-code-badge mx-auto mb-4" aria-hidden="true">403</div>
-        <h2 className="text-base font-semibold text-ink mb-2">
-          Không thể xác thực người phê duyệt
-        </h2>
-        <p className="mx-auto max-w-lg text-sm leading-relaxed text-muted">
-          Phiên đăng nhập không cung cấp danh tính người phê duyệt đã xác thực.
-        </p>
-      </div>
+      <ul className="space-y-3" role="list">
+        {activeItems.map((item) => (
+          <li key={item.id}>
+            <button
+              type="button"
+              className="ui-focus-ring w-full rounded-lg border p-4 text-left"
+              onClick={() => setSelectedId(item.id)}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <StatusBadge code={item.status} tone={STATUS_TONES[item.status]} label={STATUS_LABELS[item.status]} />
+                {expiryLabel(item.summary.expiresAt) !== null ? (
+                  <span className="text-sm text-muted">{expiryLabel(item.summary.expiresAt)}</span>
+                ) : null}
+              </div>
+              <p className="mt-2 font-medium">{cardSentence(item)}</p>
+              <p className="text-sm text-muted">
+                Yêu cầu bởi {requestingAgentLabel(item.summary.requestingAgentKey)} · {DOMAIN_LABELS[item.summary.domain]}
+              </p>
+            </button>
+          </li>
+        ))}
+      </ul>
     );
   }
 
   return (
     <div className="space-y-6">
-      <div className="ui-section-card p-5">
-        <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
-          <div>
-            <h2 className="text-headline-lg font-semibold text-ink">SCR-003: Approval Center</h2>
-            <p className="mt-1 text-sm text-muted">
-              Mandatory human-in-the-loop checkpoint for high-risk AUTH-4 operations.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="tenant-summary-badge tenant-summary-badge--warning">
-                Awaiting Sign-off: <strong>{awaitingHumanCount}</strong>
-              </span>
-              <span className="tenant-summary-badge tenant-summary-badge--info">
-                Paused: <strong>{pausedCount}</strong>
-              </span>
-              {queuedCount > 0 ? (
-                <span className="tenant-summary-badge tenant-summary-badge--ai">
-                  Queued: <strong>{queuedCount}</strong>
-                </span>
-              ) : null}
-            </div>
-
-            <div className="tenant-operator" aria-label="Verified operator identity">
-              <span>Operator:</span>
-              <strong title="Resolved from the authenticated session">{operatorId}</strong>
-            </div>
-
-            <button type="button" onClick={fetchQueue} disabled={isLoading} className="ui-button ui-button--secondary ui-button--sm">
-              {isLoading ? 'Refreshing…' : 'Refresh Queue'}
-            </button>
-          </div>
+      {banner !== null ? (
+        <div role="status" className="rounded-lg border border-success p-3">
+          {banner}
         </div>
-        {requireDistinctApprover ? (
-          <div role="note" className="tenant-notice tenant-notice--warning mt-4">
-            Người phê duyệt phải khác người soạn
+      ) : null}
+
+      <Tabs
+        tabs={[
+          { id: 'PENDING', label: 'Chờ duyệt', content: <div /> },
+          { id: 'DECIDED', label: 'Đã xử lý', content: <div /> },
+        ]}
+        activeTabId={tab}
+        onTabChange={(id) => setTab(id === 'DECIDED' ? 'DECIDED' : 'PENDING')}
+      />
+
+      {renderCards()}
+
+      <Drawer
+        open={selected !== null}
+        onClose={() => setSelectedId(null)}
+        title={selected !== null ? cardSentence(selected) : ''}
+        {...(selected === null ? {} : { description: STATUS_LABELS[selected.status] })}
+      >
+        {selected !== null ? (
+          <div className="space-y-5">
+            <section>
+              <h3>Điều gì sẽ xảy ra</h3>
+              <p>{cardSentence(selected)}</p>
+            </section>
+
+            <section>
+              <h3>Xem trước</h3>
+              <KeyValueList
+                items={[
+                  { key: 'agent', label: 'Người yêu cầu', value: requestingAgentLabel(selected.summary.requestingAgentKey) },
+                  { key: 'domain', label: 'Lĩnh vực', value: DOMAIN_LABELS[selected.summary.domain] },
+                  {
+                    key: 'campaign',
+                    label: 'Chiến dịch',
+                    value:
+                      selected.summary.params['campaign_name'] !== undefined
+                        ? String(selected.summary.params['campaign_name'])
+                        : null,
+                  },
+                  {
+                    key: 'audience',
+                    label: 'Số khách',
+                    value:
+                      selected.summary.params['audience_size'] !== undefined
+                        ? String(selected.summary.params['audience_size'])
+                        : null,
+                  },
+                  {
+                    key: 'channel',
+                    label: 'Kênh gửi',
+                    value:
+                      selected.summary.params['channel'] !== undefined
+                        ? channelLabel(selected.summary.params['channel'])
+                        : null,
+                  },
+                ]}
+              />
+            </section>
+
+            <section>
+              <h3>Kiểm tra</h3>
+              <KeyValueList
+                items={[
+                  { key: 'risk', label: 'Mức rủi ro', value: selected.summary.risk === 'high' ? 'Cao' : selected.summary.risk === 'medium' ? 'Trung bình' : 'Thấp' },
+                  { key: 'evidence', label: 'Bằng chứng', value: `${selected.summary.evidenceCount} mục` },
+                  { key: 'expiry', label: 'Hạn xem xét', value: expiryLabel(selected.summary.expiresAt) ?? 'Không có' },
+                ]}
+              />
+            </section>
+
+            {selected.summary.modification !== null ? (
+              <section>
+                <h3>Thay đổi</h3>
+                <h4>Trước</h4>
+                <ModificationPreview value={selected.summary.modification.before} />
+                <h4>Sau</h4>
+                <ModificationPreview value={selected.summary.modification.after} />
+              </section>
+            ) : null}
+
+            {selected.status === 'PENDING' && !selected.isPaused && canDecide ? (
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={() => void runDecision(selected, 'APPROVE', 'Đã phê duyệt qua bảng phê duyệt')} loading={submitting}>
+                  Duyệt
+                </Button>
+                <Button variant="danger" onClick={() => openDecision('REJECT')}>
+                  Từ chối
+                </Button>
+                <Button variant="secondary" onClick={() => openDecision('MODIFY')}>
+                  Yêu cầu sửa
+                </Button>
+                <Button variant="ghost" onClick={() => void runDecision(selected, 'PAUSE', 'Tạm dừng để xem xét thêm')}>
+                  Tạm dừng
+                </Button>
+                <Button variant="ghost" onClick={() => void runDecision(selected, 'CANCEL', 'Hủy đề xuất')}>
+                  Hủy
+                </Button>
+              </div>
+            ) : null}
+
+            {selected.status !== 'PENDING' ? (
+              <section>
+                <h3>Kết quả</h3>
+                <p>
+                  {selected.status === 'APPROVED'
+                    ? 'Đã duyệt · Đang kiểm tra lại nội dung và đồng ý trước khi gửi'
+                    : selected.status === 'MODIFIED'
+                      ? 'Đã duyệt bản chỉnh sửa · Đang kiểm tra lại nội dung và đồng ý trước khi gửi'
+                      : STATUS_LABELS[selected.status]}
+                </p>
+                {selected.decidedBy !== undefined || selected.decisionNotes !== undefined ? (
+                  <KeyValueList
+                    items={[
+                      { key: 'notes', label: 'Ghi chú', value: selected.decisionNotes ?? null },
+                    ]}
+                  />
+                ) : null}
+              </section>
+            ) : null}
+
+            <AdvancedDetails summary="Chi tiết kỹ thuật">
+              <KeyValueList
+                items={[
+                  { key: 'digest', label: 'Mã băm nội dung (SHA-256)', value: selected.payloadSha256 },
+                  { key: 'run', label: 'Mã phiên chạy', value: selected.runId },
+                  { key: 'effect', label: 'Khóa hiệu lực', value: selected.effectKey ?? null },
+                  { key: 'status', label: 'Trạng thái gốc', value: selected.status },
+                  { key: 'by', label: 'Mã người xử lý', value: selected.decidedBy ?? null },
+                  { key: 'reason', label: 'Lý do của chính sách', value: selected.reason !== '' ? selected.reason : null },
+                ]}
+              />
+              <pre>{JSON.stringify(selected.payload, null, 2)}</pre>
+              {selected.summary.modification !== null ? (
+                <pre>{JSON.stringify(selected.summary.modification, null, 2)}</pre>
+              ) : null}
+            </AdvancedDetails>
           </div>
         ) : null}
-      </div>
+      </Drawer>
 
-      <div className="max-w-5xl">
-        <ApprovalQueueList
-          items={itemList}
-          selectedId={selectedItemId}
-          onSelect={handleSelectItem}
-          isLoading={isLoading}
-          error={queueError}
-          onRetry={fetchQueue}
-        />
-      </div>
+      <Modal
+        open={decisionKind === 'REJECT'}
+        onClose={() => setDecisionKind(null)}
+        title="Từ chối đề xuất"
+        description="Nêu lý do để AI cải thiện lần sau."
+        actions={
+          <>
+            <Button variant="ghost" onClick={() => setDecisionKind(null)}>
+              Hủy
+            </Button>
+            <Button variant="danger" onClick={submitReject} loading={submitting} disabled={reason.trim() === '' && quickReason === ''}>
+              Từ chối
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <Field label="Lý do nhanh">
+            <Select value={quickReason} onChange={(e) => setQuickReason(e.target.value)}>
+              <option value="">Chọn lý do…</option>
+              {QUICK_REJECTION_REASONS.map((r) => (
+                <option key={r.code} value={r.code}>
+                  {r.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Hoặc nhập lý do">
+            <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Vì sao bạn từ chối?" />
+          </Field>
+        </div>
+      </Modal>
 
-      <ApprovalPayloadDiffModal
-        item={selectedItem}
-        requireDistinctApprover={requireDistinctApprover}
-        onClose={() => setSelectedItemId(null)}
-        onSubmitDecision={handleSubmitDecision}
-        onViewCustomer={onSelectCustomer}
-      />
+      <Modal
+        open={decisionKind === 'MODIFY'}
+        onClose={() => setDecisionKind(null)}
+        title="Yêu cầu sửa đề xuất"
+        description="Chỉnh những trường cần thay đổi, phần còn lại giữ nguyên."
+        actions={
+          <>
+            <Button variant="ghost" onClick={() => setDecisionKind(null)}>
+              Hủy
+            </Button>
+            <Button onClick={submitModify} loading={submitting}>
+              Gửi yêu cầu sửa
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <Field label="Kênh gửi">
+            <Input value={modify.channel} onChange={(e) => setModify({ ...modify, channel: e.target.value })} placeholder="Email, Zalo…" />
+          </Field>
+          <Field label="Số khách">
+            <Input value={modify.audienceSize} onChange={(e) => setModify({ ...modify, audienceSize: e.target.value })} inputMode="numeric" />
+          </Field>
+          <Field label="Nội dung">
+            <Input value={modify.message} onChange={(e) => setModify({ ...modify, message: e.target.value })} />
+          </Field>
+          <Field label="Ghi chú">
+            <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Mô tả ngắn thay đổi mong muốn" />
+          </Field>
+        </div>
+      </Modal>
     </div>
   );
-
 }

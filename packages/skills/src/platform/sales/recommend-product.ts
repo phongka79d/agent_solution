@@ -11,22 +11,22 @@ import type { PlatformSkillDependencies, PlatformSkillRow } from '../../contract
 /** Evidence half of a recommendation (§4.2 skill 12). */
 export interface RecommendationEvidence {
   verified_timeline_event_ids: string[];
-  verified_model: string;
+  verified_model: string | null;
   historical_spend?: number;
-  category_affinity?: string;
+  revenue_data_status?: string;
 }
 
 /** Eligibility half of a recommendation (§4.2 skill 12). */
 export interface RecommendationEligibility {
   stock_available: boolean;
-  consent_verified: boolean;
-  suppression_cleared: boolean;
+  consent_verified: boolean | null;
+  suppression_cleared: boolean | null;
 }
 
 /** Input of `skill.sales.recommend_product` (§4.2 skill 12). */
 export interface InputSalesRecommendProduct {
   tenant_id: string;
-  customer_id: string;
+  customer_id?: string;
   current_cart_skus: string[];
   recommendation_type?: 'CROSS_SELL' | 'UPSELL' | 'SUBSTITUTE' | 'BUNDLE' | 'REPLENISHMENT';
 }
@@ -35,8 +35,8 @@ export type RecommendationRankingMethod = 'keyword_overlap' | 'authoritative_cat
 
 /** Output of `skill.sales.recommend_product` (§4.2 skill 12), the recommendation contract fields. */
 export interface OutputSalesRecommendProduct {
-  customer: string;
-  product: { sku: string; name: string; price: number };
+  customer: string | null;
+  product: { sku: string; name: string; price: number; currency: string };
   reason: string;
   evidence: RecommendationEvidence;
   eligibility: RecommendationEligibility;
@@ -46,7 +46,7 @@ export interface OutputSalesRecommendProduct {
     conversion_probability: number;
     expected_revenue: number;
     currency: string;
-  };
+  } | null;
 }
 
 /** Immutable identifier of this row (§4.2 skill 12). */
@@ -56,7 +56,7 @@ export const SALES_RECOMMEND_PRODUCT_SKILL_ID = 'skill.sales.recommend_product';
 const input_schema: Record<string, unknown> = {
   $schema: 'https://json-schema.org/draft/2020-12/schema',
   type: 'object',
-  required: ['tenant_id', 'customer_id', 'current_cart_skus'],
+  required: ['tenant_id', 'current_cart_skus'],
   properties: {
     tenant_id: { type: 'string' },
     customer_id: { type: 'string' },
@@ -85,14 +85,15 @@ const output_schema: Record<string, unknown> = {
     'expected_outcome',
   ],
   properties: {
-    customer: { type: 'string' },
+    customer: { type: ['string', 'null'] },
     product: {
       type: 'object',
-      required: ['sku', 'name', 'price'],
+      required: ['sku', 'name', 'price', 'currency'],
       properties: {
         sku: { type: 'string' },
         name: { type: 'string' },
         price: { type: 'number' },
+        currency: { type: 'string' },
       },
       additionalProperties: false,
     },
@@ -102,9 +103,10 @@ const output_schema: Record<string, unknown> = {
       required: ['verified_timeline_event_ids', 'verified_model'],
       properties: {
         verified_timeline_event_ids: { type: 'array', items: { type: 'string' } },
-        verified_model: { type: 'string' },
+        verified_model: { type: ['string', 'null'] },
         historical_spend: { type: 'number' },
         category_affinity: { type: 'string' },
+        revenue_data_status: { type: 'string' },
       },
     },
     eligibility: {
@@ -112,8 +114,8 @@ const output_schema: Record<string, unknown> = {
       required: ['stock_available', 'consent_verified', 'suppression_cleared'],
       properties: {
         stock_available: { type: 'boolean' },
-        consent_verified: { type: 'boolean' },
-        suppression_cleared: { type: 'boolean' },
+        consent_verified: { type: ['boolean', 'null'] },
+        suppression_cleared: { type: ['boolean', 'null'] },
       },
     },
     confidence: { type: 'number', minimum: 0.0, maximum: 1.0 },
@@ -122,7 +124,7 @@ const output_schema: Record<string, unknown> = {
       enum: ['keyword_overlap', 'authoritative_catalog_order'],
     },
     expected_outcome: {
-      type: 'object',
+      type: ['object', 'null'],
       required: ['conversion_probability', 'expected_revenue', 'currency'],
       properties: {
         conversion_probability: { type: 'number' },
@@ -147,6 +149,10 @@ const spec: Omit<
   allowed_agents: ['SAL-02', 'SAL-03'],
   required_authority: 'AUTH-1',
   tool_binding: 'Core.RecommendationEngine',
+  // D14 / T1.14: read-only advice is open to anonymous shoppers and never gated by marketing consent.
+  // A caller-asserted customer_id is still verified against the session by the PEP before use.
+  requires_verified_identity: false,
+  requires_consent: false,
   validation_rules: [
     'confidence score >= 0.65 threshold required to yield recommendation',
     'stock eligibility must be verified',

@@ -1,13 +1,22 @@
 import type { TenantBinding } from '@agentos/database/contracts';
 import { loadApprovedDocuments } from '@agentos/second-brain';
 
+export * from './errors/catalog.js';
+export * from './secrets/cipher.js';
+export * from './secrets/resolver.js';
+export * from './llm/resolver.js';
+export * from './llm/url-guard.js';
+export * from './llm/recorder.js';
+export * from './auth/password.js';
+
 export * from './contracts/index.js';
 export { evaluateAuthorityVerdict } from './policy/authority.js';
 export { computeEffectKey, computeRequestFingerprint } from './effects/effect-key.js';
 export { RevenueOrchestrator } from './orchestrator/revenue-orchestrator.js';
 export { LIFECYCLE_STAGES, assertValidTransition } from './lifecycle/stages.js';
-export { assertOrchestratorBrokered } from './orchestrator/agent-boundary.js';
+export * from './responses/templates.js';
 export * from './durability/canonical-json.js';
+export * from './durability/approval-digest.js';
 export * from './durability/effect-guard.js';
 export * from './durability/evidence.js';
 export * from './durability/redis-client.js';
@@ -17,12 +26,16 @@ export {
   LlmTokenBudgetError,
   LlmUsageRecorder,
   llmIdempotencyKey,
+  estimateLlmCallTokens,
 } from './cost/llm-usage.js';
 export type {
   LlmCallContext,
   LlmCostRecordInput,
   LlmCostSink,
   LlmUsage,
+  LlmTokenBudgetReservationInput,
+  LlmTokenBudgetReservationStore,
+  LlmUsageFailureRecordContext,
   LlmUsageReader,
   LlmUsageRecordContext,
   LlmUsageRecorderOptions,

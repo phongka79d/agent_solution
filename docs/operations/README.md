@@ -20,6 +20,14 @@ Run commands from the repository root and treat the SRS, implementation blueprin
 | `pnpm lint`, `pnpm typecheck`, `pnpm build` | every workspace package |
 | `pnpm test:unit`, `pnpm test:contracts`, `pnpm test:adversarial`, `pnpm test:security` | offline suites, one owner per file (`tests/README.md`) |
 | `pnpm test:pilots`, `pnpm test:e2e` | worker offline pilot and end-to-end suites |
+| `pnpm test:stack` | isolated Compose-backed API, worker, and mock ERP tests (`agentos_stacktest`); setup and teardown run automatically unless `STACK_KEEP=1` |
+| `pnpm test:ui` | Playwright tenant-console and platform-admin browser tests against stub-backed services |
+| `pnpm test:ui:stack` | Playwright browser tests with tenant-console and platform-admin enabled in the Compose stack |
+| `pnpm live:preflight` | validates live-provider configuration before a run without printing secret values |
+| `pnpm live:scan` | scans `test-results/live/` for secret matches and prints artifact paths only |
+| `pnpm demo:up` | starts the demo stack and runs its migration, preflight, seed, and offline smoke lifecycle |
+| `pnpm demo:down` | stops the demo stack; pass `-- --volumes` to remove named volumes |
+| `docker compose --project-name agentos_stacktest --file docker-compose.yml --file tests/stack/compose.stack.yml down --volumes --remove-orphans` | explicitly tears down a retained stack-test project and its volumes |
 | `pnpm db:migrate:rehearse` | raw SQL migrations against `DATABASE_URL` |
 | `pnpm test:rls-rehearsal`, `pnpm test:rls-policies`, `pnpm test:p5-db`, `pnpm test:integration` | live PostgreSQL gates, run sequentially against one database |
 | `pnpm docker:smoke` | builds the four application images through Compose, boots them, and tears the project down |

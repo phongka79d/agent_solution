@@ -16,11 +16,12 @@ import {
 } from '../../../../lib/auth/session';
 import {
   apiV1Url,
-  demoAuthProvider,
+  authProvider,
   ExpiredProviderSessionError,
   ProviderHttpError,
-} from '../../../../lib/auth/demo-provider';
-import { isAllowedPath, routePath } from '../../../../lib/bff-allowlist';
+} from '../../../../lib/auth';
+import { findTenantBffRoute } from '../../../../lib/bff-routes';
+import { routePath } from '../../../../lib/bff-allowlist';
 export const dynamic = 'force-dynamic';
 
 
@@ -76,18 +77,20 @@ async function proxy(request: Request, context: RouteContext): Promise<Response>
 
   const params = await context.params;
   const path = routePath(params.path);
-  if (!path || !isAllowedPath(path, request.method.toUpperCase())) return jsonResponse({ error: 'NOT_FOUND' }, 404);
+  if (!path) return jsonResponse({ error: 'NOT_FOUND' }, 404);
+  const bffRoute = findTenantBffRoute(path, request.method);
+  if (!bffRoute) return jsonResponse({ error: 'NOT_FOUND' }, 404);
 
   const session = await getSessionFromRequest(request);
   if (!session) return unauthorizedResponse();
-  if (isMutationMethod(request.method)) {
+  if (bffRoute.csrf && isMutationMethod(request.method)) {
     const guard = mutationGuard(request, session);
     if (guard) return guard;
   }
 
   let verified: AuthSession | null;
   try {
-    verified = await demoAuthProvider.getSession(request);
+    verified = await authProvider.getSession(request);
   } catch (error) {
     if (error instanceof ExpiredProviderSessionError) {
       await destroySession(request);
@@ -103,7 +106,7 @@ async function proxy(request: Request, context: RouteContext): Promise<Response>
   }
   if (!verified) return unauthorizedResponse();
   session.authSession = verified;
-  if (path === 'demo/widget-session' && !session.authSession.permissions.includes('conversation:takeover')) return forbiddenResponse();
+  if (bffRoute.permission !== null && !session.authSession.permissions.includes(bffRoute.permission)) return forbiddenResponse();
 
   let body: ArrayBuffer | undefined;
   if (isMutationMethod(request.method)) {

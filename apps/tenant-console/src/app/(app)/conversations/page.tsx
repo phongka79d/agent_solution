@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import { RequirePermission } from '../../../components/auth/RequirePermission';
 import { ConversationWorkspace } from '../../../components/conversation/ConversationWorkspace';
 
@@ -9,7 +10,9 @@ export const metadata = {
 export default function ConversationsPage() {
   return (
     <RequirePermission permission="conversation:takeover">
-      <ConversationWorkspace />
+      <Suspense fallback={null}>
+        <ConversationWorkspace />
+      </Suspense>
     </RequirePermission>
   );
 }

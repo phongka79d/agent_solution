@@ -166,6 +166,27 @@ export async function readStoredSession(request: Request, env: AuthEnvironment =
   return { id: parts.id, session };
 }
 
+/**
+ * Sliding renewal: push the stored expiry forward (capped by the provider session and the TTL) and
+ * re-sign the cookie. Returns `null` when there is nothing valid to renew.
+ */
+export async function renewStoredSession(
+  request: Request,
+  env: AuthEnvironment = process.env,
+  nowMs = Date.now(),
+): Promise<{ cookieValue: string; session: StoredAuthSession } | null> {
+  const found = await readStoredSession(request, env);
+  if (!found) return null;
+  const providerExpiryMs = Date.parse(found.session.authSession.expires_at);
+  const cap = Number.isFinite(providerExpiryMs) ? Math.min(providerExpiryMs, nowMs + SESSION_TTL_MS) : nowMs + SESSION_TTL_MS;
+  if (cap <= nowMs) return null;
+  const session: StoredAuthSession = { ...found.session, expiresAtMs: cap };
+  const cookieValue = signSessionCookie(found.id, Math.floor(cap / 1000), env);
+  if (!cookieValue) return null;
+  await sessionStore().set(found.id, session);
+  return { cookieValue, session };
+}
+
 export async function deleteStoredSession(request: Request, env: AuthEnvironment = process.env): Promise<StoredAuthSession | null> {
   const parts = getSessionCookie(request, env);
   if (!parts) return null;

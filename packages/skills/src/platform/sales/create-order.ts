@@ -78,12 +78,12 @@ const spec: Omit<
 > = {
   purpose:
     'Creates a draft or pending order in ERP with server-verified prices and cryptographic effect key.',
-  effect_class: 'EFFECT',
+  effect_class: 'APPROVAL',
   guarded_dependency: 'API-001.OrderConnector',
   input_schema,
   output_schema,
-  allowed_agents: ['SAL-02', 'SAL-04', 'SAL-05'],
-  required_authority: 'AUTH-3',
+  allowed_agents: ['SAL-02'],
+  required_authority: 'AUTH-4',
   tool_binding: 'API-001.OrderConnector',
   validation_rules: [
     'effect_key must be unique within 72h Redis cache',
@@ -109,8 +109,8 @@ const spec: Omit<
       test_id: 'TC-SKILL-01',
       category: 'HAPPY_PATH',
       scenario:
-        '`SAL-02` at `AUTH-3` submits a priced cart with `shipping_address`, a supported `payment_method`, and a fresh `effect_key`.',
-      expected_outcome: 'One ERP order; `order_number` returned',
+        '`SAL-02` submits a priced cart on explicit purchase intent at `AUTH-3`; the PEP pauses for an `AUTH-4` decision before dispatch.',
+      expected_outcome: 'One ERP order is created only after the `AUTH-4` approval; `order_number` is returned',
       required: true,
     },
     {

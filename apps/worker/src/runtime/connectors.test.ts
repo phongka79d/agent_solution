@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import type { ActionDraft, ExecutionReceipt, IAdapterDispatcher } from '@agentos/core-engine/contracts';
 import { ErpRefusalError } from '@agentos/adapters';
 
-import { createWorkerConnectors, REFUSE_ALL_MUTATIONS } from './connectors.js';
+import { createWorkerConnectors as composeWorkerConnectors, REFUSE_ALL_MUTATIONS, type WorkerConnectorEnv, type WorkerConnectorOptions } from './connectors.js';
 import { nodeHmacSha256Hex } from './hmac.js';
 
 /**
@@ -104,6 +104,10 @@ function assertBoundReconcile(dispatcher: IAdapterDispatcher): BoundReconcile {
   }
   return dispatcher.reconcile.bind(dispatcher) as BoundReconcile;
 }
+/** These provider calls intentionally exercise the local DEMO fallback. */
+function createWorkerConnectors(env: WorkerConnectorEnv, options: WorkerConnectorOptions) {
+  return composeWorkerConnectors(env, { ...options, tenantDataClass: 'DEMO' });
+}
 
 describe('createWorkerConnectors', () => {
   it('reaches the local system of record through the registered API-001 connector', async () => {
@@ -147,11 +151,15 @@ describe('createWorkerConnectors', () => {
     expect(REFUSE_ALL_MUTATIONS.authorize({ tenant_id: TENANT, connector_id: 'API-001', operation: 'x', effect_key: 'y' })).toBe(false);
   });
 
-  it('refuses a mock system of record in a managed environment', () => {
-    for (const app_env of ['staging', 'sandbox', 'production']) {
-      expect(() =>
-        createWorkerConnectors({ ...LOCAL_ENV, APP_ENV: app_env }, { hmac: nodeHmacSha256Hex }),
-      ).toThrow(/MOCK_ERP_FORBIDDEN/);
+  it('does not expose an environment mock without an explicit DEMO data-class gate', () => {
+    for (const tenantDataClass of [undefined, 'PRODUCTION', 'TEST'] as const) {
+      const connectors = composeWorkerConnectors(LOCAL_ENV, {
+        hmac: nodeHmacSha256Hex,
+        ...(tenantDataClass === undefined ? {} : { tenantDataClass }),
+      });
+      expect(connectors.bound).toEqual([]);
+      expect(connectors.erp_read).toBeNull();
+      expect(connectors.unbound.join(' ')).toMatch(/restricted to DEMO/);
     }
   });
 

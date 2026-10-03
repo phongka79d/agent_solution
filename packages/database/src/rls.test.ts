@@ -5,14 +5,16 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { getPool } from './client.js';
 import { withTenantContext } from './rls.js';
+import { withPlatformRole } from './repositories/platform-directory.js';
 
 /**
  * Live row-level security suite (NFR-006).
  *
  * This suite runs against a real PostgreSQL instance because the objects under
- * test only exist there: `tenant_isolation_policy` is enabled and FORCEd on
- * every `agentos` table, cross-tenant references are refused by composite
- * `(tenant_id, id)` foreign keys, and the tenant context is a transaction-local
+ * test only exist there: tenant-scoped tables have FORCEd RLS policies,
+ * intentionally global tables use the documented role/function boundaries below,
+ * cross-tenant references are refused by composite `(tenant_id, id)` foreign keys,
+ * and the tenant context is a transaction-local
  * GUC. `DATABASE_URL` must connect as a role that cannot bypass row security
  * (`agentos_app` locally), otherwise the assertions would be measuring the
  * role's privileges instead of the policies.
@@ -32,6 +34,20 @@ const CUSTOMER_B = 'bbbbbbbb-0000-4000-8000-00000000000b';
 
 /** One run id per suite invocation, so cleanup can find exactly this run's rows. */
 const RUN_ID = `RUN-RLS-${randomUUID()}`;
+
+/**
+ * Global tables intentionally have no tenant_isolation_policy. RLS must still be
+ * ENABLEd and FORCEd; these exemptions cover only the tenant-policy name check.
+ */
+const GLOBAL_TABLE_POLICY_EXEMPTIONS: Record<string, string> = {
+  auth_sessions: '0041: global sessions; all app table grants revoked, SECURITY DEFINER auth accessors only.',
+  users: '0041: global identities; all app table grants revoked, SECURITY DEFINER auth accessors only.',
+  platform_audit_events: '0029: global append-only audit; app table grants revoked, definer writer and platform-only reads.',
+  platform_secrets: '0030: global platform credentials; app grants revoked, platform-only RLS policies.',
+  platform_llm_providers: '0032: global provider defaults; platform-only RLS policy denies app access even with bootstrap default grants.',
+  skill_catalog: '0042: public code-synced global contracts; app SELECT policy only, mutation requires platform policy.',
+  worker_heartbeats: '0040: global process presence, not tenant data; app SELECT/INSERT/UPDATE only, platform reads, no app DELETE/TRUNCATE.',
+};
 
 /**
  * Actions created by this suite. `agentos.actions` carries no run column, so the
@@ -59,15 +75,30 @@ function firstRow<R extends QueryResultRow>(result: QueryResult<R>): R {
  * test can assert on the SQLSTATE (23503 foreign_key_violation, 42501
  * row-level security violation) instead of only on the fact that it threw.
  */
-async function expectRefusal(statement: Promise<unknown>): Promise<{ code: string; message: string }> {
+async function expectRefusal(statement: Promise<unknown>): Promise<{ code: string; message: string; where: string }> {
   try {
     await statement;
   } catch (error) {
-    const { code, message } = error as { code?: string; message?: string };
-    return { code: code ?? '', message: message ?? '' };
+    const code = typeof error === 'object' && error !== null && 'code' in error
+      && typeof error.code === 'string' ? error.code : '';
+    const message = error instanceof Error ? error.message : '';
+    const where = typeof error === 'object' && error !== null && 'where' in error
+      && typeof error.where === 'string' ? error.where : '';
+    return { code, message, where };
   }
 
   throw new Error('EXPECTED_REFUSAL: the statement was accepted, but the durable schema must refuse it.');
+}
+
+/** The BEFORE INSERT inheritance trigger can fail closed before RLS WITH CHECK. */
+function expectTenantWriteRefusal(refusal: { code: string; message: string; where: string }): void {
+  expect(['42501', '23503']).toContain(refusal.code);
+  if (refusal.code === '23503') {
+    expect(refusal.message).toBe('data_class tenant or parent not found');
+    expect(refusal.where).toMatch(/inherit_data_class/);
+  } else {
+    expect(refusal.message).toContain('row-level security policy');
+  }
 }
 
 /** Opens a transaction with no tenant context bound and always rolls it back. */
@@ -216,6 +247,30 @@ describe('agentos row-level security (live PostgreSQL)', () => {
       }
 
       durableSchemaPresent = true;
+
+      // 0039 inherits child classification from a visible tenant/parent. Tenant
+      // registry writes remain platform-only; never grant app INSERT for fixtures.
+      if (!process.env.PLATFORM_DATABASE_URL?.trim()) {
+        throw new Error(
+          'RLS_PLATFORM_DATABASE_URL_REQUIRED: configure the dedicated platform login ' +
+          'to provision fixture tenant shells; agentos_app must not insert tenant registry rows.',
+        );
+      }
+      for (const tenantId of [TENANT_A, TENANT_B]) {
+        const existing = await withTenantContext(tenantId, (tenantClient) => tenantClient.query(
+          'SELECT tenant_id FROM agentos.tenants WHERE tenant_id = $1', [tenantId],
+        ));
+        if (existing.rows.length > 0) continue;
+
+        await withPlatformRole(async (platformClient) => {
+          await platformClient.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
+          await platformClient.query(
+            `SELECT agentos.provision_tenant_shell_for_id(
+               $1::uuid, $2::char(64), $2::char(64), $3::varchar(128), 'TEST'::agentos.data_class)`,
+            [tenantId, tenantId.replaceAll('-', '').padEnd(64, '0'), `RLS policy fixture (${tenantId})`],
+          );
+        });
+      }
     } finally {
       client.release();
     }
@@ -225,7 +280,7 @@ describe('agentos row-level security (live PostgreSQL)', () => {
     await cleanupFixtures();
   });
 
-  it('forces tenant_isolation_policy on every agentos table', async () => {
+  it('forces RLS on every agentos table and tenant policies on tenant-scoped tables', async () => {
     const client = await getPool().connect();
 
     try {
@@ -240,7 +295,8 @@ describe('agentos row-level security (live PostgreSQL)', () => {
                     SELECT 1
                     FROM pg_policy p
                     WHERE p.polrelid = c.oid
-                      AND p.polname = 'tenant_isolation_policy'
+                      AND p.polname = CASE WHEN c.relname = 'llm_probe_results'
+                        THEN 'llm_probe_tenant_isolation' ELSE 'tenant_isolation_policy' END
                 ) AS policy_missing
            FROM pg_class c
            JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -251,7 +307,10 @@ describe('agentos row-level security (live PostgreSQL)', () => {
 
       // A schema with no table would satisfy the filter below vacuously.
       expect(rows.length).toBeGreaterThan(0);
-      expect(rows.filter((row) => row.rls_not_forced || row.policy_missing)).toEqual([]);
+      // 0032 mixes global/platform and tenant probes; its explicitly named
+      // llm_probe_tenant_isolation policy still fences agentos_app by tenant_id.
+      expect(rows.filter((row) => row.rls_not_forced
+        || (row.policy_missing && !Object.hasOwn(GLOBAL_TABLE_POLICY_EXEMPTIONS, row.relname)))).toEqual([]);
     } finally {
       client.release();
     }
@@ -295,6 +354,7 @@ describe('agentos row-level security (live PostgreSQL)', () => {
   });
 
   it('denies reads and writes while no tenant context is bound', async () => {
+    const customerId = randomUUID();
     await withUnscopedTransaction(async (client) => {
       const visible = await client.query<{ visible: number }>(
         'SELECT count(*)::int AS visible FROM agentos.customers',
@@ -302,15 +362,22 @@ describe('agentos row-level security (live PostgreSQL)', () => {
       expect(firstRow(visible).visible).toBe(0);
 
       const refusal = await expectRefusal(
-        client.query('INSERT INTO agentos.customers (tenant_id, display_name) VALUES ($1, $2)', [
+        client.query('INSERT INTO agentos.customers (id, tenant_id, display_name) VALUES ($1, $2, $3)', [
+          customerId,
           TENANT_A,
           'unscoped insert must be refused',
         ]),
       );
 
-      expect(refusal.code).toBe('42501');
-      expect(refusal.message).toContain('row-level security policy');
+      expectTenantWriteRefusal(refusal);
     });
+
+    // Observe from the owning tenant after the refused transaction, not through
+    // an unscoped read that would hide even an incorrectly persisted row.
+    const persisted = await withTenantContext(TENANT_A, (client) => client.query(
+      'SELECT id FROM agentos.customers WHERE id = $1', [customerId],
+    ));
+    expect(persisted.rows).toEqual([]);
   });
 
   it('rejects cross-tenant foreign keys and accepts the same-tenant reference', async () => {

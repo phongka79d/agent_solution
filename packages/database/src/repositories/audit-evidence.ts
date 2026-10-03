@@ -1,8 +1,10 @@
 /**
- * @file Append-only evidence, agent run log and audit persistence (implement/03 §1 DOMAIN 5,
- * implement/04 §6.1, implement/08 §4.1-§4.2).
+ * @file Tenant-scoped evidence, audit, run-log and pending outcome-watch persistence
+ * (implement/03 §1 DOMAIN 5, implement/04 §6.1, implement/08 §4.1-§4.2).
  *
- * Three tables, three chain rules, one discipline:
+ * The signed evidence, operational log and audit chain are append-only ledgers. Outcome watches
+ * have a separate bounded lifecycle: effect-key retries preserve the first watcher, and expired
+ * watchers link an explicit UNKNOWN_OUTCOME in the same transaction as the EXPIRED transition.
  *
  *  * **`agentos.evidence_records` — the tamper-evident chain of one run** (implement/04 §6.1).
  *    `payload_sha256` digests the RFC 8785 canonical `raw_payload`; `chain_hash` is
@@ -18,26 +20,22 @@
  *    sanitized 18-field projection built by {@link buildAuditPayload}; the chain is partitioned per
  *    tenant and its genesis `prev_hash` is {@link GENESIS_HASH}.
  *
- * Four rules shape every method below:
+ * The following rules shape the ledger and outcome-watch methods below:
  *
- *  * **Append-only.** No statement of this module is an `UPDATE` or a `DELETE`; the migration's
- *    `trg_immutable_evidence_records` / `trg_immutable_agent_run_logs` / `trg_immutable_audit_records`
- *    triggers are the outer guarantee (NFR-002, the `IMMUTABLE AUDIT TRIGGERS` section of
- *    `0000_agentos_schema.sql`). A stored record is therefore never corrected, only detected: the
- *    verifiers below recompute every digest and report the interior tampering and the missing links
- *    they find instead of repairing anything.
+ *  * **Append-only ledgers.** The evidence records, run logs and audit chain are never updated or
+ *    deleted; the migration's immutable-table triggers are the outer guarantee (NFR-002). Their
+ *    verifiers report tampering or missing links instead of repairing a stored record.
+ *  * **Outcome-watch lifecycle.** A watch is inserted once per `(tenant_id, effect_key)` and is
+ *    transitioned only after its deadline, with the `UNKNOWN_OUTCOME` row and `EXPIRED` status
+ *    written atomically.
  *  * **Tenant-scoped by construction.** Each call opens exactly one `withTenantContext()`
  *    transaction, so the transaction-local `app.current_tenant_id` binding and the `tenant_id`
  *    predicate always agree and RLS (NFR-006) denies an unbound read or write. Reads are reads of one
  *    tenant's chain, so a cross-tenant row can never be linked into the walk.
- *  * **The predecessor is read, never trusted.** An append first takes a transaction-scoped advisory
- *    lock of its chain scope, then reads the durable predecessor from the table and links to the hash
- *    it finds there. A caller's chain cursor is checked against that predecessor instead of being
- *    believed, so a stale cursor is refused rather than allowed to fork the chain. Row locking alone
- *    cannot carry this rule: a row inserted by a concurrent transaction is invisible to a blocked
- *    reader's snapshot, so two writers could each link to the same predecessor. The advisory lock
- *    is held for the whole read-hash-insert-commit sequence, which is what makes the chain linear
- *    (implement/08 §4.2).
+ *  * **The predecessor is read, never trusted.** An evidence append first takes a transaction-scoped
+ *    advisory lock of its chain scope, then reads the durable predecessor from the table and links to
+ *    THAT hash. A caller's chain cursor is checked against that predecessor instead of being
+ *    believed, so a stale cursor is refused rather than allowed to fork the chain.
  *  * **The bytes hashed are the bytes stored.** Every JSONB column is written as the canonical JSON
  *    text of the value the digest was computed over, and `canonicalizeJson` refuses a value JSON
  *    cannot represent (an absent member, `NaN`, a non-plain object) instead of converting it, so the
@@ -72,9 +70,11 @@ import type { AuditChainReport, EvidenceChainReport } from './audit-evidence.cha
 import {
   AUDIT_RECORDS,
   EVIDENCE_RECORDS,
+  EXPIRE_PENDING_OUTCOME_WATCHES,
   INSERT_AGENT_RUN_LOG,
   INSERT_AUDIT_RECORD,
   INSERT_EVIDENCE_RECORD,
+  INSERT_PENDING_OUTCOME_WATCH,
   LOCK_CHAIN_SCOPE,
   SELECT_AUDIT_BY_TENANT,
   SELECT_AUDIT_SERVER_TIMESTAMP,
@@ -83,6 +83,7 @@ import {
   SELECT_EVIDENCE_BY_RUN,
   SELECT_EVIDENCE_TAIL,
   SELECT_RUN_LOGS_BY_RUN,
+  SELECT_RUN_LOGS_FOR_RUNS,
   assertInstant,
   evidenceIdFor,
   prepareLedgerRecord,
@@ -99,6 +100,11 @@ import type {
   AuthorityLevel,
   ExecutionStatus,
 } from './audit-evidence.sql.js';
+
+interface ExpiredOutcomeWatchRow extends QueryResultRow {
+  readonly effect_key: string;
+}
+
 
 export { AUDIT_HMAC_SECRET_ENV, GENESIS_HASH } from './audit-evidence.chain.js';
 export { AUTHORITY_LEVELS, EXECUTION_STATUSES } from './audit-evidence.sql.js';
@@ -282,19 +288,12 @@ export interface AppendEvidenceInput {
 }
 
 /**
- * The append-only writer and reader of one run's evidence chain (implement/04 §6.1-§6.2).
+ * The tenant-scoped persistence for evidence chains, operational logs, audit chains and pending
+ * outcome attribution.
  *
- *  * `appendEvidence()` — the whole chain step in one transaction: take the advisory lock of
- *    `(tenant, run)`, read the durable predecessor, check the caller's cursor against it, hash the
- *    canonical payload and insert the signed link. The predecessor is read, never supplied, so no
- *    caller can fork a chain by handing in a hash of its own.
- *  * `logAgentRun()` — the step's single operational row, appended once. A second append for the
- *    same `(tenant_id, run_id, skill, step_index)` is refused, because an append-only log is
- *    extended, never corrected.
- *  * `readEvidenceChain()` / `readRunLogs()` — the run's rows in chain and step order.
- *  * `verifyRunChain()` — reads the chain and recomputes every digest and signature through
- *    {@link verifyEvidenceChain}, so a tampered or incomplete trace is reported rather than
- *    truncated.
+ * `appendEvidence()` / `logAgentRun()` extend the immutable ledgers; the readers and verifiers
+ * publish those durable records. `initializeOutcomeWatch()` reserves one watcher per effect, while
+ * `expireOverdueOutcomeWatches()` atomically records an explicit unknown outcome for expired watches.
  */
 export class EvidenceRepository {
   private readonly runInTenantTransaction: TenantTransactionRunner;
@@ -305,6 +304,51 @@ export class EvidenceRepository {
    */
   constructor(runInTenantTransaction: TenantTransactionRunner = withTenantContext) {
     this.runInTenantTransaction = runInTenantTransaction;
+  }
+
+  /**
+   * Persists the observation window for one mutating effect. A retry of the same tenant/effect
+   * keeps its original run binding and deadline.
+   */
+  async initializeOutcomeWatch(params: {
+    tenant_id: string;
+    run_id: string;
+    effect_key: string;
+    skill_id: string;
+  }): Promise<void> {
+    assertIdentifier(params.tenant_id, 'tenant_id', 36, 'OUTCOME_WATCH_INPUT_INVALID');
+    assertIdentifier(params.run_id, 'run_id', 64, 'OUTCOME_WATCH_INPUT_INVALID');
+    assertIdentifier(params.effect_key, 'effect_key', 128, 'OUTCOME_WATCH_INPUT_INVALID');
+    assertIdentifier(params.skill_id, 'skill_id', 64, 'OUTCOME_WATCH_INPUT_INVALID');
+
+    await this.runInTenantTransaction(params.tenant_id, async (client) => {
+      await client.query(INSERT_PENDING_OUTCOME_WATCH, [
+        params.tenant_id,
+        params.run_id,
+        params.effect_key,
+        params.skill_id,
+      ]);
+    });
+  }
+
+  /**
+   * Closes a bounded tenant batch of expired watches with an explicit UNKNOWN_OUTCOME row.
+   * Outcomes and watch transitions are committed together; a later attribution can refine the
+   * workflow separately.
+   */
+  async expireOverdueOutcomeWatches(tenant_id: string, limit: number): Promise<readonly string[]> {
+    assertIdentifier(tenant_id, 'tenant_id', 36, 'OUTCOME_WATCH_TENANT_ID_REQUIRED');
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
+      throw new Error('OUTCOME_WATCH_EXPIRY_LIMIT_INVALID: limit must be between 1 and 500.');
+    }
+
+    return this.runInTenantTransaction(tenant_id, async (client) => {
+      const result = await client.query<ExpiredOutcomeWatchRow>(EXPIRE_PENDING_OUTCOME_WATCHES, [
+        tenant_id,
+        limit,
+      ]);
+      return result.rows.map((row) => row.effect_key);
+    });
   }
 
   /**
@@ -573,6 +617,17 @@ export class EvidenceRepository {
     return this.runInTenantTransaction(tenant_id, async (client) => {
       const result = await client.query<AgentRunLogRow>(SELECT_RUN_LOGS_BY_RUN, [tenant_id, run_id]);
 
+      return result.rows.map(toAgentRunLog);
+    });
+  }
+
+  /** One tenant-scoped batch read for a run page; rows are grouped by run_id by the caller. */
+  async readRunLogsForRuns(tenant_id: string, run_ids: readonly string[]): Promise<readonly AgentRunLog[]> {
+    assertIdentifier(tenant_id, 'tenant_id', 36, 'EVIDENCE_INPUT_INVALID');
+    if (run_ids.length === 0) return [];
+    for (const run_id of run_ids) assertIdentifier(run_id, 'run_id', 64, 'EVIDENCE_INPUT_INVALID');
+    return this.runInTenantTransaction(tenant_id, async (client) => {
+      const result = await client.query<AgentRunLogRow>(SELECT_RUN_LOGS_FOR_RUNS, [tenant_id, run_ids]);
       return result.rows.map(toAgentRunLog);
     });
   }

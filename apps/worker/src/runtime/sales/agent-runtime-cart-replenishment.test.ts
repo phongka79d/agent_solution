@@ -350,6 +350,7 @@ describe('SalesAgentRuntime', () => {
       expect(cartStep.mutating).toBe(true);
       expect(cartStep.required_authority).toBe('AUTH-3');
       expect(cartStep.timeout_ms).toBe(2000);
+      expect(cartStep.idempotency_input_field).toBe('idempotency_key');
       expect(cartStep.input_parameters).toEqual({
         tenant_id,
         session_id: 'sess-sales-1',

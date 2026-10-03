@@ -1,14 +1,35 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 
 import { authenticate, requireOperator } from '../../gateway/principal.js';
 import type { CredentialStore } from '../../gateway/principal.js';
 import type { GatewayRuntime } from '../../gateway/ports.js';
 import { correlationIdOf, fail, replyFailure } from '../../gateway/http.js';
+import { registerCompanyAutonomyRoutes } from './company-autonomy.js';
 
 export interface AutonomyAdminCommand {
   readonly tenant_id: string;
   readonly operator_id?: string;
   readonly skill_id?: string;
+  readonly reason?: string;
+}
+
+/** A company operator asking to promote one draft-gated skill (T4.5). */
+export interface PromotionRequestCommand {
+  readonly tenant_id: string;
+  readonly operator_id?: string;
+  readonly skill_id: string;
+  readonly policy_version: string;
+  readonly required_authority: string;
+  readonly reason?: string;
+  readonly expected_revision?: number;
+}
+
+/** The second, distinct operator decision under `require_distinct_approver`. */
+export interface PromotionDecisionCommand {
+  readonly tenant_id: string;
+  readonly operator_id?: string;
+  readonly request_id: string;
+  readonly decision: 'APPROVE' | 'REJECT';
   readonly reason?: string;
 }
 
@@ -18,6 +39,9 @@ export interface AutonomyAdminPort {
   resumeTenant(command: AutonomyAdminCommand): Promise<unknown> | unknown;
   demote(command: AutonomyAdminCommand): Promise<unknown> | unknown;
   inspect(command: { readonly tenant_id: string }): Promise<unknown> | unknown;
+  requestPromotion(command: PromotionRequestCommand): Promise<unknown> | unknown;
+  decidePromotion(command: PromotionDecisionCommand): Promise<unknown> | unknown;
+  listPromotionRequests(command: { readonly tenant_id: string; readonly status?: string }): Promise<unknown> | unknown;
 }
 
 export interface AutonomyAdminRouteDependencies {
@@ -55,6 +79,13 @@ function commandOf(
     ...(typeof reason === 'string' && reason.trim().length > 0 ? { reason } : {}),
   };
 }
+function requirePlatformAdmin(request: FastifyRequest) {
+  const principal = requireOperator(request, 'platform:admin');
+  if (principal.scope !== 'platform') {
+    fail('INSUFFICIENT_AUTHORITY', 'the authenticated operator must hold platform:admin at platform scope');
+  }
+  return principal;
+}
 
 /** Registers tenant-scoped pause, resume, demotion and inspection operations. */
 export function registerAutonomyAdminRoutes(
@@ -63,10 +94,17 @@ export function registerAutonomyAdminRoutes(
 ): void {
   const preHandler = authenticate(deps);
 
+  // The company-facing promotion routes live in their own module; they share this port and hook.
+  registerCompanyAutonomyRoutes(app, {
+    autonomyAdmin: deps.autonomyAdmin,
+    credentials: deps.credentials,
+    runtime: deps.runtime,
+  });
+
   app.post('/admin/autonomy/pause', { preHandler }, async (request, reply) => {
     const runtime = deps.runtime;
     try {
-      const principal = requireOperator(request, 'platform:admin');
+      const principal = requirePlatformAdmin(request);
       const command = commandOf(request.body, principal.tenant_id, principal.operator_id, false);
       const result = await deps.autonomyAdmin.pauseTenant(command);
       await runtime.audit.record({
@@ -87,7 +125,7 @@ export function registerAutonomyAdminRoutes(
   app.post('/admin/autonomy/resume', { preHandler }, async (request, reply) => {
     const runtime = deps.runtime;
     try {
-      const principal = requireOperator(request, 'platform:admin');
+      const principal = requirePlatformAdmin(request);
       const command = commandOf(request.body, principal.tenant_id, principal.operator_id, false);
       const result = await deps.autonomyAdmin.resumeTenant(command);
       await runtime.audit.record({
@@ -108,7 +146,7 @@ export function registerAutonomyAdminRoutes(
   app.post('/admin/autonomy/demote', { preHandler }, async (request, reply) => {
     const runtime = deps.runtime;
     try {
-      const principal = requireOperator(request, 'platform:admin');
+      const principal = requirePlatformAdmin(request);
       const command = commandOf(request.body, principal.tenant_id, principal.operator_id, true);
       const result = await deps.autonomyAdmin.demote(command);
       await runtime.audit.record({
@@ -130,7 +168,7 @@ export function registerAutonomyAdminRoutes(
   app.get('/admin/autonomy', { preHandler }, async (request, reply) => {
     const runtime = deps.runtime;
     try {
-      const principal = requireOperator(request, 'platform:admin');
+      const principal = requirePlatformAdmin(request);
       const result = await deps.autonomyAdmin.inspect({ tenant_id: principal.tenant_id });
       return reply.code(200).send(result);
     } catch (error) {

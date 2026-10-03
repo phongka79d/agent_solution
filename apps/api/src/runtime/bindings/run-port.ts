@@ -11,12 +11,14 @@ import {
   type EffectReservationRepository,
   type EvidenceRepository,
   type RunResponseRepository,
+  type RunStageEventsRepository,
   type TenantTransactionRunner,
 } from '@agentos/database';
 
+import { projectRunListItem, projectRunStory, projectRunTrace } from '../../projections/run-story.js';
+
 import type {
   RetryableFailureClass,
-  RunProjection,
   RunStepProjection,
   TaskSourceRef,
 } from '../../gateway/contracts.js';
@@ -49,7 +51,13 @@ type DurableRunRepository = Pick<
 type DurableReconciliationRepository = Pick<DurableWorkflowRepository, 'queueReconciliation'>;
 
 /** Operational-log surface needed by retry classification and R16. */
-type RunEvidenceRepository = Pick<EvidenceRepository, 'readRunLogs' | 'readEvidenceChain'>;
+type RunEvidenceRepository = Pick<EvidenceRepository, 'readRunLogs' | 'readEvidenceChain'> &
+  Partial<Pick<EvidenceRepository, 'readRunLogsForRuns'>>;
+
+type RunTraceRepository = Pick<
+  RunStageEventsRepository,
+  'listStageEvents' | 'listStageResults' | 'listProviderCalls' | 'listProviderCallsForRuns'
+>;
 
 /** Reservation surface used to prove that a failed effect is not still indeterminate. */
 type RunReservationRepository = Pick<EffectReservationRepository, 'getReservation'>;
@@ -61,20 +69,44 @@ function plainRecord(value: unknown): value is Record<string, unknown> {
   return prototype === Object.prototype || prototype === null;
 }
 
-/** Malformed or unrelated admission signals grant no session ownership. */
+/** Admission and Marketing AUTH-4 checkpoint signals grant ownership only within the task tenant. */
 function runOwner(task: DurableTaskRecord): { conversation_id?: string; session_id?: string } {
-  if (!plainRecord(task.state_payload) || !plainRecord(task.state_payload['signal'])) return {};
-  const signal = task.state_payload['signal'];
-  if (!plainRecord(signal['subject']) || !plainRecord(signal['payload'])) return {};
+  if (!plainRecord(task.state_payload)) return {};
+  let signal: unknown = task.state_payload['signal'];
+  const fromCheckpoint = signal === undefined;
+  if (fromCheckpoint) {
+    // Marketing keeps the admitted signal in hydrated run state when an AUTH-4 pause replaces
+    // the admission payload with a checkpoint. Its owner remains the DB or demo operator id.
+    const context = task.state_payload['context'];
+    if (!plainRecord(context) || context['tenant_id'] !== task.tenant_id) return {};
+    const runState = context['run_state'];
+    if (!plainRecord(runState) || !plainRecord(runState['marketing'])) return {};
+    signal = runState['marketing']['source_signal'];
+  }
+  if (
+    !plainRecord(signal) ||
+    signal['tenant_id'] !== task.tenant_id ||
+    !plainRecord(signal['subject']) ||
+    !plainRecord(signal['payload'])
+  ) return {};
   const conversation_id = signal['subject']['conversation_id'];
   const payloadConversation = signal['payload']['conversation_id'];
   const session_id = signal['subject']['session_id'];
+  if (typeof session_id !== 'string' || session_id.length === 0) return {};
+  // Operator campaign admissions have no customer conversation; their authenticated owner is
+  // carried by the Marketing signal instead and is needed by the distinct-approver policy.
+  if (
+    signal['source_channel'] === 'MARKETING_CAMPAIGN' &&
+    signal['event_type'] === 'campaign.requested' &&
+    signal['subject']['channel_type'] === 'MARKETING_CAMPAIGN' &&
+    signal['subject']['channel_identifier'] === session_id &&
+    signal['payload']['module'] === 'marketing'
+  ) return { session_id };
+  if (fromCheckpoint) return {};
   if (
     typeof conversation_id !== 'string' ||
     conversation_id.length === 0 ||
-    conversation_id !== payloadConversation ||
-    typeof session_id !== 'string' ||
-    session_id.length === 0
+    conversation_id !== payloadConversation
   ) return {};
   return { conversation_id, session_id };
 }
@@ -212,6 +244,10 @@ function retryClassOf(code: string | null): RetryableFailureClass | null {
 
     case 'PROVIDER_RATE_LIMITED':
     case 'PROVIDER_UNAVAILABLE':
+    // LLM provider rejections; the reservation check below still refuses an unreleased effect.
+    case 'LLM_RATE_LIMITED':
+    case 'LLM_UNAVAILABLE':
+    case 'LLM_TIMEOUT':
     case 'CONNECTOR_NOT_FOUND':
     case 'CONNECTOR_NOT_ENABLED':
       return 'PRE_DISPATCH_PROVIDER_REJECTION';
@@ -221,14 +257,14 @@ function retryClassOf(code: string | null): RetryableFailureClass | null {
   }
 }
 
-/** Extracts the persisted USD cost without inventing a zero for an unrecognised shape. */
-function costOf(value: unknown): number {
+/** Returns only a persisted numeric cost; malformed or absent cost is unknown, never an exception. */
+function costOf(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (plainRecord(value)) {
     const total = value['total_cost_usd'];
     if (typeof total === 'number' && Number.isFinite(total)) return total;
   }
-  throw new Error('RUN_LOG_PROJECTION_INVALID: cost has no numeric total_cost_usd');
+  return null;
 }
 
 /** Maps one durable operational-log row without dropping any structured value. */
@@ -251,23 +287,6 @@ function toRunStep(log: AgentRunLog): RunStepProjection {
   };
 }
 
-/** Maps the PostgreSQL schedule of record plus its step log onto R16. */
-async function toRunProjection(
-  task: DurableTaskRecord,
-  evidence: RunEvidenceRepository,
-): Promise<RunProjection> {
-  const logs = await evidence.readRunLogs(task.tenant_id, task.run_id);
-  return {
-    run_id: task.run_id,
-    state: task.state,
-    task_version: task.task_version,
-    current_step: task.current_step,
-    retry_count: task.retry_count,
-    last_error_class: task.last_error_class,
-    steps: logs.map(toRunStep),
-    correlation_id: task.correlation_id,
-  };
-}
 
 /**
  * Binds the durable run projection, safe requeue path and INTERNAL reconciliation event queue.
@@ -283,7 +302,8 @@ export function createDurableRunPort(
   reservations: RunReservationRepository,
   reconciliationOrResponse?: DurableReconciliationRepository | DurableResponseRepository,
   responseRepository?: DurableResponseRepository,
-): Pick<RunPort, 'read' | 'classifyRetry' | 'retry' | 'reconcile' | 'list'> {
+  traceRepository?: RunTraceRepository,
+): Pick<RunPort, 'read' | 'classifyRetry' | 'retry' | 'reconcile' | 'list' | 'story' | 'trace'> {
   const reconciliation =
     reconciliationOrResponse !== undefined && 'queueReconciliation' in reconciliationOrResponse
       ? reconciliationOrResponse
@@ -293,25 +313,25 @@ export function createDurableRunPort(
     (reconciliationOrResponse !== undefined && 'read' in reconciliationOrResponse
       ? reconciliationOrResponse
       : undefined);
+  const classifyRetryForTask = async (task: DurableTaskRecord, logs: readonly AgentRunLog[]) => {
+    if (task.state !== 'failed') return { retryable: false as const, reason: 'NOT_FAILED' as const };
+    const effect_key = effectKeyOf(task, logs);
+    const failure_class = retryClassOf(errorCodeOf(task.error_details));
+    if (effect_key === null || failure_class === null) {
+      return { retryable: false as const, reason: 'UNKNOWN' as const };
+    }
+    const reservation = await reservations.getReservation(task.tenant_id, effect_key);
+    if (reservation !== null && reservation.status !== 'FAILED') {
+      // RESERVED means the effect may have landed; SUCCEEDED means it did. Neither is retryable.
+      return { retryable: false as const, reason: 'UNKNOWN' as const };
+    }
+    return { retryable: true as const, failure_class, effect_key };
+  };
   const classifyRetry: RunPort['classifyRetry'] = async (tenant_id, run_id) => {
     const task = await repository.getTask(tenant_id, run_id);
     if (task === null) return { retryable: false, reason: 'NOT_FOUND' };
     if (task.state !== 'failed') return { retryable: false, reason: 'NOT_FAILED' };
-
-    const logs = await evidence.readRunLogs(tenant_id, run_id);
-    const effect_key = effectKeyOf(task, logs);
-    const failure_class = retryClassOf(errorCodeOf(task.error_details));
-    if (effect_key === null || failure_class === null) {
-      return { retryable: false, reason: 'UNKNOWN' };
-    }
-
-    const reservation = await reservations.getReservation(tenant_id, effect_key);
-    if (reservation !== null && reservation.status !== 'FAILED') {
-      // RESERVED means the effect may have landed; SUCCEEDED means it did. Neither is retryable.
-      return { retryable: false, reason: 'UNKNOWN' };
-    }
-
-    return { retryable: true, failure_class, effect_key };
+    return classifyRetryForTask(task, await evidence.readRunLogs(tenant_id, run_id));
   };
 
   return {
@@ -352,10 +372,12 @@ export function createDurableRunPort(
       });
       const persistedResponse =
         response === null ? {} : projectPersistedResponse(response, tenant_id, run_id);
+      const errorCode = errorCodeOf(task.error_details);
       return {
         run_id: task.run_id,
         task_version: task.task_version,
         lifecycle_state: task.state,
+        error: errorCode === null ? null : { code: errorCode, class: task.last_error_class },
         correlation_id: task.correlation_id,
         ...runOwner(task),
         ...persistedResponse,
@@ -391,10 +413,60 @@ export function createDurableRunPort(
       };
     },
 
+    story: async (tenant_id, run_id) => {
+      const task = await repository.getTask(tenant_id, run_id);
+      if (task === null || traceRepository === undefined) return null;
+      const [stages, logs] = await Promise.all([
+        traceRepository.listStageResults(tenant_id, run_id),
+        task.state === 'failed' ? evidence.readRunLogs(tenant_id, run_id) : Promise.resolve([]),
+      ]);
+      const classification = await classifyRetryForTask(task, logs);
+      return projectRunStory(task, stages, classification);
+
+    },
+    trace: async (tenant_id, run_id) => {
+      const task = await repository.getTask(tenant_id, run_id);
+      if (task === null || traceRepository === undefined) return null;
+      const [stages, events, calls, logs, evidenceChain] = await Promise.all([
+        traceRepository.listStageResults(tenant_id, run_id),
+        traceRepository.listStageEvents(tenant_id, run_id),
+        traceRepository.listProviderCalls(tenant_id, run_id),
+        evidence.readRunLogs(tenant_id, run_id),
+        evidence.readEvidenceChain(tenant_id, run_id),
+      ]);
+      return projectRunTrace({ task, stages, events, calls, logs, evidence: evidenceChain });
+    },
+
     list: async (input) => {
       const page = await repository.listTasks(input);
+      const run_ids = page.items.map((task) => task.run_id);
+      const [logs, calls] = await Promise.all([
+        evidence.readRunLogsForRuns === undefined
+          ? Promise.all(page.items.map((task) => evidence.readRunLogs(input.tenant_id, task.run_id))).then((rows) => rows.flat())
+          : evidence.readRunLogsForRuns(input.tenant_id, run_ids),
+        traceRepository === undefined ? Promise.resolve([]) : traceRepository.listProviderCallsForRuns(input.tenant_id, run_ids),
+      ]);
+      const logsByRun = new Map<string, AgentRunLog[]>();
+      for (const log of logs) {
+        const list = logsByRun.get(log.run_id) ?? [];
+        list.push(log);
+        logsByRun.set(log.run_id, list);
+      }
+      const callsByRun = new Map<string, (typeof calls)[number][]>();
+      for (const call of calls) {
+        const list = callsByRun.get(call.run_id) ?? [];
+        list.push(call);
+        callsByRun.set(call.run_id, list);
+      }
       return {
-        items: await Promise.all(page.items.map((task) => toRunProjection(task, evidence))),
+        items: await Promise.all(page.items.map(async (task) => {
+          const runLogs = logsByRun.get(task.run_id) ?? [];
+          const classification = await classifyRetryForTask(task, runLogs);
+          return {
+            ...projectRunListItem(task, runLogs, callsByRun.get(task.run_id) ?? [], classification),
+            steps: runLogs.map(toRunStep),
+          };
+        })),
         next_cursor: page.next_cursor,
       };
     },
@@ -494,6 +566,17 @@ export function createStartRunPort(
       // The canonical `SignalEnvelope`: `signal_id` IS the immutable inbound identity the effect key
       // is derived from. The API-resolved conversation UUID and the session/channel identity are
       // nested under `subject`; the context aggregator never derives the UUID from a thread id.
+      const signalPayload: Record<string, unknown> = { ...input.payload, module };
+      if (input.campaign !== undefined) {
+        const rawInput = input.payload['input'];
+        if (!plainRecord(rawInput)) {
+          fail('VALIDATION_FAILED', 'campaign admission requires a structured input payload');
+        }
+        signalPayload['input'] = {
+          ...rawInput,
+          campaign_id: input.campaign.campaign_id,
+        };
+      }
       const signal: Record<string, unknown> = {
         signal_id: input.request_id,
         tenant_id: input.tenant_id,
@@ -501,10 +584,7 @@ export function createStartRunPort(
         source_channel: input.source_channel,
         event_type: input.event_type,
         timestamp: clock().toISOString(),
-        payload: {
-          ...input.payload,
-          module,
-        },
+        payload: signalPayload,
         subject: {
           session_id: input.session_id,
           ...(typeof conversation_id === 'string' && conversation_id.length > 0 ? { conversation_id } : {}),
@@ -529,6 +609,9 @@ export function createStartRunPort(
           run_id,
           correlation_id: input.correlation_id,
           state_payload: { signal },
+          ...(input.admission_reservation.customer_message === undefined
+            ? {}
+            : { customer_message: input.admission_reservation.customer_message }),
         });
         return {
           run_id: task.run_id,
@@ -549,6 +632,7 @@ export function createStartRunPort(
           run_id,
           correlation_id: input.correlation_id,
           signal,
+          ...(input.campaign === undefined ? {} : { campaign: input.campaign }),
           skill_id: input.admission_skill_id ?? CONVERSATION_TURN_SKILL,
           step_index: 0,
           // The window is the effect guard's own constant, so the row admission writes and the row

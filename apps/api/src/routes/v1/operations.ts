@@ -25,6 +25,12 @@ import type {
   TaskStoredState,
 } from '../../gateway/contracts.js';
 import { correlationIdOf, fail, replyFailure } from '../../gateway/http.js';
+import {
+  registerOpenApiSchemas,
+  runListRouteSchema,
+  runStoryRouteSchema,
+  runTraceRouteSchema,
+} from './openapi-schemas.js';
 
 /** The stored lifecycle vocabulary R16 returns verbatim (`06` §8.3 C-8). */
 const STORED_STATES: readonly TaskStoredState[] = [
@@ -68,6 +74,7 @@ export function registerOperationRoutes(
   deps: { readonly runtime: GatewayRuntime; readonly credentials: CredentialStore },
 ): void {
   const preHandler = authenticate(deps);
+  registerOpenApiSchemas(app);
 
   // -------------------------------------------------------------------------
   // R13 — POST /api/v1/operations/runs/{run_id}/retry
@@ -161,7 +168,7 @@ export function registerOperationRoutes(
       from?: string;
       to?: string;
     };
-  }>('/runs', { preHandler }, async (request, reply) => {
+  }>('/runs', { preHandler, schema: runListRouteSchema }, async (request, reply) => {
     const runtime = deps.runtime;
     const correlation_id = correlationIdOf(request, runtime);
 
@@ -201,6 +208,57 @@ export function registerOperationRoutes(
     }
   });
 
+  // Company-friendly story uses the same tenant scope and permission as the run list.
+  app.get<{ Params: { run_id: string } }>(
+    '/runs/:run_id/story',
+    { preHandler, schema: runStoryRouteSchema },
+    async (request, reply) => {
+      const runtime = deps.runtime;
+      try {
+        const principal = requireOperator(request, 'run:read');
+        const story = await runtime.runs.story(principal.tenant_id, request.params.run_id);
+        if (story === null) fail('TASK_NOT_FOUND', 'this tenant holds no durable task with that identifier');
+        await runtime.audit.record({
+          tenant_id: principal.tenant_id,
+          correlation_id: correlationIdOf(request, runtime),
+          operation: 'operations.runs.story',
+          principal_kind: principal.kind,
+          ...(principal.operator_id === undefined ? {} : { operator_id: principal.operator_id }),
+          outcome: 'ACCEPTED',
+          detail: { run_id: request.params.run_id },
+        });
+        return reply.code(200).send(story);
+      } catch (error) {
+        return replyFailure(reply, error, correlationIdOf(request, runtime));
+      }
+    },
+  );
+
+  // Operator-only diagnostic trace; the story route never returns these technical identifiers.
+  app.get<{ Params: { run_id: string } }>(
+    '/runs/:run_id/trace',
+    { preHandler, schema: runTraceRouteSchema },
+    async (request, reply) => {
+      const runtime = deps.runtime;
+      try {
+        const principal = requireOperator(request, 'run:read');
+        const trace = await runtime.runs.trace(principal.tenant_id, request.params.run_id);
+        if (trace === null) fail('TASK_NOT_FOUND', 'this tenant holds no durable task with that identifier');
+        await runtime.audit.record({
+          tenant_id: principal.tenant_id,
+          correlation_id: correlationIdOf(request, runtime),
+          operation: 'operations.runs.trace',
+          principal_kind: principal.kind,
+          ...(principal.operator_id === undefined ? {} : { operator_id: principal.operator_id }),
+          outcome: 'ACCEPTED',
+          detail: { run_id: request.params.run_id },
+        });
+        return reply.code(200).send(trace);
+      } catch (error) {
+        return replyFailure(reply, error, correlationIdOf(request, runtime));
+      }
+    },
+  );
   // -------------------------------------------------------------------------
   // R18 — POST /api/v1/operations/runs/{run_id}/reconciliation
   // -------------------------------------------------------------------------

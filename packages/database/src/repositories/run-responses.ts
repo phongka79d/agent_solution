@@ -17,10 +17,18 @@ export interface RunResponseRecord {
   readonly run_id: string;
   readonly answer: string;
   readonly sources: unknown;
+  readonly response_kind: PersistedResponseKind;
+  readonly outcome: PersistedResponseOutcome;
+  readonly source: string;
+  readonly template_key: string | null;
+  readonly reason_code: string | null;
   readonly conversation_id: string | null;
   readonly message_id: string | null;
   readonly created_at: string;
 }
+
+type PersistedResponseKind = 'ANSWER' | 'CLARIFICATION' | 'REFUSAL' | 'NO_ANSWER' | 'HANDOFF_ACK';
+type PersistedResponseOutcome = 'ANSWERED' | 'CLARIFIED' | 'REFUSED' | 'NO_ANSWER' | 'HANDOFF_ACK';
 
 /** Input accepted by `RunResponseRepository.save()`. */
 export interface SaveRunResponseInput {
@@ -28,6 +36,11 @@ export interface SaveRunResponseInput {
   readonly run_id: string;
   readonly answer: string;
   readonly sources: unknown;
+  readonly response_kind: PersistedResponseKind;
+  readonly outcome: PersistedResponseOutcome;
+  readonly source: string;
+  readonly template_key?: string;
+  readonly reason_code?: string;
   readonly conversation_id?: string;
   readonly sender_id: string;
 }
@@ -35,7 +48,14 @@ export interface SaveRunResponseInput {
 const RUN_RESPONSES = 'agentos.run_responses';
 const CONVERSATIONS = 'agentos.conversations';
 const CONVERSATION_MESSAGES = 'agentos.conversation_messages';
-const CODE_OWNER = 'run-responses repository / migration 0009';
+const CODE_OWNER = 'run-responses repository / migrations 0009 and 0025';
+const RESPONSE_OUTCOME_BY_KIND: Readonly<Record<PersistedResponseKind, PersistedResponseOutcome>> = {
+  ANSWER: 'ANSWERED',
+  CLARIFICATION: 'CLARIFIED',
+  REFUSAL: 'REFUSED',
+  NO_ANSWER: 'NO_ANSWER',
+  HANDOFF_ACK: 'HANDOFF_ACK',
+};
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const RESPONSE_PROJECTION = `
@@ -43,6 +63,11 @@ const RESPONSE_PROJECTION = `
     run_id,
     answer,
     sources,
+    response_kind,
+    outcome,
+    source,
+    template_key,
+    reason_code,
     conversation_id,
     message_id,
     created_at`;
@@ -58,10 +83,15 @@ const INSERT_RESPONSE = `INSERT INTO ${RUN_RESPONSES} (
     run_id,
     answer,
     sources,
+    response_kind,
+    outcome,
+    source,
+    template_key,
+    reason_code,
     conversation_id,
     message_id
   )
-  VALUES ($1, $2, $3, $4::jsonb, $5, $6)
+  VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11)
   ON CONFLICT (tenant_id, run_id) DO NOTHING
   RETURNING${RESPONSE_PROJECTION}`;
 
@@ -71,10 +101,8 @@ const SELECT_RESPONSE = `SELECT${RESPONSE_PROJECTION}
 
 /**
  * The response row remains immutable after insertion. The durable run lock above serializes
- * concurrent writers, and this lock is used only for exact replay reads.
+ * concurrent writers, so replay reads need no lock on the append-only response row.
  */
-const SELECT_RESPONSE_FOR_UPDATE = `${SELECT_RESPONSE}
-  FOR UPDATE`;
 
 const TOUCH_CONVERSATION = `UPDATE ${CONVERSATIONS}
   SET last_message_at = GREATEST(last_message_at, CURRENT_TIMESTAMP)
@@ -97,6 +125,11 @@ interface RunResponseRow extends QueryResultRow {
   run_id: string;
   answer: string;
   sources: unknown;
+  response_kind: PersistedResponseKind;
+  outcome: PersistedResponseOutcome;
+  source: string;
+  template_key: string | null;
+  reason_code: string | null;
   conversation_id: string | null;
   message_id: string | null;
   created_at: Date;
@@ -112,6 +145,11 @@ function toRunResponseRecord(row: RunResponseRow): RunResponseRecord {
     run_id: row.run_id,
     answer: row.answer,
     sources: row.sources,
+    response_kind: row.response_kind,
+    outcome: row.outcome,
+    source: row.source,
+    template_key: row.template_key,
+    reason_code: row.reason_code,
     conversation_id: row.conversation_id,
     message_id: row.message_id,
     created_at: row.created_at.toISOString(),
@@ -144,14 +182,21 @@ function assertReplayMatches(
   input: SaveRunResponseInput,
 ): void {
   const expectedConversationId = input.conversation_id ?? null;
+  const expectedTemplateKey = input.template_key ?? null;
+  const expectedReasonCode = input.reason_code ?? null;
 
   if (
-    existing.answer !== input.answer ||
-    !sameJsonValue(existing.sources, input.sources) ||
-    existing.conversation_id !== expectedConversationId
+    existing.answer !== input.answer
+    || !sameJsonValue(existing.sources, input.sources)
+    || existing.response_kind !== input.response_kind
+    || existing.outcome !== input.outcome
+    || existing.source !== input.source
+    || existing.template_key !== expectedTemplateKey
+    || existing.reason_code !== expectedReasonCode
+    || existing.conversation_id !== expectedConversationId
   ) {
     throw new Error(
-      `RUN_RESPONSE_CONFLICT: run ${input.run_id} already has a different answer, sources, or ` +
+      `RUN_RESPONSE_CONFLICT: run ${input.run_id} already has a different typed response, sources, or ` +
         `conversation binding; refusing to overwrite the durable response (${CODE_OWNER}).`,
     );
   }
@@ -174,8 +219,8 @@ export class RunResponseRepository {
   /**
    * Saves one response, returning the existing immutable response on an exact replay.
    *
-   * @throws `RUN_RESPONSE_CONFLICT` when answer, sources, or conversation binding differs from the
-   * already persisted response for this tenant/run.
+   * @throws `RUN_RESPONSE_CONFLICT` when any typed response field, source or conversation binding
+   *   differs from the immutable response for this tenant/run.
    */
   async save(input: SaveRunResponseInput): Promise<RunResponseRecord> {
     assertIdentifier(input.tenant_id, 'tenant_id', 36, 'RUN_RESPONSE_TENANT_ID_REQUIRED');
@@ -184,6 +229,19 @@ export class RunResponseRepository {
 
     if (typeof input.answer !== 'string') {
       throw new Error(`RUN_RESPONSE_ANSWER_INVALID: answer must be text (${CODE_OWNER}).`);
+    }
+    const expectedOutcome = RESPONSE_OUTCOME_BY_KIND[input.response_kind];
+    if (expectedOutcome === undefined || input.outcome !== expectedOutcome) {
+      throw new Error(`RUN_RESPONSE_KIND_INVALID: response kind and outcome are inconsistent (${CODE_OWNER}).`);
+    }
+    if (typeof input.source !== 'string' || input.source.trim().length === 0) {
+      throw new Error(`RUN_RESPONSE_SOURCE_INVALID: response provenance must be non-empty (${CODE_OWNER}).`);
+    }
+    if (
+      input.response_kind !== 'ANSWER'
+      && (input.source !== 'Core.Template@1' || typeof input.template_key !== 'string' || input.template_key.trim().length === 0)
+    ) {
+      throw new Error(`RUN_RESPONSE_TEMPLATE_INVALID: non-answer responses require a catalog template (${CODE_OWNER}).`);
     }
 
     const conversation_id = readOptionalConversationId(input.conversation_id);
@@ -201,7 +259,7 @@ export class RunResponseRepository {
         );
       }
 
-      const existing = await client.query<RunResponseRow>(SELECT_RESPONSE_FOR_UPDATE, [
+      const existing = await client.query<RunResponseRow>(SELECT_RESPONSE, [
         input.tenant_id,
         input.run_id,
       ]);
@@ -250,6 +308,11 @@ export class RunResponseRepository {
         input.run_id,
         input.answer,
         sources,
+        input.response_kind,
+        input.outcome,
+        input.source,
+        input.template_key ?? null,
+        input.reason_code ?? null,
         conversation_id,
         message_id,
       ]);

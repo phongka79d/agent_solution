@@ -1,5 +1,8 @@
-import { computeRequestFingerprint } from '@agentos/core-engine';
-import type { CareHandoffRepository, EnqueueCareHandoffInput } from '@agentos/database';
+import type {
+  CareHandoffRepository,
+  ConversationRepository,
+  EnqueueCareHandoffInput,
+} from '@agentos/database';
 import type { SkillToolInvocation } from '@agentos/skills';
 
 import { CareSkillToolError } from './errors.js';
@@ -27,6 +30,7 @@ function asHandoffRefusal(error: unknown): CareSkillToolError | null {
 export async function handleHandoff<TOutput>(
   invocation: SkillToolInvocation<unknown>,
   handoffRepository: Pick<CareHandoffRepository, 'enqueue' | 'reconcile'>,
+  conversationRepository: Pick<ConversationRepository, 'appendMessage'>,
 ): Promise<TOutput> {
   const input = invocation.input as {
     readonly tenant_id: string;
@@ -43,17 +47,35 @@ export async function handleHandoff<TOutput>(
       'handoff payload tenant_id must match the orchestrator-bound tenant',
     );
   }
+  const requestFingerprint = invocation.context.request_fingerprint;
+  if (typeof requestFingerprint !== 'string') {
+    throw new CareSkillToolError(
+      'HANDOFF_REQUEST_FINGERPRINT_MISSING',
+      'the orchestrator did not bind the pending-action fingerprint to this handoff',
+    );
+  }
 
   const enqueueInput: EnqueueCareHandoffInput = {
     tenant_id: trustedTenantId,
     effect_key: invocation.context.effect_key,
-    request_fingerprint: computeRequestFingerprint(invocation.input as Record<string, unknown>),
+    request_fingerprint: requestFingerprint,
     run_id: invocation.context.run_id,
     session_id: input.session_id,
     conversation_id: input.conversation_id,
     ...(input.customer_id === undefined ? {} : { customer_id: input.customer_id }),
     escalation_reason: input.escalation_reason,
     ...(input.summary_context === undefined ? {} : { summary_context: input.summary_context }),
+  };
+  const confirmHandoff = async (output: unknown): Promise<TOutput> => {
+    await conversationRepository.appendMessage({
+      tenant_id: trustedTenantId,
+      conversation_id: input.conversation_id,
+      sender_type: 'system',
+      sender_id: 'system',
+      content: 'Đã chuyển cho nhân viên hỗ trợ',
+      request_id: `handoff:${enqueueInput.effect_key}`,
+    });
+    return output as TOutput;
   };
   const reconcileHandoff = async () => {
     try {
@@ -76,7 +98,7 @@ export async function handleHandoff<TOutput>(
   );
   const recoverHandoff = async (retryEnqueue: boolean): Promise<TOutput> => {
     const reconciled = await reconcileHandoff();
-    if (reconciled?.state === 'COMMITTED') return reconciled.output as TOutput;
+    if (reconciled?.state === 'COMMITTED') return confirmHandoff(reconciled.output);
     if (!retryEnqueue) {
       throw new CareSkillToolError(
         'QUEUE_DOWN',
@@ -88,12 +110,12 @@ export async function handleHandoff<TOutput>(
     // reached the worker. Re-entering the same transaction is therefore the durable retry: a
     // committed item replays and a rolled-back item is created exactly once.
     const retryOutcome = await enqueueOperation();
-    if (retryOutcome.kind === 'completed') return retryOutcome.output as TOutput;
+    if (retryOutcome.kind === 'completed') return confirmHandoff(retryOutcome.output);
     const refusal = asHandoffRefusal(retryOutcome.error);
     if (refusal !== null) throw refusal;
 
     const committed = await reconcileHandoff();
-    if (committed?.state === 'COMMITTED') return committed.output as TOutput;
+    if (committed?.state === 'COMMITTED') return confirmHandoff(committed.output);
     throw new CareSkillToolError(
       'QUEUE_DOWN',
       'the handoff queue did not commit after a bounded idempotent retry',
@@ -126,7 +148,7 @@ export async function handleHandoff<TOutput>(
     // for its commit/rollback and then apply the same idempotent recovery path.
     outcome = await operation;
   }
-  if (outcome.kind === 'completed') return outcome.output as TOutput;
+  if (outcome.kind === 'completed') return confirmHandoff(outcome.output);
   const refusal = asHandoffRefusal(outcome.error);
   if (refusal !== null) throw refusal;
   return recoverHandoff(true);

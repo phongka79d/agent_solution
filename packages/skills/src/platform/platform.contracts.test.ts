@@ -120,6 +120,22 @@ describe('platform skill registry', () => {
       expect(Number.isSafeInteger(row.retry_policy.max_retries), row.skill_id).toBe(true);
     }
   });
+  it('declares connector requirements only for tenant-bound ERP/POS and messaging tools', () => {
+    const connectorSkillIds = rows
+      .filter((row) => row.connector_kinds.length > 0)
+      .map((row) => row.skill_id);
+    expect(connectorSkillIds).toEqual([
+      'skill.mkt.dispatch_campaign',
+      'skill.sales.search_product',
+      'skill.sales.check_stock',
+      'skill.sales.check_price',
+      'skill.sales.create_order',
+      'skill.sales.send_message',
+      'skill.care.lookup_order',
+    ]);
+    expect(rows.find((row) => row.skill_id === 'skill.care.search_faq')?.connector_kinds).toEqual([]);
+    expect(rows.find((row) => row.skill_id === 'skill.care.escalate_to_human')?.connector_kinds).toEqual([]);
+  });
   it('keeps each declared input schema aligned with its runtime normalizer', () => {
     for (const row of rows) {
       const sample = sampleForSchema(row.input_schema);

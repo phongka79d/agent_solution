@@ -71,6 +71,8 @@ interface TaskRow extends QueryResultRow {
   last_error_class: 'RETRYABLE' | 'FATAL' | null;
   paused_for_approval_id: string | null;
   state_payload: unknown;
+  wait_reason?: string | null;
+  has_resume_event?: boolean;
   error_details: unknown;
   created_at: Date;
   updated_at: Date;
@@ -94,8 +96,11 @@ type StatementKind =
   | 'operator_requeue'
   | 'fail'
   | 'reconcile'
+  | 'retry_candidates'
+  | 'retry_event'
   | 'claim_select'
-  | 'claim';
+  | 'claim'
+  | 'renew';
 
 function classify(sql: string): StatementKind {
   if (sql.startsWith('INSERT INTO agentos.platform_durable_tasks')) {
@@ -116,12 +121,23 @@ function classify(sql: string): StatementKind {
     return 'lock';
   }
 
+  if (sql.startsWith('SELECT tenant_id, run_id, retry_count,')) {
+    return 'retry_candidates';
+  }
   if (sql.startsWith('SELECT')) {
     return 'read';
   }
 
+  if (sql.includes('SET lease_expires_at =')) {
+    return 'renew';
+  }
+
   if (sql.includes("WHEN state IN ('waiting', 'awaiting_human') THEN state")) {
     return 'claim';
+  }
+
+  if (sql.includes('AND retry_count = $5') && sql.includes('state_payload = state_payload || $3::jsonb')) {
+    return 'retry_event';
   }
 
   if (sql.includes("SET state = 'waiting'") && sql.includes('state_payload = state_payload || $3::jsonb')) {
@@ -1001,7 +1017,7 @@ describe('DurableWorkflowRepository.transitionTask', () => {
 });
 
 describe('DurableWorkflowRepository.recordFailure', () => {
-  it('re-queues a RETRYABLE failure inside the budget with retry_count + 1', async () => {
+  it('parks a RETRYABLE failure with a durable bounded retry deadline inside the budget', async () => {
     const error_details = { code: 'DISPATCH_TIMEOUT' };
     const { repository, client, boundTenants } = harnessFor({
       lock: {
@@ -1012,16 +1028,21 @@ describe('DurableWorkflowRepository.recordFailure', () => {
             retry_count: 0,
             max_retries: 3,
             lease_owner: 'worker-1',
+            state_payload: completeCheckpoint(),
           }),
         ],
       },
       requeue: {
         rows: [
           taskRow({
-            state: 'queued',
+            state: 'waiting',
             task_version: 4,
             retry_count: 1,
             last_error_class: 'RETRYABLE',
+            state_payload: completeCheckpoint({
+              wait_reason: 'RETRY',
+              retry_not_before: '2026-01-01T00:00:01.000Z',
+            }),
           }),
         ],
       },
@@ -1039,8 +1060,26 @@ describe('DurableWorkflowRepository.recordFailure', () => {
       'RETRYABLE',
       JSON.stringify(error_details),
       3,
+      true,
     ]);
-    expect(outcome).toEqual({ requeued: true, state: 'queued', retry_count: 1, task_version: 4 });
+    expect(statementOf(client, 'requeue').sql).toContain("'{wait_reason}', '\"RETRY\"'::jsonb");
+    expect(statementOf(client, 'requeue').sql).toContain('LEAST(60000::double precision');
+    expect(outcome).toEqual({ requeued: true, state: 'waiting', retry_count: 1, task_version: 4 });
+  });
+
+  it('delays an incomplete first-pass retry in queued until its persisted deadline', async () => {
+    const { repository, client } = harnessFor({
+      lock: { rows: [taskRow({ state: 'running', state_payload: { signal: { signal_id: 'REQ-1' } } })] },
+      requeue: {
+        rows: [taskRow({ state: 'queued', task_version: 2, retry_count: 1, last_error_class: 'RETRYABLE' })],
+      },
+    });
+
+    const outcome = await repository.recordFailure(failureInput());
+
+    expect(outcome).toEqual({ requeued: true, state: 'queued', retry_count: 1, task_version: 2 });
+    expect(bindingsOf(client, 'requeue')[5]).toBe(false);
+    expect(statementOf(client, 'requeue').sql).toContain("'{retry_not_before}'");
   });
 
   it('terminates a RETRYABLE failure whose budget is spent and releases its lease', async () => {
@@ -1128,6 +1167,117 @@ describe('DurableWorkflowRepository.recordFailure', () => {
 
     expect(parked.client.statements.map((statement) => statement.kind)).toEqual(['lock']);
     expect(stale.client.statements.map((statement) => statement.kind)).toEqual(['lock']);
+  });
+});
+
+describe('DurableWorkflowRepository.retryTimer', () => {
+  const retryCount = 2;
+  const resumeEvent = { tenant_id: TENANT, event_type: 'timer.expired', retry_count: retryCount };
+  const retryCheckpoint = completeCheckpoint({
+    wait_reason: 'RETRY',
+    retry_not_before: '2026-01-01T00:00:01.000Z',
+  });
+
+  it('limits effect sweeping to RECONCILE waits rather than pre-dispatch draft waits', async () => {
+    const { repository, client, boundTenants } = harnessFor({ list: { rows: [] } });
+
+    expect(await repository.listReconciliationCandidates(TENANT, 5)).toEqual([]);
+    expect(boundTenants).toEqual([TENANT]);
+    expect(bindingsOf(client, 'list')).toEqual([TENANT, 5, 200]);
+    const sql = statementOf(client, 'list').sql;
+    expect(sql).toContain("t.state = 'waiting'");
+    expect(sql).toContain("t.state_payload->>'wait_reason' = 'RECONCILE'");
+    expect(sql).toContain("r.status = 'RESERVED'");
+    expect(sql).toContain("t.state_payload->'pending_action'->>'effect_key' = r.effect_key");
+  });
+
+  it('lists due RETRY waits with their generation and excludes queued resume events', async () => {
+    const { repository, client, boundTenants } = harnessFor({
+      retry_candidates: {
+        rows: [taskRow({
+          state: 'waiting',
+          retry_count: retryCount,
+          wait_reason: 'RETRY',
+          has_resume_event: false,
+          state_payload: retryCheckpoint,
+        })],
+      },
+    });
+
+    const candidates = await repository.listRetryTimerCandidates(TENANT);
+
+    expect(boundTenants).toEqual([TENANT]);
+    expect(bindingsOf(client, 'retry_candidates')).toEqual([TENANT, 200]);
+    expect(statementOf(client, 'retry_candidates').sql).toContain("state_payload->>'retry_not_before'");
+    expect(candidates).toEqual([{
+      tenant_id: TENANT,
+      run_id: RUN_ID,
+      retry_count: retryCount,
+      wait_reason: 'RETRY',
+      has_resume_event: false,
+    }]);
+  });
+
+  it('queues one timer event for the exact retry generation and does not overwrite an existing event', async () => {
+    const existing = taskRow({
+      state: 'waiting',
+      task_version: 5,
+      retry_count: retryCount,
+      state_payload: retryCheckpoint,
+    });
+    const queued = taskRow({
+      state: 'waiting',
+      task_version: 6,
+      retry_count: retryCount,
+      state_payload: { ...retryCheckpoint, resume_event: resumeEvent },
+    });
+    const { repository, client } = harnessFor({
+      lock: { rows: [existing] },
+      retry_event: { rows: [queued] },
+    });
+
+    await expect(repository.queueRetryTimer({
+      tenant_id: TENANT,
+      run_id: RUN_ID,
+      retry_count: retryCount,
+    })).resolves.toBe(true);
+    expect(bindingsOf(client, 'retry_event')).toEqual([
+      TENANT,
+      RUN_ID,
+      JSON.stringify({ resume_event: resumeEvent }),
+      5,
+      retryCount,
+    ]);
+    expect(statementOf(client, 'retry_event').sql).toContain("state_payload->>'wait_reason' = 'RETRY'");
+
+    const duplicate = harnessFor({
+      lock: { rows: [queued] },
+    });
+    await expect(duplicate.repository.queueRetryTimer({
+      tenant_id: TENANT,
+      run_id: RUN_ID,
+      retry_count: retryCount,
+    })).resolves.toBe(false);
+    expect(duplicate.client.statements.map((statement) => statement.kind)).toEqual(['lock']);
+  });
+
+  it('never queues a timer for an UNKNOWN-effect reconciliation wait', async () => {
+    const { repository, client } = harnessFor({
+      lock: {
+        rows: [taskRow({
+          state: 'waiting',
+          retry_count: retryCount,
+          state_payload: completeCheckpoint({ wait_reason: 'RECONCILE' }),
+        })],
+      },
+    });
+
+    await expect(repository.queueRetryTimer({
+      tenant_id: TENANT,
+      run_id: RUN_ID,
+      retry_count: retryCount,
+    })).resolves.toBe(false);
+    expect(client.statements.map((statement) => statement.kind)).toEqual(['lock']);
   });
 });
 
@@ -1366,6 +1516,57 @@ describe('DurableWorkflowRepository.queueReconciliation', () => {
       })),
     ).rejects.toThrow('RECONCILIATION_EVENT_CONFLICT');
     expect(client.statements.map((statement) => statement.kind)).toEqual(['lock']);
+  });
+});
+
+describe('DurableWorkflowRepository.renewTaskLease', () => {
+  it('renews after a checkpoint version bump without using or advancing the task version', async () => {
+    const checkpointed = taskRow({
+      state: 'running',
+      task_version: 8,
+      lease_owner: 'worker-1',
+      lease_expires_at: LEASE_EXPIRES_AT,
+    });
+    const { repository, client, boundTenants } = harnessFor({
+      lock: { rows: [checkpointed] },
+      renew: { rows: [checkpointed] },
+    });
+
+    const renewed = await repository.renewTaskLease({
+      tenant_id: TENANT,
+      run_id: RUN_ID,
+      lease_owner: 'worker-1',
+      lease_duration_ms: 30_000,
+    });
+
+    expect(boundTenants).toEqual([TENANT]);
+    expect(client.statements.map((statement) => statement.kind)).toEqual(['lock', 'renew']);
+    expect(bindingsOf(client, 'renew')).toEqual([TENANT, RUN_ID, 30_000, 'worker-1']);
+    expect(renewed.task_version).toBe(8);
+
+    const { sql } = statementOf(client, 'renew');
+    const written = sql.slice(sql.indexOf('SET '), sql.indexOf('WHERE'));
+    const guarded = sql.slice(sql.indexOf('WHERE'), sql.indexOf('RETURNING'));
+    expect(written).not.toContain('task_version');
+    expect(guarded).toContain('lease_owner = $4');
+    expect(guarded).toContain("state IN ('running', 'waiting', 'awaiting_human')");
+    expect(guarded).not.toContain('task_version');
+  });
+
+  it('refuses a heartbeat after lease ownership is lost or the task is terminal', async () => {
+    for (const row of [
+      taskRow({ state: 'running', lease_owner: 'worker-2', lease_expires_at: LEASE_EXPIRES_AT }),
+      taskRow({ state: 'completed', lease_owner: 'worker-1', lease_expires_at: LEASE_EXPIRES_AT }),
+    ]) {
+      const { repository, client } = harnessFor({ lock: { rows: [row] } });
+
+      await expect(repository.renewTaskLease({
+        tenant_id: TENANT,
+        run_id: RUN_ID,
+        lease_owner: 'worker-1',
+      })).rejects.toThrow('TASK_LEASE_NOT_HELD');
+      expect(client.statements.map((statement) => statement.kind)).toEqual(['lock']);
+    }
   });
 });
 

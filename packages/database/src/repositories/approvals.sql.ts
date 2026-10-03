@@ -6,8 +6,18 @@ import {
 const APPROVALS = 'agentos.approvals';
 const ACTIONS = 'agentos.actions';
 
+/** A campaign attached to the same tenant/run gives approval reviewers a meaningful campaign name. */
+const CAMPAIGN_NAME_PROJECTION = `,
+    (
+      SELECT c.name
+      FROM agentos.campaigns AS c
+      WHERE c.tenant_id = agentos.approvals.tenant_id
+        AND c.run_id = agentos.approvals.run_id
+      LIMIT 1
+    ) AS campaign_name`;
 
-/** The columns every approval read publishes, in the order `toApprovalRecord` expects them. */
+
+/** The approval columns and run-linked campaign name every approval read publishes. */
 const APPROVAL_PROJECTION = `
     id,
     tenant_id,
@@ -17,6 +27,10 @@ const APPROVAL_PROJECTION = `
     effect_key,
     authority_required,
     payload,
+    digest_version,
+    original_payload,
+    original_payload_sha256,
+    original_digest_version,
     reason,
     operator_id,
     CASE
@@ -27,7 +41,7 @@ const APPROVAL_PROJECTION = `
     review_comment,
     decided_at,
     expires_at,
-    created_at`;
+    created_at${CAMPAIGN_NAME_PROJECTION}`;
 
 /** The columns every action read publishes, in the order `toActionRecord` expects them. */
 const ACTION_PROJECTION = `
@@ -150,6 +164,21 @@ SELECT${APPROVAL_PROJECTION}
   LIMIT $4`;
 
 /**
+ * One page of the DECIDED (processed) approval history (`T6.8`): every row a human already resolved,
+ * newest decision first. The predicate is `decision <> 'PENDING'`, so an EXPIRED row is included
+ * because it is a terminal outcome the console groups under Đã xử lý. The keyset is
+ * `(COALESCE(decided_at, created_at), id)` descending, and a resumed page continues strictly below
+ * the last published row.
+ */
+const SELECT_DECIDED_APPROVALS = `SELECT${APPROVAL_PROJECTION}
+  FROM ${APPROVALS}
+  WHERE tenant_id = $1
+    AND decision <> 'PENDING'
+    AND ($2::timestamptz IS NULL OR (COALESCE(decided_at, created_at), id) < ($2::timestamptz, $3::uuid))
+  ORDER BY COALESCE(decided_at, created_at) DESC, id DESC
+  LIMIT $4`;
+
+/**
  * Persists the deadline transition for at most one tenant's batch. Candidate action rows are locked
  * before the approval update, matching the decision path's action -> approval lock order, so
  * concurrent sweepers do not claim the same prepared command. The returned binding fields are used
@@ -232,9 +261,10 @@ const INSERT_APPROVAL = `INSERT INTO ${APPROVALS} (
     effect_key,
     authority_required,
     payload,
+    digest_version,
     reason
   )
-  VALUES ($1, $2, $3::uuid, $4, 'AUTH-4', $5::jsonb, $6)
+  VALUES ($1, $2, $3::uuid, $4, 'AUTH-4', $5::jsonb, $6, $7)
   ON CONFLICT (tenant_id, effect_key) DO NOTHING
   RETURNING${APPROVAL_PROJECTION}`;
 
@@ -355,13 +385,18 @@ UPDATE ${APPROVALS}
  * The MODIFIED decision: the row authorizes the new revision by moving its binding. `payload` and
  * `effect_key` advance together with the `actions` row, so the digest a later reader recomputes is
  * the digest of the authorized revision, not of the one that was reviewed.
+ * The original normalized payload, digest and version are captured from the old binding once.
  */
 const MODIFY_APPROVAL = `UPDATE ${APPROVALS}
   SET decision = 'MODIFIED',
       operator_id = $3,
       review_comment = $4,
       effect_key = $5,
+      original_payload = COALESCE(original_payload, payload),
+      original_payload_sha256 = CASE WHEN original_payload IS NULL THEN $8 ELSE original_payload_sha256 END,
+      original_digest_version = CASE WHEN original_payload IS NULL THEN digest_version ELSE original_digest_version END,
       payload = $6::jsonb,
+      digest_version = $7,
       is_paused = FALSE,
       decided_at = CURRENT_TIMESTAMP
   WHERE tenant_id = $1 AND id = $2 AND decision = 'PENDING'
@@ -408,6 +443,7 @@ export {
   SELECT_APPROVAL_BY_EFFECT_KEY,
   SELECT_APPROVAL_BY_EFFECT_KEY_FOR_UPDATE,
   SELECT_APPROVAL_FOR_UPDATE,
+  SELECT_DECIDED_APPROVALS,
   SELECT_PENDING_APPROVALS,
   STOP_TASK,
 };

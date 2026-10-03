@@ -3,11 +3,20 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
+import type * as Database from '@agentos/database';
+
+const getProfile = vi.hoisted(() => vi.fn());
+
+vi.mock('@agentos/database', async (importOriginal) => ({
+  ...(await importOriginal<typeof Database>()),
+  getProfile,
+}));
+
 import type { ConsentRow } from '@agentos/database';
 import { MarketingRuntimeError } from './contracts.js';
 import {
   createMarketingConsentPort,
-  createMarketingResearchPort,
+  createMarketingCustomerBindingVerifier,
   normalizeMarketingChannel,
   type MarketingConsentRepository,
 } from './data-adapters.js';
@@ -94,6 +103,48 @@ describe('createMarketingConsentPort', () => {
     expect(decision.consent_timestamp).toBe('2026-01-01T10:00:00.000Z');
     expect(decision.source_uri).toBe('urn:agentos:consent:consent-row-1');
   });
+  it('allows only tenant-bound customers with active marketing consent', async () => {
+    getProfile.mockReset();
+    const findConsent = vi.fn()
+      .mockResolvedValueOnce(createFakeConsentRow())
+      .mockResolvedValueOnce(createFakeConsentRow({ is_granted: false }));
+    const port = createMarketingConsentPort({
+      serverBoundTenantId: VALID_TENANT,
+      verifyCustomerBinding: createMarketingCustomerBindingVerifier(VALID_TENANT),
+      repository: { findConsent },
+    });
+
+    getProfile.mockResolvedValue({ tenant_id: VALID_TENANT, customer_id: CUSTOMER_ID });
+    await expect(port.check({
+      tenant_id: VALID_TENANT,
+      customer_id: CUSTOMER_ID,
+      channel: 'line',
+    })).resolves.toMatchObject({ allowed: true, suppression_reason: null });
+
+    await expect(port.check({
+      tenant_id: VALID_TENANT,
+      customer_id: CUSTOMER_ID,
+      channel: 'line',
+    })).resolves.toMatchObject({ allowed: false, suppression_reason: 'CONSENT_OPTED_OUT' });
+
+    getProfile.mockResolvedValue(null);
+    await expect(port.check({
+      tenant_id: VALID_TENANT,
+      customer_id: CUSTOMER_ID,
+      channel: 'line',
+    })).resolves.toMatchObject({ allowed: false, suppression_reason: 'CUSTOMER_BINDING_MISMATCH' });
+
+    getProfile.mockResolvedValue({ tenant_id: OTHER_TENANT, customer_id: CUSTOMER_ID });
+    await expect(port.check({
+      tenant_id: VALID_TENANT,
+      customer_id: CUSTOMER_ID,
+      channel: 'line',
+    })).resolves.toMatchObject({ allowed: false, suppression_reason: 'CUSTOMER_BINDING_MISMATCH' });
+
+    expect(getProfile).toHaveBeenCalledTimes(4);
+    expect(findConsent).toHaveBeenCalledTimes(2);
+  });
+
   it('denies a granted row that has no opt-in timestamp', async () => {
     const row = {
       ...createFakeConsentRow(),
@@ -347,112 +398,4 @@ describe('createMarketingConsentPort', () => {
   });
 });
 
-describe('createMarketingResearchPort', () => {
-  it('throws MARKETING_RESEARCH_UNAVAILABLE when readMarketSignals is not configured', async () => {
-    const port = createMarketingResearchPort();
 
-    await expect(
-      port.readMarketSignals({
-        tenant_id: VALID_TENANT,
-        market_region: 'TW',
-        category_id: 'cat-1',
-        observation_window_days: 30,
-      }),
-    ).rejects.toThrow(MarketingRuntimeError);
-
-    await expect(
-      port.readMarketSignals({
-        tenant_id: VALID_TENANT,
-        market_region: 'TW',
-        category_id: 'cat-1',
-        observation_window_days: 30,
-      }),
-    ).rejects.toThrow('MARKETING_RESEARCH_UNAVAILABLE');
-  });
-
-  it('throws MARKETING_SEGMENTATION_UNAVAILABLE when segmentAudience is not configured', async () => {
-    const port = createMarketingResearchPort();
-
-    await expect(
-      port.segmentAudience({
-        tenant_id: VALID_TENANT,
-        rfm_criteria: 'CHAMPIONS',
-        min_days_inactive: 10,
-      }),
-    ).rejects.toThrow(MarketingRuntimeError);
-
-    await expect(
-      port.segmentAudience({
-        tenant_id: VALID_TENANT,
-        rfm_criteria: 'CHAMPIONS',
-        min_days_inactive: 10,
-      }),
-    ).rejects.toThrow('MARKETING_SEGMENTATION_UNAVAILABLE');
-  });
-
-  it('validates tenant binding on research calls', async () => {
-    const port = createMarketingResearchPort({
-      serverBoundTenantId: VALID_TENANT,
-    });
-
-    await expect(
-      port.readMarketSignals({
-        tenant_id: OTHER_TENANT,
-        market_region: 'TW',
-        category_id: 'cat-1',
-        observation_window_days: 14,
-      }),
-    ).rejects.toThrow('TENANT_CONTEXT_MISMATCH');
-
-    await expect(
-      port.segmentAudience({
-        tenant_id: OTHER_TENANT,
-        rfm_criteria: 'LOYAL',
-        min_days_inactive: 10,
-      }),
-    ).rejects.toThrow('TENANT_CONTEXT_MISMATCH');
-  });
-
-  it('delegates to injected research and segmentation implementations when provided', async () => {
-    const mockSignalsResult = {
-      signals: [],
-      trend_velocity: 'STABLE' as const,
-      analyzed_at: '2026-01-01T00:00:00.000Z',
-      source_uri: 'urn:mock:signals',
-      source_version: 'v1',
-    };
-    const mockAudience = [
-      {
-        tenant_id: VALID_TENANT,
-        customer_id: 'cust-123',
-        source_uri: 'urn:mock:c360',
-        source_version: 'v1',
-        observed_at: '2026-01-01T00:00:00.000Z',
-        match_reason: 'manual_cohort',
-      },
-    ];
-
-    const readMarketSignals = vi.fn().mockResolvedValue(mockSignalsResult);
-    const segmentAudience = vi.fn().mockResolvedValue(mockAudience);
-
-    const port = createMarketingResearchPort({
-      readMarketSignals,
-      segmentAudience,
-    });
-
-    const signals = await port.readMarketSignals({
-      tenant_id: VALID_TENANT,
-      market_region: 'GLOBAL_US',
-      category_id: 'cat-shoes',
-      observation_window_days: 7,
-    });
-    expect(signals).toBe(mockSignalsResult);
-
-    const audience = await port.segmentAudience({
-      tenant_id: VALID_TENANT,
-      rfm_criteria: 'POTENTIAL_LOYALIST',
-      min_days_inactive: 15,
-    });
-    expect(audience).toBe(mockAudience);
-  });
-});

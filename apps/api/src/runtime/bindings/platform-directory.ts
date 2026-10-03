@@ -4,7 +4,16 @@ import type { PlatformDirectoryPort } from '../../gateway/ports.js';
 
 type PlatformDirectoryRepositoryPort = Pick<
   PlatformDirectoryRepository,
-  'listTenants' | 'getTenant' | 'readiness' | 'usage'
+  | 'listTenants'
+  | 'getTenant'
+  | 'readiness'
+  | 'usage'
+  | 'listRuns'
+  | 'runDetail'
+  | 'runTraceDetails'
+  | 'runsSummary'
+  | 'reconciliationQueue'
+  | 'companyOverview'
 >;
 
 /** Exposes the database's fixed platform projections to route handlers. */

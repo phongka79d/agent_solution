@@ -1,6 +1,13 @@
 import type { AssignableAuthority, Customer360Fact, IAdapterDispatcher } from '@agentos/core-engine/contracts';
 import type { ConsentSource, ConsentState } from '@agentos/core-engine';
-import type { SkillRegistry, SkillRuntimeEngine, SkillToolPort } from '@agentos/skills';
+import type {
+  SkillBreakerRegistry,
+  SkillGate,
+  SkillLlmPortFactory,
+  SkillRegistry,
+  SkillRuntimeEngine,
+  SkillToolPort,
+} from '@agentos/skills';
 import type { ErpReadPort } from '../../connectors.js';
 import type {
   SalesAdvisorExecutionState,
@@ -136,6 +143,19 @@ export interface SalesCartPort {
   readonly quote?: SalesQuotePort | undefined;
 }
 
+/** One SKU and quantity copied from an authoritative server cart quote. */
+export interface SalesOrderLine {
+  readonly sku_id: string;
+  readonly quantity: number;
+}
+
+/** Post-AUTH-4 proof bound by SkillRuntimeEngine to the exact pending order payload. */
+export interface SalesOrderAuthorization {
+  readonly approval_id: string;
+  readonly approval_payload_digest: string;
+  readonly signal?: AbortSignal | undefined;
+}
+
 /** Inbound payload for API-001.OrderConnector. */
 export interface SalesOrderInput {
   readonly tenant_id: string;
@@ -150,6 +170,7 @@ export interface SalesOrderInput {
   readonly p_floor?: number | undefined;
   readonly final_price?: number | undefined;
   readonly currency?: string | undefined;
+  readonly items?: readonly SalesOrderLine[] | undefined;
 }
 
 /** Canonical output schema of API-001.OrderConnector. */
@@ -164,9 +185,9 @@ export interface SalesOrderOutput {
 }
 
 export interface SalesOrderPort {
-  createOrder?(input: SalesOrderInput): Promise<SalesOrderOutput>;
-  create?(input: SalesOrderInput): Promise<SalesOrderOutput>;
-  execute?(input: SalesOrderInput): Promise<SalesOrderOutput>;
+  createOrder?(input: SalesOrderInput, authorization: SalesOrderAuthorization): Promise<SalesOrderOutput>;
+  create?(input: SalesOrderInput, authorization: SalesOrderAuthorization): Promise<SalesOrderOutput>;
+  execute?(input: SalesOrderInput, authorization: SalesOrderAuthorization): Promise<SalesOrderOutput>;
   validateQuote?(query: SalesQuoteQuery): Promise<SalesQuote | SalesCartOutput | undefined>;
   authorizeOrder?(query: SalesQuoteQuery): Promise<SalesQuote | SalesCartOutput | undefined>;
   readSupportedPaymentMethods?(query: SalesPaymentPolicyQuery | string): Promise<readonly string[] | undefined> | readonly string[] | undefined;
@@ -194,7 +215,7 @@ export interface SalesOutboundMessageContent {
 export interface SalesCommunicationInput {
   readonly tenant_id: string;
   readonly recipient_id: string;
-  readonly channel: 'LINE' | 'WHATSAPP' | 'WEB_CHAT' | 'SMS' | 'ZALO' | 'TIKTOK' | 'MESSENGER' | 'INSTAGRAM';
+  readonly channel: 'LINE' | 'WHATSAPP' | 'WEB_CHAT' | 'EMAIL' | 'SMS' | 'ZALO' | 'TIKTOK' | 'MESSENGER' | 'INSTAGRAM';
   readonly message_content: SalesOutboundMessageContent;
   readonly effect_key: string;
 }
@@ -334,6 +355,12 @@ export interface SalesSkillOptions {
   readonly context: Pick<SalesContextAggregatorLike, 'verifiedCustomerFor' | 'verifiedTimelineFor'> & Partial<SalesContextAggregatorLike>;
   readonly revenue_evidence?: SalesRecommendationRevenueEvidencePort | undefined;
   readonly now?: (() => Date) | undefined;
+  /** Invocation-scoped structured completion port, bound to the trusted run and tenant context. */
+  readonly llm?: SkillLlmPortFactory | undefined;
+  /** Live availability gate (PLAN T4.3); when supplied, enablement is `row.enabled AND gate.available`. */
+  readonly gate?: SkillGate;
+  /** Shared breaker table keyed `tenant + dependency`; pass the same instance the gate observes. */
+  readonly breakers?: SkillBreakerRegistry;
   readonly advisor_state?: SalesAdvisorExecutionState | undefined;
   readonly resolve_correlation_id: (tenant_id: string, run_id: string) => Promise<string>;
   readonly resolve_grant: (tenant_id: string, agent_id: string) => Promise<AssignableAuthority | null>;

@@ -19,16 +19,18 @@ import {
   type SkillDispatchRequest,
   type SkillDispatchResult,
   type SkillEngineSeams,
+  type SkillLlmPortFactory,
 } from '../contracts/index.js';
 import type { SkillRegistry } from '../registry.js';
 import { validateAgainstSchema } from '../schema/index.js';
+import type { SkillAvailability, SkillBreakerRegistry, SkillGate } from './availability.js';
 import { assertApprovalCoversPayload } from './approval.js';
 import { executeBounded } from './attempt.js';
 import { enforceAuthorityAdmission } from './authority.js';
 import { CircuitBreaker, DEFAULT_FAILURE_THRESHOLD, DEFAULT_RESET_TIMEOUT_MS } from './circuit-breaker.js';
 import { resolveDispatchEffectKey } from './effect.js';
 
-/** Everything the pipeline needs; all four canonical primitives and all ambient seams are injected. */
+/** The canonical effect-key and authority seams plus ambient runtime bindings. */
 export interface SkillRuntimeOptions extends SkillEngineSeams {
   readonly registry: SkillRegistry;
   /** Injected monotonic-enough clock, used for latency and the breaker window. */
@@ -43,6 +45,19 @@ export interface SkillRuntimeOptions extends SkillEngineSeams {
   ) => CircuitBreaker;
   /** Injected sleep seam for deterministic retry tests; defaults to a timer-backed delay. */
   readonly sleep?: (ms: number) => Promise<void>;
+  /** Builds the invocation-bound LLM port for each tenant/run/attempt context. */
+  readonly llm?: SkillLlmPortFactory;
+  /**
+   * Live availability gate (PLAN T4.3). When supplied, the enablement step becomes
+   * `row.enabled AND gate.available`; a refusal or a gate outage refuses with `SKILL_UNAVAILABLE`.
+   * Omitting it keeps the row flag as the only enablement source (offline harnesses, unit rows).
+   */
+  readonly gate?: SkillGate;
+  /**
+   * Shared breaker table (PLAN T4.3), keyed `tenant + dependency`. Supplying the same registry to the
+   * availability resolver keeps planner and engine in lockstep; ignored when `breakerFor` is given.
+   */
+  readonly breakers?: SkillBreakerRegistry;
 }
 
 /** The one entry point into skill execution. */
@@ -81,32 +96,40 @@ function waitFor(ms: number): Promise<void> {
 /**
  * Builds the skill runtime engine.
  *
- * @param options The registry, the four canonical seams and the ambient seams.
+ * @param options The registry, canonical seams and ambient runtime bindings.
  * @returns An engine that refuses before any side effect rather than guessing.
  */
 export function createSkillRuntimeEngine(options: SkillRuntimeOptions): SkillRuntimeEngine {
-  const { registry, digestPayload, deriveEffectKey, evaluateAuthority } = options;
+  const { registry, deriveEffectKey, evaluateAuthority, approvalDigest, gate } = options;
+  if (typeof approvalDigest !== 'function') {
+    throw new TypeError('SKILL_ENGINE_SEAM_MISSING: approvalDigest must be injected by the composition root');
+  }
   const now = options.now ?? Date.now;
   const random = options.random ?? Math.random;
   const sleep = options.sleep ?? waitFor;
 
   const breakers = new Map<string, CircuitBreaker>();
+  // Breakers are keyed `tenant + dependency` (PLAN T4.3): one tenant's provider outage never
+  // suppresses another tenant, and skills sharing a guarded dependency share its breaker state while
+  // an unguarded row falls back to its own skill id. A registry handed in by the composition root is
+  // used first, so the availability gate observes exactly the breakers this engine records into.
+  const localBreakerFor = (tenant_id: string, skill_id: string, guarded_dependency?: string): CircuitBreaker => {
+    const key = `${tenant_id}\u0000${guarded_dependency ?? skill_id}`;
+    const existing = breakers.get(key);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const created = new CircuitBreaker(DEFAULT_FAILURE_THRESHOLD, DEFAULT_RESET_TIMEOUT_MS, now);
+    breakers.set(key, created);
+    return created;
+  };
+  const sharedBreakers = options.breakers;
   const breakerFor =
     options.breakerFor ??
-    ((tenant_id: string, skill_id: string): CircuitBreaker => {
-      const key = `${tenant_id}\u0000${skill_id}`;
-      const existing = breakers.get(key);
-      if (existing !== undefined) {
-        return existing;
-      }
-      const created = new CircuitBreaker(
-        DEFAULT_FAILURE_THRESHOLD,
-        DEFAULT_RESET_TIMEOUT_MS,
-        now,
-      );
-      breakers.set(key, created);
-      return created;
-    });
+    (sharedBreakers === undefined
+      ? localBreakerFor
+      : (tenant_id: string, _skill_id: string, guarded_dependency?: string): CircuitBreaker =>
+          sharedBreakers.forDependency(tenant_id, guarded_dependency ?? null));
 
   return {
     async dispatch<TOutput = unknown>(
@@ -133,13 +156,36 @@ export function createSkillRuntimeEngine(options: SkillRuntimeOptions): SkillRun
       const correlation_id = requireResolvedText(request.correlation_id, 'correlation_id', skill_id);
       const caller_agent = requireResolvedText(request.caller_agent, 'caller_agent', skill_id);
 
-      // 4. Enablement flag stored with the row (§7): a disabled row hands off, it never degrades.
+      // 4. Enablement (`row.enabled AND gate.available`, PLAN T4.3 §10.2): a disabled or unavailable
+      //    skill refuses and hands off to a human rather than falling back. The live gate is data —
+      //    tenant setting, entitlement, connector, agent activation, autonomy, breaker, owner inputs —
+      //    and a gate outage fails closed exactly like a refusal.
       if (!skill.enabled) {
         throw new SkillError(
           'SKILL_DISABLED',
           'the row is not enabled for this gate; a disabled skill refuses and hands off to a human rather than falling back',
           skill_id,
         );
+      }
+      if (gate !== undefined) {
+        let verdict: SkillAvailability;
+        try {
+          verdict = await gate.available(tenant_id, skill_id);
+        } catch (error) {
+          throw new SkillError(
+            'SKILL_UNAVAILABLE',
+            `the availability gate could not be evaluated and failed closed: ${error instanceof Error ? error.message : String(error)}`,
+            skill_id,
+            error,
+          );
+        }
+        if (!verdict.available) {
+          throw new SkillError(
+            'SKILL_UNAVAILABLE',
+            `the skill is not available for this tenant: ${verdict.reason}`,
+            skill_id,
+          );
+        }
       }
 
       // 5. Agent binding, then the canonical verdict. Evaluated before the schema check so an
@@ -212,7 +258,7 @@ export function createSkillRuntimeEngine(options: SkillRuntimeOptions): SkillRun
               skill_id,
               normalized_input: normalized,
               request,
-              digestPayload,
+              approvalDigest,
             })
           : undefined;
 
@@ -229,68 +275,101 @@ export function createSkillRuntimeEngine(options: SkillRuntimeOptions): SkillRun
         );
       }
 
-      // 11. Bounded execution under the row's deadline and retry budget.
-      const context: ExecutionContext = {
-        run_id,
-        tenant_id,
-        caller_agent,
-        correlation_id,
-        granted_authority: request.granted_authority,
-        effect_key,
-        ...(approval_id === undefined
-          ? {}
-          : {
-              approval_id,
-              approval_payload_digest: request.approval_payload_digest,
-            }),
-      };
+      // 11. Bounded execution under the row's deadline and retry budget. The admitted call owns the
+      //     HALF_OPEN probe until it records an outcome; the `finally` releases it even on an
+      //     unexpected throw, so a broken dependency never sees two probes in one window.
+      let probeSettled = false;
+      try {
+        const context: ExecutionContext = {
+          run_id,
+          tenant_id,
+          caller_agent,
+          correlation_id,
+          effect_key,
+          granted_authority: request.granted_authority,
+          step_index: request.step_index,
+          ...(request.request_fingerprint === undefined
+            ? {}
+            : { request_fingerprint: request.request_fingerprint }),
+          ...(approval_id === undefined
+            ? {}
+            : {
+                approval_id,
+                approval_payload_digest: request.approval_payload_digest,
+              }),
+          ...(request.hydrated_context === undefined
+            ? {}
+            : { hydrated_context: request.hydrated_context }),
+        };
 
-      const execution = await executeBounded<unknown>({
-        skill_id,
-        retry_policy: skill.retry_policy,
-        timeout_ms: skill.timeout_ms,
-        runAttempt: (signal) => skill.execute(normalized, { ...context, signal }),
-        onAttemptFailure: () => breaker.recordFailure(),
-        random,
-        sleep,
-        ...(request.signal === undefined ? {} : { signal: request.signal }),
-      });
+        const execution = await executeBounded<unknown>({
+          skill_id,
+          retry_policy: skill.retry_policy,
+          timeout_ms: skill.timeout_ms,
+          runAttempt: (signal, attempt) => {
+            const attemptContext: Omit<ExecutionContext, 'llm'> = {
+              ...context,
+              attempt: Math.max(0, attempt - 1),
+              signal,
+            };
+            return skill.execute(normalized, {
+              ...attemptContext,
+              ...(options.llm === undefined
+                ? {}
+                : { llm: options.llm(attemptContext) }),
+            });
+          },
+          onAttemptFailure: () => {
+            probeSettled = true;
+            breaker.recordFailure();
+          },
+          random,
+          sleep,
+          ...(request.signal === undefined ? {} : { signal: request.signal }),
+        });
 
-      // 11. Response validation: a malformed response is never success. For an effect-bearing row,
-      // the provider may already have committed before returning malformed bytes, so the outcome is
-      // unknown and must be reconciled by effect_key rather than reported as a schema-only failure.
-      const violations = validateAgainstSchema(skill.output_schema, execution.output);
-      if (violations.length > 0) {
-        if (skill.effect_class === 'EFFECT' || skill.effect_class === 'APPROVAL') {
-          breaker.recordFailure();
+        // 12. Response validation: a malformed response is never success. For an effect-bearing row,
+        // the provider may already have committed before returning malformed bytes, so the outcome is
+        // unknown and must be reconciled by effect_key rather than reported as a schema-only failure.
+        const violations = validateAgainstSchema(skill.output_schema, execution.output);
+        if (violations.length > 0) {
+          if (skill.effect_class === 'EFFECT' || skill.effect_class === 'APPROVAL') {
+            probeSettled = true;
+            breaker.recordFailure();
+            throw new SkillError(
+              'EFFECT_UNKNOWN',
+              `the adapter response failed output_schema after an effect-bearing call (${violations
+                .map((violation) => `${violation.path}: ${violation.keyword} ${violation.message}`)
+                .join('; ')}); reconcile by effect_key before any retry`,
+              skill_id,
+            );
+          }
           throw new SkillError(
-            'EFFECT_UNKNOWN',
-            `the adapter response failed output_schema after an effect-bearing call (${violations
+            'OUTPUT_SCHEMA_VALIDATION_ERROR',
+            `the adapter response failed this row's output_schema: ${violations
               .map((violation) => `${violation.path}: ${violation.keyword} ${violation.message}`)
-              .join('; ')}); reconcile by effect_key before any retry`,
+              .join('; ')}`,
             skill_id,
           );
         }
-        throw new SkillError(
-          'OUTPUT_SCHEMA_VALIDATION_ERROR',
-          `the adapter response failed this row's output_schema: ${violations
-            .map((violation) => `${violation.path}: ${violation.keyword} ${violation.message}`)
-            .join('; ')}`,
-          skill_id,
-        );
-      }
-      breaker.recordSuccess();
+        breaker.recordSuccess();
+        probeSettled = true;
 
-      return {
-        skill_id,
-        verdict: admission.verdict,
-        effect_class: skill.effect_class,
-        effect_key,
-        ...(approval_id === undefined ? {} : { approval_id }),
-        output: execution.output as TOutput,
-        attempts: execution.attempts,
-        latency_ms: now() - startedAt,
-      };
+        return {
+          skill_id,
+          verdict: admission.verdict,
+          effect_class: skill.effect_class,
+          effect_key,
+          ...(approval_id === undefined ? {} : { approval_id }),
+          output: execution.output as TOutput,
+          attempts: execution.attempts,
+          latency_ms: now() - startedAt,
+        };
+      } finally {
+        // An admitted probe whose outcome was never recorded (an unexpected throw between admission
+        // and settlement) is released as a failure: the dependency stays refused rather than pinned.
+        if (!probeSettled) breaker.recordFailure();
+      }
     },
   };
 }

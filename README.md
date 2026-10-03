@@ -277,3 +277,35 @@ python docs/demo/presentation/export_pdf.py
 
 Script sẽ tự động tìm kiếm trình duyệt tương thích, biên dịch các tệp HTML trong
 `docs/demo/presentation/` và xuất bản trực tiếp vào `docs/demo/exports/`.
+## Current application and runtime reference
+
+### Console routes
+
+The company console implements these routes: overview (`apps/tenant-console/src/app/(app)/page.tsx`); AI team, domain details, and skill panels (`apps/tenant-console/src/app/(app)/ai-team/page.tsx`, `apps/tenant-console/src/app/(app)/ai-team/[domain]/page.tsx`, `apps/tenant-console/src/app/(app)/ai-team/[domain]/skills/page.tsx`); knowledge (`apps/tenant-console/src/app/(app)/knowledge/page.tsx`); customers and Customer 360 (`apps/tenant-console/src/app/(app)/customers/page.tsx`, `apps/tenant-console/src/app/(app)/customers/[id]/page.tsx`); campaigns and campaign details (`apps/tenant-console/src/app/(app)/campaigns/page.tsx`, `apps/tenant-console/src/app/(app)/campaigns/[runId]/page.tsx`); approvals (`apps/tenant-console/src/app/(app)/approvals/page.tsx`); integrations (`apps/tenant-console/src/app/(app)/integrations/page.tsx`); analytics (`apps/tenant-console/src/app/(app)/analytics/page.tsx`); settings (`apps/tenant-console/src/app/(app)/settings/page.tsx`); and the test customer lab (`apps/tenant-console/src/app/(app)/testing/customers/page.tsx`). Settings include audit and user tabs (`apps/tenant-console/src/components/company/SettingsPage.tsx`, `apps/tenant-console/src/components/company/settings/SettingsUsersTab.tsx`).
+
+The platform console implements overview (`apps/platform-admin/src/app/(app)/page.tsx`); company directory and create wizard (`apps/platform-admin/src/app/(app)/companies/page.tsx`, `apps/platform-admin/src/components/platform/Companies.tsx`); and company detail (`apps/platform-admin/src/app/(app)/companies/[id]/page.tsx`).
+Operations and company/run detail are at `apps/platform-admin/src/app/(dashboard)/operations/page.tsx` and `apps/platform-admin/src/app/(dashboard)/operations/runs/[companyId]/[runId]/page.tsx`; reconciliation requests use `apps/platform-admin/src/components/operations/api.ts`.
+Usage, providers, system health, and audit are at `apps/platform-admin/src/app/(dashboard)/usage/page.tsx`, `apps/platform-admin/src/app/(dashboard)/providers/page.tsx`, `apps/platform-admin/src/app/(dashboard)/system-health/page.tsx`, and `apps/platform-admin/src/app/(dashboard)/audit/page.tsx`; settings and skill catalog are at `apps/platform-admin/src/app/(app)/settings/page.tsx` and `apps/platform-admin/src/components/platform/SettingsPage.tsx`.
+
+### Runtime configuration
+
+- `AUTH_PROVIDER` accepts `demo` or `db` and defaults to `demo`; `db` selects durable user/session storage and requires `DATABASE_URL` (`apps/api/src/runtime/composition.ts`, `.env.example`).
+- `SESSION_SECRET` is the API session-signing key, required at 16 or more characters; it is not substituted with `JWT_SECRET` (`apps/api/src/runtime/composition.ts`, `apps/api/src/gateway/principal.ts`, `.env.example`).
+- Database-backed provider secrets use `ENCRYPTION_KEY_AES256`; `ENCRYPTION_KEY_AES256_PREVIOUS` is an optional previous key for decryption during rotation (`apps/api/src/runtime/composition.ts`, `packages/core-engine/src/secrets/cipher.ts`, `packages/database/src/repositories/secrets.ts`, `packages/database/migrations/0030_tenant_secrets.sql`).
+- `OPENAI_API_KEY` and `OPENAI_BASE_URL` are server-only settings, not `NEXT_PUBLIC_*` variables (`.env.example`).
+- `DEMO_TENANT_NAME` optionally sets the demo company display name; the composition uses `Demo` if it is unset (`apps/api/src/runtime/composition.ts`).
+- `PLATFORM_FEATURE_SUBSCRIPTIONS=true` enables the platform subscriptions navigation and route; otherwise the route is not found (`apps/platform-admin/src/app/(app)/layout.tsx`, `apps/platform-admin/src/app/(dashboard)/subscriptions/page.tsx`).
+- Test-data enablement is a tenant database setting, not an environment variable: `tenant_governance_settings.test_data_enabled` controls the Test Customer Lab for non-`DEMO`/`TEST` tenants (`packages/database/migrations/0045_test_data_enabled.sql`, `packages/database/src/repositories/test-customers.ts`, `apps/api/src/routes/v1/testing.ts`).
+- The `OPENAI_BASE_URL` fallback and stored LLM provider URLs are checked by `assertSafeProviderUrl`: plain HTTP is limited to `llm-stub`, `localhost`, `127.0.0.1`, `::1`, or `host.docker.internal` when `APP_ENV` is `local` or `ci`; other URLs must use HTTPS and a publicly routable host without user info, query, or fragment (`.env.example`, `packages/core-engine/src/llm/url-guard.ts`, `packages/core-engine/src/llm/resolver.ts`).
+
+### Real-stack test harness
+
+Run the isolated stack suite from the repository root with `pnpm test:stack` (`package.json`, `tests/stack/README.md`). The harness runs global setup and teardown; teardown removes the `agentos_stacktest` Compose project and volumes unless `STACK_KEEP=1` is set (`tests/stack/global-setup.mjs`, `tests/stack/README.md`). To remove a retained stack explicitly, run:
+
+```bash
+docker compose --project-name agentos_stacktest --file docker-compose.yml --file tests/stack/compose.stack.yml down --volumes --remove-orphans
+```
+
+The teardown command uses the same Compose project and files as the harness (`tests/stack/global-setup.mjs`).
+
+The checked-in SQL migration inventory 0023–0048 and skill-availability gate reasons are listed in [the architecture reference](docs/architecture/README.md), with source files under `packages/database/migrations/` and `packages/skills/src/runtime/availability.ts`.

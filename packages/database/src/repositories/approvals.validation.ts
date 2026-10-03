@@ -47,9 +47,14 @@ interface ApprovalRow extends QueryResultRow {
   run_id: string;
   action_id: string;
   campaign_id: string | null;
+  campaign_name?: string | null;
   effect_key: string;
   authority_required: 'AUTH-4';
   payload: unknown;
+  digest_version: number;
+  original_payload?: unknown;
+  original_payload_sha256?: string | null;
+  original_digest_version?: number | null;
   reason: string;
   operator_id: string | null;
   decision: ApprovalStatus;
@@ -78,8 +83,8 @@ interface ActionRow extends QueryResultRow {
  * Publishes one approval row with its timestamps as ISO-8601 UTC strings, so the row survives
  * serialization into a console projection or a resume checkpoint unchanged.
  *
- * `payload_sha256` is computed, never stored: `approvals` binds the reviewed bytes, and every
- * decision re-derives the digest from them (there is no column a stale digest could drift into).
+ * `payload_sha256` is derived from stored normalized skill input, and `digest_version` records the
+ * canonicalization contract used to create it.
  */
 function toApprovalRecord(row: ApprovalRow): ApprovalRecord {
   return {
@@ -88,10 +93,15 @@ function toApprovalRecord(row: ApprovalRow): ApprovalRecord {
     run_id: row.run_id,
     action_id: row.action_id,
     campaign_id: row.campaign_id,
+    ...(row.campaign_name === undefined ? {} : { campaign_name: row.campaign_name }),
     effect_key: row.effect_key,
     authority_required: row.authority_required,
     payload: row.payload,
     payload_sha256: sha256CanonicalJson(row.payload),
+    digest_version: row.digest_version,
+    ...(row.original_payload == null ? {} : { original_payload: row.original_payload }),
+    ...(row.original_payload_sha256 == null ? {} : { original_payload_sha256: row.original_payload_sha256 }),
+    ...(row.original_digest_version == null ? {} : { original_digest_version: row.original_digest_version }),
     reason: row.reason,
     operator_id: row.operator_id,
     decision: row.decision,
@@ -274,15 +284,33 @@ function readActionDraft(value: unknown, source: string): ApprovalActionDraft {
         'pause without it has no command to authorize (implement/04 §4.2 statement 3).',
     );
   }
-
   const draft = value;
 
   const payload = draft['payload'];
   if (!isPlainObject(payload)) {
     throw new Error(
-      `APPROVAL_ACTION_INVALID: ${source}.payload must be the action payload object the digest is ` +
-        'computed over; the approval binds those bytes and cannot bind a scalar (implement/08 §4.2).',
+      `APPROVAL_ACTION_INVALID: ${source}.payload must be the action payload object; an approval ` +
+        'must name one drafted command (implement/08 §4.2).',
     );
+  }
+  const approval_payload = draft['approval_payload'];
+  if (approval_payload !== undefined && !isPlainObject(approval_payload)) {
+    throw new Error(
+      `APPROVAL_ACTION_INVALID: ${source}.approval_payload must be normalized skill input.`,
+    );
+  }
+  const approval_payload_digest = draft['approval_payload_digest'] === undefined
+    ? undefined
+    : normalizeDigest(draft['approval_payload_digest'], 'APPROVAL_DIGEST_INVALID', source);
+  const approval_digest_version = draft['approval_digest_version'] === undefined
+    ? undefined
+    : readNonNegativeInteger(
+        draft['approval_digest_version'],
+        'approval_digest_version',
+        'APPROVAL_DIGEST_VERSION_INVALID',
+      );
+  if (approval_digest_version === 0) {
+    throw new Error('APPROVAL_DIGEST_VERSION_INVALID: approval_digest_version must be positive.');
   }
 
   const action_revision = readNonNegativeInteger(
@@ -331,6 +359,9 @@ function readActionDraft(value: unknown, source: string): ApprovalActionDraft {
       16,
       'APPROVAL_AUTHORITY_REQUIRED',
     ),
+    ...(approval_payload === undefined ? {} : { approval_payload }),
+    ...(approval_payload_digest === undefined ? {} : { approval_payload_digest }),
+    ...(approval_digest_version === undefined ? {} : { approval_digest_version }),
     payload,
   };
 }
@@ -346,6 +377,7 @@ interface PreparedPause {
   readonly action_revision: number;
   readonly payload: string;
   readonly payload_sha256: string;
+  readonly digest_version: number;
   readonly reason: string;
   readonly checkpoint: string;
 }
@@ -463,11 +495,30 @@ function preparePause(input: PauseForApprovalInput): PreparedPause {
   }
 
   const payload_sha256 = sha256CanonicalJson(input.approval.payload);
+  const supplied_digest = normalizeDigest(
+    input.approval.payload_sha256,
+    'APPROVAL_DIGEST_INVALID',
+    'the prepared approval',
+  );
+  const digest_version = readNonNegativeInteger(
+    input.approval.digest_version,
+    'digest_version',
+    'APPROVAL_DIGEST_VERSION_INVALID',
+  );
+  if (digest_version === 0) {
+    throw new Error('APPROVAL_DIGEST_VERSION_INVALID: digest_version must be positive.');
+  }
 
-  if (payload_sha256 !== sha256CanonicalJson(draft.payload)) {
+  if (
+    supplied_digest !== payload_sha256
+    || draft.approval_payload === undefined
+    || sha256CanonicalJson(draft.approval_payload) !== payload_sha256
+    || draft.approval_payload_digest !== payload_sha256
+    || draft.approval_digest_version !== digest_version
+  ) {
     throw new Error(
-      'APPROVAL_BINDING_MISMATCH: the payload the approval binds is not the payload of the drafted ' +
-        'action; a human would review one command and release another (implement/08 §4.2).',
+      'APPROVAL_BINDING_MISMATCH: the normalized approval payload, its digest version, and the ' +
+        'pending action must describe the same skill input (implement/08 §4.2).',
     );
   }
 
@@ -481,6 +532,7 @@ function preparePause(input: PauseForApprovalInput): PreparedPause {
     action_revision: draft.action_revision + PAUSED_ACTION_REVISION_OFFSET,
     payload: serializeJsonb(input.approval.payload, 'APPROVAL_PAYLOAD_UNSERIALIZABLE'),
     payload_sha256,
+    digest_version,
     reason,
     checkpoint: serializeJsonb(checkpoint, 'APPROVAL_CHECKPOINT_UNSERIALIZABLE'),
   };

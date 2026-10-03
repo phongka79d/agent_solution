@@ -1,9 +1,14 @@
 #!/usr/bin/env node
 
+import { randomUUID } from 'node:crypto';
+
 import { isMainModule } from './lib/main-module.mjs';
-import { stableUuid } from './seed.mjs';
+import { waitTask } from './lib/wait-task.mjs';
 
 const TENANT_ID = '99999999-9999-4999-8999-999999999999';
+const TERMINAL_TASK_STATES = Object.freeze(['awaiting_human', 'completed', 'failed', 'stopped']);
+const TASK_TIMEOUT_MS = 120_000;
+
 const AUTH_ENV_KEYS = Object.freeze([
   'DEMO_COMPANY_ADMIN_EMAIL',
   'DEMO_COMPANY_ADMIN_PASSWORD',
@@ -60,20 +65,20 @@ async function json(response) {
   try { return await response.json(); } catch { return null; }
 }
 
-async function request(base, path, init = {}) {
-  const response = await fetch(`${base}/${path.replace(/^\/+/, '')}`, {
+async function request(base, path, init = {}, fetchImpl = globalThis.fetch) {
+  const response = await fetchImpl(`${base}/${path.replace(/^\/+/, '')}`, {
     ...init,
     signal: init.signal ?? AbortSignal.timeout(15_000),
   });
   return { response, body: await json(response) };
 }
 
-async function login(base, email, password, audience) {
+async function login(base, email, password, audience, fetchImpl) {
   const { response, body } = await request(base, 'demo/login', {
     method: 'POST',
     headers: { accept: 'application/json', 'content-type': 'application/json' },
     body: JSON.stringify({ email, password, audience }),
-  });
+  }, fetchImpl);
   if (
     !response.ok
     || !body
@@ -110,8 +115,8 @@ function receiptFromChunk(chunk, label) {
   return receipt;
 }
 
-async function streamTurn(base, widgetToken, origin, input, label) {
-  const stream = await fetch(`${base}/storefront/stream`, {
+async function streamTurn(base, widgetToken, origin, input, label, fetchImpl) {
+  const stream = await fetchImpl(`${base}/storefront/stream`, {
     method: 'POST',
     headers: {
       accept: 'application/json',
@@ -128,6 +133,33 @@ async function streamTurn(base, widgetToken, origin, input, label) {
   }
   return receiptFromChunk(await readFirstStreamChunk(stream), label);
 }
+async function pollTask(base, token, taskId, fetchImpl) {
+  return waitTask({
+    baseUrl: base,
+    token,
+    taskId,
+    terminalStates: TERMINAL_TASK_STATES,
+    timeoutMs: TASK_TIMEOUT_MS,
+    fetchImpl,
+  });
+}
+
+function assertTaskOutcome(task, label, expectedStatus, requireAgentMessage = false) {
+  const errorCode = typeof task.error?.code === 'string' && task.error.code.length > 0
+    ? task.error.code
+    : 'unknown';
+  if (task.status !== expectedStatus) {
+    throw new Error(
+      `DEMO_SMOKE_FAILED: ${label} task ended ${task.status}; error code ${errorCode}`,
+    );
+  }
+  if (requireAgentMessage && (typeof task.answer !== 'string' || task.answer.trim().length === 0)) {
+    throw new Error(
+      `DEMO_SMOKE_FAILED: ${label} task completed without an agent message; error code ${errorCode}`,
+    );
+  }
+}
+
 
 function readinessSnapshot(body, profile) {
   if (!body || body.demo_mode !== true || typeof body.provider !== 'object' || body.provider === null) {
@@ -144,8 +176,10 @@ function readinessSnapshot(body, profile) {
   return body;
 }
 
-async function runFlow(env, profile) {
+async function runFlow(env, profile, fetchImpl = globalThis.fetch) {
   validateDemoSmokeEnvironment(env, profile);
+  const runMarker = `demo-smoke-${profile}-${randomUUID()}`;
+
   const base = apiV1Base(env);
   const origin = (env.DEMO_WIDGET_ORIGINS ?? 'http://localhost:3000').split(',')[0].trim();
   const companySession = await login(
@@ -153,20 +187,22 @@ async function runFlow(env, profile) {
     env.DEMO_COMPANY_ADMIN_EMAIL,
     env.DEMO_COMPANY_ADMIN_PASSWORD,
     'company',
+    fetchImpl,
   );
   const platformSession = await login(
     base,
     env.DEMO_PLATFORM_ADMIN_EMAIL,
     env.DEMO_PLATFORM_ADMIN_PASSWORD,
     'platform',
+    fetchImpl,
   );
   if (
     !Array.isArray(companySession.permissions)
-    || companySession.permissions.length !== 7
     || !companySession.permissions.includes('approval:decide')
     || !companySession.permissions.includes('campaign:draft')
+    || companySession.permissions.some((permission) => String(permission).startsWith('platform:'))
   ) {
-    throw new Error('DEMO_SMOKE_FAILED: company session must expose the seven company-admin permissions');
+    throw new Error('DEMO_SMOKE_FAILED: company session must hold company-admin authority and no platform authority');
   }
   if (platformSession.membership.scope !== 'platform') {
     throw new Error('DEMO_SMOKE_FAILED: platform session must have platform scope');
@@ -174,8 +210,9 @@ async function runFlow(env, profile) {
   const companyToken = companySession.access_token;
   const platformToken = platformSession.access_token;
   const auth = (token) => ({ accept: 'application/json', authorization: `Bearer ${token}` });
+  const apiRequest = (path, init) => request(base, path, init, fetchImpl);
 
-  const widget = await request(base, 'demo/widget-session', {
+  const widget = await apiRequest('demo/widget-session', {
     method: 'POST',
     headers: { ...auth(companyToken), origin, 'content-type': 'application/json' },
     body: JSON.stringify({ persona: 'C05' }),
@@ -185,58 +222,90 @@ async function runFlow(env, profile) {
   }
   const widgetToken = widget.body.access_token;
 
-  const catalog = await request(base, 'demo/catalog', { headers: auth(companyToken) });
+  const catalog = await apiRequest('demo/catalog', { headers: auth(companyToken) });
   if (!catalog.response.ok || !Array.isArray(catalog.body?.items) || catalog.body.items.length === 0) {
     throw new Error(`DEMO_SMOKE_FAILED: catalog HTTP ${catalog.response.status}`);
   }
 
   const readinessBefore = readinessSnapshot(
-    (await request(base, 'demo/readiness', { headers: auth(platformToken) })).body,
+    (await apiRequest('demo/readiness', { headers: auth(platformToken) })).body,
     profile,
   );
 
   const salesReceipt = await streamTurn(base, widgetToken, origin, {
     message: 'I need a laptop under 20 million VND for graphic design.',
-    idempotency_key: `demo-smoke-${profile}-sales-${Date.now()}`,
+    idempotency_key: `${runMarker}-sales`,
     module: 'sales',
-  }, 'sales');
+  }, 'sales', fetchImpl);
+  // Widget tokens are origin-bound; the operator reads the task like the console does (run:read).
+  const salesTask = await pollTask(base, companyToken, salesReceipt.task_id, fetchImpl);
+  assertTaskOutcome(salesTask, 'sales', 'completed', true);
 
   let careReceipt = null;
+  let careTask = null;
   if (profile === 'live') {
     careReceipt = await streamTurn(base, widgetToken, origin, {
       message: 'What is your return policy for an order delivered last week?',
-      idempotency_key: `demo-smoke-${profile}-care-${Date.now()}`,
+      idempotency_key: `${runMarker}-care`,
       module: 'support',
-    }, 'care');
+    }, 'care', fetchImpl);
+    careTask = await pollTask(base, companyToken, careReceipt.task_id, fetchImpl);
+    assertTaskOutcome(careTask, 'care', 'completed', true);
   }
 
-  const conversations = await request(base, 'conversations?limit=20', { headers: auth(companyToken) });
+  const conversations = await apiRequest('conversations?limit=20', { headers: auth(companyToken) });
   if (!conversations.response.ok) throw new Error(`DEMO_SMOKE_FAILED: conversations HTTP ${conversations.response.status}`);
 
-  const approvals = await request(base, 'approvals?status=PENDING&limit=20', { headers: auth(companyToken) });
-  if (!approvals.response.ok) throw new Error(`DEMO_SMOKE_FAILED: approvals HTTP ${approvals.response.status}`);
-
   let campaign = null;
+  let campaignTask = null;
+  let approval = null;
   if (profile === 'live') {
-    const idempotencyKey = `demo-smoke-${profile}-marketing-${Date.now()}`;
-    campaign = await request(base, 'campaigns/drafts', {
+    const idempotencyKey = `${runMarker}-marketing`;
+    // Segments are tenant data offered by the API (T1.9); a draft names one of them, never a made-up id.
+    const segments = await apiRequest('campaigns/segments', { headers: auth(companyToken) });
+    const segmentList = Array.isArray(segments.body?.segments) ? segments.body.segments : [];
+    const segmentId = (segmentList.find((segment) => segment.segment_id === 'inactive_90d') ?? segmentList[0])?.segment_id;
+    if (!segments.response.ok || typeof segmentId !== 'string') {
+      throw new Error(`DEMO_SMOKE_FAILED: campaign segments HTTP ${segments.response.status}`);
+    }
+    campaign = await apiRequest('campaigns/drafts', {
       method: 'POST',
       headers: { ...auth(companyToken), 'content-type': 'application/json', 'x-idempotency-key': idempotencyKey },
       body: JSON.stringify({
         idempotency_key: idempotencyKey,
-        segment_id: stableUuid('segment', 'inactive90'),
+        name: `Demo smoke win-back ${Date.now().toString(36).toUpperCase()}`,
+        segment_id: segmentId,
         objective: 'winback',
         instruction: 'Create a tenant-scoped reactivation draft for the inactive segment.',
-        content_constraints: { channel: 'EMAIL_HTML', locale: 'en-US', max_length: 600 },
       }),
     });
     if (!campaign.response.ok || typeof campaign.body?.task_id !== 'string') {
       throw new Error(`DEMO_SMOKE_FAILED: marketing draft HTTP ${campaign.response.status}`);
     }
+    campaignTask = await pollTask(base, companyToken, campaign.body.task_id, fetchImpl);
+    assertTaskOutcome(campaignTask, 'marketing', 'awaiting_human');
+
+    const approvals = await apiRequest('approvals?status=PENDING&limit=100', {
+      headers: auth(companyToken),
+    });
+    if (!approvals.response.ok || !Array.isArray(approvals.body?.items)) {
+      throw new Error(`DEMO_SMOKE_FAILED: approvals HTTP ${approvals.response.status}`);
+    }
+    approval = approvals.body.items.find((item) =>
+      item?.run_id === campaign.body.task_id && item.status === 'PENDING',
+    ) ?? null;
+    if (!approval) {
+      throw new Error('DEMO_SMOKE_FAILED: marketing task is awaiting human review without a pending approval row');
+    }
+  } else {
+    const approvals = await apiRequest('approvals?status=PENDING&limit=100', { headers: auth(companyToken) });
+    if (!approvals.response.ok) {
+      throw new Error(`DEMO_SMOKE_FAILED: approvals HTTP ${approvals.response.status}`);
+    }
   }
 
   const readinessAfter = readinessSnapshot(
-    (await request(base, 'demo/readiness', { headers: auth(platformToken) })).body,
+    (await apiRequest('demo/readiness', { headers: auth(platformToken) })).body,
     profile,
   );
   const providerCalls =
@@ -246,6 +315,7 @@ async function runFlow(env, profile) {
 
   return {
     profile,
+    run_marker: runMarker,
     tenant_id: TENANT_ID,
     catalog_items: catalog.body.items.length,
     provider: profile === 'offline'
@@ -257,12 +327,16 @@ async function runFlow(env, profile) {
         provider_calls_observed: providerCalls,
       },
     agents: {
-      sales: { outcome: 'turn_accepted', task_id: salesReceipt.task_id },
+      sales: { outcome: 'completed', task_id: salesReceipt.task_id, agent_message: true },
       care: profile === 'live'
-        ? { outcome: 'turn_accepted', task_id: careReceipt.task_id }
+        ? { outcome: 'completed', task_id: careReceipt.task_id, agent_message: true }
         : { outcome: 'not_exercised_offline' },
       marketing: profile === 'live'
-        ? { outcome: 'draft_admitted', task_id: campaign.body.task_id }
+        ? {
+          outcome: 'awaiting_human',
+          task_id: campaign.body.task_id,
+          approval_id: approval.approval_id,
+        }
         : { outcome: 'not_exercised_offline' },
     },
     readiness_before: readinessBefore.ledger?.status ?? 'unknown',
@@ -272,13 +346,13 @@ async function runFlow(env, profile) {
 }
 
 /** Deterministic demo smoke: no live provider is called and no live success is claimed. */
-export async function runDemoSmoke(env = process.env) {
-  return runFlow(env, 'offline');
+export async function runDemoSmoke(env = process.env, { fetchImpl = globalThis.fetch } = {}) {
+  return runFlow(env, 'offline', fetchImpl);
 }
 
 /** Provider-enabled acceptance: missing provider/auth/database prerequisites fail before requests. */
-export async function runDemoLiveSmoke(env = process.env) {
-  return runFlow(env, 'live');
+export async function runDemoLiveSmoke(env = process.env, { fetchImpl = globalThis.fetch } = {}) {
+  return runFlow(env, 'live', fetchImpl);
 }
 
 if (isMainModule(import.meta.url, process.argv[1])) {

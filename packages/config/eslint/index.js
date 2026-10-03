@@ -129,7 +129,7 @@ const LEGACY_ROLE_TEMPLATE_SELECTOR =
  * One entry per named preset. `patterns` is the `no-restricted-imports` patterns group; negated
  * patterns (`!...`) re-allow the granted contract subpath, exactly as the DAG requires.
  *
- * @type {Record<string, { patterns: readonly string[], typeOnlyImports?: readonly string[], message: string, forbidLegacyRoleNames?: boolean }>}
+ * @type {Record<string, { patterns: readonly string[], testPatterns?: readonly string[], typeOnlyImports?: readonly string[], message: string, forbidLegacyRoleNames?: boolean }>}
  */
 const PRESET_DEFINITIONS = Object.freeze({
   base: {
@@ -157,6 +157,8 @@ const PRESET_DEFINITIONS = Object.freeze({
       '!@agentos/ui-foundation/react',
       '!@agentos/ui-foundation/i18n',
       '!@agentos/ui-foundation/status',
+      '!@agentos/ui-foundation/data',
+      '!@agentos/ui-foundation/errors',
       '!@agentos/ui-foundation/tailwind-preset',
       '!@agentos/api-contract',
       ...SHARED_DEV_CONFIG_PACKAGES.map((name) => `!${name}`),
@@ -177,6 +179,8 @@ const PRESET_DEFINITIONS = Object.freeze({
       '!@agentos/ui-foundation/react',
       '!@agentos/ui-foundation/i18n',
       '!@agentos/ui-foundation/status',
+      '!@agentos/ui-foundation/data',
+      '!@agentos/ui-foundation/errors',
       '!@agentos/ui-foundation/tailwind-preset',
       '!@agentos/api-contract',
       ...SHARED_DEV_CONFIG_PACKAGES.map((name) => `!${name}`),
@@ -189,6 +193,8 @@ const PRESET_DEFINITIONS = Object.freeze({
   },
   uiFoundation: {
     patterns: [...AGENTOS_RUNTIME_IMPORTS_ONLY, ...DATASTORE_DRIVERS, 'node:*', ...PRIVATE_MODULE_TREES],
+    // Tests run under Node (vitest) and never ship to a browser; they may read fixtures from disk.
+    testPatterns: [...AGENTOS_RUNTIME_IMPORTS_ONLY, ...DATASTORE_DRIVERS, ...PRIVATE_MODULE_TREES],
     message: 'packages/ui-foundation is browser-safe: no runtime workspace package, data-store driver, or Node builtin is importable.',
   },
   coreEngine: {
@@ -206,14 +212,15 @@ const PRESET_DEFINITIONS = Object.freeze({
   skills: {
     paths: ['@agentos/core-engine', '@agentos/database'],
     patterns: [
-      '@agentos/core-engine/!(contracts)',
-      '@agentos/core-engine/!(contracts)/**',
+      // T11.2 shares only the pure canonical utility, never the orchestrator runtime root.
+      '@agentos/core-engine/!(contracts|canonical-json)',
+      '@agentos/core-engine/!(contracts|canonical-json)/**',
       '@agentos/database/!(contracts)',
       '@agentos/database/!(contracts)/**',
       ...PRIVATE_MODULE_TREES,
     ],
     message:
-      'packages/skills may import @agentos/core-engine/contracts and @agentos/database/contracts only; both package roots are forbidden (implement/02 section 2).',
+      'packages/skills may import @agentos/core-engine/contracts, @agentos/core-engine/canonical-json and @agentos/database/contracts only; both package roots are forbidden (implement/02 section 2, T11.2).',
   },
   adapters: {
     paths: ['@agentos/core-engine', '@agentos/skills', '@agentos/database'],
@@ -342,6 +349,17 @@ function createFlatPreset(name) {
           },
         },
       ];
+  const testImportRestriction = definition.testPatterns === undefined
+    ? []
+    : [
+        {
+          name: `agentos/${name}/test-imports`,
+          files: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+          rules: {
+            'no-restricted-imports': restrictedImportsRule({ ...definition, patterns: definition.testPatterns }),
+          },
+        },
+      ];
 
   return [
     {
@@ -363,6 +381,7 @@ function createFlatPreset(name) {
         'no-restricted-imports': restrictedImportsRule(definition),
       },
     },
+    ...testImportRestriction,
     ...runtimeImportRestriction,
     ...roleNameRestriction,
   ];

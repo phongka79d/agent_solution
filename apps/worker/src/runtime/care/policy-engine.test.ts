@@ -53,7 +53,7 @@ describe('CarePolicyEngine', () => {
     expect(CARE_SKILLS['skill.care.manage_case']).toBeDefined();
     expect(schemaProperties).toBeDefined();
     expect(Object.keys(CARE_ALLOWED_PAYLOAD_FIELDS['skill.care.manage_case'] ?? {}).sort())
-      .toEqual(Object.keys(schemaProperties as Record<string, unknown>).sort());
+      .toEqual([...new Set([...Object.keys(schemaProperties as Record<string, unknown>), 'tenant_id', 'effect_key'])].sort());
   });
 
   describe('validateAction', () => {
@@ -73,7 +73,7 @@ describe('CarePolicyEngine', () => {
         effect_key: 'eff-1',
         required_authority: 'AUTH-1',
         payload: {
-          order_id: 'ORD-123',
+          order_identifier: 'ORD-123',
           customer_id: 'cust-42',
           verification_reference: 'cust-42',
           verification_status: 'VERIFIED',
@@ -100,7 +100,7 @@ describe('CarePolicyEngine', () => {
         effect_key: 'eff-1',
         required_authority: 'AUTH-1',
         payload: {
-          order_id: 'ORD-123',
+          order_identifier: 'ORD-123',
           customer_id: 'cust-42',
           // Unknown field injected into payload
           unauthorized_admin_override: true,
@@ -129,7 +129,7 @@ describe('CarePolicyEngine', () => {
         effect_key: 'eff-1',
         required_authority: 'AUTH-1',
         payload: {
-          order_id: 'ORD-123',
+          order_identifier: 'ORD-123',
           customer_id: 'cust-42',
         },
       };
@@ -161,7 +161,7 @@ describe('CarePolicyEngine', () => {
         effect_key: 'eff-1',
         required_authority: 'AUTH-1',
         payload: {
-          order_id: 'ORD-123',
+          order_identifier: 'ORD-123',
           customer_id: 'cust-42',
         },
       };
@@ -310,7 +310,7 @@ describe('CarePolicyEngine', () => {
         effect_key: 'eff-1',
         required_authority: 'AUTH-1', // AUTH-1 <= AUTH-2
         payload: {
-          order_id: 'ORD-123',
+          order_identifier: 'ORD-123',
           customer_id: 'cust-42',
         },
       };

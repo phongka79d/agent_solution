@@ -1,7 +1,5 @@
-import { fileURLToPath } from 'node:url';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { ErpRefusalError } from '@agentos/adapters';
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -16,14 +14,10 @@ import type {
   ManagedServiceCase,
 } from '@agentos/database';
 
-import { createCareSkillServices, CareSkillToolError } from './index.js';
+import { createCareSkillServices } from './index.js';
 import type { ErpReadPort } from '../../connectors.js';
 
 const TENANT_ID = '11111111-1111-1111-1111-111111111111';
-const NOVAMART_TENANT_ID = '99999999-9999-4999-8999-999999999999';
-const NOVAMART_KNOWLEDGE_ROOT = fileURLToPath(
-  new URL('../../../../../../packages/second-brain/demo/novamart', import.meta.url),
-);
 const CUSTOMER_ID = 'aaaaaaaa-0000-4000-8000-00000000000a';
 const FOREIGN_CUSTOMER_ID = 'bbbbbbbb-0000-4000-8000-00000000000b';
 const VERIFICATION_REF = 'ver-ref-1';
@@ -52,12 +46,18 @@ const HANDOFF_INPUT = {
   escalation_reason: 'billing dispute',
   summary_context: 'Customer requests a human operator.',
 };
+const HANDOFF_PENDING_ACTION_PAYLOAD = {
+  ...HANDOFF_INPUT,
+  effect_key: HANDOFF_EFFECT_KEY,
+};
+const HANDOFF_REQUEST_FINGERPRINT = computeRequestFingerprint(HANDOFF_PENDING_ACTION_PAYLOAD);
 
 function handoffContext(overrides: Partial<ExecutionContext> = {}): ExecutionContext {
   return {
     ...DUMMY_CONTEXT,
     run_id: 'run-handoff-1',
     effect_key: HANDOFF_EFFECT_KEY,
+    request_fingerprint: HANDOFF_REQUEST_FINGERPRINT,
     granted_authority: 'AUTH-3',
     ...overrides,
   };
@@ -93,9 +93,7 @@ function createMockOptions(overrides: Partial<Parameters<typeof createCareSkillS
 
   return {
     erp_read,
-    env: {
-      KNOWLEDGE_TENANT_IDS: TENANT_ID,
-    },
+    env: {},
     resolve_correlation_id: vi.fn().mockResolvedValue('corr-123'),
     resolve_grant: vi.fn().mockResolvedValue('AUTH-0'),
     find_verified_identity: vi.fn().mockImplementation(async (_tenant: string, id: string) => {
@@ -108,6 +106,9 @@ function createMockOptions(overrides: Partial<Parameters<typeof createCareSkillS
       }
       return null;
     }),
+    conversation_repository: {
+      appendMessage: vi.fn().mockResolvedValue('message-1'),
+    },
     ...overrides,
   };
 }
@@ -123,15 +124,24 @@ const DUMMY_CONTEXT: ExecutionContext = {
 
 describe('CareSkillServices', () => {
   describe('Orchestrator.HandoffBus', () => {
-    it('binds one enqueue to trusted tenant, run and effect identity', async () => {
-      const enqueue = vi.fn(async (_input: EnqueueCareHandoffInput) => ({
-        disposition: 'CREATED' as const,
-        output: HANDOFF_OUTPUT,
-        receipt: HANDOFF_RECEIPT,
-      }));
+    it('uses the reserved pending-action fingerprint and confirms a successful enqueue in the conversation', async () => {
+      const callOrder: string[] = [];
+      const enqueue = vi.fn(async (_input: EnqueueCareHandoffInput) => {
+        callOrder.push('enqueue');
+        return {
+          disposition: 'CREATED' as const,
+          output: HANDOFF_OUTPUT,
+          receipt: HANDOFF_RECEIPT,
+        };
+      });
       const reconcile = vi.fn(async () => ({ state: 'NOT_COMMITTED' as const }));
+      const appendMessage = vi.fn(async () => {
+        callOrder.push('message');
+        return 'message-1';
+      });
       const services = createCareSkillServices(createMockOptions({
         handoff_repository: { enqueue, reconcile },
+        conversation_repository: { appendMessage },
       }));
 
       const output = await services.tool_port.invoke({
@@ -145,7 +155,7 @@ describe('CareSkillServices', () => {
       expect(enqueue).toHaveBeenCalledWith({
         tenant_id: TENANT_ID,
         effect_key: HANDOFF_EFFECT_KEY,
-        request_fingerprint: computeRequestFingerprint(HANDOFF_INPUT),
+        request_fingerprint: HANDOFF_REQUEST_FINGERPRINT,
         run_id: 'run-handoff-1',
         session_id: 'thread-a',
         conversation_id: HANDOFF_CONVERSATION_ID,
@@ -154,6 +164,15 @@ describe('CareSkillServices', () => {
         summary_context: 'Customer requests a human operator.',
       });
       expect(reconcile).not.toHaveBeenCalled();
+      expect(callOrder).toEqual(['enqueue', 'message']);
+      expect(appendMessage).toHaveBeenCalledWith({
+        tenant_id: TENANT_ID,
+        conversation_id: HANDOFF_CONVERSATION_ID,
+        sender_type: 'system',
+        sender_id: 'system',
+        content: 'Đã chuyển cho nhân viên hỗ trợ',
+        request_id: `handoff:${HANDOFF_EFFECT_KEY}`,
+      });
     });
 
     it('reconciles a timed-out INTERNAL effect by key before any idempotent retry', async () => {
@@ -180,7 +199,7 @@ describe('CareSkillServices', () => {
       expect(reconcile).toHaveBeenCalledWith({
         tenant_id: TENANT_ID,
         effect_key: HANDOFF_EFFECT_KEY,
-        request_fingerprint: computeRequestFingerprint(HANDOFF_INPUT),
+        request_fingerprint: HANDOFF_REQUEST_FINGERPRINT,
       });
     });
 
@@ -294,7 +313,7 @@ describe('CareSkillServices', () => {
       expect(enqueue).toHaveBeenCalledWith({
         tenant_id: TENANT_ID,
         effect_key: HANDOFF_EFFECT_KEY,
-        request_fingerprint: computeRequestFingerprint(HANDOFF_INPUT),
+        request_fingerprint: HANDOFF_REQUEST_FINGERPRINT,
         run_id: 'run-handoff-1',
         session_id: 'thread-a',
         conversation_id: HANDOFF_CONVERSATION_ID,
@@ -323,195 +342,121 @@ describe('CareSkillServices', () => {
         code: 'HANDOFF_CUSTOMER_BINDING_INVALID',
       });
     });
+
+    it('surfaces a deterministic reservation fingerprint mismatch without queueing or messaging', async () => {
+      const enqueue = vi.fn(async (_input: EnqueueCareHandoffInput) => {
+        throw new Error('HANDOFF_EFFECT_RESERVATION_INVALID: reservation does not match the pending action.');
+      });
+      const appendMessage = vi.fn();
+      const services = createCareSkillServices(createMockOptions({
+        handoff_repository: { enqueue, reconcile: vi.fn() },
+        conversation_repository: { appendMessage },
+      }));
+
+      await expect(services.tool_port.invoke({
+        skill_id: 'skill.care.escalate_to_human',
+        tool_binding: 'Orchestrator.HandoffBus',
+        input: HANDOFF_INPUT,
+        context: handoffContext(),
+      })).rejects.toMatchObject({
+        name: 'CareSkillToolError',
+        code: 'HANDOFF_EFFECT_RESERVATION_INVALID',
+      });
+      expect(enqueue).toHaveBeenCalledTimes(1);
+      expect(appendMessage).not.toHaveBeenCalled();
+    });
   });
 
   describe('SecondBrain.FAQEngine', () => {
-    it('draft/unapproved corpus ⇒ CORPUS_UNAVAILABLE on repo default corpus', async () => {
-      // Default knowledge root has all documents as status: draft
-      const options = createMockOptions();
-      const services = createCareSkillServices(options);
+    const body = [
+      '---',
+      'status: approved',
+      '---',
+      '',
+      '## FAQ-1: What is your return policy?',
+      'NovaMart offers a 14-day unopened return policy.',
+    ].join('\n');
+    const document = {
+      document_id: 'eeeeeeee-0000-4000-8000-00000000000e',
+      version: 2,
+      content_sha256: createHash('sha256').update(body, 'utf8').digest('hex'),
+      body,
+      namespace: 'customer-care' as const,
+      slug: 'faq',
+    };
 
-      await expect(
-        services.tool_port.invoke({
-          skill_id: 'skill.care.search_faq',
-          tool_binding: 'SecondBrain.FAQEngine',
-          input: { tenant_id: TENANT_ID, query_text: 'what is return policy?' },
-          context: DUMMY_CONTEXT,
-        }),
-      ).rejects.toThrowError(/CORPUS_UNAVAILABLE/);
-    });
-    it('reads approved FAQ from the tenant-bound NovaMart root and refuses another tenant', async () => {
+    it('selects and cites the best matching current FAQ revision among available documents', async () => {
+      const specificBody = [
+        '## FAQ-8: What is the 37-day return policy?',
+        'The policy permits returns within 37 days.',
+      ].join('\n');
+      const specificDocument = {
+        document_id: 'ffffffff-0000-4000-8000-00000000000f',
+        version: 1,
+        content_sha256: createHash('sha256').update(specificBody, 'utf8').digest('hex'),
+        body: specificBody,
+        namespace: 'customer-care' as const,
+        slug: 'stack-policy',
+      };
+      const listAvailable = vi.fn(async () => [document, specificDocument]);
       const services = createCareSkillServices(createMockOptions({
-        env: {
-          KNOWLEDGE_ROOT: NOVAMART_KNOWLEDGE_ROOT,
-          KNOWLEDGE_TENANT_IDS: NOVAMART_TENANT_ID,
-        },
+        knowledge_store: { listAvailable },
       }));
-      const novamartContext = { ...DUMMY_CONTEXT, tenant_id: NOVAMART_TENANT_ID };
 
       const result = await services.tool_port.invoke<
         { tenant_id: string; query_text: string },
         {
-          answers: Array<{
-            faq_id: string;
-            approved_answer: string;
-            source_file: string;
-          }>;
-          match_confidence: number;
+          answers: Array<{ faq_id: string; source_file: string; approved_answer: string }>;
           source_version: string;
         }
       >({
         skill_id: 'skill.care.search_faq',
         tool_binding: 'SecondBrain.FAQEngine',
-        input: { tenant_id: NOVAMART_TENANT_ID, query_text: 'What is your return policy?' },
-        context: novamartContext,
-      });
-      const faq = result.answers.find((answer) => answer.faq_id === 'FAQ-1');
-      expect(faq).toBeDefined();
-      expect(faq?.source_file).toBe('customer-care/faq.md');
-      expect(faq?.approved_answer).toContain('14-day unopened return policy');
-      expect(result.match_confidence).toBeGreaterThan(0);
-      expect(result.source_version).toMatch(/^[a-f0-9]{64}$/);
-
-      await expect(services.tool_port.invoke({
-        skill_id: 'skill.care.search_faq',
-        tool_binding: 'SecondBrain.FAQEngine',
-        input: { tenant_id: TENANT_ID, query_text: 'return policy' },
+        input: { tenant_id: TENANT_ID, query_text: 'What is the 37-day return policy?' },
         context: DUMMY_CONTEXT,
-      })).rejects.toMatchObject({ code: 'KNOWLEDGE_ROOT_TENANT_MISMATCH' });
-    });
-    it('uses the customer question when classification is only FAQ', async () => {
-      const services = createCareSkillServices(createMockOptions({
-        env: {
-          KNOWLEDGE_ROOT: NOVAMART_KNOWLEDGE_ROOT,
-          KNOWLEDGE_TENANT_IDS: NOVAMART_TENANT_ID,
-        },
-      }));
-
-      const result = await services.tool_port.invoke<{
-        tenant_id: string;
-        query_text: string;
-        classification: string;
-        customer_message: string;
-      }, {
-        answers: Array<{ faq_id: string }>;
-        match_confidence: number;
-      }>({
-        skill_id: 'skill.care.search_faq',
-        tool_binding: 'SecondBrain.FAQEngine',
-        input: {
-          tenant_id: NOVAMART_TENANT_ID,
-          query_text: 'FAQ',
-          classification: 'FAQ',
-          customer_message: 'What is your return policy?',
-        },
-        context: { ...DUMMY_CONTEXT, tenant_id: NOVAMART_TENANT_ID },
       });
 
-      expect(result.answers.some((answer) => answer.faq_id === 'FAQ-1')).toBe(true);
-      expect(result.match_confidence).toBeGreaterThan(0);
+      expect(listAvailable).toHaveBeenCalledWith(TENANT_ID, 'customer-care');
+      expect(result.answers[0]?.source_file).toBe('customer-care/stack-policy');
+      expect(result.answers[0]?.approved_answer).toContain('returns within 37 days');
+      expect(result.source_version).toBe(specificDocument.content_sha256);
     });
 
-    it('refuses a configured Care root without a tenant allowlist', async () => {
+    it('does not use an FAQ once the knowledge store reports it archived', async () => {
+      let archived = false;
+      const listAvailable = vi.fn(async () => archived ? [] : [document]);
       const services = createCareSkillServices(createMockOptions({
-        env: { KNOWLEDGE_ROOT: NOVAMART_KNOWLEDGE_ROOT },
+        knowledge_store: { listAvailable },
+      }));
+      const invocation = {
+        skill_id: 'skill.care.search_faq',
+        tool_binding: 'SecondBrain.FAQEngine',
+        input: { tenant_id: TENANT_ID, query_text: 'What is your return policy?' },
+        context: DUMMY_CONTEXT,
+      } as const;
+
+      const availableResult = await services.tool_port.invoke(invocation);
+      expect(availableResult).toBeDefined();
+      archived = true;
+      await expect(services.tool_port.invoke(invocation)).rejects.toMatchObject({
+        code: 'CORPUS_UNAVAILABLE',
+      });
+      expect(listAvailable).toHaveBeenCalledTimes(2);
+    });
+
+    it('rejects a knowledge lookup outside the execution tenant', async () => {
+      const listAvailable = vi.fn(async () => [document]);
+      const services = createCareSkillServices(createMockOptions({
+        knowledge_store: { listAvailable },
       }));
 
       await expect(services.tool_port.invoke({
         skill_id: 'skill.care.search_faq',
         tool_binding: 'SecondBrain.FAQEngine',
-        input: { tenant_id: NOVAMART_TENANT_ID, query_text: 'return policy' },
-        context: { ...DUMMY_CONTEXT, tenant_id: NOVAMART_TENANT_ID },
-      })).rejects.toMatchObject({ code: 'KNOWLEDGE_ROOT_TENANT_BINDING_REQUIRED' });
-    });
-
-
-
-    it('draft/unapproved corpus in custom root ⇒ CORPUS_UNAVAILABLE', async () => {
-      const tempRoot = await mkdtemp(join(tmpdir(), 'kb-draft-'));
-      try {
-        await mkdir(join(tempRoot, 'customer-care'), { recursive: true });
-        await writeFile(
-          join(tempRoot, 'customer-care', 'faq.md'),
-          '---\nstatus: draft\n---\n## FAQ-1: Return\nA: 30 days',
-        );
-
-        const options = createMockOptions({
-        env: { KNOWLEDGE_ROOT: tempRoot, KNOWLEDGE_TENANT_IDS: TENANT_ID },
-        });
-        const services = createCareSkillServices(options);
-
-        await expect(
-          services.tool_port.invoke({
-            skill_id: 'skill.care.search_faq',
-            tool_binding: 'SecondBrain.FAQEngine',
-            input: { tenant_id: TENANT_ID, query_text: 'Return' },
-            context: DUMMY_CONTEXT,
-          }),
-        ).rejects.toThrowError(/CORPUS_UNAVAILABLE/);
-      } finally {
-        await rm(tempRoot, { recursive: true, force: true });
-      }
-    });
-
-    it('approved corpus with no match ⇒ empty answers and match_confidence 0', async () => {
-      const tempRoot = await mkdtemp(join(tmpdir(), 'kb-approved-'));
-      try {
-        // Create canonical 21 documents with approved status for customer-care/faq.md
-        const folders = [
-          'company', 'customer', 'product', 'brand', 'marketing', 'sales', 'customer-care', 'policy',
-        ];
-        for (const f of folders) {
-          await mkdir(join(tempRoot, f), { recursive: true });
-        }
-        // Write all 21 files so loader succeeds
-        const canonicalPaths = [
-          'company/company.md', 'company/positioning.md', 'customer/customer.md', 'customer/segmentation.md',
-          'product/products.md', 'product/pricing.md', 'product/promotion-policy.md', 'brand/voice.md',
-          'brand/terminology.md', 'brand/prohibited-claims.md', 'marketing/playbook.md', 'marketing/content-guidelines.md',
-          'marketing/campaign-rules.md', 'sales/sales-playbook.md', 'sales/qualification.md', 'sales/objection-handling.md',
-          'customer-care/faq.md', 'customer-care/support-policy.md', 'customer-care/escalation.md', 'policy/authority.md',
-          'policy/approval.md',
-        ];
-        for (const p of canonicalPaths) {
-          await writeFile(
-            join(tempRoot, p),
-            p === 'customer-care/faq.md'
-              ? '---\nstatus: approved\n---\n## FAQ-1: What is the warranty?\nWe offer 1 year standard warranty.'
-              : '---\nstatus: approved\n---\n# Approved document\nContent',
-          );
-        }
-
-        const options = createMockOptions({
-        env: { KNOWLEDGE_ROOT: tempRoot, KNOWLEDGE_TENANT_IDS: TENANT_ID },
-        });
-        const services = createCareSkillServices(options);
-
-        // Query with completely unrelated terms
-        const noMatch = await services.tool_port.invoke<{ tenant_id: string; query_text: string }, { answers: unknown[]; match_confidence: number }>({
-          skill_id: 'skill.care.search_faq',
-          tool_binding: 'SecondBrain.FAQEngine',
-          input: { tenant_id: TENANT_ID, query_text: 'completely unrelated query about spaceships' },
-          context: DUMMY_CONTEXT,
-        });
-
-        expect(noMatch.answers).toEqual([]);
-        expect(noMatch.match_confidence).toBe(0);
-
-        // Query with matching terms
-        const match = await services.tool_port.invoke<{ tenant_id: string; query_text: string }, { answers: Array<{ faq_id: string; question: string; approved_answer: string }>; match_confidence: number }>({
-          skill_id: 'skill.care.search_faq',
-          tool_binding: 'SecondBrain.FAQEngine',
-          input: { tenant_id: TENANT_ID, query_text: 'warranty duration' },
-          context: DUMMY_CONTEXT,
-        });
-
-        expect(match.answers.length).toBeGreaterThan(0);
-        expect(match.match_confidence).toBeGreaterThan(0);
-        expect(match.answers[0]?.question).toContain('warranty');
-      } finally {
-        await rm(tempRoot, { recursive: true, force: true });
-      }
+        input: { tenant_id: TENANT_ID },
+        context: { ...DUMMY_CONTEXT, tenant_id: '88888888-8888-4888-8888-888888888888' },
+      })).rejects.toMatchObject({ code: 'TENANT_SCOPE_MISMATCH' });
+      expect(listAvailable).not.toHaveBeenCalled();
     });
   });
 
@@ -627,8 +572,7 @@ describe('CareSkillServices', () => {
       expect(options.erp_read!.read).not.toHaveBeenCalled();
     });
 
-    it('foreign order ⇒ ORDER_OWNER_MISMATCH / ORDER_NOT_FOUND with no existence disclosure', async () => {
-      // Identity is verified for CUSTOMER_ID, but ERP returns an order owned by FOREIGN_CUSTOMER_ID
+    it('returns the same non-disclosing result for foreign and confirmed-missing orders', async () => {
       const foreignOrderOptions = createMockOptions({
         erp_read: {
           read: vi.fn().mockResolvedValue({
@@ -657,32 +601,141 @@ describe('CareSkillServices', () => {
           }),
         },
       });
+      const foreignResult = await createCareSkillServices(foreignOrderOptions).tool_port.invoke({
+        skill_id: 'skill.care.lookup_order',
+        tool_binding: 'API-001.OrderConnector',
+        input: {
+          tenant_id: TENANT_ID,
+          order_identifier: 'ORD-B-1',
+          customer_id: CUSTOMER_ID,
+          verification_reference: VERIFICATION_REF,
+          verification_status: 'VERIFIED',
+        },
+        context: DUMMY_CONTEXT,
+      });
 
-      const services = createCareSkillServices(foreignOrderOptions);
+      const missingOrderOptions = createMockOptions({
+        erp_read: {
+          read: vi.fn().mockRejectedValue(new ErpRefusalError(
+            'PROVIDER_REJECTED',
+            'API-001.OrderConnector',
+            'provider rejected the orders read with status 404',
+          )),
+        },
+      });
+      const missingResult = await createCareSkillServices(missingOrderOptions).tool_port.invoke({
+        skill_id: 'skill.care.lookup_order',
+        tool_binding: 'API-001.OrderConnector',
+        input: {
+          tenant_id: TENANT_ID,
+          order_identifier: 'ORD-UNKNOWN',
+          customer_id: CUSTOMER_ID,
+          verification_reference: VERIFICATION_REF,
+          verification_status: 'VERIFIED',
+        },
+        context: DUMMY_CONTEXT,
+      });
 
-      let raisedError: unknown;
-      try {
-        await services.tool_port.invoke({
-          skill_id: 'skill.care.lookup_order',
-          tool_binding: 'API-001.OrderConnector',
-          input: {
+      expect(foreignResult).toEqual({ result: 'ORDER_NOT_FOUND' });
+      expect(missingResult).toEqual(foreignResult);
+    });
+
+    it('does not treat non-404 provider rejections as a confirmed absence', async () => {
+      const options = createMockOptions({
+        erp_read: {
+          read: vi.fn().mockRejectedValue(new ErpRefusalError(
+            'PROVIDER_REJECTED',
+            'API-001.OrderConnector',
+            'provider rejected the orders read with status 403',
+          )),
+        },
+      });
+
+      await expect(createCareSkillServices(options).tool_port.invoke({
+        skill_id: 'skill.care.lookup_order',
+        tool_binding: 'API-001.OrderConnector',
+        input: {
+          tenant_id: TENANT_ID,
+          order_identifier: 'ORD-UNKNOWN',
+          customer_id: CUSTOMER_ID,
+          verification_reference: VERIFICATION_REF,
+          verification_status: 'VERIFIED',
+        },
+        context: DUMMY_CONTEXT,
+      })).rejects.toMatchObject({ code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE' });
+    });
+
+    it('keeps an order with no authoritative owner classified as unavailable', async () => {
+      const options = createMockOptions({
+        erp_read: {
+          read: vi.fn().mockResolvedValue({
+            resource: 'orders',
+            observed_at: '2026-01-04T10:00:00Z',
             tenant_id: TENANT_ID,
-            order_identifier: 'ORD-B-1',
-            customer_id: CUSTOMER_ID,
-            verification_reference: VERIFICATION_REF,
-            verification_status: 'VERIFIED',
-          },
-          context: DUMMY_CONTEXT,
-        });
-      } catch (err) {
-        raisedError = err;
-      }
+            value: {
+              order_id: 'ORD-A-1',
+              status: 'SHIPPED',
+            },
+          }),
+        },
+      });
 
-      expect(raisedError).toBeInstanceOf(CareSkillToolError);
-      const toolErr = raisedError as CareSkillToolError;
-      expect(toolErr.code).toBe('ORDER_NOT_FOUND');
-      expect(toolErr.message).toMatch(/ORDER_OWNER_MISMATCH|ORDER_NOT_FOUND/);
-      expect(toolErr.message).toMatch(/no existence disclosure/);
+      await expect(createCareSkillServices(options).tool_port.invoke({
+        skill_id: 'skill.care.lookup_order',
+        tool_binding: 'API-001.OrderConnector',
+        input: {
+          tenant_id: TENANT_ID,
+          order_identifier: 'ORD-A-1',
+          customer_id: CUSTOMER_ID,
+          verification_reference: VERIFICATION_REF,
+          verification_status: 'VERIFIED',
+        },
+        context: DUMMY_CONTEXT,
+      })).rejects.toMatchObject({ code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE' });
+    });
+
+    it('returns the authoritative status when an order source omits optional details', async () => {
+      const options = createMockOptions({
+        erp_read: {
+          read: vi.fn().mockResolvedValue({
+            resource: 'orders',
+            observed_at: '2026-10-02T00:00:00Z',
+            tenant_id: TENANT_ID,
+            value: {
+              order_id: 'ORD-A-1',
+              customer_id: CUSTOMER_ID,
+              status: 'PAID',
+              total_amount: 87654321,
+              data_class: 'TEST',
+              items: [{ sku_id: 'NM-L01-BLK', quantity: 1 }],
+              currency: 'VND',
+            },
+          }),
+        },
+      });
+      const services = createCareSkillServices(options);
+
+      const result = await services.tool_port.invoke({
+        skill_id: 'skill.care.lookup_order',
+        tool_binding: 'API-001.OrderConnector',
+        input: {
+          tenant_id: TENANT_ID,
+          order_identifier: 'ORD-A-1',
+          customer_id: CUSTOMER_ID,
+          verification_reference: VERIFICATION_REF,
+          verification_status: 'VERIFIED',
+        },
+        context: DUMMY_CONTEXT,
+      });
+
+      expect(result).toMatchObject({
+        order_id: 'ORD-A-1',
+        status: 'PROCESSING',
+        total_price: 87654321,
+        currency: 'VND',
+      });
+      expect(result).not.toHaveProperty('line_items');
+      expect(result).not.toHaveProperty('order_date');
     });
 
     it('absent or unmappable provider field ⇒ AUTHORITATIVE_SOURCE_UNAVAILABLE, never synthesized', async () => {

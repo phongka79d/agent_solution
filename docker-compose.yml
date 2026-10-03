@@ -92,8 +92,8 @@ services:
 
   mock-erp:
     build:
-      context: ./services/mock-erp
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/mock-erp/Dockerfile
     restart: unless-stopped
     labels:
       agentos.deploy: local-ci-only
@@ -161,6 +161,7 @@ services:
     environment:
       NODE_ENV: ${NODE_ENV:?NODE_ENV is required}
       APP_ENV: ${APP_ENV:?APP_ENV is required}
+      AUTH_PROVIDER: ${AUTH_PROVIDER:-demo}
       PORT: 4000
       SERVICE_NAME: ${SERVICE_NAME:-agentos-api}
       API_BASE_URL: ${API_BASE_URL:?API_BASE_URL is required}
@@ -168,6 +169,7 @@ services:
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?CORS_ALLOWED_ORIGINS is required}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       DATABASE_URL: postgresql://agentos_app:${APP_ROLE_PASSWORD:?APP_ROLE_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-agentos_dev}?schema=agentos
+      PLATFORM_DATABASE_URL: postgresql://agentos_platform_login:${PLATFORM_ROLE_PASSWORD:-}@postgres:5432/${POSTGRES_DB:-agentos_dev}?schema=agentos
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
@@ -192,6 +194,7 @@ services:
       DEMO_COMPANY_ADMIN_PASSWORD: ${DEMO_COMPANY_ADMIN_PASSWORD:-}
       DEMO_PLATFORM_ADMIN_EMAIL: ${DEMO_PLATFORM_ADMIN_EMAIL:-}
       DEMO_PLATFORM_ADMIN_PASSWORD: ${DEMO_PLATFORM_ADMIN_PASSWORD:-}
+      DEMO_TENANT_NAME: ${DEMO_TENANT_NAME:-NovaMart Demo}
       DEMO_WIDGET_ORIGINS: ${DEMO_WIDGET_ORIGINS:-http://localhost:3000}
       ERP_API_BASE_URL: http://mock-erp:8081/api/v1
       # The shared secret the platform signs API-001 calls with; the mock-erp container verifies
@@ -254,6 +257,8 @@ services:
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?CORS_ALLOWED_ORIGINS is required}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       DATABASE_URL: postgresql://agentos_app:${APP_ROLE_PASSWORD:?APP_ROLE_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-agentos_dev}?schema=agentos
+      PLATFORM_DATABASE_URL: postgresql://agentos_platform_login:${PLATFORM_ROLE_PASSWORD:-}@postgres:5432/${POSTGRES_DB:-agentos_dev}?schema=agentos
+      INDEXER_DATABASE_URL: postgresql://agentos_indexer_login:${INDEXER_ROLE_PASSWORD:-}@postgres:5432/${POSTGRES_DB:-agentos_dev}?schema=agentos
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
@@ -291,6 +296,7 @@ services:
       FAST_COMPLETION_MODEL: ${FAST_COMPLETION_MODEL:-gpt-4o-mini}
       OPENAI_STRUCTURED_OUTPUT_MODE: ${OPENAI_STRUCTURED_OUTPUT_MODE:-json_object}
       LLM_REQUEST_TIMEOUT_MS: ${LLM_REQUEST_TIMEOUT_MS:-30000}
+      LLM_MAX_OUTPUT_TOKENS_PER_CALL: ${LLM_MAX_OUTPUT_TOKENS_PER_CALL:-2048}
       MAX_TOKENS_PER_RUN: ${MAX_TOKENS_PER_RUN:-4096}
 
       # Empty keeps Temporal out of the readiness gate. Set only with --profile workflows.
@@ -329,6 +335,7 @@ services:
     environment:
       NODE_ENV: ${NODE_ENV:?NODE_ENV is required}
       APP_ENV: ${APP_ENV:?APP_ENV is required}
+      AUTH_PROVIDER: ${AUTH_PROVIDER:-demo}
       PORT: 3000
       DEMO_MODE: ${DEMO_MODE:-false}
       API_BASE_URL: http://api:4000
@@ -366,6 +373,7 @@ services:
     environment:
       NODE_ENV: ${NODE_ENV:?NODE_ENV is required}
       APP_ENV: ${APP_ENV:?APP_ENV is required}
+      AUTH_PROVIDER: ${AUTH_PROVIDER:-demo}
       PORT: 3001
       DEMO_MODE: ${DEMO_MODE:-false}
       API_BASE_URL: http://api:4000

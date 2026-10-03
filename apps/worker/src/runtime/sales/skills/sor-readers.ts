@@ -85,12 +85,22 @@ export function productListPrice(product: ProductItem): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
+/** Case- and plural-insensitive category key: a proposed "Laptop" names the catalog's "laptops". */
+function categoryKey(value: string): string {
+  const key = value.trim().toLocaleLowerCase();
+  return key.length > 3 && key.endsWith('s') ? key.slice(0, -1) : key;
+}
+
 export function categoryMatches(product: ProductItem, category_id: string | undefined): boolean {
   if (category_id === undefined) return true;
-  if (product.category === category_id) return true;
-  if (Array.isArray(product.category_path)) return product.category_path.includes(category_id);
-  if (typeof product.category_path === 'string' && product.category_path.split('/').includes(category_id)) return true;
-  return product.categories?.includes(category_id) ?? false;
+  const wanted = categoryKey(category_id);
+  const labels = [
+    product.category,
+    ...(Array.isArray(product.category_path) ? product.category_path : []),
+    ...(typeof product.category_path === 'string' ? product.category_path.split('/') : []),
+    ...(product.categories ?? []),
+  ];
+  return labels.some((label) => typeof label === 'string' && categoryKey(label) === wanted);
 }
 
 export async function readCatalogFromSor(options: SalesSkillToolPortOptions, tenant_id: string): Promise<CatalogRead> {
@@ -199,6 +209,7 @@ export async function readInventoryFromSor(
   options: SalesSkillToolPortOptions,
   tenant_id: string,
   sku_id: string,
+  signal?: AbortSignal,
 ): Promise<InventoryRead> {
   if (options.erp_read === null) {
     throw new SalesSkillToolError(
@@ -209,7 +220,12 @@ export async function readInventoryFromSor(
 
   let rawResult: unknown;
   try {
-    rawResult = await options.erp_read.read({ tenant_id, resource: 'inventory', key: sku_id });
+    rawResult = await options.erp_read.read({
+      tenant_id,
+      resource: 'inventory',
+      key: sku_id,
+      ...(signal === undefined ? {} : { signal }),
+    });
   } catch {
     throw new SalesSkillToolError(
       'AUTHORITATIVE_SOURCE_UNAVAILABLE',

@@ -11,6 +11,7 @@ export interface ApprovalExpirySweeperOptions {
   readonly env?: NodeJS.ProcessEnv;
   /** Raw `WORKER_TENANT_IDS` or an already parsed tenant list for tests and embedding callers. */
   readonly tenantIds?: string | readonly string[];
+  readonly getTenantIds?: () => readonly string[];
   readonly repository?: ApprovalExpiryRepository;
   readonly intervalMs?: number;
   readonly setInterval?: (handler: () => void, timeout: number) => NodeJS.Timeout;
@@ -87,8 +88,10 @@ export function createApprovalExpirySweeper(
   let timer: NodeJS.Timeout | null = null;
   let activeRun: Promise<void> | null = null;
 
+  const activeTenantIds = (): readonly string[] => options.getTenantIds?.() ?? tenantIds;
+
   const runTenants = async (): Promise<void> => {
-    for (const tenant_id of tenantIds) {
+    for (const tenant_id of activeTenantIds()) {
       try {
         await repository.expireOverdueApprovals(tenant_id, APPROVAL_EXPIRY_SWEEP_BATCH_LIMIT);
       } catch (error) {
@@ -132,7 +135,9 @@ export function createApprovalExpirySweeper(
   };
 
   const handle: ApprovalExpirySweeperHandle = {
-    tenantIds,
+    get tenantIds() {
+      return activeTenantIds();
+    },
     intervalMs,
     get isRunning() {
       return timer !== null;

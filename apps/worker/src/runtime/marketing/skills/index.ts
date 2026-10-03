@@ -1,6 +1,6 @@
 import {
+  approvalPayloadDigest,
   computeEffectKey,
-  computeRequestFingerprint,
   evaluateAuthorityVerdict,
 } from '@agentos/core-engine';
 import {
@@ -102,10 +102,13 @@ export function createMarketingSkillServices(
 
   const engine = createSkillRuntimeEngine({
     registry,
-    digestPayload: (payload) => computeRequestFingerprint(payload as Record<string, unknown>),
     deriveEffectKey: (identity) => computeEffectKey(identity),
     evaluateAuthority: (granted, required) => evaluateAuthorityVerdict(granted, required),
+    approvalDigest: (action) => approvalPayloadDigest(action),
     ...(options.now !== undefined ? { now: () => options.now!().getTime() } : {}),
+    ...(options.gate === undefined ? {} : { gate: options.gate }),
+    ...(options.llm === undefined ? {} : { llm: options.llm }),
+    ...(options.breakers === undefined ? {} : { breakers: options.breakers }),
   });
 
   const dispatcher = createSkillAdapterDispatcher({
@@ -157,7 +160,7 @@ export function createMarketingSkillServices(
   if (!options.consent) {
     unbound.push('API-002.ConsentStore: no consent store connector is bound');
   }
-  if (!options.content_engine) {
+  if (!options.content_engine && !options.llm) {
     unbound.push('Core.LLMContentEngine: no content generation engine is bound');
   }
   if (!options.brand_guard && !options.knowledge) {

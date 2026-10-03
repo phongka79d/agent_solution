@@ -1,14 +1,14 @@
 /**
- * SCR-002: Agent Operations Console route.
+ * Platform operations console route (T8.3): Lượt chạy · Đối soát · Bị kẹt.
  */
 
-import { AgentOperationsConsole } from '../../../../components/operations/AgentOperationsConsole';
+import { OperationsConsole } from '../../../../components/operations/OperationsConsole';
 
 export const metadata = {
-  title: 'Operations | AgentOS Platform',
-  description: 'Tenant-scoped run history, trace inspection, and safe retry controls.',
+  title: 'Vận hành | AgentOS Platform',
+  description: 'Giám sát lượt chạy toàn nền tảng, đối soát kết quả không xác định và xử lý công việc bị kẹt.',
 };
 
 export default function OperationsPage() {
-  return <AgentOperationsConsole />;
+  return <OperationsConsole />;
 }

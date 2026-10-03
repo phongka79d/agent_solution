@@ -1,7 +1,7 @@
 import Fastify from 'fastify';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { CompanyCrmCustomerRow } from '@agentos/database';
+import type { CompanyCrmCustomerProfileRow, CompanyCrmCustomerRow } from '@agentos/database';
 import type { GatewayRuntime } from '../../gateway/ports.js';
 import { correlationIdOf, replyFailure } from '../../gateway/http.js';
 import { createCredentialStore } from '../../gateway/principal.js';
@@ -32,6 +32,19 @@ function buildHarness(profile: CompanyCrmCustomerRow | null = null) {
     companyCrm: {
       listCustomers: vi.fn(async () => ({ items: [customer], next_cursor: null })),
       getCustomerProfile: vi.fn(async () => profile),
+    },
+    events: {
+      timeline: vi.fn(async () => ({
+        items: [{
+          event_id: 'evt-1',
+          occurred_at: '2026-01-03T00:00:00.000Z',
+          event_type: 'purchase',
+          canonical_event: 'purchase',
+          stage: 'Purchase',
+          classification: 'FACT' as const,
+        }],
+        next_cursor: null,
+      })),
     },
     audit: { record: vi.fn(async () => undefined) },
     ids: () => 'corr-customer-1',
@@ -64,6 +77,64 @@ describe('customer projection routes', () => {
         next_cursor: null,
       });
       expect(runtime.companyCrm?.listCustomers).toHaveBeenCalledWith({ tenant_id: TENANT, limit: 10 });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('returns the merged Customer 360 chronology with the data class on the profile', async () => {
+    const profile: CompanyCrmCustomerProfileRow = {
+      ...customer,
+      orders: [{
+        order_id: 'order-1',
+        order_number: 'SO-1001',
+        status: 'PAID',
+        currency: 'TWD',
+        total_amount: '120.00',
+        created_at: '2026-01-02T00:00:00.000Z',
+      }],
+      conversations: [],
+      campaign_engagement: [],
+      recommendations: [],
+      service_cases: [],
+    };
+    const { app } = buildHarness(profile);
+    try {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/customers/customer-1/profile',
+        headers: { authorization: `Bearer ${TOKEN}` },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = response.json() as { readonly data_class: string; readonly timeline: readonly { readonly kind: string }[] };
+      expect(body.data_class).toBe('PRODUCTION');
+      expect(body.timeline.map((item) => item.kind)).toEqual(['EVENT', 'ORDER']);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('preserves TEST classification on the Customer360 profile response for the storefront launcher', async () => {
+    const profile: CompanyCrmCustomerProfileRow = {
+      ...customer,
+      data_class: 'TEST',
+      orders: [],
+      conversations: [],
+      campaign_engagement: [],
+      recommendations: [],
+      service_cases: [],
+    };
+    const { app } = buildHarness(profile);
+    try {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/customers/customer-1/profile',
+        headers: { authorization: `Bearer ${TOKEN}` },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual(expect.objectContaining({ customer_id: 'customer-1', data_class: 'TEST' }));
     } finally {
       await app.close();
     }

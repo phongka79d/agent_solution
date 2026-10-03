@@ -22,11 +22,31 @@ type TimerHandle = NodeJS.Timeout;
 type SetTimeoutFn = (handler: () => void, timeout: number) => TimerHandle;
 type ClearTimeoutFn = (handle: TimerHandle) => void;
 
+const TRANSIENT_LEASE_RENEWAL_CODES = {
+  '40001': true,
+  '40P01': true,
+  '57P01': true,
+  ECONNRESET: true,
+} as const;
+
+function isTransientLeaseRenewalError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const candidate = error as { code?: unknown; message?: unknown };
+  return (typeof candidate.code === 'string' && Object.hasOwn(TRANSIENT_LEASE_RENEWAL_CODES, candidate.code))
+    || (typeof candidate.message === 'string' && /connection reset|ECONNRESET/i.test(candidate.message));
+}
+
 type WorkflowRepository = Pick<DurableWorkflowRepository,
   'claimNextQueuedTask' | 'getTask' | 'renewTaskLease' | 'releaseTaskLease' | 'recordFailure' | 'transitionTask'>;
 
+export interface WorkerTenantRuntime {
+  readonly tenant_id: string;
+  readonly registry: DomainRuntimeRegistry;
+}
+
 export interface WorkerPollingOptions {
   readonly tenantIds: readonly string[];
+  readonly getTenantRuntimes?: () => readonly WorkerTenantRuntime[];
   readonly registry: DomainRuntimeRegistry;
   readonly workflowRepository: WorkflowRepository;
   readonly workerId: string;
@@ -47,6 +67,7 @@ export interface WorkerPollingOptions {
     readonly taskRecord: DurableTaskRecord;
     readonly tenant_id: string;
     readonly signal: AbortSignal;
+    readonly registry: DomainRuntimeRegistry;
   }) => Promise<void>;
 }
 
@@ -116,7 +137,11 @@ export function createWorkerPoller(options: WorkerPollingOptions): WorkerPollerH
     notifyDrainWaiter();
   };
 
-  const processClaimedTask = async (tenant_id: string, taskRecord: DurableTaskRecord): Promise<void> => {
+  const processClaimedTask = async (
+    tenant_id: string,
+    taskRecord: DurableTaskRecord,
+    registry: DomainRuntimeRegistry,
+  ): Promise<void> => {
     const controller = new AbortController();
     let heartbeatTimer: TimerHandle | null = null;
     let settled = false;
@@ -153,33 +178,43 @@ export function createWorkerPoller(options: WorkerPollingOptions): WorkerPollerH
     const heartbeat = async (): Promise<void> => {
       if (settled || controller.signal.aborted) return;
       try {
-        const current = await options.workflowRepository.getTask(tenant_id, taskRecord.run_id);
-        const parked = current?.state === 'waiting' || current?.state === 'awaiting_human';
-        if (
-          current === null
-          || (current.state !== 'running' && !parked)
-          || current.lease_owner !== options.workerId
-        ) {
-          throw new Error('TASK_LEASE_NOT_HELD: execution lease is no longer owned by this worker');
-        }
-        const currentExpiry = current.lease_expires_at === null ? Number.NaN : Date.parse(current.lease_expires_at);
-        if (!Number.isFinite(currentExpiry) || currentExpiry <= now().getTime()) {
-          throw new Error('TASK_LEASE_EXPIRED: execution lease is absent or expired');
-        }
-        const renewed = await options.workflowRepository.renewTaskLease({
-          tenant_id,
-          run_id: taskRecord.run_id,
-          lease_owner: options.workerId,
-          task_version: current.task_version,
-          lease_duration_ms: options.leaseDurationMs,
-        });
-        const expiresAt = renewed.lease_expires_at === null ? Number.NaN : Date.parse(renewed.lease_expires_at);
-        if (
-          renewed.lease_owner !== options.workerId
-          || !Number.isFinite(expiresAt)
-          || expiresAt <= now().getTime()
-        ) {
-          throw new Error('TASK_LEASE_NOT_HELD: lease renewal did not return a live lease owned by this worker');
+        let renewed = false;
+        for (let attempt = 0; attempt < 2 && !renewed; attempt++) {
+          try {
+            const current = await options.workflowRepository.getTask(tenant_id, taskRecord.run_id);
+            const parked = current?.state === 'waiting' || current?.state === 'awaiting_human';
+            if (
+              current === null
+              || (current.state !== 'running' && !parked)
+              || current.lease_owner !== options.workerId
+            ) {
+              throw new Error('TASK_LEASE_NOT_HELD: execution lease is no longer owned by this worker');
+            }
+            const currentExpiry = current.lease_expires_at === null ? Number.NaN : Date.parse(current.lease_expires_at);
+            if (!Number.isFinite(currentExpiry) || currentExpiry <= now().getTime()) {
+              throw new Error('TASK_LEASE_EXPIRED: execution lease is absent or expired');
+            }
+            const renewedTask = await options.workflowRepository.renewTaskLease({
+              tenant_id,
+              run_id: taskRecord.run_id,
+              lease_owner: options.workerId,
+              lease_duration_ms: options.leaseDurationMs,
+            });
+            const expiresAt = renewedTask.lease_expires_at === null
+              ? Number.NaN
+              : Date.parse(renewedTask.lease_expires_at);
+            if (
+              renewedTask.lease_owner !== options.workerId
+              || !Number.isFinite(expiresAt)
+              || expiresAt <= now().getTime()
+            ) {
+              throw new Error('TASK_LEASE_NOT_HELD: lease renewal did not return a live lease owned by this worker');
+            }
+            renewed = true;
+          } catch (error) {
+            if (attempt === 0 && isTransientLeaseRenewalError(error)) continue;
+            throw error;
+          }
         }
       } catch (error) {
         failLease(error);
@@ -201,6 +236,7 @@ export function createWorkerPoller(options: WorkerPollingOptions): WorkerPollerH
         taskRecord,
         tenant_id,
         signal: controller.signal,
+        registry,
       });
       taskPromise.catch(() => undefined);
       await Promise.race([taskPromise, leaseLost]);
@@ -213,16 +249,18 @@ export function createWorkerPoller(options: WorkerPollingOptions): WorkerPollerH
   const pollOnce = async (): Promise<number> => {
     activePollCount++;
     try {
-      if (
-        !acceptingClaims
-        || options.readiness !== true
-        || options.tenantIds.length === 0
-        || options.registry.modules().length === 0
-      ) return 0;
+      if (!acceptingClaims || options.readiness !== true) return 0;
+      const tenantRuntimes = options.getTenantRuntimes?.() ?? options.tenantIds.map((tenant_id) => ({
+        tenant_id,
+        registry: options.registry,
+      }));
+      if (tenantRuntimes.length === 0) return 0;
       let claimedCount = 0;
       const taskPromises: Promise<void>[] = [];
 
-      for (const tenant_id of options.tenantIds) {
+      for (const tenantRuntime of tenantRuntimes) {
+        const { tenant_id, registry } = tenantRuntime;
+        if (registry.modules().length === 0) continue;
         for (;;) {
           if (!acceptingClaims) break;
           const inFlight = inFlightByTenant.get(tenant_id) ?? 0;
@@ -249,7 +287,7 @@ export function createWorkerPoller(options: WorkerPollingOptions): WorkerPollerH
 
           claimedCount++;
           const attemptKey = `${tenant_id}:${claimResult.task.run_id}`;
-          const taskPromiseBase = processClaimedTask(tenant_id, claimResult.task);
+          const taskPromiseBase = processClaimedTask(tenant_id, claimResult.task, registry);
           const attempt = activeAttempts.get(attemptKey);
           if (drainTimeoutReason !== null && attempt !== undefined) {
             attempt.timedOut = true;
@@ -290,8 +328,8 @@ export function createWorkerPoller(options: WorkerPollingOptions): WorkerPollerH
   if (
     options.autoStartPolling
     && options.readiness === true
-    && options.tenantIds.length > 0
-    && options.registry.modules().length > 0
+    && (options.getTenantRuntimes !== undefined
+      || (options.tenantIds.length > 0 && options.registry.modules().length > 0))
   ) {
     running = true;
     scheduleNext();

@@ -9,9 +9,9 @@ synthetic: true
 
 # NovaMart Prohibited Marketing and Sales Claims
 
-## MKT-04 Deterministic Brand Compliance Policy
+## Deterministic Brand Compliance Policy
 
-Every Marketing campaign draft (`skill.mkt.audit_brand_compliance`) and customer-facing communication for NovaMart (`tenant_id: 99999999-9999-4999-8999-999999999999`) is audited against the explicit prohibited claims list below. Because NovaMart operates a strict synthetic no-discount policy (`P_floor = list_price`), zero-defect hardware guarantees, unauthorized third-party brand endorsements, and promotional discount claims are strictly forbidden. Any draft containing any of the bulleted phrases below fails compliance with `BLOCKING` severity.
+Every Marketing campaign draft and customer-facing communication for NovaMart is audited against the explicit prohibited claims list below. Because NovaMart operates a strict synthetic no-discount policy, zero-defect hardware guarantees, unauthorized third-party brand endorsements, and promotional discount claims are strictly forbidden. Any draft containing any of the bulleted phrases below fails compliance with blocking severity.
 
 ## Explicit Prohibited Claim Phrases
 

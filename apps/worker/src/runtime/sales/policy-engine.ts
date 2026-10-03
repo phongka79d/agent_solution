@@ -23,8 +23,12 @@ import {
   type ConsentState,
   type PolicyEnforcementOptions,
   type PolicyEnforcementPoint,
-  type PolicyRegistrySkill,
 } from '@agentos/core-engine';
+import {
+  PLATFORM_SKILL_ROWS,
+  payloadFieldsForRows,
+  policyRegistryForRows,
+} from '@agentos/skills';
 import type { AuditRepository } from '@agentos/database';
 
 import { DomainPolicyEngine } from '../shared/policy-engine.js';
@@ -36,177 +40,9 @@ import type {
   SalesPriceFloorPort,
 } from './skills/types.js';
 
-/** Allowed fields in action payloads per Sales skill, using static Record lookup */
-export const SALES_ALLOWED_PAYLOAD_FIELDS: Readonly<Record<string, Readonly<Record<string, true>>>> = Object.freeze({
-  'skill.sales.search_product': Object.freeze({
-    tenant_id: true,
-    query: true,
-    category_id: true,
-    limit: true,
-    effect_key: true,
-  }),
-  'skill.sales.check_stock': Object.freeze({
-    tenant_id: true,
-    sku_id: true,
-    warehouse_id: true,
-    effect_key: true,
-  }),
-  'skill.sales.check_price': Object.freeze({
-    tenant_id: true,
-    sku_id: true,
-    customer_id: true,
-    requested_discount_percent: true,
-    proposed_price: true,
-    effect_key: true,
-  }),
-  'skill.sales.retrieve_customer': Object.freeze({
-    tenant_id: true,
-    customer_identifier: true,
-    effect_key: true,
-  }),
-  'skill.sales.recommend_product': Object.freeze({
-    tenant_id: true,
-    customer_id: true,
-    current_cart_skus: true,
-    recommendation_type: true,
-    effect_key: true,
-  }),
-  'skill.sales.create_cart': Object.freeze({
-    tenant_id: true,
-    session_id: true,
-    customer_id: true,
-    items: true,
-    idempotency_key: true,
-    offer_id: true,
-    discount_amount: true,
-    discount_percent: true,
-    proposed_price: true,
-    effect_key: true,
-  }),
-  'skill.sales.create_order': Object.freeze({
-    tenant_id: true,
-    cart_id: true,
-    customer_id: true,
-    shipping_address: true,
-    payment_method: true,
-    effect_key: true,
-  }),
-  'skill.sales.send_message': Object.freeze({
-    tenant_id: true,
-    recipient_id: true,
-    channel: true,
-    message_content: true,
-    effect_key: true,
-  }),
-});
-
-/** Canonical skill definitions for Sales from packages/skills/src/platform/sales/*.ts and implement/05 §6.2 */
-export const SALES_SKILLS: Readonly<Record<string, PolicyRegistrySkill>> = Object.freeze({
-  'skill.sales.search_product': {
-    skill_id: 'skill.sales.search_product',
-    allowed_agents: Object.freeze(['SAL-02', 'SAL-03']),
-    required_authority: 'AUTH-0',
-    mutating: false,
-    price_bearing: false,
-    idempotent: true,
-    epistemic_class: 'FACT',
-    write_target: 'HYPOTHESIS',
-    requires_consent: false,
-    requires_verified_identity: false,
-    timeout_ms: 1500,
-  },
-  'skill.sales.check_stock': {
-    skill_id: 'skill.sales.check_stock',
-    allowed_agents: Object.freeze(['SAL-02', 'SAL-03', 'SAL-04', 'SAL-05']),
-    required_authority: 'AUTH-0',
-    mutating: false,
-    price_bearing: false,
-    idempotent: true,
-    epistemic_class: 'FACT',
-    write_target: 'HYPOTHESIS',
-    requires_consent: false,
-    requires_verified_identity: false,
-    timeout_ms: 3000,
-  },
-  'skill.sales.check_price': {
-    skill_id: 'skill.sales.check_price',
-    allowed_agents: Object.freeze(['SAL-02', 'SAL-03', 'SAL-04']),
-    required_authority: 'AUTH-3',
-    mutating: false,
-    price_bearing: false,
-    idempotent: true,
-    epistemic_class: 'FACT',
-    write_target: 'HYPOTHESIS',
-    requires_consent: false,
-    requires_verified_identity: false,
-    timeout_ms: 2000,
-  },
-  'skill.sales.retrieve_customer': {
-    skill_id: 'skill.sales.retrieve_customer',
-    allowed_agents: Object.freeze(['SAL-01', 'SAL-02', 'SAL-03', 'SAL-04', 'SAL-05']),
-    required_authority: 'AUTH-0',
-    mutating: false,
-    price_bearing: false,
-    idempotent: true,
-    epistemic_class: 'FACT',
-    write_target: 'HYPOTHESIS',
-    requires_consent: false,
-    requires_verified_identity: true,
-    timeout_ms: 1500,
-  },
-  'skill.sales.recommend_product': {
-    skill_id: 'skill.sales.recommend_product',
-    allowed_agents: Object.freeze(['SAL-02', 'SAL-03']),
-    required_authority: 'AUTH-1',
-    mutating: false,
-    price_bearing: false,
-    idempotent: true,
-    epistemic_class: 'HYPOTHESIS',
-    write_target: 'HYPOTHESIS',
-    requires_consent: true,
-    requires_verified_identity: true,
-    timeout_ms: 2500,
-  },
-  'skill.sales.create_cart': {
-    skill_id: 'skill.sales.create_cart',
-    allowed_agents: Object.freeze(['SAL-02', 'SAL-04']),
-    required_authority: 'AUTH-3',
-    mutating: true,
-    price_bearing: false,
-    idempotent: false,
-    epistemic_class: 'FACT',
-    write_target: 'FACT',
-    requires_consent: false,
-    requires_verified_identity: false,
-    timeout_ms: 2000,
-  },
-  'skill.sales.create_order': {
-    skill_id: 'skill.sales.create_order',
-    allowed_agents: Object.freeze(['SAL-02']),
-    required_authority: 'AUTH-3',
-    mutating: true,
-    price_bearing: false,
-    idempotent: false,
-    epistemic_class: 'FACT',
-    write_target: 'FACT',
-    requires_consent: false,
-    requires_verified_identity: false,
-    timeout_ms: 4000,
-  },
-  'skill.sales.send_message': {
-    skill_id: 'skill.sales.send_message',
-    allowed_agents: Object.freeze(['SAL-02', 'SAL-04', 'SAL-05']),
-    required_authority: 'AUTH-3',
-    mutating: true,
-    price_bearing: false,
-    idempotent: false,
-    epistemic_class: 'FACT',
-    write_target: 'FACT',
-    requires_consent: true,
-    requires_verified_identity: false,
-    timeout_ms: 3000,
-  },
-});
+const SALES_POLICY_ROWS = PLATFORM_SKILL_ROWS.filter((row) => row.domain === 'sales');
+export const SALES_ALLOWED_PAYLOAD_FIELDS = payloadFieldsForRows(SALES_POLICY_ROWS);
+export const SALES_SKILLS = policyRegistryForRows(SALES_POLICY_ROWS);
 
 function defaultSalesGrant(agent_id: string): AssignableAuthority | null {
   if (agent_id === 'SAL-01') return 'AUTH-0';
@@ -238,6 +74,7 @@ export interface SalesPolicyEngineOptions {
   readonly auditSecret?: string | undefined;
   readonly audit?: PolicyEnforcementOptions['audit'] | null | undefined;
   readonly now?: (() => Date) | undefined;
+  readonly normalizeActionInput?: IPolicyEngine['normalizeActionInput'];
 }
 
 /**
@@ -293,6 +130,7 @@ export class SalesPolicyEngine extends DomainPolicyEngine implements IPolicyEngi
     super({
       skills: SALES_SKILLS,
       allowed_payload_fields: SALES_ALLOWED_PAYLOAD_FIELDS,
+      ...(options.normalizeActionInput === undefined ? {} : { normalizeActionInput: options.normalizeActionInput }),
       ...(options.pep ? { pep: options.pep } : {}),
       ...(options.resolveGrant ? { resolveGrant: options.resolveGrant } : {}),
       defaultGrant: defaultSalesGrant,

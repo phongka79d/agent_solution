@@ -7,15 +7,30 @@ import { useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState, type FormEvent } from 'react';
 type ViewState = 'loading' | 'ready' | 'disabled' | 'signed_in' | 'error' | 'permission';
 
-function responseError(status: number, payload: unknown): string {
+function retryAfterSeconds(header: string | null): number | null {
+  if (!header) return null;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds) && seconds > 0) return Math.ceil(seconds);
+  const date = Date.parse(header);
+  if (Number.isFinite(date)) {
+    const delta = Math.ceil((date - Date.now()) / 1000);
+    return delta > 0 ? delta : null;
+  }
+  return null;
+}
+
+function responseError(status: number, payload: unknown, retryAfterHeader: string | null = null): string {
   const code = payload !== null && typeof payload === 'object' && 'error' in payload && typeof payload.error === 'string'
     ? payload.error
     : '';
   if (status === 404 || code === 'NOT_FOUND') return 'Sign-in is not available in this environment.';
   if (status === 403 || code === 'PERMISSION_DENIED') return t('auth.forbidden');
   if (status === 401 || code === 'AUTHENTICATION_FAILED') return t('auth.invalid_credentials');
-  if (status === 429 || code === 'TOO_MANY_ATTEMPTS') return t('auth.too_many_attempts');
-  if (status >= 500) return t('common.error');
+  if (status === 429 || code === 'TOO_MANY_ATTEMPTS') {
+    const seconds = retryAfterSeconds(retryAfterHeader);
+    return seconds !== null ? t('auth.too_many_attempts_retry', { seconds }) : t('auth.too_many_attempts');
+  }
+  if (status >= 500) return t('auth.unavailable');
   return 'Sign-in could not be completed.';
 }
 
@@ -96,7 +111,7 @@ function AuthPageContent() {
       const payload = await jsonPayload(response);
       if (!response.ok) {
         setViewState(response.status === 404 ? 'disabled' : response.status === 403 ? 'permission' : 'error');
-        setMessage(responseError(response.status, payload));
+        setMessage(responseError(response.status, payload, response.headers.get('retry-after')));
         return;
       }
       setPassword('');

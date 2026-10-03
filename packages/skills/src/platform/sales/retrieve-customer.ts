@@ -69,6 +69,7 @@ const spec: Omit<
   allowed_agents: ['SAL-01', 'SAL-02', 'SAL-03', 'SAL-04', 'SAL-05'],
   required_authority: 'AUTH-0',
   tool_binding: 'PostgreSQL.Customer360Store',
+  requires_verified_identity: true,
   validation_rules: ['tenant isolation boundary verified by RLS'],
   retry_policy: {
     max_retries: 3,

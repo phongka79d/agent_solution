@@ -11,7 +11,7 @@ synthetic: true
 
 ## Value Proposition
 
-NovaMart positions itself in the synthetic Vietnamese electronics market as an evidence-driven, specification-transparent technology partner for creative professionals, graphic designers, software engineers, and modern hybrid offices. Rather than competing through inflated list prices or artificial countdown markdowns, NovaMart publishes everyday verified list prices in VND backed by real-time regional warehouse availability (`WH-HCM` and `WH-HN`).
+NovaMart positions itself in the synthetic Vietnamese electronics market as an evidence-driven, specification-transparent technology partner for creative professionals, graphic designers, software engineers, and modern hybrid offices. Rather than competing through inflated list prices or artificial countdown markdowns, NovaMart publishes everyday verified list prices in VND backed by real-time regional warehouse availability in Ho Chi Minh City and Hanoi.
 
 ## Target Audience Pillars
 
@@ -21,6 +21,6 @@ NovaMart positions itself in the synthetic Vietnamese electronics market as an e
 
 ## Differentiation Commitments
 
-- **Verified Advisory Over Guesswork:** Every product recommendation is grounded in current API-001 inventory and signed quote evidence within the shopper's stated VND budget ceiling.
-- **Transparent Everyday Pricing:** Floor price equals list price (`P_floor = list_price`) across the NovaMart demo catalog. Customers receive consistent, upfront VND quotes without hidden fees or unapproved discount haggling.
+- **Verified Advisory Over Guesswork:** Every product recommendation is grounded in current live inventory and signed quote evidence within the shopper's stated VND budget ceiling.
+- **Transparent Everyday Pricing:** The approved price floor equals the published list price across the NovaMart demo catalog. Customers receive consistent, upfront VND quotes without hidden fees or unapproved discount haggling.
 - **Accountable Post-Purchase Care:** Clear 14-day unopened return rules, 2–4 business day domestic delivery across Vietnam, and 12-month limited hardware warranty coverage with seamless escalation to human support operators.

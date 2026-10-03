@@ -10,8 +10,19 @@
  */
 
 import { ConnectorRegistry, type EventAliasNormalizer, type HmacSha256Hex } from '@agentos/adapters';
-import { LlmUsageRecorder, createRuntimeRedisClient, type RuntimeRedisClient } from '@agentos/core-engine';
 import {
+  LlmCallRecorder,
+  LlmConfigResolver,
+  LlmUsageRecorder,
+  SecretResolver,
+  createSecretCipher,
+  createRuntimeRedisClient,
+  type RuntimeRedisClient,
+} from '@agentos/core-engine';
+import {
+  LlmConfigRepository,
+  AgentActivationRepository,
+  SecretRepository,
   ApprovalRepository,
   AuditRepository,
   CareHandoffRepository,
@@ -19,34 +30,60 @@ import {
   CustomerEventRepository,
   CompanyCrmProjectionRepository,
   CompanyProjectionRepository,
+  ConnectorBindingRepository,
+  PlatformCompanyRepository,
   PlatformDirectoryRepository,
+  PlatformAuditRepository,
   P5AutonomyRepository,
   DurableWorkflowRepository,
   EffectReservationRepository,
   EvidenceRepository,
+  IdentityRepository,
+  KnowledgeRepository,
   RunResponseRepository,
   RunStageEventsRepository,
+  SkillCatalogRepository,
+  PlatformSkillFleetHealthRepository,
+  TenantProfileRepository,
   TenantGovernanceRepository,
+  TestCustomersRepository,
   withTenantContext,
   type RedisInjectedClient,
   type PlatformTransactionRunner,
   type TenantTransactionRunner,
 } from '@agentos/database';
+import { createDatabaseAuthStore, type DatabaseAuthStore } from './db-auth.js';
+import { createFileEmailSender, createLogOnlyEmailSender } from './email.js';
+import { createCompanyUserAdminPort, createInvitationAcceptPort, createPlatformAdminsPort } from './user-admin.js';
+import { createSkillsPort, createPlatformSkillsPort, type SkillReadDispatcher } from './skills-port.js';
+import type { SkillsPort } from '../routes/v1/skills.js';
+import type { PlatformSkillsPort } from '../routes/v1/platform-skills.js';
+import { PLATFORM_SKILL_ROWS } from '@agentos/skills';
 
 import type {
   ApprovalPort,
+  CompanyIntegrationsPort,
   CompanyProjectionPort,
+  CompanyUserAdminPort,
+  EmailSenderPort,
   GatewayAuditPort,
+  InvitationAcceptPort,
+  PlatformAdminsPort,
+  PlatformCompanyCommandsPort,
   PlatformDirectoryPort,
   PlatformProvidersPort,
   GatewayRuntime,
   IdentityPort,
-  KpiPort,
   RunPort,
-  StreamPort,
   TakeoverLeasePort,
 } from '../gateway/ports.js';
-import { parseEnabledAgentModules, parseMarketingSignalEventTypes, parseSalesSignalEventTypes } from '../routes/v1/care-turn.js';
+import {
+  RedisTurnRateLimiter,
+  parseEnabledAgentModules,
+  parseMarketingSignalEventTypes,
+  parseSalesSignalEventTypes,
+  type TurnRateLimiter,
+} from '../routes/v1/care-turn.js';
 import { createCredentialStore, type CredentialStore } from '../gateway/principal.js';
 import {
   createCanonicalEventNormalizer,
@@ -77,9 +114,15 @@ import {
   createDemoCredentialStore,
   type DemoCredentialStore,
 } from './demo-auth.js';
+import { createWidgetSessionRegistry } from './widget-sessions.js';
 import { createP5Ports, type P5Ports } from './p5-ports.js';
 import type { DemoReadinessPort, RunTracePort } from '../routes/v1/demo-readiness.js';
+import type { TestWidgetSessionIssuer } from '../routes/v1/testing.js';
+import type { DemoWidgetSessionIssuer } from '../routes/v1/demo-widget.js';
 import { createTurnIntentPort, type TurnIntentPort } from './bindings/turn-intent.js';
+import { createTestCustomerArtifactPurger } from './test-customer-artifacts.js';
+import { createLlmConfigurationPort } from './bindings/llm-configuration.js';
+import type { LlmConfigurationPort } from '../routes/v1/company-llm.js';
 
 /**
  * A capability this build does not bind.
@@ -104,11 +147,16 @@ function unbound(port: string, capability: string): never {
 /** Environment the composition root reads. Nothing else is consulted, and no secret is logged. */
 export interface GatewayEnv {
   readonly APP_ENV?: string;
+  /** Node runtime mode does not select the deployment profile; APP_ENV owns production guards. */
+  readonly NODE_ENV?: string;
+  readonly AUTH_PROVIDER?: string;
   readonly DEMO_MODE?: string;
   readonly DEMO_COMPANY_ADMIN_EMAIL?: string;
   readonly DEMO_COMPANY_ADMIN_PASSWORD?: string;
   readonly DEMO_PLATFORM_ADMIN_EMAIL?: string;
   readonly DEMO_PLATFORM_ADMIN_PASSWORD?: string;
+  /** Display name for the demo company session (seeded profile name); defaults to "Demo". */
+  readonly DEMO_TENANT_NAME?: string;
   /** Legacy names remain readable only to produce an explicit migration error. */
   readonly DEMO_TENANT_OPERATOR_PASSWORD?: string;
   readonly DEMO_MARKETING_APPROVER_PASSWORD?: string;
@@ -120,14 +168,23 @@ export interface GatewayEnv {
   /** The classifier model: the gateway's bounded intent proposal and other latency-sensitive calls. */
   readonly FAST_COMPLETION_MODEL?: string;
   readonly LLM_REQUEST_TIMEOUT_MS?: string;
+  readonly LLM_MAX_OUTPUT_TOKENS_PER_CALL?: string;
   readonly MAX_TOKENS_PER_RUN?: string;
   /** Tenant-wide LLM token ceiling checked against persisted token_cost_records; omitted = no limit. */
   readonly LLM_TENANT_TOKEN_BUDGET?: string;
   readonly OPENAI_STRUCTURED_OUTPUT_MODE?: string;
+  readonly ENCRYPTION_KEY_AES256?: string;
+  readonly ENCRYPTION_KEY_AES256_PREVIOUS?: string;
   readonly MOCK_ERP_ENABLED?: string;
   readonly ERP_API_BASE_URL?: string;
+  readonly MOCK_SECRET_KEY?: string;
+  readonly KNOWLEDGE_ROOT?: string;
+  readonly KNOWLEDGE_TENANT_IDS?: string;
   readonly EVENT_INGESTION_BASE_URL?: string;
   readonly SESSION_SECRET?: string;
+  /** Invitation delivery backend; `file` stores single-use links only in a local/CI outbox. */
+  readonly EMAIL_TRANSPORT?: string;
+  readonly EMAIL_OUTBOX_DIR?: string;
   readonly PLATFORM_SECRET?: string;
   /** JWT signing key for API tokens; it is never used as a session-signing fallback. */
   readonly JWT_SECRET?: string;
@@ -135,22 +192,33 @@ export interface GatewayEnv {
   readonly WEBHOOK_HMAC_SECRET?: string;
   /** Presence of a non-empty URL enables database-backed P5 route ports. */
   readonly DATABASE_URL?: string;
+  /** Tenant console origin used to build invitation accept links (T9.3). */
+  readonly WEB_BASE_URL?: string;
+  /** Platform console origin used for platform administrator invitation links. */
+  readonly PLATFORM_ADMIN_BASE_URL?: string;
   readonly READINESS_ATTEMPTS?: string;
   readonly REDIS_HOST?: string;
   readonly REDIS_PORT?: string;
   readonly REDIS_PASSWORD?: string;
   readonly REDIS_DB?: string;
+  readonly QDRANT_URL?: string;
+  readonly QDRANT_API_KEY?: string;
   readonly ENABLED_AGENT_MODULES?: string;
   readonly SALES_SIGNAL_EVENT_TYPES?: string;
   readonly MARKETING_SIGNAL_EVENT_TYPES?: string;
 }
 
-/** The assembled gateway: the routes' runtime, the credential store and the derivation binding. */
+/** The assembled gateway runtime, credentials, optional shared limiter and route bindings. */
 export interface GatewayComposition {
   readonly runtime: GatewayRuntime;
   readonly credentials: CredentialStore;
   readonly demoAuth?: DemoCredentialStore;
+  readonly demoWidgetSessions?: DemoWidgetSessionIssuer;
+  /** Present when `AUTH_PROVIDER=db`: durable sessions for both consoles (T9.2). */
+  readonly auth?: DatabaseAuthStore;
+  readonly turnRateLimiter?: TurnRateLimiter;
   readonly intentProposer?: TurnIntentPort;
+  readonly llmConfiguration: LlmConfigurationPort;
   readonly env?: () => Readonly<Record<string, string | undefined>>;
   readonly demoMode: boolean;
   readonly readiness: DemoReadinessPort;
@@ -158,7 +226,22 @@ export interface GatewayComposition {
   readonly normalizer: EventAliasNormalizer;
   readonly companyProjections: CompanyProjectionPort;
   readonly platform?: PlatformDirectoryPort;
+  readonly companyCommands: PlatformCompanyCommandsPort;
+  /** Company user administration and invitation redemption (T9.3); present with durable identity. */
+  readonly userAdmin?: CompanyUserAdminPort;
+  readonly invitationAccept?: InvitationAcceptPort;
+  readonly platformAdmins?: PlatformAdminsPort;
+  /** Outbound email seam; the local/CI binding is log-only. */
+  readonly email?: EmailSenderPort;
+  /** Test Customer Lab (T7.2); present only when this composition has a database binding. */
+  readonly testCustomers?: TestCustomersRepository;
+  readonly widgetSessions?: TestWidgetSessionIssuer;
   readonly providers: PlatformProvidersPort;
+  /** Tenant knowledge lifecycle; present only when this composition has a database binding. */
+  readonly knowledge?: KnowledgeRepository;
+  /** Skill management (T4.4); present only when this composition has a database binding. */
+  readonly skills?: SkillsPort;
+  readonly platformSkills?: PlatformSkillsPort;
   /** P5 ports are present only when this composition has a database binding. */
   readonly provisioning?: P5Ports['provisioning'];
   readonly autonomyAdmin?: P5Ports['autonomyAdmin'];
@@ -253,15 +336,15 @@ function demoCredentialStore(env: GatewayEnv): DemoCredentialStore {
     companyAdminPassword: env.DEMO_COMPANY_ADMIN_PASSWORD as string,
     platformAdminEmail: env.DEMO_PLATFORM_ADMIN_EMAIL as string,
     platformAdminPassword: env.DEMO_PLATFORM_ADMIN_PASSWORD as string,
+    ...(env.DEMO_TENANT_NAME === undefined ? {} : { tenantName: env.DEMO_TENANT_NAME }),
   });
 }
 
 /**
- * Tenant LLM token limits. `LLM_TENANT_TOKEN_BUDGET` is the tenant's persisted-usage ceiling and
- * `MAX_TOKENS_PER_RUN` the per-run ceiling; an omitted value means no limit. A malformed value
- * refuses composition instead of silently disabling the guard.
+ * Tenant budgets are unlimited when omitted; the per-run ceiling defaults to 4096 tokens. Malformed
+ * values refuse composition instead of silently disabling the guard.
  */
-export function parseLlmBudgetConfig(env: GatewayEnv): { token_budget?: number; per_run_token_budget?: number } {
+export function parseLlmBudgetConfig(env: GatewayEnv): { token_budget?: number; per_run_token_budget: number } {
   const parse = (name: string, raw: string | undefined): number | undefined => {
     if (raw === undefined || raw.trim() === '') return undefined;
     const value = Number(raw);
@@ -271,10 +354,10 @@ export function parseLlmBudgetConfig(env: GatewayEnv): { token_budget?: number; 
     return value;
   };
   const token_budget = parse('LLM_TENANT_TOKEN_BUDGET', env.LLM_TENANT_TOKEN_BUDGET);
-  const per_run_token_budget = parse('MAX_TOKENS_PER_RUN', env.MAX_TOKENS_PER_RUN);
+  const per_run_token_budget = parse('MAX_TOKENS_PER_RUN', env.MAX_TOKENS_PER_RUN) ?? 4096;
   return {
     ...(token_budget === undefined ? {} : { token_budget }),
-    ...(per_run_token_budget === undefined ? {} : { per_run_token_budget }),
+    per_run_token_budget,
   };
 }
 
@@ -299,39 +382,182 @@ export function createGatewayComposition(
     readonly redis?: RedisInjectedClient;
     /** Injected tenant transaction runner for database-backed P5 ports. */
     readonly databaseRunner?: TenantTransactionRunner;
-    /** Injected platform transaction runner for directory projections. */
+    /** Injected platform transaction runner for directory and audit projections. */
     readonly platformDatabaseRunner?: PlatformTransactionRunner;
+    /** Injected READ dispatch seam for skill tests; absent leaves READ tests refused. */
+    readonly readDispatcher?: SkillReadDispatcher;
   },
 ): GatewayComposition {
   const enabledModules = parseEnabledAgentModules(env.ENABLED_AGENT_MODULES);
   const salesSignalEventTypes = parseSalesSignalEventTypes(env.SALES_SIGNAL_EVENT_TYPES);
   const marketingSignalEventTypes = parseMarketingSignalEventTypes(env.MARKETING_SIGNAL_EVENT_TYPES);
+  // The account store is chosen before anything is built from it: `AUTH_PROVIDER=db` replaces the
+  // demo store rather than sitting beside it, so a DEMO tenant cannot authenticate twice over.
+  const authProvider = (env.AUTH_PROVIDER ?? 'demo').trim().toLowerCase();
+  if (authProvider !== 'db' && authProvider !== 'demo') {
+    throw new Error('AUTH_PROVIDER: accepted values are `db` and `demo`');
+  }
+  if (env.APP_ENV === 'production' && authProvider !== 'db') {
+    throw new Error('AUTH_PROVIDER_PRODUCTION_REQUIRES_DB: production requires AUTH_PROVIDER=db');
+  }
   const demo_enabled = demoModeEnabled(env);
-  const demoAuth = demo_enabled ? demoCredentialStore(env) : undefined;
+  const demoAuth = demo_enabled && authProvider === 'demo' ? demoCredentialStore(env) : undefined;
   const hasDatabase = options?.databaseRunner !== undefined
     || (typeof env.DATABASE_URL === 'string' && env.DATABASE_URL.trim().length > 0);
-  // E3: provider-reported LLM usage lands in token_cost_records (idempotent per run/step/attempt),
-  // and the tenant budget is checked against persisted usage before any provider call.
   const tokenCosts = hasDatabase ? new P5AutonomyRepository(options?.databaseRunner) : undefined;
   const usageRecorder = tokenCosts === undefined
     ? undefined
     : new LlmUsageRecorder({
         sink: tokenCosts,
+        reservationStore: tokenCosts,
         reader: { totalTokensForTenant: (tenant_id) => tokenCosts.totalTokenUsage(tenant_id) },
         budgetConfig: parseLlmBudgetConfig(env),
       });
+  const callRecorder = usageRecorder === undefined
+    ? undefined
+    : new LlmCallRecorder({
+        usage: usageRecorder,
+        providerCalls: new RunStageEventsRepository(options?.databaseRunner),
+      });
+  const llmConfigRepository = new LlmConfigRepository({
+    ...(options?.databaseRunner === undefined ? {} : { tenantTransaction: options.databaseRunner }),
+    ...(options?.platformDatabaseRunner === undefined ? {} : { platformTransaction: options.platformDatabaseRunner }),
+  });
+  const configReader = {
+    async getTenantOverride(tenant_id: string) {
+      if (!hasDatabase) return null;
+      const config = await llmConfigRepository.getTenantOverride(tenant_id);
+      if (config === null) return null;
+      return {
+        mode: config.mode,
+        provider_id: config.provider_id,
+        base_url: config.base_url ?? null,
+        reasoning_model: config.reasoning_model ?? null,
+        fast_model: config.fast_model ?? null,
+        timeout_ms: config.timeout_ms ?? null,
+        structured_mode: config.structured_mode ?? null,
+        secret_id: config.secret_id ?? null,
+        config_version: config.config_version,
+      };
+    },
+    getPlatformDefault: () => hasDatabase
+      ? llmConfigRepository.getPlatformDefault()
+      : Promise.resolve(null),
+  };
+  const resolverEnv = env as Readonly<Record<string, string | undefined>>;
+  const secretCipher = env.ENCRYPTION_KEY_AES256 === undefined
+    ? null
+    : createSecretCipher(resolverEnv);
+  const secretRepository = new SecretRepository(
+    secretCipher ?? { encrypt: () => { throw new Error('SECRET_ENCRYPTION_KEY_INVALID'); } },
+    options?.databaseRunner,
+    options?.platformDatabaseRunner,
+  );
+  const secretResolver = new SecretResolver(
+    secretRepository,
+    secretCipher ?? { decrypt: () => { throw new Error('SECRET_ENCRYPTION_KEY_INVALID'); } },
+  );
+  const llmConfiguration = createLlmConfigurationPort({
+    configurations: llmConfigRepository,
+    secrets: secretRepository,
+    secretResolver,
+  });
+  const llmConfigResolver = new LlmConfigResolver(configReader, secretResolver, resolverEnv);
   const intentProposer = createTurnIntentPort(
     env as NodeJS.ProcessEnv,
-    usageRecorder === undefined ? {} : { usageRecorder },
+    {
+      ...(callRecorder === undefined ? {} : { callRecorder }),
+      configResolver: llmConfigResolver,
+    },
   );
   const { session_secret, platform_secret } = resolveSecrets(env);
   const useGlobalWebhookFallback = env.APP_ENV === 'local' || env.APP_ENV === 'ci';
-  const credentials = options?.credentials ?? demoAuth ?? createCredentialStore({
+  // Production requires `AUTH_PROVIDER=db` and a database; the in-memory demo store stays available
+  // only for non-production DEMO tenants in local/CI.
+  if (authProvider === 'db' && !hasDatabase) {
+    throw new Error('AUTH_PROVIDER: durable identity requires DATABASE_URL; the API did not start');
+  }
+  const identityRepository = new IdentityRepository();
+  const tenantProfileRepository = new TenantProfileRepository(options?.databaseRunner);
+  const dbAuth = authProvider === 'db'
+    ? createDatabaseAuthStore({
+        identity: identityRepository,
+        session_secret,
+        describeTenant: (tenant_id) => tenantProfileRepository.getDisplayName(tenant_id),
+      })
+    : undefined;
+  const emailTransport = env.EMAIL_TRANSPORT ?? 'log';
+  if (emailTransport !== 'log' && emailTransport !== 'file') {
+    throw new Error('EMAIL_TRANSPORT: accepted values are `log` and `file`');
+  }
+  if (emailTransport === 'file') {
+    if (env.APP_ENV !== 'local' && env.APP_ENV !== 'ci') {
+      throw new Error('EMAIL_TRANSPORT=file is available only when APP_ENV is local or ci');
+    }
+    if (typeof env.EMAIL_OUTBOX_DIR !== 'string' || env.EMAIL_OUTBOX_DIR.trim().length === 0) {
+      throw new Error('EMAIL_OUTBOX_DIR is required for the file email transport');
+    }
+  }
+  // Invitation routes require both durable identity and a local/CI transport. In every other
+  // profile they remain unbound rather than pretending that a message was delivered.
+  const emailSender = authProvider === 'db' && (env.APP_ENV === 'local' || env.APP_ENV === 'ci')
+    ? emailTransport === 'file'
+      ? createFileEmailSender({ appEnv: env.APP_ENV, outboxDir: env.EMAIL_OUTBOX_DIR ?? '' })
+      : createLogOnlyEmailSender()
+    : undefined;
+  const userAdmin = emailSender === undefined
+    ? undefined
+    : createCompanyUserAdminPort({
+        identity: identityRepository,
+        email: emailSender,
+        console_base_url: env.WEB_BASE_URL ?? 'http://localhost:3000',
+      });
+  const platformAdmins = emailSender === undefined
+    ? undefined
+    : createPlatformAdminsPort({
+        identity: identityRepository,
+        email: emailSender,
+        console_base_url: env.PLATFORM_ADMIN_BASE_URL ?? 'http://localhost:3001',
+      });
+  const invitationAccept = dbAuth === undefined
+    ? undefined
+    : createInvitationAcceptPort({ identity: identityRepository });
+  const baseCredentials = options?.credentials ?? dbAuth ?? demoAuth ?? createCredentialStore({
     operators: [],
     sessions: [],
     widgets: [],
     session_secret,
   });
+  const dbWidgetSessions = dbAuth === undefined ? undefined : createWidgetSessionRegistry();
+  const credentials: CredentialStore = dbWidgetSessions === undefined
+    ? baseCredentials
+    : {
+        resolveOperator: (token) => baseCredentials.resolveOperator(token),
+        ...(baseCredentials.resolveOperatorAsync === undefined
+          ? {}
+          : { resolveOperatorAsync: baseCredentials.resolveOperatorAsync.bind(baseCredentials) }),
+        resolveConversationSession: (token) => baseCredentials.resolveConversationSession(token),
+        resolveWidgetSession: (token) =>
+          dbWidgetSessions.resolve(token) ?? baseCredentials.resolveWidgetSession(token),
+      };
+  const widgetSessions: TestWidgetSessionIssuer | undefined = demoAuth !== undefined
+    ? {
+        issue: async ({ tenant_id, session_id, origin }) =>
+          demoAuth.issueWidget(session_id, origin, tenant_id),
+      }
+    : dbWidgetSessions === undefined
+      ? undefined
+      : {
+          issue: async (input) => {
+            if (input.data_class !== 'TEST') throw new Error('TEST_CUSTOMER_NOT_TEST_DATA');
+            return dbWidgetSessions.issue({
+              tenant_id: input.tenant_id,
+              customer_id: input.customer_id,
+              session_id: input.session_id,
+              origin: input.origin,
+            });
+          },
+        };
   const hmac = options?.hmac ?? nodeHmacSha256Hex;
 
   const p5: P5Ports | undefined = hasDatabase
@@ -347,6 +573,61 @@ export function createGatewayComposition(
   const governanceRepository = new TenantGovernanceRepository(options?.databaseRunner);
   const companyCrmRepository = new CompanyCrmProjectionRepository(options?.databaseRunner);
   const companyProjectionRepository = new CompanyProjectionRepository(options?.databaseRunner);
+  const testCustomersRepository = hasDatabase
+    ? new TestCustomersRepository(
+        options?.databaseRunner === undefined ? {} : { tenantTransaction: options.databaseRunner },
+      )
+    : undefined;
+  const knowledgeRepository = hasDatabase
+    ? new KnowledgeRepository(options?.databaseRunner === undefined
+        ? {}
+        : { tenantTransaction: options.databaseRunner })
+    : undefined;
+  const companyAiTeamRepository = hasDatabase
+    ? new AgentActivationRepository({
+        ...(options?.databaseRunner === undefined ? {} : { tenantTransaction: options.databaseRunner }),
+        ...(options?.platformDatabaseRunner === undefined ? {} : { platformTransaction: options.platformDatabaseRunner }),
+      })
+    : undefined;
+  const connectorBindings = new ConnectorBindingRepository(options?.databaseRunner);
+  const skillCatalogRepository = hasDatabase
+    ? new SkillCatalogRepository(options?.databaseRunner === undefined ? {} : { tenantTransaction: options.databaseRunner })
+    : undefined;
+  // Widget launching uses the active account provider; it never exposes a second demo login.
+  const demoWidgetSessions: DemoWidgetSessionIssuer | undefined = !demo_enabled
+    ? undefined
+    : demoAuth !== undefined
+      ? {
+          issue: ({ tenant_id, session_id, origin }) => demoAuth.issueWidget(session_id, origin, tenant_id),
+          isDemoTenant: async () => true, // The route additionally requires the canonical demo tenant.
+        }
+      : dbWidgetSessions === undefined
+        ? undefined
+        : {
+            issue: (input) => dbWidgetSessions.issue(input),
+            isDemoTenant: async (tenant_id) => await skillCatalogRepository?.tenantDataClass(tenant_id) === 'DEMO',
+          };
+  const demoErpEligibleForTenant = async (tenant_id: string): Promise<boolean> =>
+    env.MOCK_ERP_ENABLED === 'true'
+    && /^(https?):\/\/([^/?#]+)(\/[^?#]*)?$/.test(env.ERP_API_BASE_URL ?? '')
+    && (env.MOCK_SECRET_KEY?.length ?? 0) >= 16
+    && await skillCatalogRepository?.tenantDataClass(tenant_id) === 'DEMO';
+  const companyIntegrations: CompanyIntegrationsPort | undefined = hasDatabase
+    ? {
+        listBindings: (tenant_id) => connectorBindings.list(tenant_id),
+        getBinding: (tenant_id, connector_id) => connectorBindings.get(tenant_id, connector_id),
+        demoErpEligibleForTenant,
+        putConfig: (tenant_id, connector_id, input, actor, expectedVersion) =>
+          connectorBindings.putConfig(tenant_id, connector_id, input, actor, expectedVersion),
+        recordProbe: (tenant_id, connector_id, result) => connectorBindings.recordProbe(tenant_id, connector_id, result),
+        disconnect: (tenant_id, connector_id, actor, expectedVersion) =>
+          connectorBindings.disconnect(tenant_id, connector_id, actor, expectedVersion),
+        putSecret: (tenant_id, input) => secretRepository.put(tenant_id, input),
+        describeSecret: (tenant_id, secret_id) => secretRepository.describe(tenant_id, secret_id),
+        revokeSecret: (tenant_id, secret_id, context) => secretRepository.revoke(tenant_id, secret_id, context),
+        resolveSecret: (tenant_id, secret_id) => secretResolver.resolve(tenant_id, secret_id),
+      }
+    : undefined;
   const platformDirectoryRepository = hasDatabase
     ? new PlatformDirectoryRepository(
         options?.platformDatabaseRunner === undefined
@@ -354,6 +635,10 @@ export function createGatewayComposition(
           : { transaction: options.platformDatabaseRunner },
       )
     : undefined;
+  const auditHistoryRepository = new PlatformAuditRepository({
+    ...(options?.databaseRunner === undefined ? {} : { tenantTransaction: options.databaseRunner }),
+    ...(options?.platformDatabaseRunner === undefined ? {} : { platformTransaction: options.platformDatabaseRunner }),
+  });
   const evidenceRepository = new EvidenceRepository();
   const responseRepository = new RunResponseRepository(options?.databaseRunner);
   const auditRepository = new AuditRepository();
@@ -366,6 +651,7 @@ export function createGatewayComposition(
     reservationsRepository,
     workflowsRepository,
     responseRepository,
+    stageRepository,
   );
   const approvalReads = createApprovalReadPort(approvalsRepository);
   const governance = createGovernancePort(governanceRepository);
@@ -374,6 +660,13 @@ export function createGatewayComposition(
   const platform = platformDirectoryRepository === undefined
     ? undefined
     : createPlatformDirectoryPort(platformDirectoryRepository);
+  const platformCompanyRepository = new PlatformCompanyRepository(
+    options?.platformDatabaseRunner === undefined ? {} : { platformTransaction: options.platformDatabaseRunner },
+  );
+  const companyCommands: PlatformCompanyCommandsPort = {
+    suspend: (input) => platformCompanyRepository.suspend(input.tenant_id),
+    resume: (input) => platformCompanyRepository.resume(input.tenant_id),
+  };
   const handoffs = createCareHandoffPort(careHandoffsRepository);
 
   let ownedRedis: RuntimeRedisClient | null = null;
@@ -384,18 +677,24 @@ export function createGatewayComposition(
   const redis = options?.redis ?? ownedRedis;
 
   const unbound_ports: string[] = [];
+  if (userAdmin === undefined) unbound_ports.push('companies.invite/users.manage');
+  if (invitationAccept === undefined) unbound_ports.push('auth.invitations.accept');
 
   const offlineDemoProvider = env.DEMO_MODE === 'true'
     && env.DEMO_PROVIDER_MODE?.trim().toLowerCase() === 'offline'
     && (env.APP_ENV === 'local' || env.APP_ENV === 'ci');
-  const configuredProvider = !offlineDemoProvider
-    && Boolean(env.OPENAI_API_KEY?.trim() && env.PRIMARY_REASONING_MODEL?.trim());
   const providers: PlatformProvidersPort = {
-    list: async () => [{
-      provider: 'openai-compatible',
-      configured: configuredProvider,
-      mode: offlineDemoProvider ? 'DEMO_MOCK' : configuredProvider ? 'LIVE' : 'NOT_CONFIGURED',
-    }],
+    list: async () => {
+      const platformProvider = hasDatabase ? await llmConfigRepository.getPlatformDefault() : null;
+      const configuredProvider = platformProvider === null
+        ? !offlineDemoProvider && Boolean(env.OPENAI_API_KEY?.trim() && env.PRIMARY_REASONING_MODEL?.trim())
+        : platformProvider.secret_id !== null;
+      return [{
+        provider: platformProvider?.provider_id ?? 'openai-compatible',
+        configured: configuredProvider,
+        mode: offlineDemoProvider ? 'DEMO_MOCK' : configuredProvider ? 'LIVE' : 'NOT_CONFIGURED',
+      }];
+    },
   };
   const startRunPort = createStartRunPort({
     guard: effectGuard,
@@ -426,34 +725,6 @@ export function createGatewayComposition(
   if (redis === null) {
     unbound_ports.push('takeover.acquire/renew/release/holder');
   }
-
-  /**
-   * The telemetry stream. Nothing is instrumented in this build, so the subscription ends
-   * immediately rather than emitting invented frames: an empty stream is the truthful projection of
-   * a source that has produced nothing (`06` §8.1.2 R09).
-   */
-  const streams: StreamPort = {
-    subscribe: (input) => ({
-      async *[Symbol.asyncIterator](): AsyncIterator<never> {
-        // The signal is observed so a closed socket cannot keep a generator alive.
-        if (input.signal.aborted) return;
-        await Promise.resolve();
-      },
-    }),
-  };
-
-  /** SCR-001 metrics with no upstream source are reported `NOT_INSTRUMENTED` (`06` §8.1.3 R17). */
-  const kpi: KpiPort = {
-    snapshot: async (input) => ({
-      window: input.window ?? '24h',
-      timezone: input.timezone ?? 'UTC',
-      observed_at: systemClock().toISOString(),
-      // No metric source is instrumented in this build, so the snapshot is truthful and empty
-      // rather than populated with plausible numbers, and the cursor is absent for the same reason.
-      metrics: [],
-      cursor: null,
-    }),
-  };
 
   const identity: IdentityPort = createIdentityPort();
 
@@ -495,6 +766,25 @@ export function createGatewayComposition(
     },
   };
 
+  const platformSkillFleetHealthRepository = hasDatabase
+    ? new PlatformSkillFleetHealthRepository(
+        options?.platformDatabaseRunner === undefined ? {} : { transaction: options.platformDatabaseRunner },
+      )
+    : undefined;
+  const skillContractById = new Map(PLATFORM_SKILL_ROWS.map((row) => [row.skill_id, row] as const));
+  const skillsPort = skillCatalogRepository === undefined
+    ? undefined
+    : createSkillsPort({
+        skills: skillCatalogRepository,
+        contractOf: (skill_id) => skillContractById.get(skill_id) ?? null,
+        connectors: connectorBindings,
+        demoErpEligibleForTenant,
+        ...(options?.readDispatcher === undefined ? {} : { readDispatcher: options.readDispatcher }),
+      });
+  const platformSkillsPort = skillCatalogRepository === undefined || platformSkillFleetHealthRepository === undefined
+    ? undefined
+    : createPlatformSkillsPort(skillCatalogRepository, platformSkillFleetHealthRepository);
+
   const runtime: GatewayRuntime = {
     conversations: createConversationPort(conversationsRepository, { session_secret }),
     takeover,
@@ -502,13 +792,20 @@ export function createGatewayComposition(
     runs,
     approvals,
     governance,
+    companyProfile: tenantProfileRepository,
     companyCrm,
+    auditHistory: auditHistoryRepository,
     companyProjections,
+    ...(companyAiTeamRepository === undefined ? {} : { companyAiTeam: companyAiTeamRepository }),
+    ...(companyIntegrations === undefined ? {} : { companyIntegrations }),
     events: createEventPort(eventsRepository),
     timeline: createEventPort(eventsRepository),
-    streams,
-    kpi,
     identity,
+    testCustomerArtifacts: createTestCustomerArtifactPurger({
+      ...(ownedRedis === null ? {} : { redis: ownedRedis }),
+      ...(env.QDRANT_URL === undefined ? {} : { qdrantUrl: env.QDRANT_URL }),
+      ...(env.QDRANT_API_KEY === undefined ? {} : { qdrantApiKey: env.QDRANT_API_KEY }),
+    }),
     webhooks: createWebhookVerificationPort({
       channelSecrets:
         options?.channelSecrets ??
@@ -531,11 +828,25 @@ export function createGatewayComposition(
     runtime,
     companyProjections,
     ...(platform === undefined ? {} : { platform }),
+    companyCommands,
+    ...(emailSender === undefined ? {} : { email: emailSender }),
+    ...(userAdmin === undefined ? {} : { userAdmin }),
+    ...(platformAdmins === undefined ? {} : { platformAdmins }),
+    ...(invitationAccept === undefined ? {} : { invitationAccept }),
     providers,
+    ...(skillsPort === undefined ? {} : { skills: skillsPort }),
+    ...(platformSkillsPort === undefined ? {} : { platformSkills: platformSkillsPort }),
     credentials,
     ...(demoAuth === undefined ? {} : { demoAuth }),
+    ...(demoWidgetSessions === undefined ? {} : { demoWidgetSessions }),
+    ...(testCustomersRepository === undefined ? {} : { testCustomers: testCustomersRepository }),
+    ...(knowledgeRepository === undefined ? {} : { knowledge: knowledgeRepository }),
+    ...(widgetSessions === undefined ? {} : { widgetSessions }),
+    ...(dbAuth === undefined ? {} : { auth: dbAuth }),
+    ...(redis === null ? {} : { turnRateLimiter: new RedisTurnRateLimiter(redis) }),
     ...(intentProposer === undefined ? {} : { intentProposer }),
-    env: () => process.env,
+    llmConfiguration,
+    env: () => ({ ...env }),
     demoMode: demo_enabled,
     readiness: {
       snapshot: async ({ tenant_id }) => {
@@ -543,16 +854,16 @@ export function createGatewayComposition(
         const offlineDemo = env.DEMO_MODE === 'true'
           && providerMode === 'offline'
           && (env.APP_ENV === 'local' || env.APP_ENV === 'ci');
-        const configuredProvider = !offlineDemo
-          && Boolean(env.OPENAI_API_KEY?.trim() && env.PRIMARY_REASONING_MODEL?.trim());
+        const resolvedLlmConfig = offlineDemo ? null : await llmConfigResolver.resolve(tenant_id);
+        const configuredProvider = resolvedLlmConfig !== null;
         const providerProbe = configuredProvider ? 'NOT_RUN' as const : 'UNBOUND' as const;
         const isMock = env.MOCK_ERP_ENABLED === 'true' && env.ERP_API_BASE_URL?.includes('mock-erp') === true;
         const eventsMock = env.MOCK_ERP_ENABLED === 'true' && env.EVENT_INGESTION_BASE_URL?.includes('mock-erp') === true;
-        const models = env.PRIMARY_REASONING_MODEL === undefined || env.PRIMARY_REASONING_MODEL.length === 0
+        const models = resolvedLlmConfig === null
           ? []
-          : [{ model: env.PRIMARY_REASONING_MODEL, configured: configuredProvider, probe: providerProbe }];
+          : [{ model: resolvedLlmConfig.reasoning_model, configured: true, probe: providerProbe }];
         const provider = {
-          provider: configuredProvider ? 'openai-compatible' : null,
+          provider: resolvedLlmConfig?.provider_id ?? null,
           configured: configuredProvider,
           probe: providerProbe,
           models,

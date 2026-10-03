@@ -8,6 +8,8 @@ import {
   type DurableTaskSnapshot,
   type ExecutionPlan,
   type ExecutionReceipt,
+  type ResponseOutcome,
+  type RoutingDecision,
   type FinalResponse,
   type HydratedContext,
   type HypothesisRecord,
@@ -80,7 +82,7 @@ function step(overrides: Partial<PlannedStep> = {}): PlannedStep {
 }
 
 function plan(steps: PlannedStep[]): ExecutionPlan {
-  return { plan_id: 'final-response-plan', steps, fallback_strategy: 'FAIL_CLOSED' };
+  return { plan_id: 'final-response-plan', steps, fallback_strategy: 'FAIL_CLOSED', domain: 'sales' };
 }
 
 function receipt(executionId = 'final-response-execution'): ExecutionReceipt {
@@ -95,7 +97,9 @@ function receipt(executionId = 'final-response-execution'): ExecutionReceipt {
 }
 
 const finalResponse: FinalResponse = {
-  answer: 'Grounded response from verified evidence.',
+  response_kind: 'ANSWER',
+  text: 'Grounded response from verified evidence.',
+  source: 'Core.Evidence@1',
   sources: [{ source_record_id: 'response-source', source_version: 'v1', source_file: 'approved.md' }],
 };
 
@@ -108,6 +112,7 @@ function responseStore() {
     tenant_id: string;
     run_id: string;
     conversation_id?: string;
+    outcome: ResponseOutcome;
     sender_id: string;
     response: FinalResponse;
   }) => {
@@ -146,6 +151,7 @@ interface HarnessOptions {
   readonly deriveHypothesis?: IAgentRuntime['deriveHypothesis'];
   readonly maxRetries?: number;
   readonly context?: HydratedContext;
+  readonly routing?: RoutingDecision;
 }
 
 function makeHarness(options: HarnessOptions = {}) {
@@ -170,7 +176,7 @@ function makeHarness(options: HarnessOptions = {}) {
     contextAggregator: { hydrateContext: async () => options.context ?? context() },
     agentRuntime: {
       deriveHypothesis: options.deriveHypothesis ?? (async () => hypothesis()),
-      resolveRouting: async () => ({
+      resolveRouting: async () => options.routing ?? ({
         target_agent: 'SAL-01',
         requires_clarification: false,
         rationalization: 'test routing',
@@ -271,6 +277,45 @@ function leasedMemoryWorkflow() {
 }
 
 describe('RevenueOrchestrator final response boundary', () => {
+
+  it('returns a typed nonauthoritative refusal after a Sales stock read fails', async () => {
+    const responses = responseStore();
+    const finalizer = vi.fn(async (input: Parameters<IResponseFinalizer['finalize']>[0]) => {
+      if (input.terminal_response === undefined) throw new Error('Sales read refusal was not supplied');
+      return input.terminal_response;
+    });
+    const { orchestrator } = makeHarness({
+      steps: [step({
+        skill_id: 'skill.sales.check_stock',
+        adapter_target: 'API-001',
+        required_authority: 'AUTH-0',
+        mutating: false,
+        idempotent: true,
+      })],
+      dispatch: async () => {
+        throw new OrchestratorError('AUTHORITATIVE_SOURCE_UNAVAILABLE', 'ERP stock read failed');
+      },
+      responseFinalizer: { finalize: finalizer },
+      responseStore: responses.store,
+    });
+
+    const result = await orchestrator.processSignal(signal());
+
+    expect(result.lifecycle_state).toBe('completed');
+    expect(result.response).toMatchObject({
+      response_kind: 'REFUSAL',
+      reason_code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE',
+      template_key: 'sales.price_unavailable',
+    });
+    expect(result.response?.text).toContain('chưa lấy được giá chính thức');
+    expect(result.response?.text).not.toMatch(/\d|VND/);
+    expect(finalizer).toHaveBeenCalledTimes(1);
+    expect(responses.save).toHaveBeenCalledWith(expect.objectContaining({
+      sender_id: 'SAL-01',
+      outcome: 'REFUSED',
+    }));
+  });
+
   it('finalizes the first pass from deterministic immutable receipt provenance', async () => {
     const responses = responseStore();
     const evidenceLogger = new MemoryEvidenceLogger('final-response-test-secret');
@@ -279,7 +324,9 @@ describe('RevenueOrchestrator final response boundary', () => {
       const verified = input.successful_receipts[0];
       if (verified === undefined) throw new Error('missing verified receipt in test finalizer');
       return {
-        answer: `Grounded ${verified.receipt.execution_id}`,
+        response_kind: 'ANSWER' as const,
+        text: `Grounded ${verified.receipt.execution_id}`,
+        source: 'Core.Evidence@1',
         sources: [{
           source_record_id: verified.evidence.evidence_id,
           source_version: verified.evidence.payload_sha256,
@@ -303,7 +350,7 @@ describe('RevenueOrchestrator final response boundary', () => {
     const result = await orchestrator.processSignal(signal());
 
     expect(result.lifecycle_state).toBe('completed');
-    expect(result.response?.answer).toBe('Grounded first-pass-receipt');
+    expect(result.response?.text).toBe('Grounded first-pass-receipt');
     expect(dispatch).toHaveBeenCalledTimes(1);
     expect(finalizer).toHaveBeenCalledTimes(1);
     expect(responses.save).toHaveBeenCalledTimes(1);
@@ -320,6 +367,88 @@ describe('RevenueOrchestrator final response boundary', () => {
     expect(responses.rows.get(`${TENANT}:${result.run_id}`)?.sources[0]?.source_record_id)
       .toBe(verified?.evidence.evidence_id);
     expect(transition).toHaveBeenCalledWith(TENANT, result.run_id, 'completed', 'All plan steps verified');
+  });
+  it('completes and persists a clarification as a typed template response without dispatching', async () => {
+    const responses = responseStore();
+    const finalizer = vi.fn(async (input: Parameters<IResponseFinalizer['finalize']>[0]) => {
+      if (input.terminal_response === undefined) throw new Error('expected the approved clarification template');
+      return input.terminal_response;
+    });
+    const { orchestrator, workflow, dispatch } = makeHarness({
+      routing: {
+        target_agent: 'SAL-01',
+        domain: 'sales',
+        requires_clarification: true,
+        clarification_template_key: 'sales.need_sku',
+        clarification_reason_code: 'SKU_REQUIRED',
+        clarification_prompt: 'untrusted generated text must not be sent',
+        rationalization: 'The requested product is not identified.',
+      },
+      responseFinalizer: { finalize: finalizer },
+      responseStore: responses.store,
+    });
+
+    const result = await orchestrator.processSignal(signal());
+
+    expect(result.lifecycle_state).toBe('completed');
+    expect(result.outcome).toBe('CLARIFIED');
+    expect(result.response).toMatchObject({
+      response_kind: 'CLARIFICATION',
+      text: 'Bạn cho tôi xin mã sản phẩm (SKU) hoặc tên sản phẩm cần kiểm tra nhé.',
+      source: 'Core.Template@1',
+      template_key: 'sales.need_sku',
+      reason_code: 'SKU_REQUIRED',
+      sources: [],
+    });
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(responses.save).toHaveBeenCalledWith(expect.objectContaining({
+      outcome: 'CLARIFIED',
+      sender_id: 'SAL-01',
+      response: result.response,
+    }));
+    expect((await workflow.getTask(TENANT, result.run_id))?.state).toBe('completed');
+    expect(finalizer).toHaveBeenCalledTimes(1);
+    expect(finalizer.mock.calls[0]?.[0].successful_receipts).toEqual([]);
+  });
+
+  it('turns an empty plan into a persisted typed refusal', async () => {
+    const responses = responseStore();
+    const finalizer = vi.fn(async (input: Parameters<IResponseFinalizer['finalize']>[0]) => {
+      if (input.terminal_response === undefined) throw new Error('expected the empty-plan template');
+      return input.terminal_response;
+    });
+    const { orchestrator, dispatch } = makeHarness({
+      steps: [],
+      responseFinalizer: { finalize: finalizer },
+      responseStore: responses.store,
+    });
+
+    const result = await orchestrator.processSignal(signal());
+
+    expect(result.lifecycle_state).toBe('completed');
+    expect(result.outcome).toBe('REFUSED');
+    expect(result.response?.response_kind).toBe('REFUSAL');
+    expect(result.response?.template_key).toBe('core.cannot_help');
+    expect(responses.save).toHaveBeenCalledTimes(1);
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(finalizer).toHaveBeenCalledWith(expect.objectContaining({
+      domain: 'sales',
+      terminal_response: expect.objectContaining({ template_key: 'core.cannot_help' }),
+    }));
+  });
+  it('refuses an ANSWER returned for an empty plan without immutable evidence', async () => {
+    const responses = responseStore();
+    const finalizer = vi.fn(async () => finalResponse);
+    const { orchestrator } = makeHarness({
+      steps: [],
+      responseFinalizer: { finalize: finalizer },
+      responseStore: responses.store,
+    });
+
+    await expect(orchestrator.processSignal(signal())).rejects.toMatchObject({
+      code: 'RESPONSE_EVIDENCE_MISSING',
+    });
+    expect(responses.save).not.toHaveBeenCalled();
   });
 
   it('keeps the historical completion path for a run with no conversation and stores no response', async () => {
@@ -387,6 +516,7 @@ describe('RevenueOrchestrator final response boundary', () => {
       append: async ({ stage }) => {
         resumedStages.push(stage);
       },
+      complete: async () => undefined,
     };
     const { orchestrator, dispatch } = makeHarness({
       workflow: queued.workflow,
@@ -448,7 +578,9 @@ describe('RevenueOrchestrator final response boundary', () => {
     };
     const queued = checkpointWorkflow(checkpoint);
     const finalizer = vi.fn(async (input: Parameters<IResponseFinalizer['finalize']>[0]) => ({
-      answer: input.successful_receipts.map((item) => item.receipt.execution_id).join(','),
+      response_kind: 'ANSWER' as const,
+      text: input.successful_receipts.map((item) => item.receipt.execution_id).join(','),
+      source: 'Core.Evidence@1',
       sources: input.successful_receipts.map((item) => ({
         source_record_id: item.evidence.evidence_id,
         source_version: item.evidence.payload_sha256,
@@ -490,6 +622,7 @@ describe('RevenueOrchestrator final response boundary', () => {
         )) throw new Error('DUPLICATE_STAGE_ATTEMPT');
         stageEvents.push(entry);
       },
+      complete: async () => undefined,
     };
     let authorityChecks = 0;
     const policyEngine: IPolicyEngine = {
@@ -611,11 +744,23 @@ describe('RevenueOrchestrator final response boundary', () => {
 
     const runId = leased.transitionTask.mock.calls.find((call) => call[2] === 'completed')?.[1];
     if (runId === undefined) throw new Error('crashed run id was not observed');
-    const queued = await leased.getTask(TENANT, runId);
-    expect(queued?.state).toBe('queued');
+    // A RETRYABLE failure with a complete checkpoint waits for its durable retry timer (T5.5).
+    const waiting = await leased.getTask(TENANT, runId);
+    expect(waiting?.state).toBe('waiting');
+    if (waiting === null || waiting.state_payload === null || waiting.retry_count === undefined
+      || typeof waiting.state_payload !== 'object' || Array.isArray(waiting.state_payload)) {
+      throw new Error('retry wait checkpoint was not persisted');
+    }
+    const retry_count = waiting.retry_count;
+    await leased.memory.transitionTask(TENANT, runId, 'waiting', 'retry timer queued', {
+      ...waiting.state_payload,
+      resume_event: { tenant_id: TENANT, event_type: 'timer.expired', retry_count },
+    });
 
-    const replay = await orchestrator.processQueuedSignal(runId, signal(), {
-      worker_id: 'worker-final-response-test',
+    const replay = await orchestrator.resumeTask(runId, {
+      tenant_id: TENANT,
+      event_type: 'timer.expired',
+      retry_count,
     });
 
     expect(replay.lifecycle_state).toBe('completed');

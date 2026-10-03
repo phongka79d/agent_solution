@@ -9,7 +9,15 @@ import { t } from '@agentos/ui-foundation/i18n';
 import { AuthRequestError, tenantConsoleClient } from '../../../lib/tenant-console-client';
 
 function messageForError(value: unknown): string {
-  if (value instanceof AuthRequestError && value.status === 429) return t('auth.too_many_attempts');
+  if (value instanceof AuthRequestError) {
+    if (value.status === 429) {
+      return value.retryAfter !== null
+        ? t('auth.too_many_attempts_retry', { seconds: value.retryAfter })
+        : t('auth.too_many_attempts');
+    }
+    if (value.status >= 500) return t('auth.unavailable');
+    return t('auth.invalid_credentials');
+  }
   return t('auth.invalid_credentials');
 }
 

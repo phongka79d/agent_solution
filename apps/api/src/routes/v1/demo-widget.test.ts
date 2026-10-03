@@ -41,7 +41,11 @@ function buildHarness(environment?: Readonly<Record<string, string | undefined>>
   const app = Fastify({ logger: false });
   app.setErrorHandler((error, request, reply) => replyFailure(reply, error, correlationIdOf(request, runtime)));
   registerDemoWidgetRoutes(app, {
-    demoAuth,
+    credentials: demoAuth,
+    widgetSessions: {
+      issue: ({ tenant_id, session_id, origin }) => demoAuth.issueWidget(session_id, origin, tenant_id),
+      isDemoTenant: async () => true,
+    },
     runtime,
     ...(environment === undefined ? {} : { env: () => environment }),
   });

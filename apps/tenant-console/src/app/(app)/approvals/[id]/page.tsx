@@ -7,10 +7,10 @@ import { ApprovalCenter } from '../../../../components/approvals/ApprovalCenter'
 export default function ApprovalDetailPage({ params }: { readonly params: { readonly id: string } }) {
   return (
     <RequirePermission permission="approval:read">
-      <main className="space-y-6" aria-label="Chi tiết phê duyệt">
+      <section className="space-y-6" aria-label="Chi tiết phê duyệt">
         <PageHeader title="Chi tiết phê duyệt" description={`Xem xét đề xuất ${params.id}.`} />
         <ApprovalCenter initialApprovalId={params.id} />
-      </main>
+      </section>
     </RequirePermission>
   );
 }

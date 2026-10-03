@@ -1,4 +1,4 @@
-import type { QueryResultRow } from 'pg';
+import type { PoolClient, QueryResultRow } from 'pg';
 
 import { withTenantContext } from '../rls.js';
 import { assertIdentifier } from './durable-workflows.js';
@@ -74,6 +74,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export interface ConversationRecord {
   readonly conversation_id: string;
   readonly tenant_id: string;
+  readonly customer_display_name?: string | null;
   readonly customer_id: string | null;
   readonly channel: string;
   readonly external_thread_id: string;
@@ -93,7 +94,7 @@ export interface BoundConversationRecord extends ConversationRecord {
   readonly bound: boolean;
 }
 
-/** Input of `bindOrCreate()`; `active_agent` defaults to the durable column default (`'auto'`). */
+/** Input of `bindOrCreate()`; `customer_id` is verified identity or `null` while anonymous. */
 export interface BindOrCreateConversationInput {
   readonly tenant_id: string;
   readonly channel: string;
@@ -102,13 +103,14 @@ export interface BindOrCreateConversationInput {
   readonly active_agent?: string;
 }
 
-/** One `agentos.conversation_messages` row, published with its instant as an ISO-8601 UTC string. */
+/** One `agentos.conversation_messages` row, as the bounded page read publishes it. */
 export interface ConversationMessageRecord {
   readonly message_id: string;
   readonly sender_type: MessageSenderType;
   readonly sender_id: string;
   readonly content: string;
   readonly created_at: string;
+  readonly delivery_status?: 'STORED' | 'DELIVERED' | 'FAILED';
 }
 
 /** Input of `appendMessage()`; `content_type` and `metadata` default to their DDL columns. */
@@ -134,6 +136,11 @@ export interface ConversationMessageScope {
   readonly limit?: number;
 }
 
+/** Widget cursor page; cursors are message UUIDs scoped to the requested conversation. */
+export interface WidgetConversationMessagePage extends ConversationMessageScope {
+  readonly after?: string;
+}
+
 /**
  * The columns every conversation read publishes, in the order `toConversationRecord` expects them.
  *
@@ -155,8 +162,8 @@ const CONVERSATION_PROJECTION = `
 
 /**
  * The bind-or-create of R01. The unique key `(tenant_id, channel, external_thread_id)` decides the
- * winner, and `ON CONFLICT ... DO NOTHING` makes the repeated call a read-only bind: the existing
- * row keeps its `state`, its `customer_id` and its identity, and no second conversation is created.
+ * winner, and `ON CONFLICT ... DO NOTHING` prevents a second conversation. The conflict read may
+ * attach a verified customer to an anonymous row, but never replaces a non-null identity.
  *
  * `active_agent` is omitted so the durable column default (`'auto'`) stays the single source of that
  * default; the variant below carries it when the caller supplies one.
@@ -183,12 +190,19 @@ const INSERT_CONVERSATION_WITH_AGENT = `INSERT INTO ${CONVERSATIONS} (
   RETURNING${CONVERSATION_PROJECTION}`;
 
 /**
- * The existing conversation of one thread binding. Read without a lock: the conflict path of
- * `bindOrCreate()` only publishes the row, so nothing it reads is decided on or written back.
+ * Reads the existing row for a thread binding before an optional anonymous-to-verified customer
+ * attachment. The subsequent update is independently guarded by `customer_id IS NULL`.
  */
 const SELECT_CONVERSATION_BY_THREAD = `SELECT${CONVERSATION_PROJECTION}
   FROM ${CONVERSATIONS}
   WHERE tenant_id = $1 AND channel = $2 AND external_thread_id = $3`;
+
+/** Attaches a verified customer only while the existing conversation remains anonymous. */
+const ATTACH_CUSTOMER_IF_ANONYMOUS = `UPDATE ${CONVERSATIONS}
+  SET customer_id = $4
+  WHERE tenant_id = $1 AND channel = $2 AND external_thread_id = $3
+    AND customer_id IS NULL
+  RETURNING${CONVERSATION_PROJECTION}`;
 
 /** The point read of one conversation inside the caller's tenant scope. */
 const SELECT_CONVERSATION = `SELECT${CONVERSATION_PROJECTION}
@@ -196,10 +210,23 @@ const SELECT_CONVERSATION = `SELECT${CONVERSATION_PROJECTION}
   WHERE tenant_id = $1 AND id = $2`;
 
 /** Bounded tenant-scoped operator inbox, newest activity first. */
-const SELECT_TENANT_CONVERSATIONS = `SELECT${CONVERSATION_PROJECTION}
-  FROM ${CONVERSATIONS}
-  WHERE tenant_id = $1
-  ORDER BY last_message_at DESC, id DESC
+const SELECT_TENANT_CONVERSATIONS = `SELECT
+    cv.id AS conversation_id,
+    cv.tenant_id,
+    cv.customer_id,
+    cv.channel,
+    cv.external_thread_id,
+    cv.active_agent,
+    cv.state,
+    cv.takeover_operator_id,
+    cv.last_message_at,
+    cv.created_at,
+    c.display_name AS customer_display_name
+  FROM ${CONVERSATIONS} cv
+  LEFT JOIN agentos.customers c
+    ON c.tenant_id = cv.tenant_id AND c.id = cv.customer_id
+  WHERE cv.tenant_id = $1
+  ORDER BY cv.last_message_at DESC, cv.id DESC
   LIMIT $2`;
 
 /**
@@ -214,17 +241,19 @@ const SELECT_CONVERSATIONS_BY_TENANT_THREAD = `SELECT${CONVERSATION_PROJECTION}
   WHERE tenant_id = $1 AND external_thread_id = $2`;
 
 /**
- * The conversation-control transition (R06/R08): exactly one row of this tenant is moved, and a
- * wrong tenant or an unknown id matches nothing — `setState()` reports that as `false` and never
- * inserts the row it was asked to move.
+ * The conversation-control transition (R06/R08): exactly one tenant row is moved only when both
+ * the caller's expected state and `takeover_operator_id` still match. A stale state, wrong tenant,
+ * or unknown id returns `CONFLICT`; the operation never inserts the row it was asked to move.
  *
  * `takeover_operator_id` is written with the state because the two are one decision: a takeover
  * records the operator that holds the conversation, and a resume clears it.
  */
 const UPDATE_CONVERSATION_STATE = `UPDATE ${CONVERSATIONS}
-  SET state = $3,
-      takeover_operator_id = $4
+  SET state = $5,
+      takeover_operator_id = $6
   WHERE tenant_id = $1 AND id = $2
+    AND state = $3
+    AND takeover_operator_id IS NOT DISTINCT FROM $4
   RETURNING id`;
 /**
  * Clears only the stale marker owned by the operator whose lease was observed as absent. The
@@ -260,11 +289,66 @@ const SELECT_MESSAGES = `SELECT
     sender_type,
     sender_id,
     content,
-    created_at
+    created_at,
+    delivery_status
   FROM ${CONVERSATION_MESSAGES}
   WHERE tenant_id = $1 AND conversation_id = $2
   ORDER BY created_at ASC, id ASC
   LIMIT $3`;
+/** Stable chronological page for the widget; `LIMIT` includes one look-ahead row. */
+const SELECT_WIDGET_MESSAGES = `SELECT
+    id AS message_id,
+    sender_type,
+    sender_id,
+    content,
+    created_at,
+    delivery_status
+  FROM ${CONVERSATION_MESSAGES} m
+  WHERE tenant_id = $1 AND conversation_id = $2
+    AND ($3::uuid IS NULL OR (created_at, id) > (
+      SELECT cursor.created_at, cursor.id
+        FROM ${CONVERSATION_MESSAGES} cursor
+       WHERE cursor.tenant_id = $1 AND cursor.conversation_id = $2 AND cursor.id = $3::uuid
+    ))
+  ORDER BY created_at ASC, id ASC
+  LIMIT $4`;
+
+const MARK_WIDGET_MESSAGES_DELIVERED = `UPDATE ${CONVERSATION_MESSAGES}
+  SET delivery_status = 'DELIVERED'
+  WHERE tenant_id = $1 AND conversation_id = $2
+    AND id = ANY($3::uuid[]) AND sender_type = 'operator'`;
+
+const SELECT_PAUSED_TAKEOVERS = `SELECT id AS conversation_id, takeover_operator_id
+  FROM ${CONVERSATIONS}
+  WHERE tenant_id = $1 AND state = 'paused_takeover' AND takeover_operator_id IS NOT NULL
+    AND ($3::uuid IS NULL OR id > $3::uuid)
+  ORDER BY id ASC
+  LIMIT $2`;
+
+const CLEAR_ORPHANED_TAKEOVER = `UPDATE ${CONVERSATIONS} cv
+  SET state = 'open', takeover_operator_id = NULL
+  WHERE cv.tenant_id = $1 AND cv.id = $2
+    AND cv.state = 'paused_takeover' AND cv.takeover_operator_id = $3
+    AND NOT EXISTS (
+      SELECT 1 FROM agentos.care_handoffs h
+       WHERE h.tenant_id = cv.tenant_id AND h.conversation_id = cv.id AND h.status = 'ASSIGNED'
+    )
+  RETURNING cv.id`;
+
+const SELECT_HANDOFF_STATE = `SELECT
+    EXISTS (SELECT 1 FROM agentos.care_handoffs
+             WHERE tenant_id = $1 AND conversation_id = $2 AND status = 'ENQUEUED') AS has_enqueued_handoff,
+    EXISTS (SELECT 1 FROM agentos.care_handoffs
+             WHERE tenant_id = $1 AND conversation_id = $2 AND status = 'ASSIGNED') AS has_assigned_handoff`;
+
+interface WidgetMessageRow extends QueryResultRow {
+  message_id: string;
+  sender_type: MessageSenderType;
+  sender_id: string;
+  content: string;
+  created_at: Date;
+  delivery_status: 'STORED' | 'DELIVERED' | 'FAILED' | null;
+}
 
 /** One conversation row exactly as `pg` returns it, before the projection is published. */
 interface ConversationRow extends QueryResultRow {
@@ -278,6 +362,7 @@ interface ConversationRow extends QueryResultRow {
   takeover_operator_id: string | null;
   last_message_at: Date;
   created_at: Date;
+  customer_display_name?: string | null;
 }
 
 /** One message row, as the bounded page read publishes it. */
@@ -287,8 +372,8 @@ interface ConversationMessagePageRow extends QueryResultRow {
   sender_id: string;
   content: string;
   created_at: Date;
+  delivery_status: 'STORED' | 'DELIVERED' | 'FAILED' | null;
 }
-
 /**
  * The identity of an appended message. The insert is built by `buildInsertQuery`, so it returns the
  * whole row; the message's own identity is the only column this module reads back.
@@ -338,6 +423,7 @@ function toConversationRecord(row: ConversationRow): ConversationRecord {
     takeover_operator_id: row.takeover_operator_id,
     last_message_at: row.last_message_at.toISOString(),
     created_at: row.created_at.toISOString(),
+    customer_display_name: row.customer_display_name ?? null,
   };
 }
 
@@ -349,7 +435,37 @@ function toMessageRecord(row: ConversationMessagePageRow): ConversationMessageRe
     sender_id: row.sender_id,
     content: row.content,
     created_at: row.created_at.toISOString(),
+    ...(row.delivery_status === null ? {} : { delivery_status: row.delivery_status }),
   };
+}
+/**
+ * Appends a message using a transaction already opened by a larger admission operation.
+ * The conversation timestamp and message row therefore commit or roll back with its run.
+ */
+export async function appendConversationMessageInTransaction(
+  client: Pick<PoolClient, 'query'>,
+  input: AppendConversationMessageInput,
+): Promise<string> {
+  const conversation_id = readConversationId(input.conversation_id, 'CONVERSATION_ID_REQUIRED');
+  assertSenderType(input.sender_type);
+  const advanced = await client.query(TOUCH_CONVERSATION_LAST_MESSAGE, [input.tenant_id, conversation_id]);
+  if (advanced.rowCount !== 1) {
+    throw new Error(`CONVERSATION_NOT_FOUND: this tenant holds no conversation ${conversation_id}.`);
+  }
+  const { text, values } = buildInsertQuery(CONVERSATION_MESSAGES, [
+    ['tenant_id', input.tenant_id],
+    ['conversation_id', conversation_id],
+    ['sender_type', input.sender_type],
+    ['sender_id', input.sender_id],
+    ['content', input.content],
+    ['delivery_status', input.sender_type === 'operator' ? 'STORED' : undefined],
+    ['content_type', input.content_type],
+    ['metadata', input.metadata],
+    ['request_id', input.request_id],
+  ]);
+  const result = await client.query<InsertedMessageRow>(text, values);
+  const inserted = requireRow<InsertedMessageRow>(result.rows, CONVERSATION_MESSAGES);
+  return inserted.id;
 }
 
 /**
@@ -462,14 +578,11 @@ export class ConversationRepository {
    * when the binding is new (implement/06 §8.1 R01).
    *
    * The bind is a single `INSERT ... ON CONFLICT ... DO NOTHING` followed, when the thread was
-   * already bound, by a read of the existing row. A repeated call therefore
+   * already bound, by a read of the existing row. If that row is anonymous and this delivery has a
+   * verified customer identity, a conditional update attaches it exactly once. A non-null customer
+   * identity is never replaced by a later anonymous or different-customer delivery.
    *
-   *  * returns the same conversation with `bound: true`,
-   *  * inserts no second conversation, and
-   *  * writes nothing at all: an existing non-null `customer_id` is not replaced with the `null` of
-   *    a later anonymous call, and the conversation's `state` is not moved by a bind.
-   *
-   * @param input Tenant, channel, thread identity and the optional customer of this delivery.
+   * @param input Tenant, channel, thread identity and the optional verified customer of this delivery.
    * @returns The bound conversation and whether it already existed.
    * @throws Error `CONVERSATION_UNSTABLE` when the binding is reported as taken but no row is
    * visible in this transaction; the bind fails closed rather than starting a second conversation.
@@ -513,16 +626,14 @@ export class ConversationRepository {
         return { ...toConversationRecord(created), bound: false };
       }
 
-      // The unique key was already bound: the winner's row is read, never overlaid. The insert
-      // cannot report the conflict before the conflicting transaction has committed (a rolled-back
-      // inserter would have left the key free), so the row is visible to this read.
+      // The unique key was already bound: inspect its current row, attaching a verified customer
+      // below only if the durable row still has no customer.
       const existing = await client.query<ConversationRow>(SELECT_CONVERSATION_BY_THREAD, [
         input.tenant_id,
         input.channel,
         input.external_thread_id,
       ]);
       const held = existing.rows[0];
-
       if (held === undefined) {
         throw new Error(
           `CONVERSATION_UNSTABLE: the thread binding (${input.channel}, ` +
@@ -530,6 +641,35 @@ export class ConversationRepository {
             'is visible in this transaction; refusing to guess which conversation this delivery ' +
             `belongs to (${CODE_OWNER}).`,
         );
+      }
+      if (held.customer_id === null && customer_id !== null) {
+        const attached = await client.query<ConversationRow>(ATTACH_CUSTOMER_IF_ANONYMOUS, [
+          input.tenant_id,
+          input.channel,
+          input.external_thread_id,
+          customer_id,
+        ]);
+        const attachedRow = attached.rows[0];
+        if (attachedRow !== undefined) {
+          return { ...toConversationRecord(attachedRow), bound: true };
+        }
+
+        // Another verified delivery may have won the conditional attach after the read. Publish
+        // that durable winner rather than returning stale anonymity or replacing its customer.
+        const current = await client.query<ConversationRow>(SELECT_CONVERSATION_BY_THREAD, [
+          input.tenant_id,
+          input.channel,
+          input.external_thread_id,
+        ]);
+        const currentRow = current.rows[0];
+        if (currentRow === undefined) {
+          throw new Error(
+            `CONVERSATION_UNSTABLE: the thread binding (${input.channel}, ` +
+              `${input.external_thread_id}) disappeared while attaching its customer; refusing to ` +
+              `guess which conversation this delivery belongs to (${CODE_OWNER}).`,
+          );
+        }
+        return { ...toConversationRecord(currentRow), bound: true };
       }
 
       return { ...toConversationRecord(held), bound: true };
@@ -596,49 +736,55 @@ export class ConversationRepository {
   }
 
   /**
-   * Moves one conversation between the three stored states (implement/06 §8.1 R06/R08).
-   *
-   * The transition is a single tenant-scoped `UPDATE`: a conversation of another tenant, or an
-   * unknown id, matches no row and is reported as `false`. The method never inserts the row it was
-   * asked to move — a control action on a conversation that is not there is a refusal, not a
-   * creation.
+   * Moves one conversation between the three stored states using a tenant-scoped compare-and-set.
+   * The expected state and operator are matched atomically with the write, so a stale caller cannot
+   * overwrite a takeover or resume performed after its read.
    *
    * @param tenant_id Tenant that owns the conversation.
    * @param conversation_id Conversation to move.
+   * @param expected_state State observed by the caller before deciding the transition.
+   * @param expected_takeover_operator_id Operator observed as holding the conversation, or `null`.
    * @param state Stored state to write; the wire vocabulary is not accepted here.
    * @param takeover_operator_id Operator holding the conversation, or `null` when the agent owns it.
-   * @returns `true` when this call moved the conversation, `false` when no row matched.
-   * @throws Error `CONVERSATION_STATE_INVALID` when `state` is not one of the three stored values.
+   * @returns `UPDATED` when the expected row was moved, otherwise `CONFLICT`.
+   * @throws Error `CONVERSATION_STATE_INVALID` when either state is outside the stored vocabulary.
    * @throws Error `CONVERSATION_OPERATOR_INVALID` when a blank operator identity is supplied.
    */
   async setState(
     tenant_id: string,
     conversation_id: string,
+    expected_state: ConversationState,
+    expected_takeover_operator_id: string | null,
     state: ConversationState,
     takeover_operator_id: string | null,
-  ): Promise<boolean> {
+  ): Promise<'UPDATED' | 'CONFLICT'> {
     assertIdentifier(tenant_id, 'tenant_id', 36, 'CONVERSATION_TENANT_ID_REQUIRED');
     const id = readConversationId(conversation_id, 'CONVERSATION_ID_REQUIRED');
+    assertConversationState(expected_state);
     assertConversationState(state);
 
-    if (takeover_operator_id !== null) {
-      assertIdentifier(
-        takeover_operator_id,
-        'takeover_operator_id',
-        128,
-        'CONVERSATION_OPERATOR_INVALID',
-      );
+    for (const operator_id of [expected_takeover_operator_id, takeover_operator_id]) {
+      if (operator_id !== null) {
+        assertIdentifier(
+          operator_id,
+          'takeover_operator_id',
+          128,
+          'CONVERSATION_OPERATOR_INVALID',
+        );
+      }
     }
 
     return this.runInTenantTransaction(tenant_id, async (client) => {
       const result = await client.query(UPDATE_CONVERSATION_STATE, [
         tenant_id,
         id,
+        expected_state,
+        expected_takeover_operator_id,
         state,
         takeover_operator_id,
       ]);
 
-      return result.rowCount === 1;
+      return result.rowCount === 1 ? 'UPDATED' : 'CONFLICT';
     });
   }
   /**
@@ -660,6 +806,103 @@ export class ConversationRepository {
       return result.rowCount === 1;
     });
   }
+  /** Lists paused markers in cursor order so a full page never starves later conversations. */
+  async listPausedTakeovers(
+    tenant_id: string,
+    limit = 200,
+    afterConversationId?: string,
+  ): Promise<readonly { conversation_id: string; takeover_operator_id: string }[]> {
+    assertIdentifier(tenant_id, 'tenant_id', 36, 'CONVERSATION_TENANT_ID_REQUIRED');
+    if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+      throw new Error('CONVERSATION_LIMIT_INVALID: limit must be in 1..200');
+    }
+    if (afterConversationId !== undefined && !UUID.test(afterConversationId)) {
+      throw new Error('CONVERSATION_MESSAGE_CURSOR_INVALID: afterConversationId must be a conversation UUID');
+    }
+    return this.runInTenantTransaction(tenant_id, async (client) => {
+      const result = await client.query<QueryResultRow & {
+        conversation_id: string;
+        takeover_operator_id: string;
+      }>(SELECT_PAUSED_TAKEOVERS, [tenant_id, limit, afterConversationId ?? null]);
+      return result.rows;
+    });
+  }
+
+  /** Handoff state used by the owner projection; an assigned handoff is never an orphan. */
+  async handoffState(tenant_id: string, conversation_id: string): Promise<{
+    has_enqueued_handoff: boolean;
+    has_assigned_handoff: boolean;
+  }> {
+    assertIdentifier(tenant_id, 'tenant_id', 36, 'CONVERSATION_TENANT_ID_REQUIRED');
+    const id = readConversationId(conversation_id, 'CONVERSATION_ID_REQUIRED');
+    return this.runInTenantTransaction(tenant_id, async (client) => {
+      const result = await client.query<QueryResultRow & {
+        has_enqueued_handoff: boolean;
+        has_assigned_handoff: boolean;
+      }>(SELECT_HANDOFF_STATE, [tenant_id, id]);
+      return result.rows[0] ?? { has_enqueued_handoff: false, has_assigned_handoff: false };
+    });
+  }
+
+  /** CAS-clears an expired takeover only when no assigned handoff remains. */
+  async clearOrphanedTakeoverIfOwned(
+    tenant_id: string,
+    conversation_id: string,
+    operator_id: string,
+  ): Promise<boolean> {
+    assertIdentifier(tenant_id, 'tenant_id', 36, 'CONVERSATION_TENANT_ID_REQUIRED');
+    const id = readConversationId(conversation_id, 'CONVERSATION_ID_REQUIRED');
+    assertIdentifier(operator_id, 'operator_id', 128, 'CONVERSATION_OPERATOR_INVALID');
+    return this.runInTenantTransaction(tenant_id, async (client) => {
+      const result = await client.query(CLEAR_ORPHANED_TAKEOVER, [tenant_id, id, operator_id]);
+      return result.rowCount === 1;
+    });
+  }
+
+  /** Returns one widget page and acknowledges returned operator messages in the same transaction. */
+  async listWidgetMessages(input: WidgetConversationMessagePage): Promise<{
+    readonly messages: readonly ConversationMessageRecord[];
+    readonly next_cursor: string | null;
+  }> {
+    assertIdentifier(input.tenant_id, 'tenant_id', 36, 'CONVERSATION_TENANT_ID_REQUIRED');
+    const conversation_id = readConversationId(input.conversation_id, 'CONVERSATION_ID_REQUIRED');
+    const limit = input.limit === undefined ? DEFAULT_MESSAGE_LIMIT : input.limit;
+    if (!Number.isInteger(limit) || limit < 1 || limit > MAX_MESSAGE_LIMIT) {
+      throw new Error(`CONVERSATION_MESSAGE_LIMIT_INVALID: limit must be an integer between 1 and ${MAX_MESSAGE_LIMIT}`);
+    }
+    const after = input.after;
+    if (after !== undefined && !UUID.test(after)) {
+      throw new Error('CONVERSATION_MESSAGE_CURSOR_INVALID: after must be a message UUID');
+    }
+
+    return this.runInTenantTransaction(input.tenant_id, async (client) => {
+      const result = await client.query<WidgetMessageRow>(SELECT_WIDGET_MESSAGES, [
+        input.tenant_id,
+        conversation_id,
+        after ?? null,
+        limit + 1,
+      ]);
+      const hasMore = result.rows.length > limit;
+      const page = result.rows.slice(0, limit);
+      const operatorIds = page.filter((row) => row.sender_type === 'operator').map((row) => row.message_id);
+      if (operatorIds.length > 0) {
+        await client.query(MARK_WIDGET_MESSAGES_DELIVERED, [input.tenant_id, conversation_id, operatorIds]);
+      }
+      return {
+        messages: page.map((row) => ({
+          message_id: row.message_id,
+          sender_type: row.sender_type,
+          sender_id: row.sender_id,
+          content: row.content,
+          created_at: row.created_at.toISOString(),
+          ...(row.sender_type === 'operator' ? { delivery_status: 'DELIVERED' as const }
+            : row.delivery_status === null ? {} : { delivery_status: row.delivery_status }),
+        })),
+        next_cursor: hasMore ? (page[page.length - 1]?.message_id ?? null) : null,
+      };
+    });
+  }
+
 
 
   /** Lists the tenant's most recent conversations without exposing another tenant's rows. */
@@ -718,12 +961,13 @@ export class ConversationRepository {
         );
       }
 
-      const { text, values } = buildInsertQuery(CONVERSATION_MESSAGES, [
+const { text, values } = buildInsertQuery(CONVERSATION_MESSAGES, [
         ['tenant_id', input.tenant_id],
         ['conversation_id', conversation_id],
         ['sender_type', input.sender_type],
         ['sender_id', input.sender_id],
         ['content', input.content],
+        ['delivery_status', input.sender_type === 'operator' ? 'STORED' : undefined],
         ['content_type', input.content_type],
         ['metadata', input.metadata],
         ['request_id', input.request_id],

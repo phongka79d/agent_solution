@@ -421,8 +421,8 @@ export interface PolicyActionProposal {
 export interface PolicyEnforcementOptions {
   /** Server registry projection — the only authority source (required). */
   readonly registry: PolicyRegistryPort;
-  /** Durable approval store used by an approval route (required: a route without a row is no route). */
-  readonly approvals: ApprovalQueuePort;
+  /** Durable queue used when present; otherwise the orchestrator persists the row while pausing. */
+  readonly approvals?: ApprovalQueuePort;
   /** Owner-approved autonomy limits; absent ⇒ every limit is unapproved and fails closed. */
   readonly tenantPolicy?: TenantPolicySource;
   /** System-of-Record pricing reference resolution (BR-001/BR-003). */

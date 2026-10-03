@@ -29,6 +29,14 @@
       "types": "./dist/status-view.d.ts",
       "default": "./dist/status-view.js"
     },
+    "./errors": {
+      "types": "./dist/errors.d.ts",
+      "default": "./dist/errors.js"
+    },
+    "./data": {
+      "types": "./dist/data/useApi.d.ts",
+      "default": "./dist/data/useApi.js"
+    },
     "./tailwind-preset": "./tailwind-preset.cjs"
   },
   "scripts": {

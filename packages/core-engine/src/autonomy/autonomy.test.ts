@@ -56,6 +56,45 @@ describe('AutonomyService', () => {
     })).workflow).toBe('AUTO_EXECUTE');
   });
 
+  it('runs a new-tenant Sales READ skill at MINIMUM without promotion', async () => {
+    const service = new AutonomyService(new MemoryAutonomyStore());
+    const admission = await service.admit({
+      tenant_id: 'tenant-new',
+      skill_id: 'skill.sales.check_stock',
+      policy_version: 'sales-v1',
+      required_authority: 'AUTH-1',
+    });
+
+    expect(admission.workflow).toBe('AUTO_EXECUTE');
+    expect(admission.reason).toContain('MINIMUM authority');
+  });
+
+  it('parks draft-gated skills for approval and admits them after promotion approval', async () => {
+    const service = new AutonomyService(new MemoryAutonomyStore());
+    const request = promotion({
+      skill_id: 'skill.mkt.segment_audience',
+      required_authority: 'AUTH-2',
+      policy_version: 'segment-v1',
+    });
+
+    const parked = await service.admit({
+      tenant_id: request.tenant_id,
+      skill_id: request.skill_id,
+      policy_version: request.policy_version ?? '',
+      required_authority: request.required_authority,
+    });
+    expect(parked.workflow).toBe('PARKED_DRAFT');
+    expect(parked.reason).toContain('Bản nháp chờ bạn duyệt');
+
+    expect((await service.promote(request)).accepted).toBe(true);
+    expect((await service.admit({
+      tenant_id: request.tenant_id,
+      skill_id: request.skill_id,
+      policy_version: request.policy_version ?? '',
+      required_authority: request.required_authority,
+    })).workflow).toBe('AUTO_EXECUTE');
+  });
+
   it('rejects caller/self claims and never promotes AUTH-4, AUTH-5, or high-impact skills', async () => {
     const service = new AutonomyService(new MemoryAutonomyStore());
     const assertion = await service.rejectCallerAssertion({ tenant_id: TENANT, reason: 'model claimed approval' });

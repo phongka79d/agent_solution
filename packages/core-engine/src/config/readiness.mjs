@@ -30,7 +30,7 @@ const DEFAULT_PORTS = { postgres: 5432, redis: 6379, qdrant: 6333, sor: 80, temp
 /**
  * @typedef {{ ok: boolean, reason?: string }} ProbeOutcome
  * @typedef {(env: Record<string, unknown>) => ProbeOutcome | Promise<ProbeOutcome>} Probe
- * @typedef {{ postgres?: Probe, redis?: Probe, qdrant?: Probe, sor?: Probe, temporal?: Probe }} Probes
+ * @typedef {{ postgres?: Probe, redis?: Probe, qdrant?: Probe, sor?: Probe, temporal?: Probe, schemaCheck?: (env: Record<string, unknown>) => Promise<{ ready: boolean, failures: string[] }> }} Probes
  * @typedef {{ timeoutMs?: number, requireNodeEnv?: boolean }} ReadinessOptions
  * @typedef {{ dependency: string, reason: string }} ReadinessFailure
  * @typedef {{ ready: boolean, failures: ReadinessFailure[] }} ReadinessResult
@@ -66,7 +66,8 @@ export function requiredDependencies(env = process.env) {
 
 /**
  * Probes every required dependency in order and reports the aggregate readiness.
- * Calls no probe for a disabled dependency and never throws.
+ * An optional schema check reports migration and platform-role failures without exposing database
+ * error details. Calls no probe for a disabled dependency and never throws.
  *
  * @param {Record<string, unknown>} [env]
  * @param {Probes} [probes] injected probes; any omitted dependency falls back to the default TCP probe
@@ -99,6 +100,26 @@ export async function checkReadiness(env = process.env, probes = undefined, opts
     if (!outcome || outcome.ok !== true) {
       const reason = outcome && outcome.reason !== undefined && outcome.reason !== null ? String(outcome.reason) : 'not ready';
       failures.push({ dependency, reason: redact(reason, secrets) });
+    }
+  }
+
+  const schemaCheck = pickProbe(probes, 'schemaCheck');
+  if (schemaCheck) {
+    try {
+      const result = await schemaCheck(source);
+      const schemaFailures = Array.isArray(result?.failures) ? result.failures : [];
+      if (schemaFailures.includes('SCHEMA_BEHIND')) {
+        failures.push({ dependency: 'schema', reason: 'SCHEMA_BEHIND' });
+      }
+      if (schemaFailures.includes('PLATFORM_ROLE_MISSING')) {
+        failures.push({ dependency: 'platform_role', reason: 'PLATFORM_ROLE_MISSING' });
+      }
+      if (result?.ready !== true && schemaFailures.length === 0) {
+        failures.push({ dependency: 'schema', reason: 'SCHEMA_BEHIND' });
+      }
+    } catch {
+      failures.push({ dependency: 'schema', reason: 'SCHEMA_BEHIND' });
+      failures.push({ dependency: 'platform_role', reason: 'PLATFORM_ROLE_MISSING' });
     }
   }
 

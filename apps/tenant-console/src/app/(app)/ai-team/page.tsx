@@ -1,5 +1,5 @@
 import { RequirePermission } from '../../../components/auth/RequirePermission';
-import { AiTeamConsole } from '../../../components/ai-team/AiTeamConsole';
+import { AiTeamConsole } from '../../../components/company/AiTeamConsole';
 
 export const metadata = { title: 'AI Team | AgentOS' };
 

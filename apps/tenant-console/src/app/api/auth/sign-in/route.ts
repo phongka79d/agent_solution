@@ -11,9 +11,9 @@ import {
 } from '../../../../lib/auth/session';
 import {
   DEMO_TENANT_ID,
-  demoAuthProvider,
+  authProvider,
   ProviderHttpError,
-} from '../../../../lib/auth/demo-provider';
+} from '../../../../lib/auth';
 export const dynamic = 'force-dynamic';
 
 
@@ -57,7 +57,7 @@ export async function POST(request: Request): Promise<Response> {
 
   let result: SignInResult;
   try {
-    result = await demoAuthProvider.signIn(email, password);
+    result = await authProvider.signIn(email, password);
   } catch (error) {
     if (error instanceof ProviderHttpError) {
       if (error.status === 401 || error.status === 403) return invalidRequest(request, 'AUTHENTICATION_FAILED', 401);

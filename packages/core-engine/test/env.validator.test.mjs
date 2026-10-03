@@ -150,7 +150,8 @@ test('accepts a complete local environment and applies the documented defaults',
   assert.equal(data.OPENAI_BASE_URL, 'https://api.openai.com/v1');
   assert.equal(data.OPENAI_STRUCTURED_OUTPUT_MODE, 'json_object');
   assert.equal(data.LLM_REQUEST_TIMEOUT_MS, 30000);
-  assert.equal(data.MAX_TOKENS_PER_RUN, 4096);
+  assert.equal(data.LLM_MAX_OUTPUT_TOKENS_PER_CALL, 2048);
+  assert.equal(data.MAX_TOKENS_PER_RUN, 16384);
 
   assert.equal(data.PRIMARY_REASONING_MODEL, 'gpt-4o');
   assert.equal(data.FAST_COMPLETION_MODEL, 'gpt-4o-mini');
@@ -175,9 +176,31 @@ test('validates the OpenAI-compatible provider boundary and bounded runtime sett
   expectFailure(parseEnvironment(validLocalEnv({ FAST_COMPLETION_MODEL: undefined })), 'FAST_COMPLETION_MODEL');
   expectFailure(parseEnvironment(validLocalEnv({ FAST_COMPLETION_MODEL: '' })), 'FAST_COMPLETION_MODEL');
   expectFailure(parseEnvironment(validLocalEnv({ LLM_REQUEST_TIMEOUT_MS: '0' })), 'LLM_REQUEST_TIMEOUT_MS');
-  expectFailure(parseEnvironment(validLocalEnv({ MAX_TOKENS_PER_RUN: '4097' })), 'MAX_TOKENS_PER_RUN');
+  expectFailure(parseEnvironment(validLocalEnv({ LLM_MAX_OUTPUT_TOKENS_PER_CALL: '4097' })), 'LLM_MAX_OUTPUT_TOKENS_PER_CALL');
   expectFailure(parseEnvironment(managedEnv('staging', { OPENAI_BASE_URL: 'http://provider.internal/v1' })), 'OPENAI_BASE_URL');
   expectOk(parseEnvironment(validLocalEnv({ OPENAI_BASE_URL: 'http://localhost:8080/v1/' })));
+});
+
+test('requires run budget for the per-call cap plus prompt reservation margin', () => {
+  const boundary = expectOk(parseEnvironment(validLocalEnv({
+    LLM_MAX_OUTPUT_TOKENS_PER_CALL: '512',
+    MAX_TOKENS_PER_RUN: '1536',
+  })));
+  assert.equal(boundary.LLM_MAX_OUTPUT_TOKENS_PER_CALL, 512);
+  assert.equal(boundary.MAX_TOKENS_PER_RUN, 1536);
+
+  expectFailure(parseEnvironment(validLocalEnv({
+    LLM_MAX_OUTPUT_TOKENS_PER_CALL: '512',
+    MAX_TOKENS_PER_RUN: '1535',
+  })), 'MAX_TOKENS_PER_RUN');
+  expectFailure(parseEnvironment(validLocalEnv({
+    LLM_MAX_OUTPUT_TOKENS_PER_CALL: '4096',
+    MAX_TOKENS_PER_RUN: '5119',
+  })), 'MAX_TOKENS_PER_RUN');
+  expectOk(parseEnvironment(validLocalEnv({
+    LLM_MAX_OUTPUT_TOKENS_PER_CALL: '4096',
+    MAX_TOKENS_PER_RUN: '5120',
+  })));
 });
 
 test('missing APP_ENV fails and names APP_ENV', () => {
@@ -254,6 +277,12 @@ test('ENCRYPTION_KEY_AES256 must be exactly 64 hex characters (never cropped or 
   expectFailure(parseEnvironment(validLocalEnv({ ENCRYPTION_KEY_AES256: `${ENCRYPTION_KEY_64_HEX}ab` })), 'ENCRYPTION_KEY_AES256');
   expectFailure(parseEnvironment(validLocalEnv({ ENCRYPTION_KEY_AES256: `${'z'.repeat(63)}` })), 'ENCRYPTION_KEY_AES256');
   expectFailure(parseEnvironment(validLocalEnv({ ENCRYPTION_KEY_AES256: undefined })), 'ENCRYPTION_KEY_AES256');
+});
+test('ENCRYPTION_KEY_AES256_PREVIOUS is optional but must be exactly 64 hexadecimal characters', () => {
+  expectOk(parseEnvironment(validLocalEnv()));
+  expectOk(parseEnvironment(validLocalEnv({ ENCRYPTION_KEY_AES256_PREVIOUS: 'ab'.repeat(32) })));
+  expectFailure(parseEnvironment(validLocalEnv({ ENCRYPTION_KEY_AES256_PREVIOUS: 'ab'.repeat(31) })), 'ENCRYPTION_KEY_AES256_PREVIOUS');
+  expectFailure(parseEnvironment(validLocalEnv({ ENCRYPTION_KEY_AES256_PREVIOUS: 'z'.repeat(64) })), 'ENCRYPTION_KEY_AES256_PREVIOUS');
 });
 
 test('DATABASE_URL must be a postgres URI and pin verify-full TLS outside local/ci', () => {

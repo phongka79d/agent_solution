@@ -303,11 +303,8 @@ function rowOf(record: ImmutableEvidenceRecord | AuditRecord | AgentRunLog): Que
  * ---------------------------------------------------------------------------------------------- */
 
 /**
- * Which statement of the module a SQL text is. The ten kinds below are the module's whole SQL
- * vocabulary: the advisory lock, one read and one insert per table, and the server-time read. A
- * statement that is anything else — an `UPDATE`, a `DELETE`, or a statement of a table this module
- * must not touch — raises here, so every case of this suite doubles as a check that the module only
- * ever appends.
+ * Which statement of the module a SQL text is. The scripted PostgreSQL vocabulary covers the
+ * audit/evidence ledgers and the transactional outcome-watch lifecycle; unexpected statements fail.
  */
 type StatementKind =
   | 'lock'
@@ -319,7 +316,9 @@ type StatementKind =
   | 'audit_tail'
   | 'audit_read'
   | 'audit_server_timestamp'
-  | 'audit_insert';
+  | 'audit_insert'
+  | 'outcome_watch_insert'
+  | 'outcome_watch_expiry';
 
 function classify(sql: string): StatementKind {
   if (sql.startsWith('SELECT pg_advisory_xact_lock')) {
@@ -329,6 +328,14 @@ function classify(sql: string): StatementKind {
   if (sql.startsWith('SELECT date_trunc')) {
     return 'audit_server_timestamp';
   }
+  if (sql.startsWith('INSERT INTO agentos.pending_outcome_attributions')) {
+    return 'outcome_watch_insert';
+  }
+
+  if (sql.startsWith('WITH expired AS MATERIALIZED')) {
+    return 'outcome_watch_expiry';
+  }
+
 
   if (sql.startsWith('INSERT INTO agentos.evidence_records')) {
     return 'evidence_insert';
@@ -537,6 +544,56 @@ describe('chain primitives', () => {
     expect(payload.step_index).toBeUndefined();
     expect(payload.started_at).toBeUndefined();
     expect(payload.completed_at).toBeUndefined();
+  });
+});
+
+describe('EvidenceRepository outcome watches', () => {
+  it('creates watchers idempotently by tenant and effect key', async () => {
+    const { evidence, client, boundTenants } = harnessFor({
+      outcome_watch_insert: { rowCount: 0 },
+    });
+    const params = {
+      tenant_id: TENANT,
+      run_id: RUN_ID,
+      effect_key: 'effect-watch-1',
+      skill_id: 'skill.sales.place_order',
+    };
+
+    await evidence.initializeOutcomeWatch(params);
+    await evidence.initializeOutcomeWatch({
+      ...params,
+      run_id: 'run-retry',
+      skill_id: 'skill.sales.other',
+    });
+
+    expect(boundTenants).toEqual([TENANT, TENANT]);
+    expect(client.statements.map((statement) => statement.params)).toEqual([
+      [TENANT, RUN_ID, 'effect-watch-1', 'skill.sales.place_order'],
+      [TENANT, 'run-retry', 'effect-watch-1', 'skill.sales.other'],
+    ]);
+    expect(client.statements).toHaveLength(2);
+    for (const statement of client.statements) {
+      expect(statement.sql).toContain('ON CONFLICT (tenant_id, effect_key) DO NOTHING');
+    }
+  });
+
+  it('records linked UNKNOWN_OUTCOME rows for a bounded tenant expiry batch', async () => {
+    const { evidence, client, boundTenants } = harnessFor({
+      outcome_watch_expiry: { rows: [{ effect_key: 'effect-watch-1' }] },
+    });
+
+    await expect(evidence.expireOverdueOutcomeWatches(TENANT, 2)).resolves.toEqual([
+      'effect-watch-1',
+    ]);
+
+    expect(boundTenants).toEqual([TENANT]);
+    expect(bindingsOf(client, 'outcome_watch_expiry')).toEqual([TENANT, 2]);
+    const expirySql = client.statements[0]?.sql;
+    expect(expirySql).toContain('p.expires_at <= CURRENT_TIMESTAMP');
+    expect(expirySql).toContain('FOR UPDATE OF p SKIP LOCKED');
+    expect(expirySql).toContain("'UNKNOWN_OUTCOME'");
+    expect(expirySql).toContain("status = 'EXPIRED'");
+    expect(expirySql).toContain('unknown_outcomes.id = expired.outcome_id');
   });
 });
 

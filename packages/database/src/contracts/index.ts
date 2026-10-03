@@ -61,6 +61,8 @@ export interface CustomerProfileRow {
   readonly suppression_active: boolean;
   readonly line_user_id: string | null;
   readonly created_at: Date;
+  /** Server-owned TEST/customer profile address metadata used only after identity verification. */
+  readonly default_shipping_address?: unknown;
 }
 
 /**

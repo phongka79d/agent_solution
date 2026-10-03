@@ -1,11 +1,16 @@
-import type { PoolClient } from 'pg';
+import type { PoolClient, QueryResultRow } from 'pg';
 
 import { withTenantContext } from '../rls.js';
 import type { TenantTransactionRunner } from './effect-reservations.js';
+import { appendConversationMessageInTransaction } from './conversations.js';
 import {
   INSERT_TASK,
   PLATFORM_DURABLE_TASKS,
   SELECT_CLAIMABLE_TASK,
+  SELECT_RECONCILIATION_CANDIDATES,
+  SELECT_RECONCILIATION_RESERVATION_FOR_UPDATE,
+  SELECT_RECONCILIATION_TASK_FOR_UPDATE,
+  SELECT_RETRY_TIMER_CANDIDATES,
   SELECT_TASK,
   SELECT_TASK_FOR_UPDATE,
   SELECT_TASK_PAGE,
@@ -14,8 +19,13 @@ import {
   UPDATE_CLEAR_HANDOFF_EVIDENCE_TASK,
   UPDATE_HANDOFF_EVIDENCE_TASK,
   UPDATE_RECONCILE_TASK,
+  UPDATE_RETRY_TIMER_TASK,
   UPDATE_RENEW_LEASE,
   UPDATE_RELEASE_LEASE,
+  UPDATE_RECONCILED_RESERVATION,
+  UPDATE_RECONCILIATION_COMPLETED_TASK,
+  UPDATE_RECONCILIATION_ESCALATED_TASK,
+  UPDATE_RECONCILIATION_FAILED_TASK,
   UPDATE_TASK_FAILURE_REQUEUE,
   UPDATE_TASK_FAILURE_TERMINAL,
   UPDATE_TASK_OPERATOR_REQUEUE,
@@ -137,6 +147,54 @@ export interface DurableTaskRecord {
   readonly updated_at: string;
 }
 
+export interface ReconciliationCandidate {
+  readonly tenant_id: string;
+  readonly run_id: string;
+  readonly effect_key: string;
+  readonly skill_id: string;
+  readonly step_index: number;
+  readonly reserved_at: string;
+  readonly expires_at: string;
+  readonly max_age_reached: boolean;
+  readonly state_payload: unknown;
+}
+
+interface ReconciliationCandidateRow extends QueryResultRow {
+  tenant_id: string;
+  run_id: string;
+  effect_key: string;
+  skill_id: string;
+  step_index: number;
+  reserved_at: Date;
+  expires_at: Date;
+  max_age_reached: boolean;
+  state_payload: unknown;
+}
+
+/** Due retry waits eligible for one durable timer event; UNKNOWN/reconciliation waits are excluded. */
+export interface RetryTimerCandidate {
+  readonly tenant_id: string;
+  readonly run_id: string;
+  readonly retry_count: number;
+  readonly wait_reason: string | null;
+  readonly has_resume_event: boolean;
+}
+
+interface RetryTimerCandidateRow extends QueryResultRow {
+  tenant_id: string;
+  run_id: string;
+  retry_count: number;
+  wait_reason: string | null;
+  has_resume_event: boolean;
+}
+
+interface ReconciliationReservationRow extends QueryResultRow {
+  max_age_reached: boolean;
+}
+interface ReconciliationTaskRow extends DurableTaskRow {
+  lease_available: boolean;
+}
+
 /**
  * The read shape of `IStatefulWorkflowEngine.getTask()` (implement/04 §3.3): the four fields the
  * resume path decides from. `DurableTaskRecord` is a superset, so either can be published.
@@ -158,7 +216,14 @@ export interface CreateDurableTaskInput {
 }
 
 /** Input for the preclaimed conversation admission writer; queued turns begin at step zero. */
-export type CreateQueuedAdmissionTaskInput = Omit<CreateDurableTaskInput, 'current_step' | 'state'>;
+export type CreateQueuedAdmissionTaskInput = Omit<CreateDurableTaskInput, 'current_step' | 'state'> & {
+  readonly customer_message?: {
+    readonly conversation_id: string;
+    readonly sender_id: string;
+    readonly content: string;
+    readonly request_id?: string;
+  };
+};
 
 /**
  * The optimistic guard of implement/04 §4.2, passed by a caller that read the task earlier.
@@ -189,12 +254,11 @@ export interface ClaimTaskResult {
   readonly task_version: number;
 }
 
-/** Input of `renewTaskLease()`: tenant, run, lease owner, version, and optional duration. */
+/** Input of `renewTaskLease()`: tenant, run, lease owner and optional duration. */
 export interface RenewTaskLeaseInput {
   readonly tenant_id: string;
   readonly run_id: string;
   readonly lease_owner: string;
-  readonly task_version: number;
   readonly lease_duration_ms?: number;
   readonly now?: Date | string | number;
 }
@@ -221,9 +285,9 @@ export interface RecordTaskFailureInput {
   readonly now?: Date | string | number;
 }
 
-/** Outcome of `recordFailure()`: whether the task was re-queued, and the row it left behind. */
+/** Outcome of `recordFailure()`: whether a retry was scheduled or the task became terminal. */
 export interface TaskFailureOutcome {
-  /** `true` when the task returned to `queued` with `retry_count + 1`; `false` when it terminated. */
+  /** `true` when the task earned retry_count + 1; a complete checkpoint parks until a timer fires. */
   readonly requeued: boolean;
   readonly state: DurableTaskState;
   readonly retry_count: number;
@@ -284,6 +348,13 @@ export interface QueueReconciliationInput {
   readonly reason: string;
   readonly operator_id: string;
   readonly receipt?: Record<string, unknown>;
+}
+
+/** Identity of one idempotent automatic retry resume event. */
+export interface QueueRetryTimerInput {
+  readonly tenant_id: string;
+  readonly run_id: string;
+  readonly retry_count: number;
 }
 
 /** Input of `queueHandoffEvidence()`: tenant, run, evidence payload and optional fences. */
@@ -396,8 +467,9 @@ export async function insertDurableTask(
  * The surface is the durable half of `IStatefulWorkflowEngine`: create the run's task row, read it
  * back, page the tenant's rows for the operator read model, checkpoint progress, transition the
  * lifecycle state, record a classified failure, and re-enter a failed run at the operator's explicit
- * request. Every method opens exactly one tenant-scoped transaction through `withTenantContext`, and
- * every write locks the row, compares `task_version` and increments it.
+ * request. Every lifecycle/progress write locks the row, compares `task_version` and increments it.
+ * Lease renewal is the exception: it extends the current owner's lease without changing the task
+ * version, so ordinary checkpoint writes do not conflict with a heartbeat.
  *
  * The AUTH-4 pause and the human decision are NOT here: they must write `actions` and `approvals`
  * in the same transaction as the task, which is `ApprovalRepository`'s job.
@@ -464,6 +536,18 @@ export class DurableWorkflowRepository {
     assertIdentifier(input.run_id, 'run_id', 64, 'TASK_RUN_ID_REQUIRED');
     assertIdentifier(input.correlation_id, 'correlation_id', 64, 'TASK_CORRELATION_ID_REQUIRED');
     return this.runInTenantTransaction(input.tenant_id, async (client) => {
+      if (input.customer_message !== undefined) {
+        await appendConversationMessageInTransaction(client, {
+          tenant_id: input.tenant_id,
+          conversation_id: input.customer_message.conversation_id,
+          sender_type: 'customer',
+          sender_id: input.customer_message.sender_id,
+          content: input.customer_message.content,
+          ...(input.customer_message.request_id === undefined
+            ? {}
+            : { request_id: input.customer_message.request_id }),
+        });
+      }
       return insertDurableTask(client, {
         ...input,
         state: 'queued',
@@ -491,14 +575,22 @@ export class DurableWorkflowRepository {
   async renewTaskLease(input: RenewTaskLeaseInput): Promise<DurableTaskRecord> {
     assertIdentifier(input.tenant_id, 'tenant_id', 36, 'TASK_TENANT_ID_REQUIRED');
     assertIdentifier(input.run_id, 'run_id', 64, 'TASK_RUN_ID_REQUIRED');
+    assertIdentifier(input.lease_owner, 'lease_owner', 128, 'TASK_LEASE_OWNER_REQUIRED');
     const ttl = input.lease_duration_ms ?? 30_000;
     if (!Number.isInteger(ttl) || ttl < 1) throw new Error('TASK_LEASE_DURATION_INVALID');
     return this.runInTenantTransaction(input.tenant_id, async (client) => {
       const row = await this.lockWithin(client, input.tenant_id, input.run_id);
       if (!row) throw new Error('DURABLE_TASK_NOT_FOUND');
       assertLeaseHeld(row, input.lease_owner);
-      if (row.task_version !== input.task_version) throw new Error('TASK_VERSION_CONFLICT');
-      return assertSingleRow(await client.query<DurableTaskRow>(UPDATE_RENEW_LEASE, [input.tenant_id, input.run_id, ttl, input.task_version, input.lease_owner]), input.run_id);
+      return assertSingleRow(
+        await client.query<DurableTaskRow>(UPDATE_RENEW_LEASE, [
+          input.tenant_id,
+          input.run_id,
+          ttl,
+          input.lease_owner,
+        ]),
+        input.run_id,
+      );
     });
   }
 
@@ -780,12 +872,13 @@ export class DurableWorkflowRepository {
    * `RESERVED` and parks the run for reconciliation, and `last_error_class` has no member for it
    * (implement/04 §3.2.4, §4.4). The outcome then follows the retry budget:
    *
-   *  * `RETRYABLE` with `retry_count < max_retries` → back to `queued` with `retry_count + 1`, a
-   *    backoff timer for the caller, and the lease released (the failed worker is done with the run);
+   *  * `RETRYABLE` with `retry_count < max_retries` → `retry_count + 1`, a bounded backoff and
+   *    a parked timer event when the checkpoint is complete; an incomplete first-pass payload stays
+   *    queued but is not claimable until the same persisted deadline;
    *  * `FATAL`, or `RETRYABLE` with the budget spent → `failed`, carrying the class and diagnostics.
    *
    * No evidence or progress is rolled back: the checkpoint stays as the failed attempt left it, so a
-   * requeued run resumes from the last verified cursor (§4.4).
+   * resumed run continues from the last verified cursor (§4.4).
    *
    * @param input Tenant, run, classified failure and its diagnostics.
    * @returns Whether the task was re-queued, and the row it left behind.
@@ -823,16 +916,22 @@ export class DurableWorkflowRepository {
       const base = assertGuard(open, guard);
       assertLeaseHeld(open, input.lease_owner);
       const requeued = input.error_class === 'RETRYABLE' && open.retry_count < open.max_retries;
+      let checkpointComplete = false;
+      if (requeued) {
+        try {
+          assertCompleteCheckpoint(open.state_payload);
+          checkpointComplete = true;
+        } catch {
+          checkpointComplete = false;
+        }
+      }
 
       const statement = requeued ? UPDATE_TASK_FAILURE_REQUEUE : UPDATE_TASK_FAILURE_TERMINAL;
+      const failureParams = requeued
+        ? [input.tenant_id, input.run_id, input.error_class, error_details, base, checkpointComplete]
+        : [input.tenant_id, input.run_id, input.error_class, error_details, base];
       const row = assertSingleRow(
-        await client.query<DurableTaskRow>(statement, [
-          input.tenant_id,
-          input.run_id,
-          input.error_class,
-          error_details,
-          base,
-        ]),
+        await client.query<DurableTaskRow>(statement, failureParams),
         input.run_id,
       );
 
@@ -842,6 +941,184 @@ export class DurableWorkflowRepository {
         retry_count: row.retry_count,
         task_version: row.task_version,
       };
+    });
+  }
+
+  async listReconciliationCandidates(
+    tenant_id: string,
+    min_age_minutes: number,
+    limit = 200,
+  ): Promise<readonly ReconciliationCandidate[]> {
+    assertIdentifier(tenant_id, 'tenant_id', 36, 'TASK_TENANT_ID_REQUIRED');
+    assertPositiveInteger(min_age_minutes, 'min_age_minutes', 'RECONCILIATION_AGE_INVALID');
+    assertPositiveInteger(limit, 'limit', 'RECONCILIATION_LIMIT_INVALID');
+    return this.runInTenantTransaction(tenant_id, async (client) => {
+      const result = await client.query<ReconciliationCandidateRow>(
+        SELECT_RECONCILIATION_CANDIDATES,
+        [tenant_id, min_age_minutes, limit],
+      );
+      return result.rows.map((row) => ({
+        tenant_id: row.tenant_id,
+        run_id: row.run_id,
+        effect_key: row.effect_key,
+        skill_id: row.skill_id,
+        step_index: row.step_index,
+        reserved_at: row.reserved_at.toISOString(),
+        expires_at: row.expires_at.toISOString(),
+        max_age_reached: row.max_age_reached,
+        state_payload: row.state_payload,
+      }));
+    });
+  }
+
+  async listRetryTimerCandidates(
+    tenant_id: string,
+    limit = 200,
+  ): Promise<readonly RetryTimerCandidate[]> {
+    assertIdentifier(tenant_id, 'tenant_id', 36, 'TASK_TENANT_ID_REQUIRED');
+    assertPositiveInteger(limit, 'limit', 'RETRY_TIMER_LIMIT_INVALID');
+    return this.runInTenantTransaction(tenant_id, async (client) => {
+      const result = await client.query<RetryTimerCandidateRow>(
+        SELECT_RETRY_TIMER_CANDIDATES,
+        [tenant_id, limit],
+      );
+      return result.rows.map((row) => ({
+        tenant_id: row.tenant_id,
+        run_id: row.run_id,
+        retry_count: row.retry_count,
+        wait_reason: row.wait_reason,
+        has_resume_event: row.has_resume_event,
+      }));
+    });
+  }
+
+  /** Adds one due `timer.expired` event for exactly the retry count currently parked in the row. */
+  async queueRetryTimer(input: QueueRetryTimerInput): Promise<boolean> {
+    assertIdentifier(input.tenant_id, 'tenant_id', 36, 'TASK_TENANT_ID_REQUIRED');
+    assertIdentifier(input.run_id, 'run_id', 64, 'TASK_RUN_ID_REQUIRED');
+    assertPositiveInteger(input.retry_count, 'retry_count', 'RETRY_COUNT_INVALID');
+
+    return this.runInTenantTransaction(input.tenant_id, async (client) => {
+      const task = await this.lockWithin(client, input.tenant_id, input.run_id);
+      if (task === null || task.state !== 'waiting' || task.retry_count !== input.retry_count) return false;
+      if (!isPlainObject(task.state_payload)
+        || task.state_payload['wait_reason'] !== 'RETRY'
+        || typeof task.state_payload['retry_not_before'] !== 'string'
+        || task.state_payload['resume_event'] !== undefined) {
+        return false;
+      }
+      assertCompleteCheckpoint(task.state_payload);
+
+      const resume_event = {
+        tenant_id: input.tenant_id,
+        event_type: 'timer.expired',
+        retry_count: input.retry_count,
+      };
+      canonicalizeEvent(resume_event);
+      const eventPayload = serializeJsonb({ resume_event }, 'TASK_PAYLOAD_UNSERIALIZABLE');
+      const updated = await client.query<DurableTaskRow>(UPDATE_RETRY_TIMER_TASK, [
+        input.tenant_id,
+        input.run_id,
+        eventPayload,
+        task.task_version,
+        input.retry_count,
+      ]);
+      return updated.rows.length > 0;
+    });
+  }
+
+  /** Atomically records provider truth and its safe workflow handoff (or operator attention). */
+  async recordReconciliationOutcome(input: {
+    readonly tenant_id: string;
+    readonly run_id: string;
+    readonly effect_key: string;
+    readonly outcome: 'SUCCEEDED' | 'FAILED' | 'INDETERMINATE';
+    readonly receipt?: unknown;
+  }): Promise<'COMPLETED' | 'FAILED' | 'ESCALATED' | 'UNCHANGED'> {
+    assertIdentifier(input.tenant_id, 'tenant_id', 36, 'TASK_TENANT_ID_REQUIRED');
+    assertIdentifier(input.run_id, 'run_id', 64, 'TASK_RUN_ID_REQUIRED');
+    assertIdentifier(input.effect_key, 'effect_key', 128, 'EFFECT_RESERVATION_KEY_REQUIRED');
+    if (input.outcome === 'SUCCEEDED' && !isPlainObject(input.receipt)) {
+      throw new Error('RECONCILIATION_RECEIPT_INVALID: provider success requires a receipt object');
+    }
+
+    return this.runInTenantTransaction(input.tenant_id, async (client) => {
+      const reservation = (await client.query<ReconciliationReservationRow>(
+        SELECT_RECONCILIATION_RESERVATION_FOR_UPDATE,
+        [input.tenant_id, input.run_id, input.effect_key],
+      )).rows[0];
+      if (!reservation) return 'UNCHANGED';
+
+      const taskRow = (await client.query<ReconciliationTaskRow>(
+        SELECT_RECONCILIATION_TASK_FOR_UPDATE,
+        [input.tenant_id, input.run_id],
+      )).rows[0];
+      if (!taskRow || !taskRow.lease_available) return 'UNCHANGED';
+      const task = toDurableTaskRecord(taskRow);
+      if (task.state !== 'waiting' || !isPlainObject(task.state_payload)) return 'UNCHANGED';
+      const payload = task.state_payload;
+      const pending = payload['pending_action'];
+      if (!isPlainObject(pending) || pending['mutating'] !== true
+        || pending['effect_key'] !== input.effect_key || payload['resume_event'] !== undefined) {
+        return 'UNCHANGED';
+      }
+
+      let status: 'SUCCEEDED' | 'FAILED' | 'EXPIRED';
+      let taskUpdate: string;
+      let taskPayload: string;
+      let result: 'COMPLETED' | 'FAILED' | 'ESCALATED';
+      if (input.outcome === 'SUCCEEDED') {
+        status = 'SUCCEEDED';
+        result = 'COMPLETED';
+        const resume_event = {
+          tenant_id: input.tenant_id,
+          event_type: 'reconcile.completed',
+          effect_key: input.effect_key,
+        };
+        canonicalizeEvent(resume_event);
+        taskPayload = serializeJsonb({ resume_event }, 'TASK_PAYLOAD_UNSERIALIZABLE');
+        taskUpdate = UPDATE_RECONCILIATION_COMPLETED_TASK;
+      } else if (input.outcome === 'FAILED') {
+        status = 'FAILED';
+        result = 'FAILED';
+        taskPayload = serializeJsonb({
+          code: 'PROVIDER_CONFIRMED_ABSENT',
+          effect_key: input.effect_key,
+        }, 'TASK_ERROR_DETAILS_INVALID');
+        taskUpdate = UPDATE_RECONCILIATION_FAILED_TASK;
+      } else {
+        if (!reservation.max_age_reached) return 'UNCHANGED';
+        status = 'EXPIRED';
+        result = 'ESCALATED';
+        taskPayload = serializeJsonb({
+          reconciliation_required: true,
+          reconciliation_effect_key: input.effect_key,
+        }, 'TASK_PAYLOAD_UNSERIALIZABLE');
+        taskUpdate = UPDATE_RECONCILIATION_ESCALATED_TASK;
+      }
+
+      const receipt = input.outcome === 'SUCCEEDED'
+        ? serializeJsonb(input.receipt, 'RECONCILIATION_RECEIPT_INVALID')
+        : null;
+      const settled = await client.query(UPDATE_RECONCILED_RESERVATION, [
+        input.tenant_id,
+        input.run_id,
+        input.effect_key,
+        status,
+        receipt,
+      ]);
+      if (settled.rowCount !== 1) throw new Error('RECONCILIATION_RESERVATION_CONFLICT');
+
+      assertSingleRow(
+        await client.query<DurableTaskRow>(taskUpdate, [
+          input.tenant_id,
+          input.run_id,
+          taskPayload,
+          task.task_version,
+        ]),
+        input.run_id,
+      );
+      return result;
     });
   }
 

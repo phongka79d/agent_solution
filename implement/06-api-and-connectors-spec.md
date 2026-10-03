@@ -455,6 +455,7 @@ components:
         module:
           type: string
           enum: [marketing, sales, support, auto]
+          description: Invalid values receive HTTP 400 `VALIDATION_FAILED` with a Vietnamese message before any task is created.
           default: auto
         message:
           type: string

@@ -391,6 +391,7 @@ function createInMemoryAdapterRepositories() {
         authority_required: 'AUTH-4',
         payload: input.approval.payload,
         payload_sha256: payloadSha256,
+        digest_version: input.approval.digest_version,
         reason: input.approval.reason,
         decision: 'PENDING',
         operator_id: null,
@@ -1000,6 +1001,7 @@ describe('PILOT-02 / E2E-OFF-CART: Cart Recovery, Floor-Price Guard & Consent Su
         correlation_id: `corr-${RUN_ID}`,
         granted_authority: 'AUTH-1',
         effect_key: 'effect-rec-01',
+        hydrated_context: contextA,
       },
     });
 
@@ -1018,11 +1020,12 @@ describe('PILOT-02 / E2E-OFF-CART: Cart Recovery, Floor-Price Guard & Consent Su
       sku: SKU_ADDON,
       name: 'Silicone Mug Coaster & Lid',
       price: 250,
+      currency: 'TWD',
     });
     expect(recommendation.eligibility).toEqual({
       stock_available: true,
-      consent_verified: true,
-      suppression_cleared: true,
+      consent_verified: null,
+      suppression_cleared: null,
     });
     expect(recommendation.confidence).toBeGreaterThanOrEqual(0.7);
     expect(recommendation.expected_outcome).toEqual({
@@ -1788,6 +1791,7 @@ describe('PILOT-02 / E2E-OFF-CART: Negative Security, Governance & Isolation Inv
           correlation_id: `corr-${RUN_ID}`,
           granted_authority: 'AUTH-1',
           effect_key: 'effect-no-rec',
+          hydrated_context: contextA,
         },
       }),
     ).rejects.toMatchObject({ code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE' });
@@ -1994,10 +1998,12 @@ describe('PILOT-02 / E2E-OFF-CART: Negative Security, Governance & Isolation Inv
       auditSecret: AUDIT_SECRET,
       now: FROZEN_CLOCK,
     });
+    let communicationDispatches = 0;
 
     // Communication connector simulates timeout / provider failure
     const timingOutCommPort: SalesCommunicationPort = {
       async sendMessage() {
+        communicationDispatches += 1;
         throw new OrchestratorError('DISPATCH_TIMEOUT', 'Communication connector request timed out past 3000ms');
       },
     };
@@ -2037,6 +2043,7 @@ describe('PILOT-02 / E2E-OFF-CART: Negative Security, Governance & Isolation Inv
     // UNKNOWN failure parks task in waiting state for reconciliation, never reports completed or success
     expect(result.lifecycle_state).toBe('waiting');
     expect(result.lifecycle_state).not.toBe('completed');
+    expect(communicationDispatches).toBe(1);
   });
 
   it('Negative Case 11: Stale approval — approval bound to a mismatched payload digest fails with APPROVAL_STALE_PAYLOAD and refuses authorization', async () => {
@@ -2059,6 +2066,8 @@ describe('PILOT-02 / E2E-OFF-CART: Negative Security, Governance & Isolation Inv
         action_id: 'act-01',
         effect_key: EFFECT_KEY,
         payload: { discount_amount: 100 },
+        payload_sha256: computePayloadSha256({ discount_amount: 100 }),
+        digest_version: 1,
         reason: 'Autonomous discount requires approval',
       },
     });

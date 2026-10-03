@@ -4,7 +4,7 @@ import { AuthRequestError, TenantConsoleClient } from './tenant-console-client';
 import type {
   ApprovalDecisionRequest, ApprovalDecisionResponse, ApprovalDetailResponse,
   ConversationResumeRequest, ConversationTakeoverHeartbeatRequest, ConversationTakeoverRequest,
-  CustomerTimelineResponse, GetApprovalsResponse, KpiSnapshotResponse, PostMessageRequest,
+  CustomerTimelineResponse, GetApprovalsResponse, PostMessageRequest,
 } from './types/tenant-console';
 
 function createMockJsonResponse<T>(data: T, status = 200, headersInit: Record<string, string> = {}): Response {
@@ -136,6 +136,18 @@ describe('R14 Approval Contracts', () => {
       decision_notes: null,
       payload_sha256: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
       created_at: '2026-09-23T00:00:00Z',
+      summary: {
+        title_key: 'approvals.summary.campaign_send',
+        params: {},
+        requesting_agent_key: 'agents.marketing',
+        domain: 'marketing',
+        campaign_id: null,
+        customer_id: null,
+        risk: 'low',
+        evidence_count: 0,
+        modification: null,
+        expires_at: '2026-09-23T01:00:00Z',
+      },
       tenant_id: 'tenant-1',
       expires_at: '2026-09-23T01:00:00Z',
     };
@@ -249,11 +261,13 @@ describe('R15 Customer 360 Timeline Contract', () => {
       items: [
         {
           event_id: 'ev-1',
+          event_type: 'purchase',
           source_record_id: 'order-1',
           stage: 'purchase',
           canonical_event: 'order.completed',
           classification: 'FACT',
           evidence_reference: 'evidence-1',
+          gap_reason: 'SOURCE_RECORD_PARTIALLY_AVAILABLE',
           occurred_at: '2026-09-23T10:00:00Z',
         },
       ],
@@ -274,50 +288,12 @@ describe('R15 Customer 360 Timeline Contract', () => {
     );
     expect(spy.getLastInit()?.method).toBe('GET');
     expect(result.items[0]?.classification).toBe('FACT');
+    expect(result.items[0]?.event_type).toBe('purchase');
+    expect(result.items[0]?.gap_reason).toBe('SOURCE_RECORD_PARTIALLY_AVAILABLE');
+    expect(result.next_cursor).toBeNull();
   });
 });
 
-describe('R17 Telemetry KPI & Stream Contracts', () => {
-  it('calls GET /api/v1/telemetry/kpi-snapshot with window and timezone queries', async () => {
-    const mockKpi: KpiSnapshotResponse = {
-      window: '7d',
-      timezone: 'Asia/Taipei',
-      observed_at: '2026-09-23T12:00:00Z',
-      metrics: [
-        {
-          metric: 'revenue_twd',
-          value: 1250000,
-          source_status: 'LIVE',
-          observed_at: '2026-09-23T12:00:00Z',
-          window: '7d',
-          timezone: 'Asia/Taipei',
-          provisional: false,
-        },
-      ],
-      cursor: null,
-    };
-    const spy = createFetchSpy(createMockJsonResponse(mockKpi));
-    const client = new TenantConsoleClient({ baseUrl: 'http://localhost:4000', fetch: spy.mockFetch });
-
-    const result = await client.getKpiSnapshot({ window: '7d', timezone: 'Asia/Taipei' });
-
-    expect(spy.getLastUrl()).toBe(
-      'http://localhost:4000/api/v1/telemetry/kpi-snapshot?window=7d&timezone=Asia%2FTaipei'
-    );
-    expect(spy.getLastInit()?.method).toBe('GET');
-    expect(Array.isArray(result.metrics) && result.metrics[0]?.source_status).toBe('LIVE');
-  });
-
-  it('constructs R09 Server-Sent Events (SSE) telemetry stream URL correctly', () => {
-    const client = new TenantConsoleClient({ baseUrl: 'http://localhost:4000' });
-    const sseUrl = client.getTelemetryStreamUrl({
-      metric: 'revenue_attribution',
-      channel: 'live_kpi',
-    });
-
-    expect(sseUrl).toBe('http://localhost:4000/api/v1/telemetry/stream?metric=revenue_attribution&channel=live_kpi');
-  });
-});
 
 describe('SCR-005 Conversation Console Contracts', () => {
   it('calls POST /api/v1/conversations/{id}/takeover with operator lease request', async () => {
@@ -394,13 +370,11 @@ describe('SCR-005 Conversation Console Contracts', () => {
     const spy = createFetchSpy(
       createMockJsonResponse(
         {
-          task_id: 'msg-task-555',
+          message_id: 'msg-555',
           conversation_id: 'conv-101',
-          status: 'accepted',
-          task_version: 1,
-          correlation_id: 'corr-message-1',
+          status: 'persisted',
         },
-        202
+        201
       )
     );
     const client = new TenantConsoleClient({ baseUrl: 'http://localhost:4000', fetch: spy.mockFetch });
@@ -415,6 +389,8 @@ describe('SCR-005 Conversation Console Contracts', () => {
     expect(spy.getLastUrl()).toBe('http://localhost:4000/api/v1/conversations/conv-101/operator-messages');
     expect(spy.getLastInit()?.method).toBe('POST');
     expect(spy.getBodyJson()).toEqual(messageReq);
-    expect(result.status).toBe('accepted');
+    expect(result.status).toBe('persisted');
+    expect(result.message_id).toBe('msg-555');
+    expect(result.conversation_id).toBe('conv-101');
   });
 });

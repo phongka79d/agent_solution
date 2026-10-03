@@ -10,11 +10,12 @@ import type { IRunStageRecorder } from '@agentos/core-engine/contracts';
 import {
   RunStageEventsRepository,
   type AppendRunStageEventInput,
+  type AppendRunStageResultInput,
 } from '@agentos/database';
 
 export type RunStageEventsStore = Pick<
   RunStageEventsRepository,
-  'nextAttemptOrdinal' | 'appendStageEvent'
+  'nextAttemptOrdinal' | 'appendStageEvent' | 'appendStageResult'
 >;
 
 /** Bridges the core stage-recorder port to the tenant-scoped database repository. */
@@ -27,6 +28,10 @@ export class RunStageRecorderAdapter implements IRunStageRecorder {
 
   async append(input: Parameters<IRunStageRecorder['append']>[0]): Promise<void> {
     await this.repository.appendStageEvent(input as AppendRunStageEventInput);
+  }
+
+  async complete(input: Parameters<IRunStageRecorder['complete']>[0]): Promise<void> {
+    await this.repository.appendStageResult(input as AppendRunStageResultInput);
   }
 }
 

@@ -68,7 +68,7 @@ describe('POST /events digest identity', () => {
   it('canonicalizes nested payload keys and refuses a changed body under the same id', async () => {
     const { app, append } = buildHarness();
     try {
-      const headers = { 'content-type': 'application/json', 'x-tenant-id': TOKEN };
+      const headers = { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` };
       const first = await app.inject({
         method: 'POST',
         url: '/events',

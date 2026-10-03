@@ -17,8 +17,8 @@
 
 import { randomUUID } from 'node:crypto';
 import {
+  approvalPayloadDigest,
   computeEffectKey,
-  computeRequestFingerprint,
   evaluateAuthorityVerdict,
   EffectGuard,
   RevenueOrchestrator,
@@ -56,6 +56,8 @@ import {
 } from '@agentos/database';
 import {
   createSkillRuntimeEngine,
+  type SkillBreakerRegistry,
+  type SkillGate,
   type SkillRegistry,
 } from '@agentos/skills';
 import {
@@ -81,6 +83,7 @@ import {
 import { createSkillAdapterDispatcher } from '../shared/skill-dispatcher.js';
 import { createSalesPolicyEngine } from './policy-engine.js';
 import { createSalesSkillServices } from './skills/index.js';
+import { createErpSalesCartPort } from './erp-cart-port.js';
 import {
   createSalesErpPriceFloorPort,
   SalesAdvisorExecutionState,
@@ -97,6 +100,7 @@ import type {
   SalesRecommendationRevenueEvidencePort,
   SalesReplenishmentPolicyPort,
   SalesSkillServices,
+  SalesSkillOptions,
 } from './skills/types.js';
 import type { WorkerConnectorEnv } from '../connectors.js';
 type SalesFactoryEnv = WorkerConnectorEnv & {
@@ -135,6 +139,11 @@ export interface SalesOrchestratorFactoryOptions {
   readonly skillServices?: SalesSkillServices | undefined;
   readonly adapters?: SalesAdaptersShape | undefined;
   readonly registry?: SkillRegistry | undefined;
+  /** Live availability gate (PLAN T4.3): planner skips refused skills, engine refuses at dispatch. */
+  readonly gate?: SkillGate | undefined;
+  /** Shared breaker table keyed `tenant + dependency`; the same instance the gate observes. */
+  readonly breakers?: SkillBreakerRegistry | undefined;
+  readonly llm?: SalesSkillOptions['llm'] | undefined;
   readonly effectReservationRepository?: EffectReservationRepository | undefined;
   readonly aggregatorRepositories?: SalesContextAggregatorRepositories | undefined;
   readonly workflowRepository?: DurableWorkflowRepository | undefined;
@@ -224,9 +233,6 @@ export function getSalesUnboundCapabilities(options: SalesOrchestratorFactoryOpt
   const unbound: string[] = [];
 
   if (!options.adapterDispatcher && !options.skillServices?.dispatcher) {
-    if (options.revenue_evidence === undefined) {
-      unbound.push('Core.RecommendationEngine revenue evidence: no owner-approved revenue model is bound');
-    }
     if (options.erp_read === null || options.erp_read === undefined) {
       unbound.push('API-001 (unbound ERP read: no ERP read connector is bound)');
     }
@@ -234,7 +240,13 @@ export function getSalesUnboundCapabilities(options: SalesOrchestratorFactoryOpt
     if (!priceFloor) {
       unbound.push('API-001.PricingEngine (unbound price/floor: no pricing engine port is bound; skill.sales.check_price refuses)');
     }
-    const cart = options.cart;
+    const cart = options.cart === undefined
+      ? createErpSalesCartPort(options.erp_read ?? null, {
+          price_floor: priceFloor,
+          quote_signing_secret: options.quote_signing_secret,
+          now: options.now,
+        })
+      : options.cart;
     if (!cart) {
       unbound.push('API-002.CommerceCartAPI (unbound cart: no cart port is bound; skill.sales.create_cart refuses)');
     }
@@ -372,7 +384,13 @@ export function createSalesOrchestratorFactory(
   // 4. Skills services and adapter dispatcher
   const advisorState = options.advisor_state ?? new SalesAdvisorExecutionState();
   const priceFloorPort = options.price_floor ?? createSalesErpPriceFloorPort(options.erp_read ?? null);
-  const cartPort = options.cart ?? null;
+  const cartPort = options.cart === undefined
+    ? createErpSalesCartPort(options.erp_read ?? null, {
+        price_floor: priceFloorPort,
+        quote_signing_secret: options.quote_signing_secret,
+        now,
+      })
+    : options.cart;
   const orderPort = options.order ?? null;
   const commPort = options.communication ?? null;
   const consentPort = options.consent ?? null;
@@ -406,6 +424,9 @@ export function createSalesOrchestratorFactory(
       resolve_correlation_id: resolveCorrelationId,
       resolve_grant: resolveGrant,
       now,
+      ...(options.llm === undefined ? {} : { llm: options.llm }),
+      ...(options.gate === undefined ? {} : { gate: options.gate }),
+      ...(options.breakers === undefined ? {} : { breakers: options.breakers }),
     });
     registry ??= skillServices.registry;
   }
@@ -414,10 +435,12 @@ export function createSalesOrchestratorFactory(
   if (!adapterDispatcher) {
     const runtimeEngine = skillServices?.engine ?? (registry ? createSkillRuntimeEngine({
       registry,
-      digestPayload: (payload) => computeRequestFingerprint(payload as Record<string, unknown>),
       deriveEffectKey: (identity) => computeEffectKey(identity),
       evaluateAuthority: (granted, required) => evaluateAuthorityVerdict(granted, required),
-      now: () => now().getTime(),
+      approvalDigest: (action) => approvalPayloadDigest(action),
+      ...(options.llm === undefined ? {} : { llm: options.llm }),
+      ...(options.gate === undefined ? {} : { gate: options.gate }),
+      ...(options.breakers === undefined ? {} : { breakers: options.breakers }),
     }) : undefined);
 
     if (runtimeEngine) {
@@ -454,9 +477,9 @@ export function createSalesOrchestratorFactory(
     ...(replenishmentPort ? { replenishment_policy: replenishmentPort } : {}),
     ...(purchaseEvidencePort ? { purchase_evidence: purchaseEvidencePort } : {}),
     ...(options.lexicon ? { lexicon: options.lexicon } : {}),
+    ...(options.gate === undefined ? {} : { gate: options.gate }),
     advisor_state: advisorState,
     advisor_price_floor_bound: priceFloorPort !== null,
-    advisor_quote_signing_bound: typeof options.quote_signing_secret === 'string' && options.quote_signing_secret.trim().length > 0,
     ...(options.careOnboardingItinerary === undefined
       ? {}
       : { careOnboardingItinerary: options.careOnboardingItinerary }),
@@ -475,6 +498,9 @@ export function createSalesOrchestratorFactory(
     ...(options.autonomy ? { autonomy: options.autonomy } : {}),
     auditTrail,
     auditRepository: options.auditRepository,
+    ...(registry === undefined
+      ? {}
+      : { normalizeActionInput: (skill_id, input) => registry!.resolve(skill_id).validateInput(input) }),
   });
 
   return async (_tenant_id: string): Promise<RevenueOrchestrator | null> => {

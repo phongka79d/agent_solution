@@ -17,6 +17,7 @@ import {
   type AuthEnvironment,
 } from './session';
 
+import { findPlatformBffRoute } from '../bff-routes';
 export const PLATFORM_AUDIENCE = 'platform' as const;
 export const PLATFORM_SCOPE = 'platform' as const;
 export const PLATFORM_PERMISSION = 'platform:admin' as const;
@@ -132,15 +133,25 @@ function providerError(response: Response, payload: ApiPayload | null): AuthProv
 export interface DemoAuthProviderOptions {
   readonly env?: AuthEnvironment;
   readonly fetchImpl?: FetchLike;
+  /** The API account routes this provider speaks to; the demo routes unless durable identity is selected. */
+  readonly loginPath?: string;
+  readonly sessionPath?: string;
+  readonly logoutPath?: string;
 }
 
 export class DemoAuthProvider implements AuthProvider {
   private readonly env: AuthEnvironment;
   private readonly fetchImpl: FetchLike;
+  private readonly loginPath: string;
+  private readonly sessionPath: string;
+  private readonly logoutPath: string;
 
   constructor(options: DemoAuthProviderOptions = {}) {
     this.env = options.env ?? process.env;
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.loginPath = options.loginPath ?? '/demo/login';
+    this.sessionPath = options.sessionPath ?? '/demo/session';
+    this.logoutPath = options.logoutPath ?? '/demo/logout';
   }
 
   async signIn(email: string, password: string): Promise<SignInResult> {
@@ -149,7 +160,7 @@ export class DemoAuthProvider implements AuthProvider {
       throw new AuthProviderError(400, 'INVALID_LOGIN');
     }
     if (!cookieHmacKey(this.env)) throw new AuthProviderError(503, 'AUTH_CONFIGURATION');
-    const url = apiUrl('/demo/login', this.env);
+    const url = apiUrl(this.loginPath, this.env);
     if (!url) throw new AuthProviderError(503, 'DEMO_UNAVAILABLE');
     let response: Response;
     try {
@@ -177,7 +188,7 @@ export class DemoAuthProvider implements AuthProvider {
     await sweepExpiredSessions();
     const previous = await revokeSessionsForIdentity(parsed.session.identity.user_id);
     await Promise.all(previous.map(async (session) => {
-      const logoutUrl = apiUrl('/demo/logout', this.env);
+      const logoutUrl = apiUrl(this.logoutPath, this.env);
       if (!logoutUrl) return;
       try {
         await this.fetchImpl(logoutUrl, { method: 'POST', headers: { accept: 'application/json', authorization: `Bearer ${session.apiToken}` }, cache: 'no-store' });
@@ -199,7 +210,7 @@ export class DemoAuthProvider implements AuthProvider {
   async getSession(request: Request): Promise<AuthSession | null> {
     const found = await readStoredSession(request, this.env);
     if (!found) return null;
-    const url = apiUrl('/demo/session', this.env);
+    const url = apiUrl(this.sessionPath, this.env);
     if (!url) throw new AuthProviderError(503, 'DEMO_UNAVAILABLE');
     let response: Response;
     try {
@@ -227,7 +238,7 @@ export class DemoAuthProvider implements AuthProvider {
     const found = await readStoredSession(request, this.env);
     if (!found) return;
     try {
-      const url = apiUrl('/demo/logout', this.env);
+      const url = apiUrl(this.logoutPath, this.env);
       if (url) {
         await this.fetchImpl(url, { method: 'POST', headers: { accept: 'application/json', authorization: `Bearer ${found.session.apiToken}` }, cache: 'no-store' });
       }
@@ -257,25 +268,7 @@ function normalizeProxyPath(path: string): string | null {
 
 export function isAllowedProxyPath(method: string, rawPath: string): boolean {
   const path = normalizeProxyPath(rawPath);
-  if (!path) return false;
-  const upperMethod = method.toUpperCase();
-  if (upperMethod === 'GET') {
-    return path === 'runs'
-      || path === 'demo/readiness'
-      || path === 'platform/tenants'
-      || path === 'platform/usage'
-      || path === 'platform/providers'
-      || path === 'admin/tenants/current'
-      || path === 'admin/autonomy'
-      || path === 'telemetry/kpi-snapshot'
-      || /^platform\/tenants\/[A-Za-z0-9._:-]+$/.test(path)
-      || /^platform\/tenants\/[A-Za-z0-9._:-]+\/readiness$/.test(path)
-      || /^runs\/[A-Za-z0-9._:-]+\/trace$/.test(path);
-  }
-  if (upperMethod === 'POST') {
-    return path === 'admin/autonomy/pause' || path === 'admin/autonomy/resume' || path === 'admin/autonomy/demote' || /^operations\/runs\/[A-Za-z0-9._:-]+\/retry$/.test(path);
-  }
-  return false;
+  return path !== null && findPlatformBffRoute(method, path) !== undefined;
 }
 
 function forwardedHeaders(request: Request, token: string): Headers {
@@ -297,16 +290,28 @@ function proxyResponse(upstream: Response): Response {
   return new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers });
 }
 
-export async function proxyPlatformApi(request: Request, rawPath: string, env: AuthEnvironment = process.env, fetchImpl: FetchLike = fetch): Promise<Response> {
-  const gate = demoGateResponse(env);
+/**
+ * The authenticated proxy both consoles' BFFs use. The provider and the gate are parameters so the
+ * durable (`AUTH_PROVIDER=db`) path proxies with the same code but a different account store; the
+ * defaults keep the demo behaviour for every existing caller.
+ */
+export async function proxyPlatformApi(
+  request: Request,
+  rawPath: string,
+  env: AuthEnvironment = process.env,
+  fetchImpl: FetchLike = fetch,
+  provider: DemoAuthProvider = createDemoAuthProvider({ env, fetchImpl }),
+  gate: Response | null = demoGateResponse(env),
+): Promise<Response> {
   if (gate) return gate;
   const method = request.method.toUpperCase();
   const path = normalizeProxyPath(rawPath);
-  if (!path || !isAllowedProxyPath(method, path)) return jsonResponse({ error: 'NOT_FOUND' }, 404);
-  const provider = createDemoAuthProvider({ env, fetchImpl });
+  if (!path) return jsonResponse({ error: 'NOT_FOUND' }, 404);
+  const bffRoute = findPlatformBffRoute(method, path);
+  if (!bffRoute) return jsonResponse({ error: 'NOT_FOUND' }, 404);
   const found = await readStoredSession(request, env);
   if (!found) return jsonResponse({ reason: 'unauthenticated' }, 401);
-  const protection = method === 'GET' ? null : mutationProtection(request, found.session);
+  const protection = bffRoute.csrf ? mutationProtection(request, found.session) : null;
   if (protection) return protection;
   let verified: { token: string } | null;
   try {

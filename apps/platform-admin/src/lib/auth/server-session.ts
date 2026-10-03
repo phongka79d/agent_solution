@@ -1,6 +1,6 @@
 import type { AuthSession } from '@agentos/ui-foundation/auth';
 import { headers } from 'next/headers';
-import { createDemoAuthProvider } from './demo-provider';
+import { createConfiguredAuthProvider } from './selection';
 import {
   getCookie,
   PLATFORM_SESSION_COOKIE,
@@ -18,7 +18,7 @@ export async function getServerSession(): Promise<AuthSession | null> {
     if (!rawCookie) return null;
     const reference = verifySessionCookie(rawCookie, process.env as AuthEnvironment);
     if (!reference || !(await readStoredSession(request, process.env as AuthEnvironment))) return null;
-    return await createDemoAuthProvider({ env: process.env as AuthEnvironment }).getSession(request);
+    return await createConfiguredAuthProvider({ env: process.env as AuthEnvironment }).getSession(request);
   } catch {
     return null;
   }

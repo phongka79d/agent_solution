@@ -19,7 +19,7 @@ export interface BoundedExecutionOptions<TOutput> {
   readonly retry_policy: RetryPolicy;
   readonly timeout_ms: number;
   /** One attempt, under a signal that is aborted when the attempt's deadline fires. */
-  readonly runAttempt: (signal: AbortSignal) => Promise<TOutput>;
+  readonly runAttempt: (signal: AbortSignal, attempt: number) => Promise<TOutput>;
   /** Called exactly once when an attempt ends the loop as `EFFECT_UNKNOWN` or `FATAL`. */
   readonly onAttemptFailure: () => void;
   readonly random: () => number;
@@ -79,7 +79,7 @@ export async function executeBounded<TOutput>(
         }, options.timeout_ms);
       });
       try {
-        const output = await Promise.race([options.runAttempt(controller.signal), deadlinePromise]);
+        const output = await Promise.race([options.runAttempt(controller.signal, attempt), deadlinePromise]);
         return { output, attempts: attempt };
       } finally {
         clearTimeout(deadline);
@@ -113,6 +113,7 @@ export async function executeBounded<TOutput>(
           'SKILL_EXECUTION_FAILED',
           `${errorCode} after ${attempt} attempts inside a ${options.retry_policy.max_retries}-retry budget`,
           options.skill_id,
+          error,
         );
       }
 

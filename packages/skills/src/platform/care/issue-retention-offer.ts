@@ -127,6 +127,8 @@ const spec: Omit<
   allowed_agents: ['CS-02'],
   required_authority: 'AUTH-3',
   tool_binding: 'PromotionEngine.FloorPriceGuard',
+  requires_verified_identity: true,
+  requires_consent: true,
   validation_rules: [
     'voucher must not reduce cart subtotal below P_floor (BR-001, BR-002)',
     'customer cannot receive > 1 retention offer per 30 days',

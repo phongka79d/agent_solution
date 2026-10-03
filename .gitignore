@@ -9,8 +9,9 @@ __pycache__/
 *$py.class
 *.env
 .env
-.venv/
+.env.*
 !.env.example
+.venv/
 env/
 venv/
 
@@ -31,3 +32,4 @@ coverage/
 *.tsbuildinfo
 pnpm-debug.log
 test-results/
+tests/stack/.state/

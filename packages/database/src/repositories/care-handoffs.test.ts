@@ -153,6 +153,8 @@ describe('CareHandoffRepository', () => {
 
     expect(result).toEqual({ disposition: 'CREATED', output: testReceipt().response_payload, receipt: testReceipt() });
     expect(tenants).toEqual([TENANT_ID]);
+    const reservationLookup = client.queries.find(({ sql }) => statement(sql, 'FROM agentos.effect_reservations'));
+    expect(reservationLookup?.params).toEqual([TENANT_ID, EFFECT_KEY]);
     const writes = client.queries.filter(({ sql }) =>
       /^(INSERT INTO|UPDATE) agentos\.(care_handoffs|platform_durable_tasks|conversations|effect_reservations)/.test(sql.trim()),
     );
@@ -162,6 +164,45 @@ describe('CareHandoffRepository', () => {
     expect(writes[1]?.sql).toContain('lease_owner = NULL, lease_expires_at = NULL');
     expect(writes[3]?.params[3]).toBe(JSON.stringify(testReceipt()));
     expect(client.queries.filter(({ sql }) => statement(sql, 'set_config(')).length).toBeGreaterThan(0);
+  });
+
+  it('refuses a reservation whose stored fingerprint differs from the dispatched pending action', async () => {
+    const { repository, client } = harnessFor((sql) => {
+      if (statement(sql, 'set_config(') || statement(sql, 'pg_advisory_xact_lock')) return [];
+      if (statement(sql, 'FROM agentos.care_handoffs') && statement(sql, 'effect_key = $2')) return [];
+      if (statement(sql, 'FROM agentos.platform_durable_tasks')) {
+        return [{
+          state: 'running',
+          current_step: 2,
+          task_version: 4,
+          lease_owner: 'worker-1',
+          lease_active: true,
+          state_payload: CHECKPOINT,
+        }];
+      }
+      if (statement(sql, 'FROM agentos.conversations')) {
+        return [{ customer_id: CUSTOMER_ID, external_thread_id: 'thread-1', state: 'open', takeover_operator_id: null }];
+      }
+      if (statement(sql, "status IN ('ENQUEUED', 'ASSIGNED')")) return [];
+      if (statement(sql, 'FROM agentos.effect_reservations')) {
+        return [{
+          request_id: REQUEST_ID,
+          request_fingerprint: 'c'.repeat(64),
+          run_id: RUN_ID,
+          step_index: 2,
+          skill_id: 'skill.care.escalate_to_human',
+          status: 'RESERVED',
+          response_receipt: null,
+        }];
+      }
+      throw new Error('FINGERPRINT_MISMATCH_MUST_STOP_BEFORE_QUEUE_WRITES:' + sql);
+    });
+
+    await expect(repository.enqueue(INPUT)).rejects.toThrow(/HANDOFF_EFFECT_RESERVATION_INVALID/);
+
+    const reservationLookup = client.queries.find(({ sql }) => statement(sql, 'FROM agentos.effect_reservations'));
+    expect(reservationLookup?.params).toEqual([TENANT_ID, EFFECT_KEY]);
+    expect(client.queries.some(({ sql }) => /^(INSERT INTO|UPDATE) agentos\./.test(sql.trim()))).toBe(false);
   });
 
   it('replays the persisted output and rejects a changed request fingerprint without queue writes', async () => {

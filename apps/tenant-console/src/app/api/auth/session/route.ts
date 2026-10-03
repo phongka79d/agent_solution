@@ -13,10 +13,10 @@ import {
   unauthorizedResponse,
 } from '../../../../lib/auth/session';
 import {
-  demoAuthProvider,
+  authProvider,
   ExpiredProviderSessionError,
   ProviderHttpError,
-} from '../../../../lib/auth/demo-provider';
+} from '../../../../lib/auth';
 export const dynamic = 'force-dynamic';
 
 
@@ -38,7 +38,7 @@ export async function GET(request: Request): Promise<Response> {
 
   let session: AuthSession | null;
   try {
-    session = await demoAuthProvider.getSession(request);
+    session = await authProvider.getSession(request);
   } catch (error) {
     if (error instanceof ExpiredProviderSessionError) {
       await destroySession(request);

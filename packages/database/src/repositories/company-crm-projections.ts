@@ -17,6 +17,8 @@ export interface CompanyCrmCustomerRow extends QueryResultRow {
   display_name: string | null;
   customer_tier: string;
   verification_status: string;
+  /** Server-owned class selected from the customer root, not the tenant or profile view. */
+  data_class?: string;
   created_at: Date | string;
   verified_phone: string | null;
   verified_email: string | null;
@@ -80,17 +82,27 @@ export interface CompanyCrmCampaignRow extends QueryResultRow {
   name: string | null;
   objective: string | null;
   channels: unknown;
+  audience_count: number | null;
   campaign_status: string | null;
   campaign_created_at: Date | string | null;
   campaign_updated_at: Date | string | null;
   task_state: string | null;
   task_payload: unknown;
+  task_error: unknown;
   task_created_at: Date | string | null;
   approval_id: string | null;
   approval_decision: string | null;
   approval_created_at: Date | string | null;
   approval_decided_at: Date | string | null;
   approval_payload: unknown;
+}
+
+export interface CompanyCrmCampaignSegment extends QueryResultRow {
+  segment_id: string;
+  label_key: string;
+  kind: 'STORED' | 'INACTIVE_DAYS';
+  days?: number;
+  audience_count: number;
 }
 
 export interface CompanyCrmCampaignEngagementRow extends QueryResultRow {
@@ -123,6 +135,8 @@ export interface CompanyCrmConversationSummaryRow extends QueryResultRow {
   customer_display_name: string | null;
   customer_tier: string | null;
   customer_classification: string | null;
+  has_enqueued_handoff?: boolean;
+  has_assigned_handoff?: boolean;
 }
 
 export interface CustomerListInput {
@@ -197,7 +211,7 @@ export class CompanyCrmProjectionRepository {
     return this.runInTenantTransaction(input.tenant_id, async (client) => {
       const result = await client.query<CompanyCrmCustomerRow>(
         `SELECT c.id AS customer_id, c.tenant_id, c.display_name, c.customer_tier,
-                c.verification_status, c.created_at,
+                c.verification_status, c.data_class::text AS data_class, c.created_at,
                 p.verified_phone, p.verified_email, p.total_spent,
                 p.order_count, p.rfm_segment_hypothesis,
                 p.consent_marketing, p.suppression_active,
@@ -219,7 +233,7 @@ export class CompanyCrmProjectionRepository {
                  OR c.external_crm_id ILIKE '%' || $2::text || '%')
             AND ($3::timestamptz IS NULL OR (c.created_at, c.id) < ($3::timestamptz, $4::uuid))
           GROUP BY c.id, c.tenant_id, c.display_name, c.customer_tier,
-                   c.verification_status, c.created_at, p.verified_phone,
+                   c.verification_status, c.data_class, c.created_at, p.verified_phone,
                    p.verified_email, p.total_spent, p.order_count,
                    p.rfm_segment_hypothesis, p.consent_marketing,
                    p.suppression_active
@@ -243,7 +257,7 @@ export class CompanyCrmProjectionRepository {
     return this.runInTenantTransaction(tenant_id, async (client) => {
       const result = await client.query<CompanyCrmCustomerProfileRow>(
         `SELECT c.id AS customer_id, c.tenant_id, c.display_name, c.customer_tier,
-                c.verification_status, c.created_at,
+                c.verification_status, c.data_class::text AS data_class, c.created_at,
                 p.verified_phone, p.verified_email, p.total_spent,
                 p.order_count, p.rfm_segment_hypothesis,
                 p.consent_marketing, p.suppression_active,
@@ -290,7 +304,7 @@ export class CompanyCrmProjectionRepository {
            JOIN agentos.customers c ON c.tenant_id = p.tenant_id AND c.id = p.customer_id
           WHERE p.tenant_id = $1 AND p.customer_id = $2
           GROUP BY c.id, c.tenant_id, c.display_name, c.customer_tier,
-                   c.verification_status, c.created_at, p.verified_phone,
+                   c.verification_status, c.data_class, c.created_at, p.verified_phone,
                    p.verified_email, p.total_spent, p.order_count,
                    p.rfm_segment_hypothesis, p.consent_marketing,
                    p.suppression_active`,
@@ -310,27 +324,85 @@ export class CompanyCrmProjectionRepository {
     });
   }
 
+  async listCampaignSegments(tenant_id: string): Promise<readonly CompanyCrmCampaignSegment[]> {
+    return this.runInTenantTransaction(tenant_id, async (client) => {
+      const result = await client.query<CompanyCrmCampaignSegment>(
+        `WITH inactivity_windows(days) AS (
+           VALUES (30), (60), (90), (180)
+         )
+         SELECT 'inactive_' || w.days::text || 'd' AS segment_id,
+                'campaigns.segments.inactive_' || w.days::text || 'd' AS label_key,
+                'INACTIVE_DAYS'::text AS kind,
+                w.days,
+                (
+                  SELECT COUNT(DISTINCT c.id)::int
+                    FROM agentos.customers c
+                    JOIN agentos.customer_360_profiles p
+                      ON p.tenant_id = c.tenant_id AND p.customer_id = c.id
+                   WHERE c.tenant_id = $1
+                     AND c.metadata->>'last_paid_purchase_at' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                     AND (c.metadata->>'last_paid_purchase_at')::timestamptz
+                         <= CURRENT_TIMESTAMP - make_interval(days => w.days)
+                     AND p.rfm_segment_hypothesis = 'HIBERNATING'
+                     AND p.suppression_active = FALSE
+                     AND EXISTS (
+                           SELECT 1
+                             FROM agentos.customer_identities ci
+                             JOIN agentos.consents consent
+                               ON consent.tenant_id = ci.tenant_id
+                              AND consent.customer_id = ci.customer_id
+                              AND consent.channel = ci.channel_type
+                            WHERE ci.tenant_id = c.tenant_id
+                              AND ci.customer_id = c.id
+                              AND ci.verified_at IS NOT NULL
+                              AND consent.consent_type = 'marketing_messaging'
+                              AND consent.is_granted = TRUE
+                              AND consent.opt_in_timestamp IS NOT NULL
+                              AND consent.opt_out_timestamp IS NULL
+                         )
+                ) AS audience_count
+           FROM inactivity_windows w
+          ORDER BY w.days`,
+        [tenant_id],
+      );
+      return result.rows;
+    });
+  }
+
   async listCampaigns(input: CampaignListInput): Promise<CampaignListPage> {
     const limit = boundedLimit(input.limit, 'CAMPAIGN_LIST_LIMIT_INVALID');
     const cursor = decodeCursor(input.cursor, 'CAMPAIGN_LIST_CURSOR_INVALID');
     return this.runInTenantTransaction(input.tenant_id, async (client) => {
       const result = await client.query<CompanyCrmCampaignRow>(
-        `SELECT c.id AS campaign_id, t.run_id, c.name, c.objective, c.channels,
+        `WITH latest_approvals AS (
+           SELECT DISTINCT ON (a.tenant_id, a.run_id)
+                  a.id, a.tenant_id, a.run_id, a.campaign_id, a.decision,
+                  a.created_at, a.decided_at, a.payload
+             FROM agentos.approvals a
+            ORDER BY a.tenant_id, a.run_id, a.created_at DESC, a.id DESC
+         )
+         SELECT c.id AS campaign_id, t.run_id, c.name, c.objective, c.channels,
+                c.target_count AS audience_count,
                 c.status AS campaign_status, c.created_at AS campaign_created_at,
                 c.updated_at AS campaign_updated_at, t.state AS task_state,
-                t.state_payload AS task_payload, t.created_at AS task_created_at,
+                t.state_payload AS task_payload, t.error_details AS task_error,
+                t.created_at AS task_created_at,
                 a.id AS approval_id, a.decision AS approval_decision,
                 a.created_at AS approval_created_at, a.decided_at AS approval_decided_at,
                 a.payload AS approval_payload
            FROM agentos.platform_durable_tasks t
-           LEFT JOIN agentos.approvals a
+           LEFT JOIN latest_approvals a
              ON a.tenant_id = t.tenant_id AND a.run_id = t.run_id
            LEFT JOIN agentos.campaigns c
              ON c.tenant_id = t.tenant_id
-            AND (c.id::text = t.state_payload->'signal'->'payload'->>'campaign_id'
+            AND (c.run_id = t.run_id
+                 OR c.id::text = t.state_payload->'signal'->'payload'->>'campaign_id'
                  OR c.id = a.campaign_id)
           WHERE t.tenant_id = $1
-            AND t.state_payload->'signal'->'payload'->>'module' = 'marketing'
+            -- Admission payload carries signal.module; once checkpointed the plan carries domain.
+            AND (t.state_payload->'signal'->'payload'->>'module' = 'marketing'
+                 OR t.state_payload->'plan'->>'domain' = 'marketing'
+                 OR c.id IS NOT NULL)
             AND ($2::timestamptz IS NULL OR (t.created_at, t.run_id) < ($2::timestamptz, $3::varchar))
           ORDER BY t.created_at DESC, t.run_id DESC
           LIMIT $4`,
@@ -350,23 +422,35 @@ export class CompanyCrmProjectionRepository {
   async getCampaign(tenant_id: string, run_id: string): Promise<CompanyCrmCampaignRow | null> {
     return this.runInTenantTransaction(tenant_id, async (client) => {
       const result = await client.query<CompanyCrmCampaignRow>(
-        `SELECT c.id AS campaign_id, t.run_id, c.name, c.objective, c.channels,
+        `WITH latest_approvals AS (
+           SELECT DISTINCT ON (a.tenant_id, a.run_id)
+                  a.id, a.tenant_id, a.run_id, a.campaign_id, a.decision,
+                  a.created_at, a.decided_at, a.payload
+             FROM agentos.approvals a
+            ORDER BY a.tenant_id, a.run_id, a.created_at DESC, a.id DESC
+         )
+         SELECT c.id AS campaign_id, t.run_id, c.name, c.objective, c.channels,
+                c.target_count AS audience_count,
                 c.status AS campaign_status, c.created_at AS campaign_created_at,
                 c.updated_at AS campaign_updated_at, t.state AS task_state,
-                t.state_payload AS task_payload, t.created_at AS task_created_at,
+                t.state_payload AS task_payload, t.error_details AS task_error,
+                t.created_at AS task_created_at,
                 a.id AS approval_id, a.decision AS approval_decision,
                 a.created_at AS approval_created_at, a.decided_at AS approval_decided_at,
                 a.payload AS approval_payload
            FROM agentos.platform_durable_tasks t
-           LEFT JOIN agentos.approvals a
+           LEFT JOIN latest_approvals a
              ON a.tenant_id = t.tenant_id AND a.run_id = t.run_id
            LEFT JOIN agentos.campaigns c
              ON c.tenant_id = t.tenant_id
-            AND (c.id::text = t.state_payload->'signal'->'payload'->>'campaign_id'
+            AND (c.run_id = t.run_id
+                 OR c.id::text = t.state_payload->'signal'->'payload'->>'campaign_id'
                  OR c.id = a.campaign_id)
           WHERE t.tenant_id = $1
             AND t.run_id = $2
-            AND t.state_payload->'signal'->'payload'->>'module' = 'marketing'`,
+            AND (t.state_payload->'signal'->'payload'->>'module' = 'marketing'
+                 OR t.state_payload->'plan'->>'domain' = 'marketing'
+                 OR c.id IS NOT NULL)`,
         [tenant_id, run_id],
       );
       return result.rows[0] ?? null;
@@ -380,7 +464,13 @@ export class CompanyCrmProjectionRepository {
                 cv.active_agent, cv.takeover_operator_id, cv.last_message_at,
                 p.verified_phone, p.verified_email,
                 c.display_name AS customer_display_name, c.customer_tier,
-                c.verification_status AS customer_classification
+                c.verification_status AS customer_classification,
+                EXISTS (SELECT 1 FROM agentos.care_handoffs h
+                         WHERE h.tenant_id = cv.tenant_id AND h.conversation_id = cv.id
+                           AND h.status = 'ENQUEUED') AS has_enqueued_handoff,
+                EXISTS (SELECT 1 FROM agentos.care_handoffs h
+                         WHERE h.tenant_id = cv.tenant_id AND h.conversation_id = cv.id
+                           AND h.status = 'ASSIGNED') AS has_assigned_handoff
            FROM agentos.conversations cv
            LEFT JOIN agentos.customers c
              ON c.tenant_id = cv.tenant_id AND c.id = cv.customer_id

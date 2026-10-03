@@ -10,6 +10,10 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./canonical-json": {
+      "types": "./dist/durability/canonical-json.d.ts",
+      "import": "./dist/durability/canonical-json.js"
+    },
     "./contracts": {
       "types": "./dist/contracts/index.d.ts",
       "default": "./dist/contracts/index.js"

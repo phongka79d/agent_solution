@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 
-import type { CompanyProjectionSources } from '@agentos/database';
+import type { CompanyActivityPageOptions, CompanyProjectionSources } from '@agentos/database';
 import type { CompanyProjectionPort, PlatformProvidersPort } from '../../gateway/ports.js';
 import type { CredentialStore } from '../../gateway/principal.js';
 import { authenticate, requireOperator } from '../../gateway/principal.js';
@@ -11,13 +11,11 @@ import type { ProvisioningRoutePort } from './provisioning.js';
 import { mapAiTeam } from '../../projections/ai-team.js';
 import { mapAttention } from '../../projections/attention.js';
 import { mapActivity } from '../../projections/activity.js';
-import { mapIntegrations } from '../../projections/integrations.js';
-import { mapOverview } from '../../projections/overview.js';
+import { mapOverview, type WorkspaceOverviewSource } from '../../projections/overview.js';
 import {
   companyActivityRouteSchema,
   companyAiTeamRouteSchema,
   companyAttentionRouteSchema,
-  companyIntegrationsRouteSchema,
   companyOverviewRouteSchema,
   registerOpenApiSchemas,
 } from './openapi-schemas.js';
@@ -47,6 +45,7 @@ type CompanyRouteSources = CompanyProjectionSources & {
   readonly readiness_connectors?: readonly { readonly key: string; readonly class: string }[];
   readonly enabled_modules?: readonly string[];
   readonly module_capabilities?: readonly { readonly capability_id: string; readonly status: string }[];
+  readonly workspace?: WorkspaceOverviewSource;
 };
 
 interface CompanyReadinessSource {
@@ -98,8 +97,11 @@ async function sourceWithShell(
   dependencies: CompanyRouteDependencies,
   tenant_id: string,
   enrich = true,
+  activityPage?: CompanyActivityPageOptions,
 ): Promise<CompanyRouteSources> {
-  const sources = await dependencies.projections.getSources(tenant_id);
+  const sources = activityPage === undefined
+    ? await dependencies.projections.getSources(tenant_id)
+    : await dependencies.projections.getSources(tenant_id, activityPage);
   if (!enrich) return sources;
   const [readiness, shell] = await Promise.all([
     readinessSource(dependencies, tenant_id),
@@ -113,11 +115,23 @@ async function sourceWithShell(
     if (ownerById[input_id] === undefined) ownerById[input_id] = { input_id, status: 'UNRESOLVED' };
   }
   const capabilities = capabilityRows(shell?.capabilities);
+  const erpClass = readiness?.readiness_connectors.find((connector) => connector.key === 'erp')?.class;
+  const provisionedConnector = sources.connectors.some((connector) => /bound|connected|live|active/i.test(connector.status));
+  const workspace: WorkspaceOverviewSource = {
+    status: shell?.status ?? 'UNKNOWN',
+    profile_ready: shell !== null,
+    erp_ready: erpClass !== undefined && !/unconfig|missing|not_configured|unbound|absent/i.test(erpClass),
+    knowledge_ready: (capabilities ?? []).some((capability) => /knowledge/i.test(capability.capability_id) && capability.status === 'ENABLED'),
+    llm_ready: readiness?.provider.configured ?? false,
+    channels_ready: provisionedConnector,
+    test_agents_ready: sources.agents.length > 0,
+  };
   return {
     ...sources,
     ...(readiness === undefined ? {} : { provider: readiness.provider, readiness_connectors: readiness.readiness_connectors }),
     ...(dependencies.enabledModules === undefined ? {} : { enabled_modules: dependencies.enabledModules }),
     ...(capabilities === undefined ? {} : { module_capabilities: capabilities }),
+    ...(shell === null && readiness === undefined ? {} : { workspace }),
     owner_inputs: Object.values(ownerById),
   };
 }
@@ -177,11 +191,12 @@ export function registerCompanyRoutes(app: FastifyInstance, dependencies: Compan
     try {
       const principal = requireOperator(request, 'run:read');
       const limit = queryLimit(request.query.limit);
-      const sources = await sourceWithShell(dependencies, principal.tenant_id, false);
-      const activity = mapActivity(sources, {
+      const activityPage: CompanyActivityPageOptions = {
         ...(limit === undefined ? {} : { limit }),
         ...(request.query.cursor === undefined ? {} : { cursor: request.query.cursor }),
-      });
+      };
+      const sources = await sourceWithShell(dependencies, principal.tenant_id, false, activityPage);
+      const activity = mapActivity(sources, activityPage);
       await audit(request, runtime, principal.tenant_id, 'company.activity', { count: activity.items.length }, principal.kind, principal.operator_id);
       return reply.code(200).send(activity);
     } catch (error) {
@@ -189,31 +204,18 @@ export function registerCompanyRoutes(app: FastifyInstance, dependencies: Compan
     }
   });
 
-  app.get('/company/integrations', { preHandler, schema: companyIntegrationsRouteSchema }, async (request, reply) => {
-    const runtime = dependencies.runtime;
-    try {
-      const principal = requireOperator(request, 'telemetry:read');
-      const sources = await sourceWithShell(dependencies, principal.tenant_id);
-      const items = mapIntegrations(sources);
-      await audit(request, runtime, principal.tenant_id, 'company.integrations', { count: items.length }, principal.kind, principal.operator_id);
-      return reply.code(200).send({ items });
-    } catch (error) {
-      return replyFailure(reply, error, correlationIdOf(request, runtime));
-    }
-  });
 
   app.get('/company/overview', { preHandler, schema: companyOverviewRouteSchema }, async (request, reply) => {
     const runtime = dependencies.runtime;
     try {
       const principal = requireOperator(request, 'telemetry:read');
       const sources = await sourceWithShell(dependencies, principal.tenant_id);
-      const overview = mapOverview({
-        ...sources,
-        ...(sources.runs_today.length === 0 ? {} : { metrics: { runs: sources.runs_today.length } }),
-      });
+      const overview = mapOverview(sources);
       await audit(request, runtime, principal.tenant_id, 'company.overview', {
         attention_count: overview.attention.length,
+        today_metric_count: overview.today?.metrics.length ?? 0,
         activity_count: overview.activity.length,
+        workspace_checklist: overview.workspace?.checklist.length ?? 0,
       }, principal.kind, principal.operator_id);
       return reply.code(200).send(overview);
     } catch (error) {

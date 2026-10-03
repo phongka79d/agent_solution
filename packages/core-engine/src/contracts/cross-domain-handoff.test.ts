@@ -342,10 +342,11 @@ describe('assertHandoffAdmissible', () => {
 });
 
 describe('assertHandoffSourceDomain', () => {
-  it('corroborates the leg against the agents the run acted with', () => {
-    expect(() => assertHandoffSourceDomain('sales', ['SAL-02', 'SAL-05'])).not.toThrow();
-    expect(() => assertHandoffSourceDomain('retention', ['CS-02'])).not.toThrow();
-    expectRefusal(() => assertHandoffSourceDomain('marketing', ['SAL-02']), 'HANDOFF_PACKAGE_INVALID');
-    expectRefusal(() => assertHandoffSourceDomain('retention', []), 'HANDOFF_PACKAGE_INVALID');
+  it('corroborates the leg against the execution domain declared by the planner', () => {
+    expect(() => assertHandoffSourceDomain('sales', 'sales', 2)).not.toThrow();
+    expect(() => assertHandoffSourceDomain('retention', 'support', 1)).not.toThrow();
+    expectRefusal(() => assertHandoffSourceDomain('marketing', 'sales', 1), 'HANDOFF_PACKAGE_INVALID');
+    expectRefusal(() => assertHandoffSourceDomain('retention', 'support', 0), 'HANDOFF_PACKAGE_INVALID');
+    expectRefusal(() => assertHandoffSourceDomain('retention', undefined, 1), 'HANDOFF_PACKAGE_INVALID');
   });
 });

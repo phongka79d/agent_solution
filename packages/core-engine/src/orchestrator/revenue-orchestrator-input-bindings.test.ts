@@ -8,6 +8,7 @@ import {
   type ExecutionReceipt,
   type HydratedContext,
   type IPlanInputResolver,
+  type IRunResponseStore,
   type IStatefulWorkflowEngine,
   type PlannedStep,
   type RoutingDecision,
@@ -87,6 +88,7 @@ function plan(steps: PlannedStep[]): ExecutionPlan {
 
 function makeOrchestrator(options: {
   readonly steps: PlannedStep[];
+  readonly domain?: ExecutionPlan['domain'];
   readonly evidenceLogger?: MemoryEvidenceLogger;
   readonly workflowEngine?: IStatefulWorkflowEngine;
   readonly resolver?: IPlanInputResolver;
@@ -96,6 +98,13 @@ function makeOrchestrator(options: {
   const effectGuard = new MemoryEffectGuard();
   const workflow = options.workflowEngine ?? new MemoryWorkflowEngine();
   const dispatch = vi.fn(options.dispatch ?? (async () => receipt({})));
+  const responses = new Map<string, Parameters<IRunResponseStore['save']>[0]['response']>();
+  const responseStore: IRunResponseStore = {
+    read: async ({ tenant_id, run_id }) => responses.get(`${tenant_id}:${run_id}`) ?? null,
+    save: async ({ tenant_id, run_id, response }) => {
+      responses.set(`${tenant_id}:${run_id}`, response);
+    },
+  };
   const agentRuntime = {
     deriveHypothesis: async () => ({
       classification: 'HYPOTHESIS' as const,
@@ -111,7 +120,10 @@ function makeOrchestrator(options: {
       requires_clarification: false,
       rationalization: 'test route',
     }),
-    formulatePlan: async () => plan(options.steps),
+    formulatePlan: async () => ({
+      ...plan(options.steps),
+      ...(options.domain === undefined ? {} : { domain: options.domain }),
+    }),
   };
   const orchestrator = new RevenueOrchestrator({
     contextAggregator: { hydrateContext: async () => context() },
@@ -125,6 +137,7 @@ function makeOrchestrator(options: {
     },
     workflowEngine: workflow,
     evidenceLogger,
+    responseStore,
     ...(options.resolver === undefined ? {} : { planInputResolver: options.resolver }),
     auditTrail: { append: async () => undefined },
     adapterDispatcher: { dispatch },
@@ -191,6 +204,23 @@ describe('RevenueOrchestrator receipt-bound inputs', () => {
     });
 
     await expect(orchestrator.processSignal(signal())).rejects.toMatchObject({ code: 'INPUT_BINDING_RESPONSE_PATH_MISSING' });
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('answers an empty Sales product search with a clarification instead of failing the run', async () => {
+    const { orchestrator, dispatch, workflow } = makeOrchestrator({
+      domain: 'sales',
+      steps: twoStepPlan({ sku: { source_step_index: 1, response_path: 'products.0.sku' } }),
+      resolver: { resolve: async () => ({ sku: '' }) },
+      dispatch: async () => receipt({ products: [] }),
+    });
+
+    const result = await orchestrator.processSignal(signal());
+
+    expect(result.lifecycle_state).toBe('completed');
+    expect((await workflow.getTask(TENANT, result.run_id))?.state_payload).toMatchObject({
+      plan: { steps: [], terminal_response: { response_kind: 'CLARIFICATION', reason_code: 'NO_MATCHING_PRODUCT' } },
+    });
     expect(dispatch).toHaveBeenCalledTimes(1);
   });
 

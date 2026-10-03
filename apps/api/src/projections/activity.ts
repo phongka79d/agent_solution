@@ -16,6 +16,7 @@ export interface ActivityProjection {
 
 export interface ActivityProjectionSources {
   readonly activity: readonly CompanyActivityProjectionSource[];
+  readonly activity_next_cursor?: string | null;
 }
 
 export interface ActivityPageOptions {
@@ -45,47 +46,57 @@ function encodeCursor(offset: number): string {
   return Buffer.from(String(offset), 'utf8').toString('base64url');
 }
 
-/** Projects observed response/stage/decision rows into catalog-keyed activity sentences. */
+/** Projects one bounded durable run outcome per activity row. */
 export function mapActivity(
   sources: ActivityProjectionSources,
   options: ActivityPageOptions = {},
 ): ActivityProjection {
   const limit = options.limit === undefined ? 50 : Math.max(1, Math.min(200, Math.trunc(options.limit)));
   const offset = decodeCursor(options.cursor);
-  const ordered = [...sources.activity].sort((left, right) => right.occurred_at.localeCompare(left.occurred_at));
-  const page = ordered.slice(offset, offset + limit);
+  const serverPaged = sources.activity_next_cursor !== undefined;
+  const ordered = serverPaged
+    ? sources.activity
+    : [...sources.activity].sort((left, right) => right.occurred_at.localeCompare(left.occurred_at));
+  const page = serverPaged ? ordered : ordered.slice(offset, offset + limit);
   const items = page.map((source): ActivityItem => {
-    if (source.kind === 'RUN_RESPONSE') {
-      return {
-        kind: 'RUN_COMPLETED',
-        sentence_key: 'company.activity.run_completed',
-        params: { run_id: source.run_id },
-        run_id: source.run_id,
-        domain: activityDomain(source.domain),
-        occurred_at: source.occurred_at,
-      };
-    }
-    if (source.kind === 'RUN_STAGE') {
-      return {
-        kind: 'RUN_STAGE_ENTERED',
-        sentence_key: 'company.activity.run_stage_entered',
-        params: { run_id: source.run_id, stage: source.stage ?? 'unknown' },
-        run_id: source.run_id,
-        domain: activityDomain(source.domain),
-        occurred_at: source.occurred_at,
-      };
+    let kind = 'RUN_OUTCOME';
+    let sentence_key = 'company.activity.run_outcome';
+    switch (source.state) {
+      case 'completed':
+        kind = 'RUN_COMPLETED';
+        sentence_key = 'company.activity.run_completed';
+        break;
+      case 'failed':
+        kind = 'RUN_FAILED';
+        sentence_key = 'company.activity.run_failed';
+        break;
+      case 'waiting':
+        kind = 'RUN_NEEDS_RECONCILIATION';
+        sentence_key = 'company.activity.run_needs_reconciliation';
+        break;
+      case 'awaiting_human':
+        kind = 'RUN_WAITING_FOR_APPROVAL';
+        sentence_key = 'company.activity.run_waiting_for_approval';
+        break;
+      case 'stopped':
+        kind = 'RUN_STOPPED';
+        sentence_key = 'company.activity.run_stopped';
+        break;
     }
     return {
-      kind: 'APPROVAL_DECIDED',
-      sentence_key: 'company.activity.approval_decided',
-      params: { run_id: source.run_id, decision: source.decision ?? 'unknown' },
+      kind,
+      sentence_key,
+      params: { run_id: source.run_id },
       run_id: source.run_id,
       domain: activityDomain(source.domain),
       occurred_at: source.occurred_at,
     };
   });
   const nextOffset = offset + page.length;
-  return { items, next_cursor: nextOffset < ordered.length ? encodeCursor(nextOffset) : null };
+  const next_cursor = serverPaged
+    ? sources.activity_next_cursor ?? null
+    : nextOffset < ordered.length ? encodeCursor(nextOffset) : null;
+  return { items, next_cursor };
 }
 
 export const projectActivity = mapActivity;

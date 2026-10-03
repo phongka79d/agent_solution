@@ -40,6 +40,7 @@ function buildHarness(options: {
   const providerCalls = { appendProviderCall: vi.fn(async (_input: unknown) => undefined) };
   const audit = { record: vi.fn(async (_input: unknown) => undefined) };
   const appendMessage = vi.fn(async (_input: unknown) => undefined);
+  const resolve = vi.fn(async (_input: unknown) => undefined);
   const setState = vi.fn(async (
     _tenant_id: string,
     _conversation_id: string,
@@ -61,7 +62,11 @@ function buildHarness(options: {
   });
   // The real `runs.start` port carries the server-resolved channel, so the fixture names it too:
   // a case can then assert what the admission path actually passed.
-  const start = vi.fn(async (input: { correlation_id: string; source_channel?: string }) => ({
+  const start = vi.fn(async (input: {
+    correlation_id: string;
+    source_channel?: string;
+    payload?: Record<string, unknown>;
+  }) => ({
     run_id: 'run-a',
     task_version: 1,
     correlation_id: input.correlation_id,
@@ -91,7 +96,7 @@ function buildHarness(options: {
         [input.tenant_id, input.skill_id, input.request_id].join(':'),
       computeRequestFingerprint: (input: Record<string, unknown>) => JSON.stringify(input),
       reserve,
-      resolve: vi.fn(async () => undefined),
+      resolve,
     },
     audit,
     providerCalls,
@@ -117,7 +122,7 @@ function buildHarness(options: {
     ...(options.turnRateLimiter === undefined ? {} : { turnRateLimiter: options.turnRateLimiter }),
   });
 
-  return { app, appendMessage, conversation, receipts, start, reserve, providerCalls, audit, setState, clearTakeoverIfOwned };
+  return { app, appendMessage, conversation, receipts, start, reserve, resolve, providerCalls, audit, setState, clearTakeoverIfOwned };
 }
 
 describe('POST /conversations/:conversation_id/messages shared Care admission', () => {
@@ -167,6 +172,37 @@ describe('POST /conversations/:conversation_id/messages shared Care admission', 
       await app.close();
     }
   });
+  it('leaves incomplete provider order proposals for deterministic Care parsing', async () => {
+    const intentProposer: TurnIntentPort = {
+      propose: vi.fn(async () => ({
+        intent: 'order_status' as const,
+        requirements: {},
+        confidence: 0.8,
+      })),
+    };
+    const { app, start } = buildHarness({ intentProposer });
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/conversations/${CONVERSATION_ID}/messages`,
+        headers: { authorization: `Bearer ${SESSION_TOKEN}` },
+        payload: {
+          message: 'Where is my order ORD-ABC123?',
+          idempotency_key: 'turn-order-reference-fallback',
+          module: 'support',
+        },
+      });
+
+      expect(response.statusCode).toBe(202);
+      const runInput = start.mock.calls[0]?.[0];
+      expect(runInput?.payload?.message).toBe('Where is my order ORD-ABC123?');
+      expect(runInput?.payload).not.toHaveProperty('care_intent');
+      expect(runInput?.payload).not.toHaveProperty('care_requirements');
+    } finally {
+      await app.close();
+    }
+  });
+
 
   it('keeps an admitted turn accepted when telemetry storage is unavailable and reports UNAVAILABLE', async () => {
     const intentProposer: TurnIntentPort = {
@@ -202,6 +238,104 @@ describe('POST /conversations/:conversation_id/messages shared Care admission', 
       await app.close();
     }
   });
+
+  it('resolves the reserved effect as FAILED when intent classification throws', async () => {
+    const intentProposer: TurnIntentPort = {
+      propose: vi.fn(async () => {
+        throw new Error('intent provider unavailable');
+      }),
+    };
+    const { app, resolve, start } = buildHarness({ intentProposer });
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/conversations/${CONVERSATION_ID}/messages`,
+        headers: { authorization: `Bearer ${SESSION_TOKEN}` },
+        payload: { message: 'Where is my order?', idempotency_key: 'turn-intent-failure', module: 'support' },
+      });
+
+      expect(response.statusCode).toBe(500);
+      expect(start).not.toHaveBeenCalled();
+      expect(resolve).toHaveBeenCalledWith({
+        tenant_id: TENANT,
+        effect_key: `${TENANT}:conversation.turn:turn-intent-failure`,
+        status: 'FAILED',
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('admits invalid Sales intent JSON as a run-level refusal', async () => {
+    const intentProposer: TurnIntentPort = {
+      propose: vi.fn(async () => {
+        throw Object.assign(new Error('untrusted provider response details'), {
+          code: 'LLM_INVALID_RESPONSE',
+        });
+      }),
+    };
+    const originalModules = process.env.ENABLED_AGENT_MODULES;
+    process.env.ENABLED_AGENT_MODULES = 'support,sales';
+    const { app, start, resolve } = buildHarness({ intentProposer });
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/conversations/${CONVERSATION_ID}/messages`,
+        headers: { authorization: `Bearer ${SESSION_TOKEN}` },
+        payload: {
+          message: 'I need a laptop for graphic design',
+          idempotency_key: 'turn-invalid-sales-intent',
+          module: 'sales',
+        },
+      });
+
+      expect(response.statusCode).toBe(202);
+      const admittedPayload = start.mock.calls[0]?.[0].payload;
+      expect(admittedPayload).toMatchObject({
+        sales_proposal_source: 'API_GATEWAY',
+        sales_intent_failure: 'LLM_INVALID_RESPONSE',
+      });
+      expect(admittedPayload).not.toHaveProperty('sales_intent');
+      expect(response.body).not.toContain('untrusted provider response details');
+      expect(resolve).not.toHaveBeenCalled();
+    } finally {
+      if (originalModules === undefined) delete process.env.ENABLED_AGENT_MODULES;
+      else process.env.ENABLED_AGENT_MODULES = originalModules;
+      await app.close();
+    }
+  });
+
+  it('maps LLM_NOT_CONFIGURED to a public capability refusal without exposing provider details', async () => {
+    const intentProposer: TurnIntentPort = {
+      propose: vi.fn(async () => {
+        throw Object.assign(new Error('LLM_NOT_CONFIGURED: provider secret must not escape'), {
+          code: 'LLM_NOT_CONFIGURED',
+        });
+      }),
+    };
+    const { app, resolve, start } = buildHarness({ intentProposer });
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/conversations/${CONVERSATION_ID}/messages`,
+        headers: { authorization: `Bearer ${SESSION_TOKEN}` },
+        payload: { message: 'Where is my order?', idempotency_key: 'turn-llm-not-configured', module: 'support' },
+      });
+
+      expect(response.statusCode).toBe(503);
+      expect(response.json()).toMatchObject({ error_code: 'CAPABILITY_UNAVAILABLE' });
+      expect(response.json()).not.toHaveProperty('details');
+      expect(response.body).not.toContain('provider secret');
+      expect(start).not.toHaveBeenCalled();
+      expect(resolve).toHaveBeenCalledWith({
+        tenant_id: TENANT,
+        effect_key: `${TENANT}:conversation.turn:turn-llm-not-configured`,
+        status: 'FAILED',
+      });
+    } finally {
+      await app.close();
+    }
+  });
   it('replays the durable acceptance without starting or appending twice, and rejects changed bytes', async () => {
     const { app, appendMessage, start } = buildHarness();
     const url = `/conversations/${CONVERSATION_ID}/messages`;
@@ -224,11 +358,19 @@ describe('POST /conversations/:conversation_id/messages shared Care admission', 
       expect(conflict.statusCode).toBe(409);
       expect(conflict.json().error_code).toBe('IDEMPOTENCY_CONFLICT');
       expect(start).toHaveBeenCalledTimes(1);
-      expect(appendMessage).toHaveBeenCalledTimes(1);
+      expect(appendMessage).not.toHaveBeenCalled();
       expect(start.mock.calls[0]?.[0]).toMatchObject({
         request_id: 'turn-1',
         event_type: 'message.received',
         payload: { conversation_id: CONVERSATION_ID, message: 'Where is my order?', module: 'support' },
+        admission_reservation: {
+          customer_message: {
+            conversation_id: CONVERSATION_ID,
+            sender_id: 'session-a',
+            content: 'Where is my order?',
+            request_id: 'turn-1',
+          },
+        },
       });
     } finally {
       await app.close();
@@ -332,7 +474,7 @@ describe('POST /conversations/:conversation_id/messages shared Care admission', 
     expect(conversation.state).toBe('paused_takeover');
     expect(conversation.takeover_operator_id).toBe('operator-a');
     expect(start).toHaveBeenCalledOnce();
-    expect(appendMessage).toHaveBeenCalledOnce();
+    expect(appendMessage).not.toHaveBeenCalled();
     await app.close();
   });
 
@@ -443,7 +585,7 @@ describe('POST /conversations/:conversation_id/messages shared Care admission', 
         request_id: 'turn-sales-allowed',
         payload: { conversation_id: CONVERSATION_ID, message: 'Can I buy this product?', module: 'sales' },
       });
-      expect(appendMessage).toHaveBeenCalledTimes(1);
+      expect(appendMessage).not.toHaveBeenCalled();
     } finally {
       if (originalEnv !== undefined) process.env.ENABLED_AGENT_MODULES = originalEnv;
       else delete process.env.ENABLED_AGENT_MODULES;
@@ -534,7 +676,7 @@ describe('POST /conversations/:conversation_id/messages shared Care admission', 
         event_type: 'campaign.requested',
         payload: { conversation_id: CONVERSATION_ID, message: 'Prepare a campaign draft', module: 'marketing' },
       });
-      expect(appendMessage).toHaveBeenCalledTimes(1);
+      expect(appendMessage).not.toHaveBeenCalled();
     } finally {
       if (originalEnv !== undefined) process.env.ENABLED_AGENT_MODULES = originalEnv;
       else delete process.env.ENABLED_AGENT_MODULES;
@@ -627,7 +769,7 @@ describe('POST /conversations/:conversation_id/messages shared Care admission', 
         event_type: 'cart.abandoned',
         payload: { conversation_id: CONVERSATION_ID, message: 'Restore my cart', module: 'sales' },
       });
-      expect(appendMessage).toHaveBeenCalledTimes(1);
+      expect(appendMessage).not.toHaveBeenCalled();
     } finally {
       if (originalModules !== undefined) process.env.ENABLED_AGENT_MODULES = originalModules;
       else delete process.env.ENABLED_AGENT_MODULES;
@@ -821,6 +963,46 @@ describe('POST /conversations/:conversation_id/messages shared Care admission', 
       else delete process.env.ENABLED_AGENT_MODULES;
       if (originalEventTypes !== undefined) process.env.SALES_SIGNAL_EVENT_TYPES = originalEventTypes;
       else delete process.env.SALES_SIGNAL_EVENT_TYPES;
+      await app.close();
+    }
+  });
+  it('stamps explicit Sales order details from the customer message without provider price input', async () => {
+    const intentProposer: TurnIntentPort = {
+      propose: vi.fn(async () => {
+        throw new Error('explicit orders must not depend on an LLM proposal');
+      }),
+    };
+    const originalModules = process.env.ENABLED_AGENT_MODULES;
+    process.env.ENABLED_AGENT_MODULES = 'support,sales';
+    const { app, start } = buildHarness({ intentProposer });
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/conversations/${CONVERSATION_ID}/messages`,
+        headers: { authorization: `Bearer ${SESSION_TOKEN}` },
+        payload: {
+          message: 'Please order SKU-local-1 qty 2 with COD for $0.01',
+          idempotency_key: 'turn-explicit-order',
+          module: 'sales',
+        },
+      });
+
+      expect(response.statusCode).toBe(202);
+      expect(intentProposer.propose).not.toHaveBeenCalled();
+      const admittedPayload = start.mock.calls[0]?.[0].payload;
+      expect(admittedPayload).toMatchObject({
+        sales_proposal_source: 'API_GATEWAY',
+        sales_intent: 'purchase',
+        sales_order_request: {
+          sku_id: 'SKU-LOCAL-1',
+          quantity: 2,
+          payment_method: 'CVS_COD',
+        },
+      });
+      expect(admittedPayload?.['sales_order_request']).not.toHaveProperty('proposed_price');
+    } finally {
+      if (originalModules !== undefined) process.env.ENABLED_AGENT_MODULES = originalModules;
+      else delete process.env.ENABLED_AGENT_MODULES;
       await app.close();
     }
   });

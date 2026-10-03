@@ -70,9 +70,44 @@ export interface ErpTransportRequest {
   readonly path: string;
   readonly tenant_id: string;
   readonly body?: Record<string, unknown>;
+  /** Provider idempotency key; API-001 transports it as the `idempotency-key` header. */
+  readonly idempotency_key?: string;
   /** Abort signal from the orchestrator's registry deadline guard. */
   readonly signal?: AbortSignal;
 }
+/** One explicitly priced cart line; the provider, not the caller, resolves its unit price. */
+export interface ErpCreateOrderLine {
+  readonly sku_id: string;
+  readonly quantity: number;
+}
+
+/** AUTH-4 request passed only after the Sales skill engine verifies the bound approval payload. */
+export interface ErpCreateOrderInput {
+  readonly tenant_id: string;
+  readonly effect_key: string;
+  readonly approval_id: string;
+  readonly approval_payload_digest: string;
+  readonly cart_id: string;
+  readonly customer_id: string;
+  readonly items: readonly ErpCreateOrderLine[];
+  readonly shipping_address: Record<string, unknown>;
+  readonly payment_method: 'CREDIT_CARD' | 'CVS_COD' | 'LINE_PAY' | 'JKOPAY' | 'STRIPE' | 'PAYPAL';
+  readonly signal?: AbortSignal;
+}
+
+/** Canonical order receipt returned to the Sales skill from API-001. */
+export interface ErpCreatedOrder {
+  readonly order_id: string;
+  readonly order_number: string;
+  readonly total_amount: number;
+  readonly currency: string;
+  readonly status: 'DRAFT' | 'PENDING_PAYMENT' | 'CONFIRMED';
+  readonly created_at: string;
+}
+
+const ERP_ORDER_CREATE_PATH = '/api/v1/orders';
+const ERP_ORDER_RECONCILE_PATH = '/api/v1/orders/reconcile';
+
 
 /**
  * Host-implemented wire to API-001. It returns *classified* outcomes rather than throwing, because
@@ -165,6 +200,46 @@ function firstStringField(
   }
   return null;
 }
+const ORDER_CREATED_AT_FIELDS = ['created_at', 'order_date', 'snapshot_at'] as const;
+const ORDER_PAYMENT_METHODS: Readonly<Record<string, true>> = {
+  CREDIT_CARD: true,
+  CVS_COD: true,
+  LINE_PAY: true,
+  JKOPAY: true,
+  STRIPE: true,
+  PAYPAL: true,
+};
+
+function orderOutput(body: Record<string, unknown>): ErpCreatedOrder | null {
+  const order_id = body.order_id;
+  const order_number = body.order_number;
+  const total_amount = body.total_amount;
+  const currency = body.currency;
+  const observed_at = firstStringField(body, ORDER_CREATED_AT_FIELDS);
+  const provider_status = body.status;
+  const status = provider_status === 'DRAFT' || provider_status === 'CONFIRMED'
+    ? provider_status
+    : provider_status === 'CREATED' || provider_status === 'PENDING_PAYMENT'
+      ? 'PENDING_PAYMENT'
+      : undefined;
+  if (
+    typeof order_id !== 'string'
+    || order_id.trim().length === 0
+    || typeof order_number !== 'string'
+    || order_number.trim().length === 0
+    || typeof total_amount !== 'number'
+    || !Number.isFinite(total_amount)
+    || total_amount < 0
+    || typeof currency !== 'string'
+    || currency.trim().length === 0
+    || observed_at === null
+    || Number.isNaN(Date.parse(observed_at))
+    || status === undefined
+  ) {
+    return null;
+  }
+  return { order_id, order_number, total_amount, currency, status, created_at: observed_at };
+}
 
 /** Builds the host request, omitting `body` and `signal` when there is nothing to send. */
 function requestOf(
@@ -217,6 +292,7 @@ export class Api001ErpConnector implements AdapterPort {
     readonly resource: string;
     readonly key?: string;
     readonly customer_id?: string;
+    readonly signal?: AbortSignal;
   }): Promise<ConnectorReadResult> {
     if (input.tenant_id.length === 0) {
       throw new ErpRefusalError(
@@ -258,7 +334,12 @@ export class Api001ErpConnector implements AdapterPort {
             ? { key: input.key, customer_id: input.customer_id }
             : { key: input.key };
     const result = await this.transport.request(
-      requestOf({ method: route.method, path: route.path, tenant_id: input.tenant_id }, body),
+      requestOf({
+        method: route.method,
+        path: route.path,
+        tenant_id: input.tenant_id,
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
+      }, body),
     );
 
     if (!result.ok || result.status >= 400) {
@@ -289,6 +370,84 @@ export class Api001ErpConnector implements AdapterPort {
       observed_at,
       tenant_id: input.tenant_id,
     };
+  }
+
+  /**
+   * Creates a server-priced order only from the Sales skill's post-AUTH-4 call. The skill runtime
+   * verifies `approval_id` against the exact bound payload digest before invoking this port.
+   */
+  async createOrder(input: ErpCreateOrderInput): Promise<ErpCreatedOrder> {
+    if (input.tenant_id.trim().length === 0) {
+      throw new ErpRefusalError('TENANT_UNSCOPED', this.adapterId, 'order creation requires an authenticated tenant');
+    }
+    if (
+      input.effect_key.trim().length === 0
+      || input.approval_id.trim().length === 0
+      || !/^[a-f0-9]{64}$/i.test(input.approval_payload_digest)
+    ) {
+      throw new ErpRefusalError('AUTHORITY_ABSENT', this.adapterId, 'order creation requires the verified approval identity');
+    }
+    if (
+      input.cart_id.trim().length === 0
+      || input.customer_id.trim().length === 0
+      || typeof input.shipping_address !== 'object'
+      || input.shipping_address === null
+      || Array.isArray(input.shipping_address)
+      || !Object.hasOwn(ORDER_PAYMENT_METHODS, input.payment_method)
+      || input.items.length === 0
+      || input.items.length > 50
+    ) {
+      throw new ErpRefusalError('PROVIDER_REJECTED', this.adapterId, 'order input is missing required cart, customer, address, payment, or line data');
+    }
+    for (const item of input.items) {
+      if (
+        typeof item !== 'object'
+        || item === null
+        || Array.isArray(item)
+        || Object.keys(item).some((key) => key !== 'sku_id' && key !== 'quantity')
+        || typeof item.sku_id !== 'string'
+        || item.sku_id.trim().length === 0
+        || !Number.isSafeInteger(item.quantity)
+        || item.quantity < 1
+      ) {
+        throw new ErpRefusalError('PROVIDER_REJECTED', this.adapterId, 'order line must contain only a SKU and positive quantity');
+      }
+    }
+
+    const result = await this.transport.request({
+      method: 'POST',
+      path: ERP_ORDER_CREATE_PATH,
+      tenant_id: input.tenant_id,
+      idempotency_key: input.effect_key,
+      body: {
+        tenant_id: input.tenant_id,
+        cart_id: input.cart_id,
+        customer_id: input.customer_id,
+        items: input.items,
+        shipping_address: input.shipping_address,
+        payment_method: input.payment_method,
+      },
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
+    });
+    if (!result.ok || result.status >= 400) {
+      const failure_class = result.ok ? 'PROVIDER_REJECTED' : result.failure_class;
+      throw new ErpRefusalError(
+        failure_class === 'PROVIDER_REJECTED' ? 'PROVIDER_REJECTED' : 'INDETERMINATE_OUTCOME',
+        this.adapterId,
+        failure_class === 'PROVIDER_REJECTED'
+          ? `provider rejected order creation with status ${String(result.status)}`
+          : `order creation outcome is unconfirmed (${failure_class})`,
+      );
+    }
+    const order = orderOutput(result.body);
+    if (order === null) {
+      throw new ErpRefusalError(
+        'INDETERMINATE_OUTCOME',
+        this.adapterId,
+        'provider accepted order creation but returned an incomplete order receipt',
+      );
+    }
+    return order;
   }
 
   /**
@@ -365,6 +524,7 @@ export class Api001ErpConnector implements AdapterPort {
     readonly tenant_id: string;
     readonly effect_key: string;
     readonly action_id?: string;
+    readonly skill_id?: string;
   }): Promise<{
     readonly outcome: 'SUCCEEDED' | 'FAILED' | 'INDETERMINATE';
     readonly receipt?: ExecutionReceipt;
@@ -375,6 +535,34 @@ export class Api001ErpConnector implements AdapterPort {
         this.adapterId,
         'reconcile requires a tenant id from the authenticated principal',
       );
+    }
+
+    if (input.skill_id === 'skill.sales.create_order') {
+      const result = await this.transport.request({
+        method: 'POST',
+        path: ERP_ORDER_RECONCILE_PATH,
+        tenant_id: input.tenant_id,
+        body: { tenant_id: input.tenant_id, idempotency_key: input.effect_key },
+      });
+      if (result.status === 404) {
+        return { outcome: 'FAILED' };
+      }
+      if (!result.ok || result.status !== 200) {
+        return { outcome: 'INDETERMINATE' };
+      }
+      const order = orderOutput(result.body);
+      if (order === null) {
+        return { outcome: 'INDETERMINATE' };
+      }
+      const receipt: ExecutionReceipt = {
+        execution_id: `${this.adapterId}:${input.effect_key}:reconciled`,
+        adapter_status: 'SUCCESS',
+        provider_reference: order.order_id,
+        response_payload: { ...order },
+        latency_ms: 0,
+        token_usage: { prompt: 0, completion: 0, total_cost_usd: 0 },
+      };
+      return { outcome: 'SUCCEEDED', receipt };
     }
 
     let targetId = input.action_id ?? input.effect_key;

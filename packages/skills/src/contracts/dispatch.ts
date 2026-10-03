@@ -6,8 +6,7 @@
  * orchestrator route marker is refused rather than executed.
  */
 
-import type { AuthorityVerdict } from '@agentos/core-engine/contracts';
-
+import type { AuthorityVerdict, HydratedContext } from '@agentos/core-engine/contracts';
 import type { ExecutionContext, SkillEffectClass } from './types.js';
 
 /**
@@ -47,8 +46,12 @@ export interface SkillDispatchRequest {
    * `EFFECT_KEY_NOT_DETERMINISTIC`; the engine never adopts a foreign key.
    */
   readonly effect_key?: string;
+  /** Reservation fingerprint of the orchestrator's full pending-action payload. */
+  readonly request_fingerprint?: string;
   readonly approval_id?: string;
   readonly approval_payload_digest?: string;
+  /** Read-only, checkpoint-backed hydrated state passed through from the orchestrator. */
+  readonly hydrated_context?: HydratedContext;
   readonly input: unknown;
   readonly signal?: AbortSignal;
 }

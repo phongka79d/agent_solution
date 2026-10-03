@@ -8,7 +8,19 @@ export type Permission =
   | 'approval:decide'
   | 'platform:admin'
   | 'run:retry'
-  | 'run:reconcile';
+  | 'run:reconcile'
+  | 'settings:manage'
+  | 'integration:manage'
+  | 'llm:manage'
+  | 'knowledge:manage'
+  | 'knowledge:approve'
+  | 'skills:manage'
+  | 'agents:manage'
+  | 'testdata:manage'
+  | 'run:retry:company'
+  | 'platform:providers:write'
+  | 'platform:companies:write'
+  | 'platform:audit:read';
 
 export interface UserIdentity {
   readonly user_id: string;

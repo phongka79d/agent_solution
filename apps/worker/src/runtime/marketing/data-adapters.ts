@@ -26,13 +26,8 @@ import type {
 } from './skills/types.js';
 import {
   MarketingRuntimeError,
-  type MarketingAudienceCandidate,
   type MarketingConsentDecision,
   type MarketingConsentPort,
-  type MarketingResearchPort,
-  type MarketingSegmentInput,
-  type MarketingSignalInput,
-  type MarketingSignalResearchResult,
 } from './contracts.js';
 
 export type FindConsentFn = (
@@ -268,61 +263,6 @@ export function createMarketingConsentPort(options: MarketingConsentPortOptions)
   };
 }
 
-export interface MarketingResearchPortOptions {
-  /** Injected implementation of market signals research. */
-  readonly readMarketSignals?: (input: MarketingSignalInput) => Promise<MarketingSignalResearchResult>;
-  /** Injected implementation of audience segmentation. */
-  readonly segmentAudience?: (input: MarketingSegmentInput) => Promise<readonly MarketingAudienceCandidate[]>;
-  /** Optional server-bound tenant UUID. */
-  readonly serverBoundTenantId?: string;
-}
-
-/**
- * Creates a MarketingResearchPort.
- * If segmentation or market signal research cannot be supported from the canonical store without
- * inventing data, calling the missing method throws an explicit unavailable MarketingRuntimeError.
- */
-export function createMarketingResearchPort(options: MarketingResearchPortOptions = {}): MarketingResearchPort {
-  const { readMarketSignals, segmentAudience, serverBoundTenantId } = options;
-
-  return {
-    readMarketSignals: async (input: MarketingSignalInput): Promise<MarketingSignalResearchResult> => {
-      if (serverBoundTenantId !== undefined && input.tenant_id !== serverBoundTenantId) {
-        throw new MarketingRuntimeError(
-          'TENANT_CONTEXT_MISMATCH',
-          `Caller asserted tenant '${input.tenant_id}' does not match server-bound tenant '${serverBoundTenantId}'.`,
-        );
-      }
-      assertTenantContext(input.tenant_id);
-
-      if (!readMarketSignals) {
-        throw new MarketingRuntimeError(
-          'MARKETING_RESEARCH_UNAVAILABLE',
-          'Market signals research is not configured in this runtime; signal providers must be explicitly injected.',
-        );
-      }
-      return readMarketSignals(input);
-    },
-
-    segmentAudience: async (input: MarketingSegmentInput): Promise<readonly MarketingAudienceCandidate[]> => {
-      if (serverBoundTenantId !== undefined && input.tenant_id !== serverBoundTenantId) {
-        throw new MarketingRuntimeError(
-          'TENANT_CONTEXT_MISMATCH',
-          `Caller asserted tenant '${input.tenant_id}' does not match server-bound tenant '${serverBoundTenantId}'.`,
-        );
-      }
-      assertTenantContext(input.tenant_id);
-
-      if (!segmentAudience) {
-        throw new MarketingRuntimeError(
-          'MARKETING_SEGMENTATION_UNAVAILABLE',
-          'Audience segmentation is unavailable: canonical C360 projection does not support arbitrary RFM cohort queries without inventing segmentation logic or customer data.',
-        );
-      }
-      return segmentAudience(input);
-    },
-  };
-}
 /**
  * Tenant-scoped Customer360 segmentation adapter used by the live Marketing campaign plan.
  *

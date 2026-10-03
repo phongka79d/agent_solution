@@ -41,6 +41,9 @@ export const MANAGED_APP_ENVS = ['staging', 'sandbox', 'production'];
 const LLM_PROVIDERS = ['openai-compatible'];
 const LLM_STRUCTURED_OUTPUT_MODES = ['json_object', 'json_schema'];
 const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
+const DEFAULT_LLM_MAX_OUTPUT_TOKENS_PER_CALL = 2048;
+const DEFAULT_MAX_TOKENS_PER_RUN = 16_384;
+const LLM_PROMPT_RESERVATION_MARGIN_TOKENS = 1024;
 
 
 /**
@@ -87,6 +90,7 @@ const KNOWN_KEYS = new Set([
   'WEBHOOK_HMAC_SECRET',
   'AUDIT_HMAC_SECRET',
   'ENCRYPTION_KEY_AES256',
+  'ENCRYPTION_KEY_AES256_PREVIOUS',
   'DATABASE_URL',
   'DATABASE_POOL_MIN',
   'DATABASE_POOL_MAX',
@@ -106,8 +110,8 @@ const KNOWN_KEYS = new Set([
   'OPENAI_BASE_URL',
   'OPENAI_STRUCTURED_OUTPUT_MODE',
   'LLM_REQUEST_TIMEOUT_MS',
+  'LLM_MAX_OUTPUT_TOKENS_PER_CALL',
   'MAX_TOKENS_PER_RUN',
-
   'OPENAI_API_KEY',
   'PRIMARY_REASONING_MODEL',
   'FAST_COMPLETION_MODEL',
@@ -377,6 +381,18 @@ export function parseEnvironment(env = process.env, options = {}) {
     validate: (value) => /^[0-9a-f]{64}$/i.test(value),
     invalidMessage: 'ENCRYPTION_KEY_AES256 must be exactly 64 hexadecimal characters (32 bytes); the value is never truncated or padded.',
   });
+  const encryptionPreviousKeyRaw = read('ENCRYPTION_KEY_AES256_PREVIOUS');
+  let encryptionPreviousKey;
+  if (encryptionPreviousKeyRaw !== undefined && encryptionPreviousKeyRaw !== '') {
+    if (/^[0-9a-f]{64}$/i.test(encryptionPreviousKeyRaw)) {
+      encryptionPreviousKey = encryptionPreviousKeyRaw;
+    } else {
+      add(
+        'ENCRYPTION_KEY_AES256_PREVIOUS',
+        'ENCRYPTION_KEY_AES256_PREVIOUS must be exactly 64 hexadecimal characters (32 bytes); the value is never truncated or padded.',
+      );
+    }
+  }
 
   // ---- relational database ------------------------------------------------------
   let databaseUrl;
@@ -477,11 +493,33 @@ export function parseEnvironment(env = process.env, options = {}) {
     min: 1,
     description: 'a positive integer (milliseconds)',
   });
-  const maxTokensPerRun = intField(add, read, 'MAX_TOKENS_PER_RUN', 4096, {
+  const maxTokensPerRun = intField(add, read, 'MAX_TOKENS_PER_RUN', DEFAULT_MAX_TOKENS_PER_RUN, {
     min: 1,
-    max: 4096,
-    description: 'an integer between 1 and 4096',
+    max: Number.MAX_SAFE_INTEGER,
+    description: 'a positive safe integer run token budget',
   });
+  const llmMaxOutputTokensPerCall = intField(
+    add,
+    read,
+    'LLM_MAX_OUTPUT_TOKENS_PER_CALL',
+    DEFAULT_LLM_MAX_OUTPUT_TOKENS_PER_CALL,
+    {
+      min: 1,
+      max: 4096,
+      description: 'an integer between 1 and 4096',
+    },
+  );
+  if (
+    maxTokensPerRun !== undefined
+    && llmMaxOutputTokensPerCall !== undefined
+    && maxTokensPerRun < llmMaxOutputTokensPerCall + LLM_PROMPT_RESERVATION_MARGIN_TOKENS
+  ) {
+    const minimumRunBudget = llmMaxOutputTokensPerCall + LLM_PROMPT_RESERVATION_MARGIN_TOKENS;
+    add(
+      'MAX_TOKENS_PER_RUN',
+      `MAX_TOKENS_PER_RUN must be at least ${minimumRunBudget} tokens (LLM_MAX_OUTPUT_TOKENS_PER_CALL plus ${LLM_PROMPT_RESERVATION_MARGIN_TOKENS} prompt tokens).`,
+    );
+  }
 
   // ---- external boundaries ------------------------------------------------------
 
@@ -610,6 +648,7 @@ export function parseEnvironment(env = process.env, options = {}) {
     WEBHOOK_HMAC_SECRET: webhookHmacSecret,
     AUDIT_HMAC_SECRET: auditHmacSecret,
     ENCRYPTION_KEY_AES256: encryptionKey,
+    ENCRYPTION_KEY_AES256_PREVIOUS: encryptionPreviousKey,
     DATABASE_URL: databaseUrl,
     DATABASE_POOL_MIN: poolMin,
     DATABASE_POOL_MAX: poolMax,
@@ -631,6 +670,7 @@ export function parseEnvironment(env = process.env, options = {}) {
     FAST_COMPLETION_MODEL: fastCompletionModel,
     OPENAI_STRUCTURED_OUTPUT_MODE: structuredOutputMode,
     LLM_REQUEST_TIMEOUT_MS: llmRequestTimeoutMs,
+    LLM_MAX_OUTPUT_TOKENS_PER_CALL: llmMaxOutputTokensPerCall,
     MAX_TOKENS_PER_RUN: maxTokensPerRun,
 
     ERP_API_BASE_URL: erpApiBaseUrl,
@@ -817,16 +857,6 @@ function corsField(add, read, context) {
   return value;
 }
 
-/**
- * @param {(key: string) => string|undefined} read
- * @param {string} key
- * @param {string} fallback
- * @returns {string}
- */
-function defaultedString(read, key, fallback) {
-  const value = read(key);
-  return value === undefined || value === '' ? fallback : value;
-}
 
 /**
  * @param {Record<string, unknown>} object

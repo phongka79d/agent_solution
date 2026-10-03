@@ -22,6 +22,19 @@ describe('tenant middleware', () => {
     expect(response.headers.get('cache-control')).toBe('no-store');
   });
 
+  it('sets a nonce CSP without inline scripts or non-BFF connections', () => {
+    const expires = Math.floor(Date.now() / 1000) + 300;
+    const response = middleware(request('/approvals', `v1.session.${expires}.signature`));
+    const policy = response.headers.get('content-security-policy') ?? '';
+    const directives = policy.split(';').map((directive) => directive.trim());
+    const scriptSource = directives.find((directive) => directive.startsWith('script-src ')) ?? '';
+    const connectSource = directives.find((directive) => directive.startsWith('connect-src ')) ?? '';
+
+    expect(scriptSource).toMatch(/'nonce-[A-Za-z0-9+/]+=*'/);
+    expect(scriptSource).not.toContain("'unsafe-inline'");
+    expect(connectSource).toBe("connect-src 'self'");
+  });
+
   it('redirects signed-in sign-in requests to a safe next path', () => {
     const expires = Math.floor(Date.now() / 1000) + 300;
     const response = middleware(request('/sign-in?next=//evil.com', `v1.session.${expires}.signature`));

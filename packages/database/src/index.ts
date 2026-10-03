@@ -1,7 +1,9 @@
 export const packageName = '@agentos/database';
 
-export { getPool } from './client.js';
-export { assertTenantContext, withTenantContext } from './rls.js';
+export { checkSchema } from './schema-check.js';
+export type { SchemaCheckCode, SchemaCheckQuery, SchemaCheckResult } from './schema-check.js';
+export { getIndexerPool, getPlatformPool, getPool } from './client.js';
+export { assertTenantContext, withIndexerContext, withTenantContext } from './rls.js';
 export { assertEpistemicWrite, SOR_FACT_TABLES } from './epistemic.js';
 export { getProfile, insertFact } from './repositories/customer-360.js';
 export { findIdentity, insertIdentity } from './repositories/identity.js';

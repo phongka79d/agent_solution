@@ -12,6 +12,8 @@
  * reads a clock: the jitter source is injected, so a backoff is reproducible in a test.
  */
 
+import { getErrorCatalogEntry } from '@agentos/core-engine/contracts';
+
 import {
   INDETERMINATE_TRANSPORT_ERRORS,
   isSkillError,
@@ -92,9 +94,9 @@ export function errorCodeOf(error: unknown, isAborted: boolean): string {
  *      reconciles by `effect_key` instead of this layer sending a blind second dispatch;
  *      `retry_on_timeout: true` has asserted its attempts are effect-free, so the timeout is retried
  *      in-loop while the declared budget lasts.
- *   3. Otherwise the provider answered: a listed `non_retryable_errors` code is `'FATAL'`, and any
- *      other transient code is `'RETRYABLE'` under the unchanged `effect_key` until the budget is
- *      gone.
+ *   3. Otherwise the provider answered: a cataloged deterministic refusal or a listed
+ *      `non_retryable_errors` code is `'FATAL'`; other codes remain `'RETRYABLE'` under the unchanged
+ *      `effect_key` until the budget is gone.
  *
  * `skill_id` travels with the subject so the caller's refusal and this classification name the same
  * row; the decision itself reads only the retry policy.
@@ -121,7 +123,10 @@ export function classifyFailure(
     return exhausted ? 'FATAL' : 'RETRYABLE';
   }
 
-  if (skill.retry_policy.non_retryable_errors.includes(errorCode)) {
+  if (
+    getErrorCatalogEntry(errorCode)?.class === 'FATAL'
+    || skill.retry_policy.non_retryable_errors.includes(errorCode)
+  ) {
     return 'FATAL';
   }
   return exhausted ? 'FATAL' : 'RETRYABLE';

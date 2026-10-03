@@ -1,96 +1,79 @@
 /**
- * Wire contracts and local models for SCR-003: Approval Center.
- * References: R14 approval queue, decision, and evidence contracts.
+ * Wire contracts and local models for the Vietnamese approval console (`T6.8`, spec §7.7).
+ * References: R14 approval queue, §8.2.1 detail read, decision and evidence contracts.
  */
-import type {
-  ApprovalDecision as ContractApprovalDecision,
-  ApprovalDecisionRequest as ContractApprovalDecisionRequest,
-  ApprovalDecisionResponse as ContractApprovalDecisionResponse,
-  ApprovalDecisionStatus as ContractApprovalDecisionStatus,
-} from '../../lib/types/tenant-console';
 
-/** SCR-003 decision enum — the five baseline operator actions sent to POST /api/v1/approvals/{id}/decision */
-export type ApprovalDecision = ContractApprovalDecision;
+/** The five baseline decisions sent to POST /api/v1/approvals/{id}/decision. */
+export type ApprovalDecision = 'APPROVE' | 'REJECT' | 'MODIFY' | 'PAUSE' | 'CANCEL';
 
-/**
- * Approval status enum.
- * AWAITING_HUMAN and PAUSED describe undecided queue items (PAUSED = stored PENDING + is_paused=TRUE).
- * APPROVED, REJECTED, MODIFIED, CANCELLED describe resolved items.
- */
+/** Reader-facing queue status. `PENDING`/`PAUSED` are undecided; the rest are resolved outcomes. */
 export type ApprovalStatus =
-  | 'AWAITING_HUMAN'
+  | 'PENDING'
   | 'PAUSED'
   | 'APPROVED'
-  | 'REJECTED'
   | 'MODIFIED'
+  | 'REJECTED'
   | 'CANCELLED'
-  | 'QUEUED';
+  | 'EXPIRED';
 
-/** Standardized rejection reason codes for REJECT action */
-export const STANDARD_REJECTION_CODES = [
-  'BUDGET_EXCEEDED',
-  'BRAND_VIOLATION',
-  'UNACCEPTABLE_MARGIN',
-  'INAPPROPRIATE_TIMING',
-  'FLOOR_PRICE_BREACH',
-  'CUSTOM_POLICY_VIOLATION',
-] as const;
+/** The two console tabs: Chờ duyệt and Đã xử lý. */
+export type ApprovalTab = 'PENDING' | 'DECIDED';
 
-export type StandardRejectionCode = (typeof STANDARD_REJECTION_CODES)[number] | string;
+/** Reviewer-facing sentence, context and evidence (`ApprovalSummary` of the gateway contract). */
+export interface ApprovalSummary {
+  readonly titleKey: string;
+  readonly params: Readonly<Record<string, string | number | boolean>>;
+  readonly requestingAgentKey: string;
+  readonly domain: 'marketing' | 'sales' | 'care' | 'platform';
+  readonly campaignId: string | null;
+  readonly customerId: string | null;
+  readonly risk: 'low' | 'medium' | 'high';
+  readonly evidenceCount: number;
+  readonly modification: { readonly before: unknown; readonly after: unknown } | null;
+  readonly expiresAt: string | null;
+}
 
-/** Approval item projection from R14 GET /api/v1/approvals?status=PENDING and supplemental detail */
+/** One queue item, normalized from the R14 list or the detail read. */
 export interface ApprovalItem {
   readonly id: string;
   readonly runId: string;
   readonly actionId?: string | undefined;
   readonly tenantId?: string | undefined;
-  readonly agentId: string;
-  readonly requestingAgentName?: string | undefined;
-  readonly domain?: string | undefined;
   readonly effectKey?: string | undefined;
   readonly authority?: string | undefined;
-  readonly title: string;
   readonly reason: string;
-  readonly context?: unknown;
-  readonly evidence?: readonly unknown[] | undefined;
   readonly payload: Record<string, unknown>;
-  /** RFC 8785 + SHA-256 digest of the canonical reviewed payload; required on every decision submission */
   readonly payloadSha256: string;
   readonly status: ApprovalStatus;
   readonly isPaused: boolean;
   readonly createdAt: string;
-  /** Present only when the server instruments an expiry source; absent -> no countdown rendered */
-  readonly expiresAt?: string | undefined;
   readonly decidedAt?: string | undefined;
   readonly decidedBy?: string | undefined;
   readonly decisionNotes?: string | undefined;
-  /** Optional customer binding in payload for cross-navigation to SCR-004 */
-  readonly customerId?: string | undefined;
-  readonly queuedAt?: string | undefined;
+  readonly summary: ApprovalSummary;
 }
 
-/** Wire request for a decision. Operator identity is bound by the authenticated BFF session. */
-export type ApprovalDecisionRequest = ContractApprovalDecisionRequest;
-export type ApprovalDecisionStatus = ContractApprovalDecisionStatus;
-export type ApprovalDecisionResponse = ContractApprovalDecisionResponse;
+/** Quick rejection reasons offered beside the free-text field (spec §7.7). */
+export const QUICK_REJECTION_REASONS: readonly { readonly code: string; readonly label: string }[] = [
+  { code: 'BUDGET_EXCEEDED', label: 'Vượt ngân sách' },
+  { code: 'BRAND_VIOLATION', label: 'Sai giọng thương hiệu' },
+  { code: 'UNACCEPTABLE_MARGIN', label: 'Biên lợi nhuận không đạt' },
+  { code: 'INAPPROPRIATE_TIMING', label: 'Thời điểm chưa phù hợp' },
+  { code: 'CUSTOM_POLICY_VIOLATION', label: 'Vi phạm chính sách' },
+];
 
-/** Standard error response envelope from the API gateway */
-export interface ApiErrorResponse {
-  readonly error_code?: string | undefined;
+/** Structured edits approved by a MODIFY decision; the edited revision resumes the same run. */
+export interface ModifyFields {
+  readonly channel: string;
+  readonly audienceSize: string;
   readonly message: string;
-  readonly retryable?: boolean | undefined;
-  readonly correlation_id?: string | undefined;
-  readonly details?: Record<string, unknown> | undefined;
 }
 
-/** Descriptive shared UI states */
-export type UiState =
-  | 'idle'
-  | 'loading'
-  | 'empty'
-  | 'partial'
-  | 'stale'
-  | 'permission_denied'
-  | 'dependency_unavailable'
-  | 'version_conflict'
-  | 'fail_closed';
+/** Wire response of POST /api/v1/approvals/{id}/decision (durable worker handoff). */
+export interface ApprovalDecisionResponse {
+  readonly approval_id: string;
+  readonly task_id: string;
+  readonly status: 'QUEUED';
+  readonly queued_at: string;
+  readonly correlation_id: string;
+}

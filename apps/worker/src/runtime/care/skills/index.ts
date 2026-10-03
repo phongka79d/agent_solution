@@ -1,4 +1,4 @@
-import { computeEffectKey, computeRequestFingerprint, evaluateAuthorityVerdict } from '@agentos/core-engine';
+import { approvalPayloadDigest, computeEffectKey, evaluateAuthorityVerdict } from '@agentos/core-engine';
 import {
   DEFAULT_P0_PLATFORM_SKILL_ENABLEMENT,
   createPlatformSkillRegistry,
@@ -35,10 +35,13 @@ export function createCareSkillServices(options: CareSkillOptions): CareSkillSer
 
   const engine = createSkillRuntimeEngine({
     registry,
-    digestPayload: (payload) => computeRequestFingerprint(payload as Record<string, unknown>),
     deriveEffectKey: (identity) => computeEffectKey(identity),
     evaluateAuthority: (granted, required) => evaluateAuthorityVerdict(granted, required),
+    approvalDigest: (action) => approvalPayloadDigest(action),
     ...(options.now ? { now: () => options.now!().getTime() } : {}),
+    ...(options.gate === undefined ? {} : { gate: options.gate }),
+    ...(options.breakers === undefined ? {} : { breakers: options.breakers }),
+    ...(options.llm === undefined ? {} : { llm: options.llm }),
   });
 
   const dispatcher = createCareSkillDispatcher({

@@ -1,4 +1,4 @@
-import { proxyPlatformApi } from '../../../../lib/auth/demo-provider';
+import { proxyPlatformApi } from '../../../../lib/auth/selection';
 
 export const dynamic = 'force-dynamic';
 

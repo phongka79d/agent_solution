@@ -1,4 +1,4 @@
-import type { Customer360Fact } from '@agentos/core-engine/contracts';
+import type { Customer360Fact, HydratedContext } from '@agentos/core-engine/contracts';
 import type { CustomerEventTimeline } from '@agentos/database';
 import type { ConnectorReadResult } from '@agentos/adapters';
 
@@ -227,8 +227,8 @@ export class SalesOfflineHarness {
       : { read: (input) => this.read(input) };
 
     this.context = {
-      verifiedCustomerFor: (tenant_id, correlation_id) => this.customerFor(tenant_id, correlation_id),
-      verifiedTimelineFor: (tenant_id, correlation_id) => this.timelineFor(tenant_id, correlation_id),
+      verifiedCustomerFor: (context: HydratedContext) => this.customerFor(context.tenant_id, context.correlation_id),
+      verifiedTimelineFor: (context: HydratedContext) => this.timelineFor(context.tenant_id, context.correlation_id),
     };
 
     if (options.revenue_evidence_available === false || this.fixture.revenue_evidence === null) {

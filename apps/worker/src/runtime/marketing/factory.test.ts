@@ -16,6 +16,7 @@ import type {
 } from '@agentos/core-engine/contracts';
 import type * as Database from '@agentos/database';
 import type { DurableWorkflowRepository } from '@agentos/database';
+import type { SkillGate } from '@agentos/skills';
 
 const getProfile = vi.hoisted(() => vi.fn());
 
@@ -78,6 +79,7 @@ interface OrchestratorInternals {
 const makeFactory = (
   crossDomainHandoff = false,
   audiencePolicy?: { getApprovedAudienceLimit: (tenant_id: string) => Promise<number | undefined> },
+  gate?: SkillGate,
 ) => createMarketingOrchestratorFactory({
   auditSecret: AUDIT_SECRET,
   audit: null,
@@ -93,6 +95,7 @@ const makeFactory = (
   effectGuard: {} as IEffectGuard,
   policyEngine: {} as IPolicyEngine,
   ...(audiencePolicy === undefined ? {} : { audiencePolicy }),
+  ...(gate === undefined ? {} : { gate }),
   ...(crossDomainHandoff
     ? { crossDomainHandoff: { admit: vi.fn() } }
     : {}),
@@ -159,17 +162,19 @@ describe('Marketing policy factory composition', () => {
     expect(approval.autonomyWorkflow).toBeUndefined();
     expect(auditTrail.append).toHaveBeenCalledTimes(1);
 
-    const readOnly = await policyEngine.evaluateAuthority({
+    // segment_audience is an INTERNAL row: the derived policy treats it as mutating, so it carries
+    // its server-derived effect key; it is still draft-gated by autonomy rather than AUTH-4.
+    const draftGated = await policyEngine.evaluateAuthority({
       ...action,
       agent_id: 'MKT-02',
       skill_id: 'skill.mkt.segment_audience',
       adapter_target: 'PostgreSQL.Customer360Store',
-      mutating: false,
+      mutating: true,
       required_authority: 'AUTH-1',
-      payload: { tenant_id: TENANT },
+      payload: { tenant_id: TENANT, effect_key: 'effect-marketing' },
     }, context);
-    expect(readOnly.verdict).toBe('AUTO_APPROVED');
-    expect(readOnly.autonomyWorkflow).toBe('PARKED_DRAFT');
+    expect(draftGated.verdict, draftGated.reason).toBe('AUTO_APPROVED');
+    expect(draftGated.autonomyWorkflow).toBe('PARKED_DRAFT');
     expect(admit).toHaveBeenCalledWith(expect.objectContaining({
       tenant_id: TENANT,
       skill_id: 'skill.mkt.segment_audience',
@@ -277,8 +282,44 @@ describe('default Marketing context aggregation', () => {
     });
   });
 
+  it('returns a typed skill-unavailable refusal for an unavailable Marketing step', async () => {
+    getProfile.mockResolvedValueOnce(profile());
+    const checks: [string, string][] = [];
+    const gate: SkillGate = {
+      available: async (tenant_id, skill_id) => {
+        checks.push([tenant_id, skill_id]);
+        return { available: false, reason: 'AGENT_INACTIVE' };
+      },
+    };
+    const orchestrator = await makeFactory(false, undefined, gate)(TENANT);
+    const { contextAggregator, agentRuntime } = internals(orchestrator).dependencies;
+    const context = await contextAggregator.hydrateContext(TENANT, subject, 'correlation-unavailable-skill');
+    const inbound = signal();
+    const hypothesis = await agentRuntime.deriveHypothesis(inbound, context);
+    const routing = await agentRuntime.resolveRouting(inbound, context, hypothesis);
+    const plan = await agentRuntime.formulatePlan(routing, context, hypothesis);
+
+    expect(checks).toEqual([[TENANT, 'skill.mkt.analyze_market_signal']]);
+    expect(plan.domain).toBe('marketing');
+    expect(plan.steps).toEqual([]);
+    expect(plan.terminal_response).toMatchObject({
+      response_kind: 'REFUSAL',
+      reason_code: 'AGENT_INACTIVE',
+    });
+  });
+
   it('plans an operator campaign as segment → content → brand → AUTH-4 dispatch with no per-customer step', async () => {
-    const orchestrator = await makeFactory()(TENANT);
+    const availabilityChecks: string[] = [];
+    const gate: SkillGate = {
+      async available(_tenant_id, skill_id) {
+        availabilityChecks.push(skill_id);
+        if (skill_id === 'skill.mkt.dispatch_campaign') {
+          return { available: false, reason: 'CONNECTOR_UNBOUND' };
+        }
+        return { available: true, reason: 'OK' };
+      },
+    };
+    const orchestrator = await makeFactory(false, undefined, gate)(TENANT);
     const { contextAggregator, agentRuntime } = internals(orchestrator).dependencies;
     // The subject the gateway stamps for an operator command: the operator session, under the
     // Marketing contract's own channel — never the browser WEB_CHAT turn the file defaults to.
@@ -314,10 +355,12 @@ describe('default Marketing context aggregation', () => {
     const hypothesis = await agentRuntime.deriveHypothesis(campaign, context);
     const routing = await agentRuntime.resolveRouting(campaign, context, hypothesis);
     const plan = await agentRuntime.formulatePlan(routing, context, hypothesis);
+    expect(availabilityChecks).toContain('skill.mkt.dispatch_campaign');
 
     // Contiguous steps, and the approval gate is on the dispatch step itself: the plan parks in
     // SCR-003 as AUTH-4 before any provider call.
     expect(plan.steps.map((step) => step.step_index)).toEqual([1, 2, 3, 4]);
+    expect(plan.domain).toBe('marketing');
     const content = plan.steps[1]!;
     expect(content.input_parameters).toMatchObject({
       campaign_theme: 'Reactivate the 90-day inactive segment.',
@@ -385,55 +428,41 @@ describe('default Marketing context aggregation', () => {
     });
     expect(policy.getApprovedAudienceLimit).toHaveBeenCalledWith(TENANT);
   });
-  it('keeps retained signals tenant-scoped when signal ids collide', async () => {
-    const factory = makeFactory();
-    const first = await factory(TENANT);
-    const second = await factory(OTHER_TENANT);
+  it('restores the signal from checkpoint context in a fresh Marketing runtime', async () => {
+    const first = await makeFactory()(TENANT);
+    const recovered = await makeFactory()(TENANT);
     expect(first).not.toBeNull();
-    expect(second).not.toBeNull();
+    expect(recovered).not.toBeNull();
 
-    const firstInternals = internals(first);
-    const secondInternals = internals(second);
-    const firstContext = await firstInternals.dependencies.contextAggregator.hydrateContext(
+    const initialInternals = internals(first);
+    const recoveredRuntime = internals(recovered).dependencies.agentRuntime;
+    const context = await initialInternals.dependencies.contextAggregator.hydrateContext(
       TENANT,
       subject,
-      'correlation-signal-tenant-a',
+      'correlation-signal-checkpoint',
     );
-    const secondContext = await secondInternals.dependencies.contextAggregator.hydrateContext(
-      OTHER_TENANT,
-      {
-        session_id: subject.session_id,
-        channel_type: subject.channel_type,
-      },
-      'correlation-signal-tenant-b',
-    );
-    const firstSignal = { ...signal(), signal_id: 'same-signal-id', tenant_id: TENANT };
-    const secondSignal = {
+    const sourceSignal: SignalEnvelope = {
       ...signal(),
-      signal_id: 'same-signal-id',
-      tenant_id: OTHER_TENANT,
-      correlation_id: 'correlation-signal-tenant-b',
+      signal_id: 'signal-from-checkpoint',
+      payload: {
+        skill_id: 'skill.mkt.analyze_market_signal',
+        input: { checkpoint_marker: 'survives-restart' },
+      },
     };
-
-    const firstHypothesis = await firstInternals.dependencies.agentRuntime.deriveHypothesis(firstSignal, firstContext);
-    const secondHypothesis = await secondInternals.dependencies.agentRuntime.deriveHypothesis(secondSignal, secondContext);
+    const hypothesis = await initialInternals.dependencies.agentRuntime.deriveHypothesis(sourceSignal, context);
+    const persistedContext = structuredClone(context);
     const routing = {
       target_agent: 'MKT-01' as const,
       requires_clarification: false,
       rationalization: 'test',
     };
-    const firstPlan = await firstInternals.dependencies.agentRuntime.formulatePlan(
-      routing,
-      firstContext,
-      firstHypothesis,
-    );
-    const secondPlan = await secondInternals.dependencies.agentRuntime.formulatePlan(
-      routing,
-      secondContext,
-      secondHypothesis,
-    );
 
-    expect(firstPlan.steps[0]!.input_parameters.tenant_id).toBe(TENANT);
-    expect(secondPlan.steps[0]!.input_parameters.tenant_id).toBe(OTHER_TENANT);
+    const plan = await recoveredRuntime.formulatePlan(routing, persistedContext, hypothesis);
+
+    expect(plan.steps[0]?.input_parameters).toMatchObject({
+      tenant_id: TENANT,
+      checkpoint_marker: 'survives-restart',
+    });
+    expect(persistedContext.run_state?.marketing?.source_signal?.signal_id).toBe(sourceSignal.signal_id);
   });
 });

@@ -1,9 +1,12 @@
 import type { QueryResultRow } from 'pg';
 
-import { getPool } from '../client.js';
 import { withTenantContext } from '../rls.js';
+import { appendConfigAudit } from './platform-audit.js';
 import { assertIdentifier } from './durable-workflows.js';
 import type { TenantTransactionRunner } from './effect-reservations.js';
+import { withPlatformRole } from './platform-directory.js';
+import type { PlatformTransactionRunner } from './platform-directory.js';
+import { seedDefaultSkillSettings } from './skill-catalog.js';
 
 const TENANTS = 'agentos.tenants';
 const WORKSPACES = 'agentos.tenant_workspaces';
@@ -16,16 +19,20 @@ const SHOPIFY_DELIVERIES = 'agentos.shopify_webhook_deliveries';
 const RESIDENCY = 'agentos.residency_configurations';
 const PROVISIONING_EVENTS = 'agentos.provisioning_events';
 
+export type TenantDataClass = 'PRODUCTION' | 'DEMO' | 'TEST';
+
 export interface ProvisionTenantShellInput {
   readonly idempotency_key: string;
   readonly request_fingerprint: string;
   readonly display_name: string;
+  readonly data_class?: TenantDataClass;
 }
 
 export interface TenantRecord {
   readonly tenant_id: string;
-  readonly status: 'PROVISIONED';
+  readonly status: 'PROVISIONED' | 'CONFIGURING' | 'ACTIVE' | 'SUSPENDED' | 'ARCHIVED';
   readonly display_name: string;
+  readonly data_class: TenantDataClass;
   readonly created_at: string;
   readonly idempotency_key: string;
   readonly request_fingerprint: string;
@@ -34,34 +41,45 @@ export interface TenantRecord {
 export interface TenantWorkspaceRecord {
   readonly tenant_id: string;
   readonly admin_binding_ref: string;
-  readonly status: 'UNCONFIGURED';
+  readonly status: 'UNCONFIGURED' | 'CONFIGURING' | 'ACTIVE';
 }
 
 export interface CommitTenantWorkspaceInput {
   readonly tenant_id: string;
   readonly admin_binding_ref: string;
-  readonly status: 'UNCONFIGURED';
+  readonly status: TenantWorkspaceRecord['status'];
 }
 
 export interface TenantCapabilityRecord {
   readonly tenant_id: string;
   readonly capability_id: string;
-  readonly status: 'UNCONFIGURED';
+  readonly status: 'UNCONFIGURED' | 'ENABLED' | 'DISABLED';
 }
 
 export interface CommitTenantCapabilityInput {
   readonly tenant_id: string;
   readonly capability_id: string;
-  readonly status: 'UNCONFIGURED';
+  readonly status: TenantCapabilityRecord['status'];
 }
 
-export type ConnectorConfigurationStatus = 'UNBOUND' | 'DISABLED';
+export type ConnectorConfigurationStatus = 'UNBOUND' | 'BOUND' | 'DEGRADED' | 'DISABLED';
+export type ConnectorMode = 'MOCK' | 'LIVE';
 
 export interface ConnectorConfigurationRecord {
   readonly tenant_id: string;
   readonly connector_id: string;
   readonly status: ConnectorConfigurationStatus;
   readonly secret_ref: string | null;
+  readonly mode: ConnectorMode;
+  readonly config: Record<string, unknown>;
+  readonly secret_id: string | null;
+  readonly bound_at: string | null;
+  readonly probe_outcome: string | null;
+  readonly probe_latency_ms: number | null;
+  readonly probe_http_status: number | null;
+  readonly probe_error_class: string | null;
+  readonly probed_at: string | null;
+  readonly version: number;
 }
 
 export interface CommitConnectorConfigurationInput {
@@ -74,7 +92,12 @@ export interface CommitConnectorConfigurationInput {
 export interface OwnerInputRecord {
   readonly tenant_id: string;
   readonly input_id: string;
-  readonly status: 'UNRESOLVED';
+  readonly status: 'UNRESOLVED' | 'RESOLVED';
+  readonly version: number;
+  readonly resolved_value: Record<string, unknown> | null;
+  readonly resolved_value_ref: string | null;
+  readonly resolved_by: string | null;
+  readonly resolved_at: string | null;
 }
 
 export interface AppendOwnerInputInput {
@@ -82,6 +105,21 @@ export interface AppendOwnerInputInput {
   readonly input_id: string;
   readonly status: 'UNRESOLVED';
 }
+
+export interface ResolveOwnerInputInput {
+  readonly tenant_id: string;
+  readonly input_id: string;
+  readonly expected_version: number;
+  readonly value?: Readonly<Record<string, unknown>>;
+  readonly value_ref?: string;
+  readonly actor_kind: string;
+  readonly actor_id: string;
+  readonly correlation_id: string;
+}
+
+export type ResolveOwnerInputResult =
+  | { readonly status: 'RESOLVED'; readonly input: OwnerInputRecord }
+  | { readonly status: 'NOT_FOUND' | 'VERSION_CONFLICT' };
 
 export interface NamespaceBindingRecord {
   readonly tenant_id: string;
@@ -163,8 +201,9 @@ export interface AppendProvisioningEventInput {
 
 interface TenantRow extends QueryResultRow {
   tenant_id: string;
-  status: 'PROVISIONED';
+  status: TenantRecord['status'];
   display_name: string;
+  data_class: TenantDataClass;
   created_at: Date | string;
   idempotency_key: string;
   request_fingerprint: string;
@@ -173,13 +212,13 @@ interface TenantRow extends QueryResultRow {
 interface WorkspaceRow extends QueryResultRow {
   tenant_id: string;
   admin_binding_ref: string;
-  status: 'UNCONFIGURED';
+  status: TenantWorkspaceRecord['status'];
 }
 
 interface CapabilityRow extends QueryResultRow {
   tenant_id: string;
   capability_id: string;
-  status: 'UNCONFIGURED';
+  status: TenantCapabilityRecord['status'];
 }
 
 interface ConnectorRow extends QueryResultRow {
@@ -187,12 +226,27 @@ interface ConnectorRow extends QueryResultRow {
   connector_id: string;
   status: ConnectorConfigurationStatus;
   secret_ref: string | null;
+  mode: ConnectorMode;
+  config: Record<string, unknown>;
+  secret_id: string | null;
+  bound_at: Date | string | null;
+  probe_outcome: string | null;
+  probe_latency_ms: number | null;
+  probe_http_status: number | null;
+  probe_error_class: string | null;
+  probed_at: Date | string | null;
+  version: string | number;
 }
 
 interface OwnerInputRow extends QueryResultRow {
   tenant_id: string;
   input_id: string;
-  status: 'UNRESOLVED';
+  status: OwnerInputRecord['status'];
+  version: string | number;
+  resolved_value: Record<string, unknown> | null;
+  resolved_value_ref: string | null;
+  resolved_by: string | null;
+  resolved_at: Date | string | null;
 }
 
 interface NamespaceRow extends QueryResultRow {
@@ -232,11 +286,11 @@ interface ProvisioningEventRow extends QueryResultRow {
   occurred_at: Date | string;
 }
 
-const TENANT_COLUMNS = `tenant_id, status, display_name, created_at, idempotency_key, request_fingerprint`;
+const TENANT_COLUMNS = `tenant_id, status, display_name, data_class, created_at, idempotency_key, request_fingerprint`;
 const WORKSPACE_COLUMNS = `tenant_id, admin_binding_ref, status`;
 const CAPABILITY_COLUMNS = `tenant_id, capability_id, status`;
-const CONNECTOR_COLUMNS = `tenant_id, connector_id, status, secret_ref`;
-const OWNER_INPUT_COLUMNS = `tenant_id, input_id, status`;
+const CONNECTOR_COLUMNS = `tenant_id, connector_id, status, secret_ref, mode, config, secret_id, bound_at, probe_outcome, probe_latency_ms, probe_http_status, probe_error_class, probed_at, version`;
+const OWNER_INPUT_COLUMNS = `tenant_id, input_id, status, version::text AS version, resolved_value, resolved_value_ref, resolved_by, resolved_at`;
 const NAMESPACE_COLUMNS = `tenant_id, redis_prefix, vector_filter, storage_prefix`;
 const SHOPIFY_COLUMNS = `tenant_id, shop_domain, status, state_token_hash, secret_ref, installed_at`;
 const DELIVERY_COLUMNS = `tenant_id, delivery_id, received_at`;
@@ -271,6 +325,15 @@ const UPSERT_CONNECTOR = `INSERT INTO ${CONNECTORS} (tenant_id, connector_id, st
 const INSERT_OWNER_INPUT = `INSERT INTO ${OWNER_INPUTS} (tenant_id, input_id, status)
   VALUES ($1, $2, $3)
   ON CONFLICT (tenant_id, input_id) DO NOTHING
+  RETURNING ${OWNER_INPUT_COLUMNS}`;
+const RESOLVE_OWNER_INPUT = `UPDATE ${OWNER_INPUTS}
+  SET status = 'RESOLVED',
+      resolved_value = $3::jsonb,
+      resolved_value_ref = $4,
+      resolved_by = $5,
+      resolved_at = clock_timestamp(),
+      version = version + 1
+  WHERE tenant_id = $1 AND input_id = $2 AND status = 'UNRESOLVED' AND version = $6::bigint
   RETURNING ${OWNER_INPUT_COLUMNS}`;
 const UPSERT_NAMESPACE = `INSERT INTO ${NAMESPACES} (tenant_id, redis_prefix, vector_filter, storage_prefix)
   VALUES ($1, $2, $3, $4)
@@ -325,6 +388,23 @@ function toTenant(row: TenantRow): TenantRecord {
   return { ...row, created_at: iso(row.created_at) };
 }
 
+function toConnector(row: ConnectorRow): ConnectorConfigurationRecord {
+  return {
+    ...row,
+    bound_at: nullableIso(row.bound_at),
+    probed_at: nullableIso(row.probed_at),
+    version: Number(row.version),
+  };
+}
+
+function toOwnerInput(row: OwnerInputRow): OwnerInputRecord {
+  const version = Number(row.version);
+  if (!Number.isSafeInteger(version) || version < 1) {
+    throw new Error('P5_PROVISIONING_OWNER_INPUT_VERSION_INVALID');
+  }
+  return { ...row, version, resolved_at: nullableIso(row.resolved_at) };
+}
+
 function toShopify(row: ShopifyInstallationRow): ShopifyInstallationRecord {
   return { ...row, installed_at: nullableIso(row.installed_at) };
 }
@@ -344,34 +424,33 @@ function requiredRow<T>(rows: readonly T[], code: string): T {
 }
 
 export class P5ProvisioningRepository {
-  constructor(private readonly runInTenantTransaction: TenantTransactionRunner = withTenantContext) {}
+  constructor(
+    private readonly runInTenantTransaction: TenantTransactionRunner = withTenantContext,
+    private readonly runInPlatformTransaction: PlatformTransactionRunner = withPlatformRole,
+  ) {}
 
   async provisionTenantShell(input: ProvisionTenantShellInput): Promise<string> {
     requireText(input.idempotency_key, 'idempotency_key', 'P5_PROVISIONING_IDEMPOTENCY_REQUIRED', 64);
     requireText(input.request_fingerprint, 'request_fingerprint', 'P5_PROVISIONING_FINGERPRINT_REQUIRED', 64);
     requireText(input.display_name, 'display_name', 'P5_PROVISIONING_DISPLAY_NAME_REQUIRED', 128);
 
-    const client = await getPool().connect();
-    let transactionOpen = false;
-    try {
-      await client.query('BEGIN');
-      transactionOpen = true;
-      await client.query('SET LOCAL ROLE agentos_platform');
+    return this.runInPlatformTransaction(async (client) => {
       const result = await client.query<{ tenant_id: string }>(
-        'SELECT agentos.provision_tenant_shell($1::char(64), $2::char(64), $3::varchar(128)) AS tenant_id',
-        [input.idempotency_key, input.request_fingerprint, input.display_name],
+        'SELECT agentos.provision_tenant_shell($1::char(64), $2::char(64), $3::varchar(128), $4::agentos.data_class) AS tenant_id',
+        [input.idempotency_key, input.request_fingerprint, input.display_name, input.data_class ?? 'PRODUCTION'],
       );
       const tenant_id = result.rows[0]?.tenant_id;
       if (tenant_id === undefined) throw new Error('P5_PROVISIONING_EMPTY_RESULT: shell function returned no tenant.');
-      await client.query('COMMIT');
-      transactionOpen = false;
+      // Bind the shell's returned identity before touching RLS-protected skill bindings. The
+      // baseline is part of this transaction: a failed binding write rolls back the shell too.
+      await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenant_id]);
+      await seedDefaultSkillSettings(client, tenant_id, {
+        actor_kind: 'SYSTEM',
+        actor_id: 'tenant-provisioning',
+        correlation_id: input.idempotency_key,
+      });
       return tenant_id;
-    } catch (error) {
-      if (transactionOpen) await client.query('ROLLBACK').catch(() => undefined);
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   async getTenant(tenant_id: string): Promise<TenantRecord | null> {
@@ -381,6 +460,10 @@ export class P5ProvisioningRepository {
       const row = result.rows[0];
       return row === undefined ? null : toTenant(row);
     });
+  }
+  async getTenantDataClass(tenant_id: string): Promise<TenantDataClass | null> {
+    const tenant = await this.getTenant(tenant_id);
+    return tenant?.data_class ?? null;
   }
 
   async listTenants(tenant_id: string): Promise<readonly TenantRecord[]> {
@@ -434,7 +517,7 @@ export class P5ProvisioningRepository {
     requireText(tenant_id, 'tenant_id', 'P5_PROVISIONING_TENANT_REQUIRED', 36);
     return this.runInTenantTransaction(tenant_id, async (client) => {
       const result = await client.query<ConnectorRow>(SELECT_CONNECTORS, [tenant_id]);
-      return result.rows;
+      return result.rows.map(toConnector);
     });
   }
 
@@ -448,7 +531,7 @@ export class P5ProvisioningRepository {
         input.status,
         input.secret_ref,
       ]);
-      return requiredRow(result.rows, 'P5_PROVISIONING_CONNECTOR_EMPTY');
+      return toConnector(requiredRow(result.rows, 'P5_PROVISIONING_CONNECTOR_EMPTY'));
     });
   }
 
@@ -456,7 +539,7 @@ export class P5ProvisioningRepository {
     requireText(tenant_id, 'tenant_id', 'P5_PROVISIONING_TENANT_REQUIRED', 36);
     return this.runInTenantTransaction(tenant_id, async (client) => {
       const result = await client.query<OwnerInputRow>(SELECT_OWNER_INPUTS, [tenant_id]);
-      return result.rows;
+      return result.rows.map(toOwnerInput);
     });
   }
 
@@ -469,9 +552,94 @@ export class P5ProvisioningRepository {
         input.input_id,
         input.status,
       ]);
-      return result.rows[0] ?? null;
+      const row = result.rows[0];
+      return row === undefined ? null : toOwnerInput(row);
     });
   }
+  async resolveOwnerInput(input: ResolveOwnerInputInput): Promise<ResolveOwnerInputResult> {
+    requireText(input.tenant_id, 'tenant_id', 'P5_PROVISIONING_TENANT_REQUIRED', 36);
+    requireText(input.input_id, 'input_id', 'P5_PROVISIONING_OWNER_INPUT_REQUIRED', 64);
+    requireText(input.actor_kind, 'actor_kind', 'P5_PROVISIONING_OWNER_INPUT_ACTOR_REQUIRED', 64);
+    requireText(input.actor_id, 'actor_id', 'P5_PROVISIONING_OWNER_INPUT_ACTOR_REQUIRED', 128);
+    requireText(input.correlation_id, 'correlation_id', 'P5_PROVISIONING_OWNER_INPUT_CORRELATION_REQUIRED', 128);
+    if (!Number.isSafeInteger(input.expected_version) || input.expected_version < 1) {
+      throw new Error('P5_PROVISIONING_OWNER_INPUT_VERSION_INVALID');
+    }
+    if ((input.value === undefined) === (input.value_ref === undefined)) {
+      throw new Error('P5_PROVISIONING_OWNER_INPUT_RESOLUTION_INVALID');
+    }
+    if (input.value !== undefined && (input.value === null || typeof input.value !== 'object' || Array.isArray(input.value))) {
+      throw new Error('P5_PROVISIONING_OWNER_INPUT_VALUE_INVALID');
+    }
+    if (input.value_ref !== undefined && (
+      typeof input.value_ref !== 'string'
+      || input.value_ref.trim().length === 0
+      || input.value_ref.length > 4096
+      || /[\u0000-\u001f\u007f-\u009f]/.test(input.value_ref)
+    )) {
+      throw new Error('P5_PROVISIONING_OWNER_INPUT_VALUE_REF_INVALID');
+    }
+    if (input.input_id === 'PROVIDER_CREDENTIALS' && input.value_ref === undefined) {
+      throw new Error('P5_PROVISIONING_OWNER_INPUT_VALUE_REF_REQUIRED');
+    }
+    let value: string | null = null;
+    if (input.value !== undefined) {
+      const serialized = JSON.stringify(input.value);
+      if (serialized === undefined || serialized.length > 32_768) {
+        throw new Error('P5_PROVISIONING_OWNER_INPUT_VALUE_INVALID');
+      }
+      value = serialized;
+    }
+
+    return this.runInTenantTransaction(input.tenant_id, async (client) => {
+      const currentResult = await client.query<OwnerInputRow>(
+        `SELECT ${OWNER_INPUT_COLUMNS}
+           FROM ${OWNER_INPUTS}
+          WHERE tenant_id = $1 AND input_id = $2
+          FOR UPDATE`,
+        [input.tenant_id, input.input_id],
+      );
+      const currentRow = currentResult.rows[0];
+      if (currentRow === undefined) return { status: 'NOT_FOUND' };
+      const current = toOwnerInput(currentRow);
+      if (current.status !== 'UNRESOLVED' || current.version !== input.expected_version) {
+        return { status: 'VERSION_CONFLICT' };
+      }
+
+      const updateResult = await client.query<OwnerInputRow>(RESOLVE_OWNER_INPUT, [
+        input.tenant_id,
+        input.input_id,
+        value,
+        input.value_ref ?? null,
+        input.actor_id,
+        input.expected_version,
+      ]);
+      const updatedRow = updateResult.rows[0];
+      if (updatedRow === undefined) return { status: 'VERSION_CONFLICT' };
+      const updated = toOwnerInput(updatedRow);
+      await appendConfigAudit(client, {
+        actor_kind: input.actor_kind,
+        actor_id: input.actor_id,
+        scope: 'company.owner_inputs',
+        action: 'RESOLVE',
+        target_tenant: input.tenant_id,
+        target: input.input_id,
+        outcome: 'ACCEPTED',
+        reason: null,
+        before: { status: current.status, version: current.version },
+        after: {
+          status: updated.status,
+          version: updated.version,
+          value_kind: input.value_ref === undefined ? 'INLINE' : 'REFERENCE',
+        },
+        correlation_id: input.correlation_id,
+      });
+      return { status: 'RESOLVED', input: updated };
+    });
+  }
+
+
+
 
   async getNamespace(tenant_id: string): Promise<NamespaceBindingRecord | null> {
     requireText(tenant_id, 'tenant_id', 'P5_PROVISIONING_TENANT_REQUIRED', 36);

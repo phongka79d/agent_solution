@@ -9,7 +9,7 @@ import {
   mutationGuard,
   unauthorizedResponse,
 } from '../../../../lib/auth/session';
-import { demoAuthProvider } from '../../../../lib/auth/demo-provider';
+import { authProvider } from '../../../../lib/auth';
 export const dynamic = 'force-dynamic';
 
 
@@ -33,7 +33,7 @@ export async function POST(request: Request): Promise<Response> {
     return response;
   }
 
-  await demoAuthProvider.signOut(request);
+  await authProvider.signOut(request);
   await destroySession(request);
   const response = acceptsJson(request) ? jsonResponse({ ok: true }) : redirectResponse();
   appendClearedCookies(response, request);

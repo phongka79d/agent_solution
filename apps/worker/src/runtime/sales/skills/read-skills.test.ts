@@ -6,14 +6,16 @@
  */
 
 import { computeEffectKey } from '@agentos/core-engine';
+import { approvalPayloadDigest } from '@agentos/core-engine';
 import { type ActionDraft } from '@agentos/core-engine/contracts';
 import { describe, expect, it, vi } from 'vitest';
-import { type Customer360Fact } from '@agentos/core-engine/contracts';
+import { type Customer360Fact, type HydratedContext } from '@agentos/core-engine/contracts';
 import { type CustomerEventTimeline } from '@agentos/database';
 import { type ErpReadPort } from '../../connectors.js';
 import { SalesAdvisorExecutionState } from '../advisor-adapters.js';
 import { type AssignableAuthority } from '@agentos/core-engine/contracts';
 import { createSalesSkillServices, GATE_SALES_SKILLS, computeQuoteToken, type SalesCartPort, type SalesCommunicationPort, type SalesConsentPort, type SalesCustomer360Fact, type SalesFrequencyCapConfig, type SalesFrequencyCapPort, type SalesOrderPort, type SalesPaymentPolicyPort, type SalesPriceFloorApproved, type SalesPriceFloorDecision, type SalesPriceFloorPort, type SalesPriceFloorRefused, type SalesQuotePort, type SalesRecommendationRevenueEvidencePort, type SalesReplenishmentPolicyPort } from './index.js';
+import { categoryMatches } from './sor-readers.js';
 
 const TENANT_ID = '00000000-0000-4000-8000-000000000001';
 
@@ -51,6 +53,21 @@ const timeline: CustomerEventTimeline = {
   }],
   next_cursor: null,
 };
+function createHydratedContext(customerFact: Customer360Fact | null = customer): HydratedContext {
+  return {
+    correlation_id: CORRELATION_ID,
+    tenant_id: TENANT_ID,
+    customer: customerFact,
+    working_memory: {
+      session_id: 'session-read-skills',
+      last_touch_channel: 'WEB_CHAT',
+      turn_count: 1,
+      takeover_active: false,
+    },
+    knowledge_citations: [],
+    hydrated_at: SNAPSHOT_AT,
+  };
+}
 
 function createErpRead(): ErpReadPort {
   return {
@@ -261,13 +278,14 @@ function createServices(overrides: {
   const quote_signing_secret = overrides.quote_signing_secret !== undefined
     ? overrides.quote_signing_secret
     : (overrides.order || overrides.price_floor ? TEST_QUOTE_SECRET : undefined);
-  return createSalesSkillServices({
+  const context = {
+    verifiedCustomerFor: vi.fn(async () => overrides.customer !== undefined ? overrides.customer : customer),
+    verifiedTimelineFor: vi.fn(async () => overrides.timeline !== undefined ? overrides.timeline : timeline),
+  };
+  const services = createSalesSkillServices({
     now: overrides.now ?? (() => new Date(SNAPSHOT_AT)),
     erp_read: overrides.erp_read !== undefined ? overrides.erp_read : createErpRead(),
-    context: {
-      verifiedCustomerFor: vi.fn(async () => overrides.customer !== undefined ? overrides.customer : customer),
-      verifiedTimelineFor: vi.fn(async () => overrides.timeline !== undefined ? overrides.timeline : timeline),
-    },
+    context,
     ...(overrides.revenue_evidence === undefined ? {} : { revenue_evidence: overrides.revenue_evidence }),
     ...(overrides.price_floor === undefined ? {} : { price_floor: overrides.price_floor }),
     ...(overrides.cart === undefined ? {} : { cart: overrides.cart }),
@@ -285,6 +303,7 @@ function createServices(overrides: {
     resolve_correlation_id: vi.fn(async () => CORRELATION_ID),
     resolve_grant: overrides.resolve_grant ?? vi.fn(async () => 'AUTH-1'),
   });
+  return { ...services, context };
 }
 
 function createFullyBoundServices(overrides: {
@@ -576,7 +595,11 @@ describe('SalesSkillServices - read, recommendation and customer skills', () => 
         provenance_reference: 'finance:approved-model:1',
       })),
     };
-    const services = createServices({ revenue_evidence, price_floor: createPriceFloorPort() });
+    const consent = {
+      read: vi.fn(async () => ({ consented: false, suppressed: true })),
+      getConsent: vi.fn(async () => ({ consent_marketing: false, suppression_active: true })),
+    };
+    const services = createServices({ revenue_evidence, price_floor: createPriceFloorPort(), consent });
     const request_id = 'request-recommendation-1';
     const skill_id = 'skill.sales.recommend_product';
     const action: ActionDraft = {
@@ -606,12 +629,12 @@ describe('SalesSkillServices - read, recommendation and customer skills', () => 
       },
     };
 
-    const receipt = await services.dispatcher.dispatch(action);
+    const receipt = await services.dispatcher.dispatch(action, { hydrated_context: createHydratedContext() });
 
     expect(receipt.adapter_status).toBe('SUCCESS');
     expect(receipt.response_payload).toEqual({
       customer: CUSTOMER_ID,
-      product: { sku: 'SKU-1', name: 'Accessory', price: 100 },
+      product: { sku: 'SKU-1', name: 'Accessory', price: 100, currency: 'TWD' },
       reason: 'Available product selected from verified Customer360 event event-1.',
       evidence: {
         verified_timeline_event_ids: ['event-1'],
@@ -621,8 +644,8 @@ describe('SalesSkillServices - read, recommendation and customer skills', () => 
       },
       eligibility: {
         stock_available: true,
-        consent_verified: true,
-        suppression_cleared: true,
+        consent_verified: null,
+        suppression_cleared: null,
       },
       confidence: 0.8,
       ranking_method: 'authoritative_catalog_order',
@@ -632,6 +655,8 @@ describe('SalesSkillServices - read, recommendation and customer skills', () => 
         currency: 'TWD',
       },
     });
+    expect(consent.read).not.toHaveBeenCalled();
+    expect(consent.getConsent).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -696,6 +721,7 @@ describe('SalesSkillServices - read, recommendation and customer skills', () => 
         correlation_id: CORRELATION_ID,
         granted_authority: 'AUTH-1' as const,
         effect_key: 'effect-read-invalid-product',
+        hydrated_context: createHydratedContext(),
       },
     })).rejects.toMatchObject({
       code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE',
@@ -715,6 +741,7 @@ describe('SalesSkillServices - read, recommendation and customer skills', () => 
         correlation_id: CORRELATION_ID,
         granted_authority: 'AUTH-0' as const,
         effect_key: 'effect-read-2',
+        hydrated_context: createHydratedContext(),
       },
     });
     expect(output).toEqual({
@@ -727,9 +754,9 @@ describe('SalesSkillServices - read, recommendation and customer skills', () => 
     });
   });
 
-  it('refuses recommendation execution without owner-approved revenue evidence', async () => {
+  it('returns a recommendation with a null expected outcome when revenue evidence is unavailable', async () => {
     const services = createServices();
-    await expect(services.tool_port.invoke({
+    const output = await services.tool_port.invoke({
       skill_id: 'skill.sales.recommend_product',
       tool_binding: 'Core.RecommendationEngine',
       input: {
@@ -744,10 +771,46 @@ describe('SalesSkillServices - read, recommendation and customer skills', () => 
         correlation_id: CORRELATION_ID,
         granted_authority: 'AUTH-1' as const,
         effect_key: 'effect-read-3',
+        hydrated_context: createHydratedContext(),
       },
-    })).rejects.toMatchObject({
-      code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE',
     });
+
+    expect(output).toMatchObject({
+      customer: CUSTOMER_ID,
+      expected_outcome: null,
+      evidence: {
+        verified_model: null,
+        revenue_data_status: 'Chưa có dữ liệu doanh thu',
+      },
+    });
+  });
+
+  it('gives anonymous recommendations without reading customer data', async () => {
+    const consent = createConsentPort({ consented: false, suppressed: true });
+    const services = createServices({ customer: null, timeline: null, consent });
+    const output = await services.tool_port.invoke({
+      skill_id: 'skill.sales.recommend_product',
+      tool_binding: 'Core.RecommendationEngine',
+      input: { tenant_id: TENANT_ID, current_cart_skus: [] },
+      context: {
+        run_id: 'run-anonymous-recommendation',
+        tenant_id: TENANT_ID,
+        caller_agent: 'SAL-02' as const,
+        correlation_id: CORRELATION_ID,
+        granted_authority: 'AUTH-1' as const,
+        effect_key: 'effect-read-anonymous',
+      },
+    });
+
+    expect(output).toMatchObject({
+      customer: null,
+      product: { sku: 'SKU-1', price: 100 },
+      expected_outcome: null,
+    });
+    expect(services.context.verifiedCustomerFor).not.toHaveBeenCalled();
+    expect(services.context.verifiedTimelineFor).not.toHaveBeenCalled();
+    expect(consent.read).not.toHaveBeenCalled();
+    expect(consent.getConsent).not.toHaveBeenCalled();
   });
 
   it('uses only owner-approved revenue evidence when recommendation execution is enabled', async () => {
@@ -776,6 +839,7 @@ describe('SalesSkillServices - read, recommendation and customer skills', () => 
         correlation_id: CORRELATION_ID,
         granted_authority: 'AUTH-1' as const,
         effect_key: 'effect-read-4',
+        hydrated_context: createHydratedContext(),
       },
     });
     expect(output).toMatchObject({
@@ -921,7 +985,7 @@ describe('SalesSkillServices - read, recommendation and customer skills', () => 
       effect_key: computeEffectKey({ tenant_id: TENANT_ID, skill_id: 'skill.sales.retrieve_customer', step_index: 3, action_revision: 0, request_id: 'req-3' }),
       required_authority: 'AUTH-0',
       payload: { tenant_id: TENANT_ID, customer_identifier: CUSTOMER_ID },
-    });
+    }, { hydrated_context: createHydratedContext() });
     expect(customerReceipt.adapter_status).toBe('SUCCESS');
 
     // 4. recommend_product
@@ -940,7 +1004,7 @@ describe('SalesSkillServices - read, recommendation and customer skills', () => 
       effect_key: computeEffectKey({ tenant_id: TENANT_ID, skill_id: 'skill.sales.recommend_product', step_index: 4, action_revision: 0, request_id: 'req-4' }),
       required_authority: 'AUTH-1',
       payload: { tenant_id: TENANT_ID, customer_id: CUSTOMER_ID, current_cart_skus: [] },
-    });
+    }, { hydrated_context: createHydratedContext() });
     expect(recommendReceipt.adapter_status).toBe('SUCCESS');
 
     // 5. check_price
@@ -1009,8 +1073,15 @@ describe('SalesSkillServices - read, recommendation and customer skills', () => 
       updated_at: '2026-09-24T10:00:00.000Z',
     });
 
-    // 7. create_order
+    // 7. create_order (AUTH-4): the row executes only with an approval bound to the normalized payload.
     const orderEffectKey = computeEffectKey({ tenant_id: TENANT_ID, skill_id: 'skill.sales.create_order', step_index: 7, action_revision: 0, request_id: 'req-7' });
+    const orderApprovalPayload = {
+      tenant_id: TENANT_ID,
+      cart_id: 'cart-00000000-0000-4000-8000-000000000001',
+      customer_id: CUSTOMER_ID,
+      shipping_address: { street: 'Main St 1' },
+      payment_method: 'CREDIT_CARD',
+    };
     const orderReceipt = await services.dispatcher.dispatch({
       action_id: '00000000-0000-0000-0000-000000000007',
       run_id: 'run-1',
@@ -1024,7 +1095,9 @@ describe('SalesSkillServices - read, recommendation and customer skills', () => 
       request_id: 'req-7',
       action_revision: 0,
       effect_key: orderEffectKey,
-      required_authority: 'AUTH-3',
+      approval_id: 'approval-read-skills-create-order',
+      approval_payload_digest: approvalPayloadDigest({ skill_id: 'skill.sales.create_order', payload: orderApprovalPayload }),
+      required_authority: 'AUTH-4',
       payload: {
         tenant_id: TENANT_ID,
         cart_id: 'cart-00000000-0000-4000-8000-000000000001',
@@ -1080,7 +1153,7 @@ describe('SalesSkillServices - read, recommendation and customer skills', () => 
         message_content: { text: 'Your items are in stock!' },
         effect_key: msgEffectKey,
       },
-    });
+    }, { hydrated_context: createHydratedContext() });
     expect(msgReceipt.adapter_status).toBe('SUCCESS');
     expect(msgReceipt.response_payload).toEqual({
       message_id: 'msg-00000000-0000-4000-8000-000000000001',
@@ -1112,6 +1185,7 @@ describe('SalesSkillServices - read, recommendation and customer skills', () => 
         correlation_id: CORRELATION_ID,
         granted_authority: 'AUTH-0' as const,
         effect_key: 'effect-read-evidence',
+        hydrated_context: createHydratedContext(customerWithEvidence),
       },
     });
 
@@ -1127,7 +1201,8 @@ describe('SalesSkillServices - read, recommendation and customer skills', () => 
 
   it('binds an advisor recommendation to the SKU this run actually searched and verified', async () => {
     const advisor_state = new SalesAdvisorExecutionState();
-    advisor_state.setRequirements(TENANT_ID, CORRELATION_ID, {
+    const hydrated_context = createHydratedContext();
+    advisor_state.setRequirements(hydrated_context, {
       category: 'accessories',
       budget: { amount: 100, currency: 'TWD' },
       use_case: 'accessories',
@@ -1184,13 +1259,14 @@ describe('SalesSkillServices - read, recommendation and customer skills', () => 
         correlation_id: CORRELATION_ID,
         granted_authority: 'AUTH-1' as const,
         effect_key: 'effect-advisor-search',
+        hydrated_context,
       },
     });
     const searchPayload = search as unknown as Record<string, unknown>;
     expect(searchPayload['products']).toEqual([
       expect.objectContaining({ sku: 'SKU-1', in_stock: true }),
     ]);
-    expect(advisor_state.candidateSkuFor(TENANT_ID, CORRELATION_ID)).toBe('SKU-1');
+    expect(advisor_state.candidateSkuFor(hydrated_context)).toBe('SKU-1');
 
     const recommendation = await services.tool_port.invoke({
       skill_id: 'skill.sales.recommend_product',
@@ -1203,6 +1279,7 @@ describe('SalesSkillServices - read, recommendation and customer skills', () => 
         correlation_id: CORRELATION_ID,
         granted_authority: 'AUTH-1' as const,
         effect_key: 'effect-advisor-recommend',
+        hydrated_context,
       },
     });
 
@@ -1210,5 +1287,16 @@ describe('SalesSkillServices - read, recommendation and customer skills', () => 
     // evidence trail this run actually verified, so it stays on `SKU-1`.
     const recommendationPayload = recommendation as unknown as Record<string, unknown>;
     expect(recommendationPayload['product']).toMatchObject({ sku: 'SKU-1', price: 100 });
+  });
+});
+
+describe('catalog category matching', () => {
+  it('matches a proposed category regardless of case and plural form, but not another category', () => {
+    const laptop = { sku: 'L-1', category: 'laptops' } as Parameters<typeof categoryMatches>[0];
+    expect(categoryMatches(laptop, 'Laptop')).toBe(true);
+    expect(categoryMatches(laptop, 'laptops')).toBe(true);
+    expect(categoryMatches(laptop, 'accessories')).toBe(false);
+    expect(categoryMatches({ sku: 'B-1', category_path: 'electronics/bags' } as Parameters<typeof categoryMatches>[0], 'bag'))
+      .toBe(true);
   });
 });
