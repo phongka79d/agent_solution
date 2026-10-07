@@ -8,7 +8,9 @@
 import Fastify from 'fastify';
 import { describe, expect, it, vi } from 'vitest';
 import { createCredentialStore } from '../../gateway/principal.js';
-import { GatewayRuntime } from '../../gateway/ports.js';
+import type { GatewayRuntime } from '../../gateway/ports.js';
+import type { TurnIntentPort } from '../../runtime/bindings/turn-intent.js';
+import type { TurnRateLimiter } from './care-turn.js';
 import { registerConversationRoutes } from './conversations.js';
 
 const TENANT = 'tenant-a';
@@ -17,7 +19,11 @@ const CONVERSATION_ID = '11111111-1111-4111-8111-111111111111';
 
 const SESSION_TOKEN = 'session-token';
 
-function buildHarness() {
+function buildHarness(options: {
+  readonly intentProposer?: TurnIntentPort;
+  readonly takeoverHolder?: { readonly operator_id: string; readonly expires_at: string } | null;
+  readonly turnRateLimiter?: TurnRateLimiter;
+} = {}) {
   const conversation = {
     conversation_id: CONVERSATION_ID,
     tenant_id: TENANT,
@@ -31,22 +37,48 @@ function buildHarness() {
     created_at: '2026-09-23T00:00:00.000Z',
   };
   const receipts = new Map<string, Record<string, unknown>>();
+  const providerCalls = { appendProviderCall: vi.fn(async (_input: unknown) => undefined) };
+  const audit = { record: vi.fn(async (_input: unknown) => undefined) };
   const appendMessage = vi.fn(async (_input: unknown) => undefined);
+  const setState = vi.fn(async (
+    _tenant_id: string,
+    _conversation_id: string,
+    state: 'open' | 'paused_takeover' | 'closed',
+    operator_id: string | null,
+  ) => {
+    conversation.state = state;
+    conversation.takeover_operator_id = operator_id;
+  });
+  const clearTakeoverIfOwned = vi.fn(async (
+    _tenant_id: string,
+    _conversation_id: string,
+    operator_id: string,
+  ) => {
+    if (conversation.state !== 'paused_takeover' || conversation.takeover_operator_id !== operator_id) return false;
+    conversation.state = 'open';
+    conversation.takeover_operator_id = null;
+    return true;
+  });
   // The real `runs.start` port carries the server-resolved channel, so the fixture names it too:
   // a case can then assert what the admission path actually passed.
-  const start = vi.fn(async (input: { correlation_id: string; source_channel?: string }) => ({
+  const start = vi.fn(async (input: { correlation_id: string; source_channel?: string; payload?: Record<string, unknown>; [key: string]: unknown }) => ({
     run_id: 'run-a',
     task_version: 1,
     correlation_id: input.correlation_id,
     lifecycle_state: 'queued' as const,
     admission: 'ADMITTED' as 'ADMITTED' | 'IN_FLIGHT',
   }));
+  const reserve = vi.fn(async (): Promise<{ kind: 'RESERVED' | 'IN_FLIGHT' }> => ({ kind: 'RESERVED' }));
   const runtime = {
     conversations: {
       get: vi.fn(async (_tenant_id: string, _conversation_id: string) => conversation),
       appendMessage,
+      setState,
+      clearTakeoverIfOwned,
     },
-    takeover: { holder: vi.fn(async () => null) },
+    takeover: {
+      holder: vi.fn(async () => options.takeoverHolder === undefined ? null : options.takeoverHolder),
+    },
     runs: { start },
     receipts: {
       receiptFor: vi.fn(async (_tenant_id: string, effect_key: string) => receipts.get(effect_key) ?? null),
@@ -58,8 +90,11 @@ function buildHarness() {
       computeEffectKey: (input: { tenant_id: string; skill_id: string; request_id: string }) =>
         [input.tenant_id, input.skill_id, input.request_id].join(':'),
       computeRequestFingerprint: (input: Record<string, unknown>) => JSON.stringify(input),
+      reserve,
+      resolve: vi.fn(async () => undefined),
     },
-    audit: { record: vi.fn(async () => undefined) },
+    audit,
+    providerCalls,
     clock: () => new Date('2026-09-23T00:00:00.000Z'),
     ids: () => 'corr-a',
   } as unknown as GatewayRuntime;
@@ -78,12 +113,95 @@ function buildHarness() {
       }],
       widgets: [],
     }),
+    ...(options.intentProposer === undefined ? {} : { intentProposer: options.intentProposer }),
+    ...(options.turnRateLimiter === undefined ? {} : { turnRateLimiter: options.turnRateLimiter }),
   });
 
-  return { app, appendMessage, conversation, receipts, start };
+  return { app, appendMessage, conversation, receipts, start, reserve, providerCalls, audit, setState, clearTakeoverIfOwned };
 }
 
 describe('POST /conversations/:conversation_id/messages shared Care admission', () => {
+  it('records only redacted provider telemetry after an admitted intent proposal', async () => {
+    const intentProposer: TurnIntentPort = {
+      propose: vi.fn(async () => ({
+        intent: 'faq_search' as const,
+        requirements: { question: 'return policy' },
+        confidence: 0.93,
+        metadata: {
+          provider: 'openai-compatible',
+          model: 'intent-model',
+          request_id: 'provider-request-1',
+          latency_ms: 21,
+          usage: { prompt_tokens: 12, completion_tokens: 8 },
+        },
+      })),
+    };
+    const { app, providerCalls } = buildHarness({ intentProposer });
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/conversations/${CONVERSATION_ID}/messages`,
+        headers: { authorization: `Bearer ${SESSION_TOKEN}` },
+        payload: { message: 'What is your return policy?', idempotency_key: 'turn-provider-1', module: 'support' },
+      });
+
+      expect(response.statusCode).toBe(202);
+      expect(providerCalls.appendProviderCall).toHaveBeenCalledWith({
+        tenant_id: TENANT,
+        run_id: 'run-a',
+        step_index: 0,
+        stage: 'HYPOTHESIS',
+        call_index: 0,
+        provider: 'openai-compatible',
+        model: 'intent-model',
+        observed_status: 'SUCCESS',
+        latency_ms: 21,
+        prompt_tokens: 12,
+        completion_tokens: 8,
+      });
+      const ledgerInput = providerCalls.appendProviderCall.mock.calls[0]?.[0];
+      expect(JSON.stringify(ledgerInput)).not.toContain('return policy');
+      expect(ledgerInput).not.toHaveProperty('prompt');
+      expect(ledgerInput).not.toHaveProperty('completion');
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('keeps an admitted turn accepted when telemetry storage is unavailable and reports UNAVAILABLE', async () => {
+    const intentProposer: TurnIntentPort = {
+      propose: vi.fn(async () => ({
+        intent: 'faq_search' as const,
+        requirements: {},
+        confidence: 0.8,
+        metadata: {
+          provider: 'openai-compatible',
+          model: 'intent-model',
+          latency_ms: 11,
+        },
+      })),
+    };
+    const { app, providerCalls, audit } = buildHarness({ intentProposer });
+    providerCalls.appendProviderCall.mockRejectedValue(new Error('ledger connection secret must not escape'));
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/conversations/${CONVERSATION_ID}/messages`,
+        headers: { authorization: `Bearer ${SESSION_TOKEN}` },
+        payload: { message: 'Can you help?', idempotency_key: 'turn-provider-2', module: 'support' },
+      });
+
+      expect(response.statusCode).toBe(202);
+      expect(JSON.stringify(response.json())).not.toContain('secret');
+      expect(audit.record).toHaveBeenCalledWith(expect.objectContaining({
+        operation: 'conversations.messages.provider_ledger',
+        outcome: 'ACCEPTED',
+        detail: { provider_ledger: 'UNAVAILABLE' },
+      }));
+    } finally {
+      await app.close();
+    }
+  });
   it('replays the durable acceptance without starting or appending twice, and rejects changed bytes', async () => {
     const { app, appendMessage, start } = buildHarness();
     const url = `/conversations/${CONVERSATION_ID}/messages`;
@@ -165,23 +283,118 @@ describe('POST /conversations/:conversation_id/messages shared Care admission', 
     }
   });
 
-  it('rejects message admission with HTTP 409 and CONVERSATION_LOCKED when conversation.state=paused_takeover', async () => {
-    const { app, appendMessage, conversation, start } = buildHarness();
+  it('persists a customer message during human takeover with HTTP 202 HUMAN_OWNED and no run', async () => {
+    const { app, appendMessage, conversation, start } = buildHarness({
+      takeoverHolder: { operator_id: 'operator-a', expires_at: '2026-09-23T00:01:00.000Z' },
+    });
     conversation.state = 'paused_takeover';
+    conversation.takeover_operator_id = 'operator-a';
     const url = `/conversations/${CONVERSATION_ID}/messages`;
     const headers = { authorization: `Bearer ${SESSION_TOKEN}` };
     const body = { message: 'Where is my order?', idempotency_key: 'turn-paused', module: 'support' };
 
     try {
       const response = await app.inject({ method: 'POST', url, headers, payload: body });
+      const replay = await app.inject({ method: 'POST', url, headers, payload: body });
 
-      expect(response.statusCode).toBe(409);
+      expect(response.statusCode).toBe(202);
       expect(response.json()).toMatchObject({
-        error_code: 'CONVERSATION_LOCKED',
-        retryable: false,
+        conversation_id: CONVERSATION_ID,
+        status: 'HUMAN_OWNED',
       });
+      expect(replay.statusCode).toBe(202);
+      expect(replay.json()).toEqual(response.json());
+      expect(appendMessage).toHaveBeenCalledTimes(1);
+      expect(appendMessage).toHaveBeenCalledWith(expect.objectContaining({
+        conversation_id: CONVERSATION_ID,
+        content: body.message,
+        request_id: body.idempotency_key,
+      }));
       expect(start).not.toHaveBeenCalled();
-      expect(appendMessage).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
+  it('treats an expired takeover lease as released for the next customer turn', async () => {
+    const { app, appendMessage, conversation, start } = buildHarness();
+    conversation.state = 'paused_takeover';
+    conversation.takeover_operator_id = 'operator-a';
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/conversations/${CONVERSATION_ID}/messages`,
+      headers: { authorization: `Bearer ${SESSION_TOKEN}` },
+      payload: { message: 'Where is my order?', idempotency_key: 'turn-expired', module: 'support' },
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(response.json()).toMatchObject({ conversation_id: CONVERSATION_ID, status: 'accepted' });
+    expect(conversation.state).toBe('paused_takeover');
+    expect(conversation.takeover_operator_id).toBe('operator-a');
+    expect(start).toHaveBeenCalledOnce();
+    expect(appendMessage).toHaveBeenCalledOnce();
+    await app.close();
+  });
+
+  it('claims the idempotency slot before intent classification, so a concurrent duplicate calls the LLM once', async () => {
+    let releaseProposal: () => void = () => {};
+    const proposalFinished = new Promise<void>((resolve) => {
+      releaseProposal = resolve;
+    });
+    const intentProposer: TurnIntentPort = {
+      propose: vi.fn(async () => {
+        await proposalFinished;
+        return { intent: 'faq_search' as const, requirements: {}, confidence: 0.9 };
+      }),
+    };
+    const { app, reserve, start } = buildHarness({ intentProposer });
+    reserve
+      .mockImplementationOnce(async () => ({ kind: 'RESERVED' as const }))
+      .mockImplementationOnce(async () => ({ kind: 'IN_FLIGHT' as const }));
+    const request = {
+      method: 'POST' as const,
+      url: `/conversations/${CONVERSATION_ID}/messages`,
+      headers: { authorization: `Bearer ${SESSION_TOKEN}` },
+      payload: { message: 'Where is my order?', idempotency_key: 'turn-concurrent', module: 'support' },
+    };
+
+    try {
+      const first = app.inject(request);
+      await vi.waitFor(() => expect(reserve).toHaveBeenCalledTimes(1));
+      const second = app.inject(request);
+      await vi.waitFor(() => expect(reserve).toHaveBeenCalledTimes(2));
+      expect(reserve).toHaveBeenCalledTimes(2);
+      expect(intentProposer.propose).toHaveBeenCalledOnce();
+      releaseProposal();
+      const responses = await Promise.all([first, second]);
+      expect(responses[0]?.statusCode).toBe(202);
+      expect(responses[1]?.statusCode).toBe(202);
+      expect(start).toHaveBeenCalledOnce();
+    } finally {
+      releaseProposal();
+      await app.close();
+    }
+  });
+
+  it('returns RATE_LIMITED before intent classification when the tenant session bucket is empty', async () => {
+    const intentProposer: TurnIntentPort = {
+      propose: vi.fn(async () => ({ intent: 'faq_search' as const, requirements: {}, confidence: 0.9 })),
+    };
+    const turnRateLimiter: TurnRateLimiter = { consume: vi.fn(() => false) };
+    const { app, start } = buildHarness({ intentProposer, turnRateLimiter });
+
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/conversations/${CONVERSATION_ID}/messages`,
+        headers: { authorization: `Bearer ${SESSION_TOKEN}` },
+        payload: { message: 'Please help', idempotency_key: 'turn-rate-limited', module: 'support' },
+      });
+
+      expect(response.statusCode).toBe(429);
+      expect(response.json()).toMatchObject({ error_code: 'RATE_LIMITED' });
+      expect(intentProposer.propose).not.toHaveBeenCalled();
+      expect(start).not.toHaveBeenCalled();
     } finally {
       await app.close();
     }
@@ -202,7 +415,6 @@ describe('POST /conversations/:conversation_id/messages shared Care admission', 
       expect(response.statusCode).toBe(403);
       expect(response.json()).toMatchObject({
         error_code: 'CAPABILITY_NOT_ENABLED',
-        message: 'only Customer Care support turns are enabled',
       });
       expect(start).not.toHaveBeenCalled();
       expect(appendMessage).not.toHaveBeenCalled();
@@ -293,7 +505,6 @@ describe('POST /conversations/:conversation_id/messages shared Care admission', 
       expect(response.statusCode).toBe(403);
       expect(response.json()).toMatchObject({
         error_code: 'CAPABILITY_NOT_ENABLED',
-        message: 'only Customer Care support turns are enabled',
       });
       expect(start).not.toHaveBeenCalled();
       expect(appendMessage).not.toHaveBeenCalled();
@@ -613,4 +824,65 @@ describe('POST /conversations/:conversation_id/messages shared Care admission', 
       await app.close();
     }
   });
+
+  it('validates attachments: rejects non-array or non-string attachments with 400 VALIDATION_FAILED', async () => {
+    const { app } = buildHarness();
+    const url = `/conversations/${CONVERSATION_ID}/messages`;
+    const headers = { authorization: `Bearer ${SESSION_TOKEN}` };
+
+    // String instead of array
+    const stringRes = await app.inject({
+      method: 'POST',
+      url,
+      headers,
+      payload: {
+        message: 'Here is my receipt',
+        idempotency_key: 'turn-attachments-invalid-1',
+        attachments: 'https://example.com/receipt.pdf',
+      },
+    });
+    expect(stringRes.statusCode).toBe(400);
+    expect(stringRes.json()).toMatchObject({ error_code: 'VALIDATION_FAILED' });
+
+    // Array containing non-string
+    const numberRes = await app.inject({
+      method: 'POST',
+      url,
+      headers,
+      payload: {
+        message: 'Here is my receipt',
+        idempotency_key: 'turn-attachments-invalid-2',
+        attachments: [123],
+      },
+    });
+    expect(numberRes.statusCode).toBe(400);
+    expect(numberRes.json()).toMatchObject({ error_code: 'VALIDATION_FAILED' });
+
+    await app.close();
+  });
+
+  it('accepts valid string array attachments', async () => {
+    const { app, start } = buildHarness();
+    const url = `/conversations/${CONVERSATION_ID}/messages`;
+    const headers = { authorization: `Bearer ${SESSION_TOKEN}` };
+
+    const validRes = await app.inject({
+      method: 'POST',
+      url,
+      headers,
+      payload: {
+        message: 'Here is my receipt',
+        idempotency_key: 'turn-attachments-valid',
+        attachments: ['https://example.com/receipt.pdf'],
+      },
+    });
+    expect(validRes.statusCode).toBe(202);
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(start.mock.calls[0]?.[0].payload).toMatchObject({
+      attachments: ['https://example.com/receipt.pdf'],
+    });
+
+    await app.close();
+  });
 });
+

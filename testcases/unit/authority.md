@@ -153,7 +153,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-AUTH-0.json`](../fixtures/scenarios/UNIT-AUTH-0.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-AUTH-0.json`](../fixtures/scenarios/UNIT-AUTH-0.json).
 
 <a id="case-unit-auth-1"></a>
 
@@ -261,7 +261,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/offline/catalog.json`](../fixtures/offline/catalog.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-AUTH-1.json`](../fixtures/scenarios/UNIT-AUTH-1.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-AUTH-1.json`](../fixtures/scenarios/UNIT-AUTH-1.json).
 
 <a id="case-unit-auth-2"></a>
 
@@ -365,7 +365,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/offline/knowledge.json`](../fixtures/offline/knowledge.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-AUTH-2.json`](../fixtures/scenarios/UNIT-AUTH-2.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-AUTH-2.json`](../fixtures/scenarios/UNIT-AUTH-2.json).
 
 <a id="case-unit-auth-3"></a>
 
@@ -483,7 +483,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-AUTH-3.json`](../fixtures/scenarios/UNIT-AUTH-3.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-AUTH-3.json`](../fixtures/scenarios/UNIT-AUTH-3.json).
 
 <a id="case-unit-auth-4"></a>
 
@@ -589,7 +589,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-AUTH-4.json`](../fixtures/scenarios/UNIT-AUTH-4.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-AUTH-4.json`](../fixtures/scenarios/UNIT-AUTH-4.json).
 
 <a id="case-unit-auth-5"></a>
 
@@ -702,7 +702,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-AUTH-5.json`](../fixtures/scenarios/UNIT-AUTH-5.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-AUTH-5.json`](../fixtures/scenarios/UNIT-AUTH-5.json).
 
 <a id="case-unit-auth-5-cross-tenant"></a>
 
@@ -812,7 +812,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-AUTH-5-CROSS-TENANT.json`](../fixtures/scenarios/UNIT-AUTH-5-CROSS-TENANT.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-AUTH-5-CROSS-TENANT.json`](../fixtures/scenarios/UNIT-AUTH-5-CROSS-TENANT.json).
 
 <a id="case-unit-auth-deny-audit"></a>
 
@@ -923,7 +923,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-AUTH-DENY-AUDIT.json`](../fixtures/scenarios/UNIT-AUTH-DENY-AUDIT.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-AUTH-DENY-AUDIT.json`](../fixtures/scenarios/UNIT-AUTH-DENY-AUDIT.json).
 
 <a id="case-unit-auth-freq-cap"></a>
 
@@ -1040,7 +1040,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/offline/consents.json`](../fixtures/offline/consents.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-AUTH-FREQ-CAP.json`](../fixtures/scenarios/UNIT-AUTH-FREQ-CAP.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-AUTH-FREQ-CAP.json`](../fixtures/scenarios/UNIT-AUTH-FREQ-CAP.json).
 
 <a id="case-unit-auth-grant-registry"></a>
 
@@ -1152,7 +1152,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-AUTH-GRANT-REGISTRY.json`](../fixtures/scenarios/UNIT-AUTH-GRANT-REGISTRY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-AUTH-GRANT-REGISTRY.json`](../fixtures/scenarios/UNIT-AUTH-GRANT-REGISTRY.json).
 
 <a id="case-unit-auth-self-asserted"></a>
 
@@ -1254,7 +1254,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-AUTH-SELF-ASSERTED.json`](../fixtures/scenarios/UNIT-AUTH-SELF-ASSERTED.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-AUTH-SELF-ASSERTED.json`](../fixtures/scenarios/UNIT-AUTH-SELF-ASSERTED.json).
 
 <a id="case-unit-auth-unknown-skill"></a>
 
@@ -1370,7 +1370,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-AUTH-UNKNOWN-SKILL.json`](../fixtures/scenarios/UNIT-AUTH-UNKNOWN-SKILL.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-AUTH-UNKNOWN-SKILL.json`](../fixtures/scenarios/UNIT-AUTH-UNKNOWN-SKILL.json).
 
 <a id="case-unit-auth-verdict-map"></a>
 
@@ -1495,7 +1495,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-AUTH-VERDICT-MAP.json`](../fixtures/scenarios/UNIT-AUTH-VERDICT-MAP.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-AUTH-VERDICT-MAP.json`](../fixtures/scenarios/UNIT-AUTH-VERDICT-MAP.json).
 
 <a id="case-unit-auth-verdict-precedence"></a>
 
@@ -1610,4 +1610,4 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-AUTH-VERDICT-PRECEDENCE.json`](../fixtures/scenarios/UNIT-AUTH-VERDICT-PRECEDENCE.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-AUTH-VERDICT-PRECEDENCE.json`](../fixtures/scenarios/UNIT-AUTH-VERDICT-PRECEDENCE.json).

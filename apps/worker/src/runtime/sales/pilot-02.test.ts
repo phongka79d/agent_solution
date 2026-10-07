@@ -21,7 +21,7 @@
  *   - SKU: SKU-OK (list price 1000 TWD, P_floor 800 TWD, D_cap 200 TWD)
  *   - proposed below-floor discount: 300 TWD (offered 700 < P_floor 800)
  *   - in-policy discount: 200 TWD (offered 800 >= P_floor 800, inside D_cap 200)
- *   - effect_key: EK-CART-0115-01-EMAIL
+ *   - effect_key: server-derived SHA-256 of (tenant, skill, step, revision, inbound request_id)
  *   - opted-out customer: cust-b (bbbbbbbb-0000-4000-8000-00000000000b)
  *   - recovered order: ORD-CART-0115-01 (1000 TWD)
  *   - frozen clock: 2026-01-15T10:00:00.000Z
@@ -54,6 +54,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  computeEffectKey,
   computeRequestFingerprint,
   MemoryEffectGuard,
   PolicyEnforcementPoint,
@@ -154,7 +155,39 @@ const LIST_PRICE_TWD = 1000;
 const P_FLOOR_TWD = 800;
 const PROPOSED_DISCOUNT_TWD = 300;
 const IN_POLICY_DISCOUNT_TWD = 200;
-const EFFECT_KEY = 'EK-CART-0115-01-EMAIL';
+// Every mutating effect fixture uses the same BR-005 derivation as the server; human-readable
+// aliases are deliberately not accepted by MemoryEffectGuard.
+const MESSAGE_REQUEST_ID = 'req-cart-msg-01';
+const EFFECT_KEY = computeEffectKey({
+  tenant_id: TENANT_T1,
+  skill_id: 'skill.sales.send_message',
+  step_index: 1,
+  action_revision: 0,
+  request_id: MESSAGE_REQUEST_ID,
+});
+const FLOOR_CHECK_EFFECT_KEY = computeEffectKey({
+  tenant_id: TENANT_T1,
+  skill_id: 'skill.sales.create_cart',
+  step_index: 1,
+  action_revision: 0,
+  request_id: 'req-floor-check',
+});
+const REPLAY_REQUEST_ID = 'req-first-pass';
+const REPLAY_EFFECT_KEY = computeEffectKey({
+  tenant_id: TENANT_T1,
+  skill_id: 'skill.sales.send_message',
+  step_index: 1,
+  action_revision: 0,
+  request_id: REPLAY_REQUEST_ID,
+});
+const DUPLICATE_REQUEST_ID = 'req-dup-1';
+const DUPLICATE_EFFECT_KEY = computeEffectKey({
+  tenant_id: TENANT_T1,
+  skill_id: 'skill.sales.send_message',
+  step_index: 1,
+  action_revision: 0,
+  request_id: DUPLICATE_REQUEST_ID,
+});
 const RECOVERED_ORDER_ID = 'ORD-CART-0115-01';
 const FROZEN_TIME_ISO = '2026-01-15T10:00:00.000Z';
 const ABANDONED_TIME_ISO = '2026-01-15T09:30:00.000Z'; // 30 minutes before frozen clock
@@ -364,6 +397,7 @@ function createInMemoryAdapterRepositories() {
         review_comment: null,
         is_paused: true,
         created_at: FROZEN_TIME_ISO,
+        expires_at: new Date(Date.parse(FROZEN_TIME_ISO) + 72 * 60 * 60 * 1000).toISOString(),
         decided_at: null,
       };
       approvals.set(approval_id, approval);
@@ -1065,7 +1099,7 @@ describe('PILOT-02 / E2E-OFF-CART: Cart Recovery, Floor-Price Guard & Consent Su
       price_bearing: false,
       request_id: 'req-floor-check',
       action_revision: 0,
-      effect_key: EFFECT_KEY,
+      effect_key: FLOOR_CHECK_EFFECT_KEY,
       required_authority: 'AUTH-3',
       payload: {
         tenant_id: TENANT_T1,
@@ -1073,7 +1107,7 @@ describe('PILOT-02 / E2E-OFF-CART: Cart Recovery, Floor-Price Guard & Consent Su
         customer_id: CUSTOMER_A_UUID,
         items: [{ sku_id: SKU_OK, quantity: 1 }],
         discount_amount: PROPOSED_DISCOUNT_TWD,
-        effect_key: EFFECT_KEY,
+        effect_key: FLOOR_CHECK_EFFECT_KEY,
       },
     };
 
@@ -1225,7 +1259,7 @@ describe('PILOT-02 / E2E-OFF-CART: Cart Recovery, Floor-Price Guard & Consent Su
       action_id: randomUUID(),
       run_id: RUN_ID,
       tenant_id: TENANT_T1,
-      request_id: 'req-cart-msg-01',
+      request_id: MESSAGE_REQUEST_ID,
       action_revision: 0,
       agent_id: 'SAL-04',
       skill_id: 'skill.sales.send_message',
@@ -1250,7 +1284,7 @@ describe('PILOT-02 / E2E-OFF-CART: Cart Recovery, Floor-Price Guard & Consent Su
       tenant_id: TENANT_T1,
       run_id: RUN_ID,
       request_id: messageAction.request_id,
-      effect_key: EFFECT_KEY,
+      effect_key: messageAction.effect_key,
       request_fingerprint: computeRequestFingerprint(messageAction.payload),
       skill_id: messageAction.skill_id,
       step_index: 1,
@@ -1266,7 +1300,7 @@ describe('PILOT-02 / E2E-OFF-CART: Cart Recovery, Floor-Price Guard & Consent Su
       message_content: {
         text: `Complete your cart with ${IN_POLICY_DISCOUNT_TWD} TWD off!`,
       },
-      effect_key: EFFECT_KEY,
+      effect_key: messageAction.effect_key,
     });
 
     expect(sendResult.message_id).toMatch(/^msg-/);
@@ -1276,7 +1310,7 @@ describe('PILOT-02 / E2E-OFF-CART: Cart Recovery, Floor-Price Guard & Consent Su
     // 3. Execution receipt committed and provider reference stored
     await effectGuard.resolve({
       tenant_id: TENANT_T1,
-      effect_key: EFFECT_KEY,
+      effect_key: messageAction.effect_key,
       status: 'SUCCEEDED',
       receipt: {
         execution_id: 'exec-cart-01',
@@ -1304,8 +1338,8 @@ describe('PILOT-02 / E2E-OFF-CART: Cart Recovery, Floor-Price Guard & Consent Su
     await effectGuard.reserve({
       tenant_id: TENANT_T1,
       run_id: RUN_ID,
-      request_id: 'req-first-pass',
-      effect_key: EFFECT_KEY,
+      request_id: REPLAY_REQUEST_ID,
+      effect_key: REPLAY_EFFECT_KEY,
       request_fingerprint: fingerprint,
       skill_id: 'skill.sales.send_message',
       step_index: 1,
@@ -1317,13 +1351,13 @@ describe('PILOT-02 / E2E-OFF-CART: Cart Recovery, Floor-Price Guard & Consent Su
       recipient_id: CUSTOMER_A_UUID,
       channel: 'WEB_CHAT',
       message_content: { text: 'Complete your cart!' },
-      effect_key: EFFECT_KEY,
+      effect_key: REPLAY_EFFECT_KEY,
     });
     expect(connectors.sentMessages).toHaveLength(1);
 
     await effectGuard.resolve({
       tenant_id: TENANT_T1,
-      effect_key: EFFECT_KEY,
+      effect_key: REPLAY_EFFECT_KEY,
       status: 'SUCCEEDED',
       receipt: {
         execution_id: 'exec-cart-first',
@@ -1338,8 +1372,8 @@ describe('PILOT-02 / E2E-OFF-CART: Cart Recovery, Floor-Price Guard & Consent Su
     const replayOutcome = await effectGuard.reserve({
       tenant_id: TENANT_T1,
       run_id: RUN_ID,
-      request_id: 'req-replay-pass',
-      effect_key: EFFECT_KEY,
+      request_id: REPLAY_REQUEST_ID,
+      effect_key: REPLAY_EFFECT_KEY,
       request_fingerprint: fingerprint,
       skill_id: 'skill.sales.send_message',
       step_index: 1,
@@ -1898,8 +1932,8 @@ describe('PILOT-02 / E2E-OFF-CART: Negative Security, Governance & Isolation Inv
     const firstReserve = await effectGuard.reserve({
       tenant_id: TENANT_T1,
       run_id: RUN_ID,
-      request_id: 'req-dup-1',
-      effect_key: 'EK-DUP-TEST',
+      request_id: DUPLICATE_REQUEST_ID,
+      effect_key: DUPLICATE_EFFECT_KEY,
       request_fingerprint: fingerprint,
       skill_id: 'skill.sales.send_message',
       step_index: 1,
@@ -1912,13 +1946,13 @@ describe('PILOT-02 / E2E-OFF-CART: Negative Security, Governance & Isolation Inv
       recipient_id: CUSTOMER_A_UUID,
       channel: 'WEB_CHAT',
       message_content: { text: 'Reminder' },
-      effect_key: 'EK-DUP-TEST',
+      effect_key: DUPLICATE_EFFECT_KEY,
     });
     expect(connectors.sentMessages).toHaveLength(1);
 
     await effectGuard.resolve({
       tenant_id: TENANT_T1,
-      effect_key: 'EK-DUP-TEST',
+      effect_key: DUPLICATE_EFFECT_KEY,
       status: 'SUCCEEDED',
       receipt: {
         execution_id: 'exec-dup-1',
@@ -1933,8 +1967,8 @@ describe('PILOT-02 / E2E-OFF-CART: Negative Security, Governance & Isolation Inv
     const secondReserve = await effectGuard.reserve({
       tenant_id: TENANT_T1,
       run_id: RUN_ID,
-      request_id: 'req-dup-2',
-      effect_key: 'EK-DUP-TEST',
+      request_id: DUPLICATE_REQUEST_ID,
+      effect_key: DUPLICATE_EFFECT_KEY,
       request_fingerprint: fingerprint,
       skill_id: 'skill.sales.send_message',
       step_index: 1,

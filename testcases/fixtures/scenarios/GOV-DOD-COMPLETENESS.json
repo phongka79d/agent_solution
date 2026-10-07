@@ -98,7 +98,7 @@
   ],
   "automation": "The gate-evaluation code and the run-report writer run as real code under test while the evidence registry is data. The oracle is the pair (evidence registry, run-report status): a gate that reads PASS without a real artifact fails the case, and a missing runtime is reported NOT_RUN instead of being allowed to fall through to PASS.",
   "prerequisites": [
-    "No runtime exists in this repository, so the four runtime pillars cannot be satisfied and no capability can be declared done; completion is BLOCKED_PREREQUISITE."
+    "The required runtime artifacts are absent from the evidence registry, so the four runtime pillars cannot be satisfied and no capability can be declared done; completion is BLOCKED_PREREQUISITE."
   ],
   "references": [
     "implement/09-sprint-roadmap-and-pilots.md",
@@ -109,5 +109,5 @@
   ],
   "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
   "generator": "testcases/_generate.py",
-  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+  "note": "Generated acceptance specification. Plain specification, not an executable test; the repository runtime is not executed while generating it, so the status is NOT_RUN."
 }

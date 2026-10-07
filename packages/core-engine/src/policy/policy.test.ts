@@ -121,6 +121,13 @@ const CHECK_PRICE = skill({
   required_authority: 'AUTH-0',
   price_bearing: true,
 });
+const MUTATING_PRICE = skill({
+  skill_id: 'skill.sales.apply_price',
+  required_authority: 'AUTH-0',
+  mutating: true,
+  price_bearing: true,
+  idempotent: false,
+});
 
 const CAMPAIGN = skill({
   skill_id: 'skill.mkt.dispatch_campaign',
@@ -160,6 +167,7 @@ const MIRROR_WRITE = skill({
 const DEFAULT_SKILLS: readonly PolicyRegistrySkill[] = [
   SEND_MESSAGE,
   CHECK_PRICE,
+  MUTATING_PRICE,
   CAMPAIGN,
   RAW_EXPORT,
   REFUND,
@@ -184,6 +192,7 @@ interface Harness {
   readonly pep: PolicyEnforcementPoint;
   readonly queueRequests: PendingApprovalRequest[];
   readonly auditRecords: PolicyAuditRecord[];
+  readonly events: string[];
 }
 
 interface HarnessOptions {
@@ -232,12 +241,14 @@ function consentPort(state: ConsentState | null): ConsentSource {
 function createHarness(options: HarnessOptions = {}): Harness {
   const queueRequests: PendingApprovalRequest[] = [];
   const auditRecords: PolicyAuditRecord[] = [];
+  const events: string[] = [];
   const skills = options.skills ?? DEFAULT_SKILLS;
   const agents = options.agents ?? DEFAULT_AGENTS;
   const approvals = options.approvals ?? (async () => ({ approval_id: `APV-${queueRequests.length}` }));
   const audit = options.audit === undefined
     ? {
       append: async (record: PolicyAuditRecord) => {
+        events.push('audit');
         auditRecords.push(record);
       },
     }
@@ -250,6 +261,7 @@ function createHarness(options: HarnessOptions = {}): Harness {
     },
     approvals: {
       createOrReadPending: async (request) => {
+        events.push('approval');
         const pending = await approvals(request);
         queueRequests.push(request);
 
@@ -268,7 +280,7 @@ function createHarness(options: HarnessOptions = {}): Harness {
     auditSecret: options.auditSecret ?? 'audit-secret-fixture',
   });
 
-  return { pep, queueRequests, auditRecords };
+  return { pep, queueRequests, auditRecords, events };
 }
 
 /** Evaluates one proposal against the bound context a case does not need to restate. */
@@ -413,6 +425,13 @@ describe('AUTH-4 approval route', () => {
         created_at: FROZEN_INSTANT,
       }),
     ]);
+    expect(harness.events).toEqual(['audit', 'approval']);
+    expect(harness.auditRecords).toEqual([
+      expect.objectContaining({
+        verdict: 'AWAITING_HUMAN_APPROVAL',
+        approval_id: null,
+      }),
+    ]);
   });
 
   it('queues nothing when an independent check refuses the prepared action', async () => {
@@ -450,6 +469,40 @@ describe('AUTH-4 approval route', () => {
     expect(decision.verdict).toBe('DENIED');
     expect(decision.errorCode).toBe('APPROVAL_QUEUE_UNAVAILABLE');
     expect(decision.approvalTicketId).toBeNull();
+    expect(harness.events).toEqual(['audit', 'approval', 'audit']);
+    expect(harness.auditRecords).toEqual([
+      expect.objectContaining({
+        verdict: 'AWAITING_HUMAN_APPROVAL',
+        approval_id: null,
+      }),
+      expect.objectContaining({
+        verdict: 'DENIED',
+        decision_code: 'DENY_PROHIBITED',
+        rule_id: 'BR-007',
+        error_code: 'APPROVAL_QUEUE_UNAVAILABLE',
+        approval_id: null,
+      }),
+    ]);
+  });
+  it('does not create an approval row when the route audit intent fails', async () => {
+    const harness = createHarness({
+      audit: {
+        append: async () => {
+          throw new Error('audit sink unavailable');
+        },
+      },
+    });
+
+    const decision = await evaluate(
+      harness,
+      { skill_id: REFUND.skill_id, tool_name: 'adapter:refund', payload: { effect_key: EFFECT_KEY } },
+      { agent_id: CARER },
+    );
+
+    expect(decision.errorCode).toBe('AUDIT_UNAVAILABLE');
+    expect(decision.authorized).toBe(false);
+    expect(decision.approvalTicketId).toBeNull();
+    expect(harness.queueRequests).toHaveLength(0);
   });
 
   it('never accepts a blank approval id as a queue row', async () => {
@@ -825,6 +878,33 @@ describe('business rules', () => {
     expect(decision.errorCode).toBe('PROMPT_INJECTION_BLOCKED');
     expect(decision.ruleId).toBe('BR-009');
     expect(harness.queueRequests).toHaveLength(0);
+  });
+  it('refuses an absent price for a mutating price-bearing skill', async () => {
+    const harness = createHarness();
+
+    const decision = await evaluate(harness, {
+      skill_id: MUTATING_PRICE.skill_id,
+      tool_name: 'adapter:apply-price',
+      payload: { catalog_ref_id: CATALOG.catalog_ref_id, effect_key: EFFECT_KEY },
+    });
+
+    expect(decision.errorCode).toBe('ERR_ARBITRARY_PRICING');
+    expect(decision.ruleId).toBe('BR-001');
+    expect(decision.authorized).toBe(false);
+  });
+
+  it('keeps read-only price-bearing skills exempt from the absent-price refusal', async () => {
+    const harness = createHarness();
+
+    const decision = await evaluate(harness, {
+      skill_id: CHECK_PRICE.skill_id,
+      tool_name: 'adapter:pricing',
+      payload: { catalog_ref_id: CATALOG.catalog_ref_id },
+    });
+
+    expect(decision.verdict).toBe('AUTO_APPROVED');
+    expect(decision.authorized).toBe(true);
+    expect(decision.errorCode).toBeNull();
   });
 });
 

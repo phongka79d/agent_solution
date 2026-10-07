@@ -55,9 +55,9 @@ const CORRELATION_ID = 'CORR-1';
 const SECRET = 'unit-test-audit-secret';
 
 const CREATED_AT = new Date('2026-01-01T00:00:02.000Z');
+const SERVER_TIMESTAMP = new Date('2026-01-01T00:00:03.000Z');
 const STARTED_AT = '2026-01-01T00:00:00.000Z';
 const COMPLETED_AT = '2026-01-01T00:00:01.000Z';
-
 /** Two step payloads with a distinct canonical form, so a swapped record is visible. */
 const FIRST_PAYLOAD = { order: 'ORD-1', step: 1 };
 const SECOND_PAYLOAD = { order: 'ORD-1', step: 2 };
@@ -188,11 +188,13 @@ function auditRecord(
   prev_hash: string,
   timestamp: string,
   id = '0193f000-0000-7000-8000-000000000001',
+  chain_seq = '1',
 ): AuditRecord {
   return {
     id,
     run_id: input.run_id,
     tenant_id: input.tenant_id,
+    chain_seq,
     agent_id: input.agent_id,
     customer_or_entity_id: input.customer_or_entity_id,
     trigger: input.trigger,
@@ -228,6 +230,7 @@ function auditChain(
       previous,
       event.timestamp,
       `0193f000-0000-7000-8000-${String(index + 1).padStart(12, '0')}`,
+      String(index + 1),
     );
 
     records.push(record);
@@ -300,10 +303,11 @@ function rowOf(record: ImmutableEvidenceRecord | AuditRecord | AgentRunLog): Que
  * ---------------------------------------------------------------------------------------------- */
 
 /**
- * Which statement of the module a SQL text is. The eight kinds below are the module's whole SQL
- * vocabulary: the advisory lock, one read and one insert per table. A statement that is anything
- * else — an `UPDATE`, a `DELETE`, a statement of a table this module must not touch — raises here,
- * so every case of this suite doubles as a check that the module only ever appends.
+ * Which statement of the module a SQL text is. The ten kinds below are the module's whole SQL
+ * vocabulary: the advisory lock, one read and one insert per table, and the server-time read. A
+ * statement that is anything else — an `UPDATE`, a `DELETE`, or a statement of a table this module
+ * must not touch — raises here, so every case of this suite doubles as a check that the module only
+ * ever appends.
  */
 type StatementKind =
   | 'lock'
@@ -314,11 +318,16 @@ type StatementKind =
   | 'run_log_read'
   | 'audit_tail'
   | 'audit_read'
+  | 'audit_server_timestamp'
   | 'audit_insert';
 
 function classify(sql: string): StatementKind {
   if (sql.startsWith('SELECT pg_advisory_xact_lock')) {
     return 'lock';
+  }
+
+  if (sql.startsWith('SELECT date_trunc')) {
+    return 'audit_server_timestamp';
   }
 
   if (sql.startsWith('INSERT INTO agentos.evidence_records')) {
@@ -415,7 +424,11 @@ interface RepositoryHarness {
 }
 
 function harnessFor(answers: ScriptedAnswers): RepositoryHarness {
-  const client = new ScriptedClient({ lock: { rows: [] }, ...answers });
+  const client = new ScriptedClient({
+    lock: { rows: [] },
+    audit_server_timestamp: { rows: [{ server_timestamp: SERVER_TIMESTAMP }] },
+    ...answers,
+  });
   const boundTenants: string[] = [];
   const runInTenantTransaction: TenantTransactionRunner = async (tenant_id, work) => {
     boundTenants.push(tenant_id);
@@ -961,7 +974,7 @@ describe('verifyEvidenceChain', () => {
 describe('AuditRepository.append', () => {
   it('chains a tenant\'s first event to the genesis digest under the tenant lock', async () => {
     const input = auditEvent();
-    const expected = auditRecord(input, GENESIS_HASH, COMPLETED_AT);
+    const expected = auditRecord(input, GENESIS_HASH, SERVER_TIMESTAMP.toISOString());
     const { audit, client, boundTenants } = harnessFor({
       audit_tail: { rows: [] },
       audit_insert: { rows: [{ id: expected.id }] },
@@ -970,7 +983,12 @@ describe('AuditRepository.append', () => {
     await audit.append(input);
 
     expect(boundTenants).toEqual([TENANT]);
-    expect(issuedKinds(client)).toEqual(['lock', 'audit_tail', 'audit_insert']);
+    expect(issuedKinds(client)).toEqual([
+      'lock',
+      'audit_tail',
+      'audit_server_timestamp',
+      'audit_insert',
+    ]);
     expect(bindingsOf(client, 'lock')).toEqual(['agentos.audit_records', TENANT]);
     expect(bindingsOf(client, 'audit_tail')).toEqual([TENANT]);
     expect(bindingsOf(client, 'audit_insert')).toEqual([
@@ -992,46 +1010,68 @@ describe('AuditRepository.append', () => {
       120,
       '{"tokens":10}',
       null,
-      COMPLETED_AT,
+      SERVER_TIMESTAMP.toISOString(),
       GENESIS_HASH,
       expected.chain_hash,
     ]);
   });
 
-  it('chains the next event to the tenant\'s durable predecessor', async () => {
+  it('uses chain_seq tail order and ignores caller timestamps', async () => {
     const previousInput = auditEvent();
-    const previous = auditRecord(previousInput, GENESIS_HASH, COMPLETED_AT);
+    const previous = auditRecord(previousInput, GENESIS_HASH, COMPLETED_AT, undefined, '1');
     const nextInput = auditEvent({ execution_status: 'failed', error: { outcome: 'UNKNOWN' } });
-    const nextTimestamp = '2026-01-01T00:00:02.000Z';
+    const durableTail = auditRecord(
+      nextInput,
+      previous.chain_hash,
+      '2025-01-01T00:00:00.000Z',
+      '0193f000-0000-7000-8000-000000000002',
+      '2',
+    );
+    const callerTimestamp = '1970-01-01T00:00:00.000Z';
     const { audit, client } = harnessFor({
-      audit_tail: { rows: [rowOf(previous)] },
-      audit_insert: { rows: [{ id: '0193f000-0000-7000-8000-000000000002' }] },
+      // The database's chain_seq ordering returns this row despite its older event timestamp.
+      audit_tail: { rows: [rowOf(durableTail)] },
+      audit_insert: { rows: [{ id: durableTail.id }] },
     });
 
-    await audit.append({ ...nextInput, timestamp: nextTimestamp });
+    await audit.append({ ...nextInput, timestamp: callerTimestamp });
 
-    expect(bindingsOf(client, 'audit_insert')[19]).toBe(previous.chain_hash);
-    expect(bindingsOf(client, 'audit_insert')[18]).toBe(nextTimestamp);
+    expect(client.statements.find((statement) => statement.kind === 'audit_tail')?.sql).toContain(
+      'ORDER BY chain_seq DESC',
+    );
+    expect(client.statements.find((statement) => statement.kind === 'audit_insert')?.sql).toContain(
+      'MAX(chain_seq)',
+    );
+    expect(bindingsOf(client, 'audit_insert')[19]).toBe(durableTail.chain_hash);
+    expect(bindingsOf(client, 'audit_insert')[18]).toBe(SERVER_TIMESTAMP.toISOString());
+    expect(bindingsOf(client, 'audit_insert')[18]).not.toBe(callerTimestamp);
     expect(bindingsOf(client, 'audit_insert')[20]).toBe(
-      sha256(previous.chain_hash, canonicalizeJson(buildAuditPayload(nextInput)), nextTimestamp),
+      sha256(
+        durableTail.chain_hash,
+        canonicalizeJson(buildAuditPayload(nextInput)),
+        SERVER_TIMESTAMP.toISOString(),
+      ),
     );
   });
 
-  it('defaults the event time to the step\'s completion and refuses any other rendering', async () => {
+  it('uses the server event time even when a caller timestamp is malformed', async () => {
     const input = auditEvent();
-    const { audit: writing } = harnessFor({
+    const { audit, client } = harnessFor({
       audit_tail: { rows: [] },
       audit_insert: { rows: [{ id: '0193f000-0000-7000-8000-000000000001' }] },
     });
-    const { audit: refusing, client } = harnessFor({});
 
-    await writing.append(input);
+    await audit.append({ ...input, timestamp: 'not-a-timestamp' });
 
-    const message = await refusalOf(refusing.append({ ...input, timestamp: '2026-01-01T00:00:01Z' }));
-
-    expect(message).toContain('AUDIT_INPUT_INVALID');
-    expect(issuedKinds(client)).toEqual([]);
+    expect(bindingsOf(client, 'audit_insert')[18]).toBe(SERVER_TIMESTAMP.toISOString());
+    expect(issuedKinds(client)).toEqual([
+      'lock',
+      'audit_tail',
+      'audit_server_timestamp',
+      'audit_insert',
+    ]);
   });
+
 });
 
 describe('AuditRepository reads', () => {

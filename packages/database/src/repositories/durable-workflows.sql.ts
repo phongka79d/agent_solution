@@ -169,9 +169,11 @@ const UPDATE_TASK_PROGRESS = `UPDATE ${PLATFORM_DURABLE_TASKS}
   WHERE tenant_id = $1 AND run_id = $2 AND task_version = $5
   RETURNING${TASK_PROJECTION}`;
 
-/** State transition that does not touch `state_payload` (§4.1 transition table). */
+/** State transition (§4.1): terminal targets release any worker lease; parked/open targets retain it. */
 const UPDATE_TASK_STATE = `UPDATE ${PLATFORM_DURABLE_TASKS}
   SET state = $3::agentos.task_lifecycle_state,
+      lease_owner = CASE WHEN $3::agentos.task_lifecycle_state IN ('completed', 'stopped', 'failed') THEN NULL ELSE lease_owner END,
+      lease_expires_at = CASE WHEN $3::agentos.task_lifecycle_state IN ('completed', 'stopped', 'failed') THEN NULL ELSE lease_expires_at END,
       task_version = task_version + 1,
       updated_at = CURRENT_TIMESTAMP
   WHERE tenant_id = $1 AND run_id = $2 AND task_version = $4
@@ -181,25 +183,27 @@ const UPDATE_TASK_STATE = `UPDATE ${PLATFORM_DURABLE_TASKS}
 const UPDATE_TASK_STATE_REPLACE_PAYLOAD = `UPDATE ${PLATFORM_DURABLE_TASKS}
   SET state = $3::agentos.task_lifecycle_state,
       state_payload = $4::jsonb,
+      lease_owner = CASE WHEN $3::agentos.task_lifecycle_state IN ('completed', 'stopped', 'failed') THEN NULL ELSE lease_owner END,
+      lease_expires_at = CASE WHEN $3::agentos.task_lifecycle_state IN ('completed', 'stopped', 'failed') THEN NULL ELSE lease_expires_at END,
       task_version = task_version + 1,
       updated_at = CURRENT_TIMESTAMP
   WHERE tenant_id = $1 AND run_id = $2 AND task_version = $5
   RETURNING${TASK_PROJECTION}`;
 
-/** Transition carrying a progress payload: the blob is merged so an existing cursor is not lost. */
+/** Transition carrying a progress payload: terminal targets release any worker lease. */
 const UPDATE_TASK_STATE_MERGE_PAYLOAD = `UPDATE ${PLATFORM_DURABLE_TASKS}
   SET state = $3::agentos.task_lifecycle_state,
       state_payload = state_payload || $4::jsonb,
+      lease_owner = CASE WHEN $3::agentos.task_lifecycle_state IN ('completed', 'stopped', 'failed') THEN NULL ELSE lease_owner END,
+      lease_expires_at = CASE WHEN $3::agentos.task_lifecycle_state IN ('completed', 'stopped', 'failed') THEN NULL ELSE lease_expires_at END,
       task_version = task_version + 1,
       updated_at = CURRENT_TIMESTAMP
   WHERE tenant_id = $1 AND run_id = $2 AND task_version = $5
   RETURNING${TASK_PROJECTION}`;
 
-/**
- * `RETRYABLE` failure inside the retry budget (§4.4): re-queue with `retry_count + 1` and release
+/** `RETRYABLE` failure inside the retry budget (§4.4): re-queue with `retry_count + 1` and release
  * the lease, because the worker that failed is done with the task and a dead lease must not hold the
- * next attempt back for its full TTL.
- */
+ * next attempt back for its full TTL. */
 const UPDATE_TASK_FAILURE_REQUEUE = `UPDATE ${PLATFORM_DURABLE_TASKS}
   SET state = 'queued',
       retry_count = retry_count + 1,
@@ -243,6 +247,7 @@ const UPDATE_CLEAR_HANDOFF_EVIDENCE_TASK = `UPDATE ${PLATFORM_DURABLE_TASKS}
   WHERE tenant_id = $1 AND run_id = $2 AND state = 'awaiting_human'
     AND task_version = $4 AND lease_owner = $5
   RETURNING${TASK_PROJECTION}`;
+
 /**
  * `FATAL` failure, or `RETRYABLE` with the budget spent (§4.4): terminate fail-closed.
  * `retry_count` records the attempts that were made and is left as it is.
@@ -251,6 +256,8 @@ const UPDATE_TASK_FAILURE_TERMINAL = `UPDATE ${PLATFORM_DURABLE_TASKS}
   SET state = 'failed',
       last_error_class = $3,
       error_details = $4::jsonb,
+      lease_owner = NULL,
+      lease_expires_at = NULL,
       task_version = task_version + 1,
       updated_at = CURRENT_TIMESTAMP
   WHERE tenant_id = $1 AND run_id = $2 AND task_version = $5

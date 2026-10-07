@@ -17,4 +17,5 @@ export * from './erp/api-001-erp.js';
 export * from './events/api-002-events.js';
 export * from './channels/api-003-channels.js';
 export * from './shopify/index.js';
+export * from './llm/openai-compatible.js';
 export * from './global/index.js';

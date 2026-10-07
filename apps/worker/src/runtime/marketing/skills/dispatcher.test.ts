@@ -502,6 +502,179 @@ describe('Marketing Skill Services and Dispatcher', () => {
         'PostgreSQL.AnalyticsStore: no downstream analytics/order evidence store is bound',
       );
     });
+    it('does not treat approved knowledge as a content provider', async () => {
+      const readApproved = vi.fn(async () => ({
+        path: 'brand/voice.md',
+        version: 'approved-v1',
+        content: '---\nstatus: approved\n---\nApproved voice',
+      }));
+      const services = createMarketingSkillServices({
+        knowledge: { readApproved },
+        resolve_correlation_id: vi.fn(async () => CORRELATION_ID),
+        resolve_grant: vi.fn(async () => 'AUTH-3'),
+      });
+
+      await expect(services.tool_port.invoke({
+        skill_id: 'skill.mkt.generate_content',
+        tool_binding: 'Core.LLMContentEngine',
+        input: {
+          tenant_id: TENANT_ID,
+          campaign_theme: 'theme',
+          channel: 'SMS_TEXT',
+          locale: 'en-US',
+        },
+        context: {
+          run_id: RUN_ID,
+          tenant_id: TENANT_ID,
+          caller_agent: 'MKT-03',
+          correlation_id: CORRELATION_ID,
+          granted_authority: 'AUTH-3',
+          effect_key: 'effect-content',
+        },
+      })).rejects.toMatchObject({ code: 'UNBOUND_PROVIDER' });
+      expect(readApproved).not.toHaveBeenCalled();
+    });
+
+    it('surfaces configured content provider failures as typed provider errors', async () => {
+      const content_engine: MarketingContentEnginePort = {
+        generateContent: vi.fn(async () => {
+          throw Object.assign(new Error('provider unavailable'), { code: 'LLM_UNAVAILABLE' });
+        }),
+      };
+      const services = createMarketingSkillServices({
+        content_engine,
+        resolve_correlation_id: vi.fn(async () => CORRELATION_ID),
+        resolve_grant: vi.fn(async () => 'AUTH-3'),
+      });
+
+      await expect(services.tool_port.invoke({
+        skill_id: 'skill.mkt.generate_content',
+        tool_binding: 'Core.LLMContentEngine',
+        input: {
+          tenant_id: TENANT_ID,
+          campaign_theme: 'theme',
+          channel: 'SMS_TEXT',
+          locale: 'en-US',
+        },
+        context: {
+          run_id: RUN_ID,
+          tenant_id: TENANT_ID,
+          caller_agent: 'MKT-03',
+          correlation_id: CORRELATION_ID,
+          granted_authority: 'AUTH-3',
+          effect_key: 'effect-content',
+        },
+      })).rejects.toMatchObject({
+        code: 'PROVIDER_ERROR',
+        details: { provider_code: 'LLM_UNAVAILABLE' },
+      });
+    });
+    it('recomposes the audit surface from every generated copy field', async () => {
+      const content_engine = {
+        generateContent: vi.fn(async () => ({
+          draft_id: 'draft-all-fields',
+          subject: 'Subject',
+          title: 'Title',
+          headline: 'Headline',
+          body_content: 'Body',
+          cta_text: 'CTA',
+          preheader: 'Preheader',
+          brand_audit_text: 'provider omitted title',
+          channel_payload: { channel_type: 'EMAIL_HTML' },
+        })),
+      } as unknown as MarketingContentEnginePort;
+      const services = createServices({ content_engine });
+
+      const output = await services.tool_port.invoke({
+        skill_id: 'skill.mkt.generate_content',
+        tool_binding: 'Core.LLMContentEngine',
+        input: {
+          tenant_id: TENANT_ID,
+          campaign_theme: 'theme',
+          channel: 'EMAIL_HTML',
+          locale: 'en-US',
+        },
+        context: {
+          run_id: RUN_ID,
+          tenant_id: TENANT_ID,
+          caller_agent: 'MKT-03',
+          correlation_id: CORRELATION_ID,
+          granted_authority: 'AUTH-3',
+          effect_key: 'effect-content-all-fields',
+        },
+      }) as { readonly brand_audit_text: string };
+
+      expect(output.brand_audit_text).toBe('Subject\nTitle\nHeadline\nBody\nCTA\nPreheader');
+    });
+
+    it('does not infer a segment from a customer id that happens to use the segment format', async () => {
+      const checkConsent = vi.fn(async () => ({
+        allowed: true,
+        consent_timestamp: '2026-09-26T12:00:00.000Z',
+        suppression_reason: null,
+      }));
+      const checkAudienceConsent = vi.fn(async () => ({
+        allowed: true,
+        consent_timestamp: '2026-09-26T12:00:00.000Z',
+        suppression_reason: null,
+      }));
+      const services = createServices({
+        consent: { checkConsent },
+        audience_consent: { checkAudienceConsent },
+      });
+
+      await services.tool_port.invoke({
+        skill_id: 'skill.mkt.check_consent',
+        tool_binding: 'API-002.ConsentStore',
+        input: {
+          tenant_id: TENANT_ID,
+          customer_id: 'inactive_90d',
+          channel: 'EMAIL',
+        },
+        context: {
+          run_id: RUN_ID,
+          tenant_id: TENANT_ID,
+          caller_agent: 'MKT-02',
+          correlation_id: CORRELATION_ID,
+          granted_authority: 'AUTH-3',
+          effect_key: 'effect-consent',
+        },
+      });
+
+      expect(checkConsent).toHaveBeenCalledOnce();
+      expect(checkAudienceConsent).not.toHaveBeenCalled();
+    });
+    it('refuses consent checks that provide both a segment and a customer identity', async () => {
+      const services = createServices({
+        audience_consent: {
+          checkAudienceConsent: vi.fn(async () => ({
+            allowed: true,
+            consent_timestamp: '2026-09-26T12:00:00.000Z',
+            suppression_reason: null,
+          })),
+        },
+      });
+
+      await expect(services.tool_port.invoke({
+        skill_id: 'skill.mkt.check_consent',
+        tool_binding: 'API-002.ConsentStore',
+        input: {
+          tenant_id: TENANT_ID,
+          customer_id: 'customer-1',
+          segment_id: 'inactive_90d',
+          channel: 'EMAIL',
+        },
+        context: {
+          run_id: RUN_ID,
+          tenant_id: TENANT_ID,
+          caller_agent: 'MKT-02',
+          correlation_id: CORRELATION_ID,
+          granted_authority: 'AUTH-3',
+          effect_key: 'effect-consent-ambiguous',
+        },
+      })).rejects.toMatchObject({ code: 'CONSENT_IDENTITY_AMBIGUOUS' });
+    });
+
 
     it('fails closed on tool_port.invoke for every unbound skill with UNBOUND_PROVIDER', async () => {
       const services = createMarketingSkillServices({
@@ -1136,5 +1309,21 @@ describe('Marketing Skill Services and Dispatcher', () => {
 
       expect(normalized).not.toHaveProperty('recipients');
     });
+
+    it('rejects null or non-object tool invocation input with VALIDATION_FAILED', async () => {
+      const services = createServices();
+      await expect(
+        services.tool_port.invoke({
+          skill_id: 'skill.mkt.dispatch_campaign',
+          tool_binding: 'API-003.CommunicationConnector',
+          input: null as any,
+          context: dummyContext,
+        }),
+      ).rejects.toMatchObject({
+        code: 'VALIDATION_FAILED',
+        message: expect.stringContaining('must be an object'),
+      });
+    });
   });
 });
+

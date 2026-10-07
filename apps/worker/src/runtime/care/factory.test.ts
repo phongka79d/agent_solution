@@ -52,6 +52,7 @@ describe('createCareOrchestratorFactory', () => {
   };
 
   it('assembles and returns a RevenueOrchestrator when all ports are bound', async () => {
+    const assertExecutionLease = vi.fn(async () => undefined);
     const factory = createCareOrchestratorFactory({
       workerId: 'test-worker-1',
       contextAggregator: {} as IContextAggregator,
@@ -60,27 +61,35 @@ describe('createCareOrchestratorFactory', () => {
       effectGuard: {} as IEffectGuard,
       adapterDispatcher: mockDispatcher,
       adapters: mockAdapters,
-      auditSecret: testAuditSecret,
+      env: { AUDIT_HMAC_SECRET: testAuditSecret },
+      assertExecutionLease,
     });
 
     const orchestrator = await factory(tenant_id);
     expect(orchestrator).toBeInstanceOf(RevenueOrchestrator);
+    const internals = orchestrator as unknown as {
+      dependencies: { assertExecutionLease?: unknown };
+    };
+    expect(internals.dependencies.assertExecutionLease).toBe(assertExecutionLease);
   });
 
-  it('refuses construction with CARE_AUDIT_SECRET_REQUIRED when audit secret is missing', () => {
+
+  it('records a structured blocker and returns no orchestrator when audit secret is missing', async () => {
     const origSecret = process.env.AUDIT_HMAC_SECRET;
     try {
       delete process.env.AUDIT_HMAC_SECRET;
-      expect(() =>
-        createCareOrchestratorFactory({
-          auditSecret: undefined,
-          contextAggregator: {} as IContextAggregator,
-          agentRuntime: {} as IAgentRuntime,
-          policyEngine: {} as IPolicyEngine,
-          adapterDispatcher: mockDispatcher,
-          adapters: mockAdapters,
-        }),
-      ).toThrow('CARE_AUDIT_SECRET_REQUIRED');
+      const blockers: string[] = [];
+      const factory = createCareOrchestratorFactory({
+        auditSecret: undefined,
+        blockers,
+        contextAggregator: {} as IContextAggregator,
+        agentRuntime: {} as IAgentRuntime,
+        policyEngine: {} as IPolicyEngine,
+        adapterDispatcher: mockDispatcher,
+        adapters: mockAdapters,
+      });
+      await expect(factory(tenant_id)).resolves.toBeNull();
+      expect(blockers[0]).toContain('CARE_AUDIT_SECRET_REQUIRED');
     } finally {
       if (origSecret !== undefined) {
         process.env.AUDIT_HMAC_SECRET = origSecret;
@@ -167,6 +176,26 @@ describe('createCareOrchestratorFactory', () => {
 
     // The factory returns an async function; calling it fails closed
     await expect(factory(tenant_id)).rejects.toThrow('CARE_ORCHESTRATOR_UNBOUND');
+  });
+
+  it('keeps an offline composition offline: no DATABASE_URL-backed recorder without a durable repository', async () => {
+    const factory = createCareOrchestratorFactory({
+      workerId: 'test-worker-offline',
+      contextAggregator: {} as IContextAggregator,
+      agentRuntime: {} as IAgentRuntime,
+      policyEngine: {} as IPolicyEngine,
+      effectGuard: {} as IEffectGuard,
+      adapterDispatcher: mockDispatcher,
+      adapters: mockAdapters,
+      auditSecret: testAuditSecret,
+    });
+    const orchestrator = await factory(tenant_id);
+    const internals = orchestrator as unknown as {
+      dependencies: { runStageRecorder?: unknown; responseStore?: unknown; responseFinalizer?: unknown };
+    };
+    expect(internals.dependencies.runStageRecorder).toBeUndefined();
+    expect(internals.dependencies.responseStore).toBeUndefined();
+    expect(internals.dependencies.responseFinalizer).toBeUndefined();
   });
 
   describe('policy audit binding regression (BR-010)', () => {

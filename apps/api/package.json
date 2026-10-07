@@ -8,6 +8,8 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "lint": "node ../../scripts/eslint.mjs",
+    "openapi:emit": "pnpm run build && node scripts/openapi-emit.mjs && pnpm --filter @agentos/api-contract generate",
+    "check:openapi": "pnpm run openapi:emit && git diff --exit-code -- packages/api-contract/openapi.json packages/api-contract/src/schema.d.ts",
     "test:unit": "vitest run src && node --test test/startup.test.mjs"
   },
   "dependencies": {
@@ -15,6 +17,7 @@
     "@agentos/core-engine": "workspace:*",
     "@agentos/database": "workspace:*",
     "@agentos/skills": "workspace:*",
+    "@fastify/swagger": "^8.15.0",
     "fastify": "^4.28.1"
   },
   "devDependencies": {

@@ -1,3 +1,5 @@
+import { PassThrough } from 'node:stream';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import type { FastifyInstance } from 'fastify';
@@ -17,7 +19,7 @@ const TENANT = 'tenant-a';
  * @param with_operator Whether to trust {@link OPERATOR_TOKEN} for {@link TENANT}.
  * @returns A server that answers `/health`, `/api/v1` and the R10 socket handshake.
  */
-function buildTestServer(with_operator: boolean): FastifyInstance {
+function buildTestServer(with_operator: boolean, loggerStream?: NodeJS.WritableStream): FastifyInstance {
   return buildServer(
     createGatewayComposition(
       { SESSION_SECRET: 'test-session-secret-000000', PLATFORM_SECRET: 'test-platform-secret-00000' },
@@ -31,6 +33,7 @@ function buildTestServer(with_operator: boolean): FastifyInstance {
         }),
       },
     ),
+    loggerStream === undefined ? undefined : { loggerStream },
   );
 }
 
@@ -47,6 +50,60 @@ describe('GET /health', () => {
       dependencies: [...DEPENDENCIES],
     });
 
+    await app.close();
+  });
+});
+
+describe('request logging and correlation', () => {
+  it('redacts credentials and customer PII from serialized log records', async () => {
+    const stream = new PassThrough();
+    const lines: string[] = [];
+    stream.on('data', (chunk: Buffer) => lines.push(chunk.toString('utf8')));
+    const app = buildTestServer(false, stream);
+
+    const secret = 'request-secret-that-must-not-be-serialized';
+    app.log.info({
+      req: {
+        headers: { authorization: `Bearer ${secret}`, cookie: secret, 'x-api-key': secret },
+        body: { token: secret, password: secret, email: 'customer@example.test', phone: '+15555550123' },
+      },
+    }, 'redaction-test');
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const serialized = lines.join('');
+    expect(serialized).not.toContain(secret);
+    expect(serialized).not.toContain('customer@example.test');
+    expect(serialized).not.toContain('+15555550123');
+    await app.close();
+  });
+
+  it('echoes a valid correlation id and replaces an invalid one', async () => {
+    const app = buildTestServer(false);
+    const valid = 'corr-2026-09-30';
+    const accepted = await app.inject({
+      method: 'GET',
+      url: '/health',
+      headers: { 'x-correlation-id': valid },
+    });
+    expect(accepted.headers['x-correlation-id']).toBe(valid);
+
+    const invalid = await app.inject({
+      method: 'GET',
+      url: '/health',
+      headers: { 'x-correlation-id': 'not valid/with spaces' },
+    });
+    const replaced = invalid.headers['x-correlation-id'];
+    expect(replaced).toMatch(/^[A-Za-z0-9-]{1,64}$/);
+    expect(replaced).not.toBe('not valid/with spaces');
+
+    const refused = await app.inject({
+      method: 'POST',
+      url: '/api/v1/events',
+      headers: { 'x-correlation-id': valid },
+      payload: {},
+    });
+    expect(refused.headers['x-correlation-id']).toBe(valid);
+    expect(refused.json()).toMatchObject({ correlation_id: valid });
     await app.close();
   });
 });
@@ -119,6 +176,10 @@ describe('Customer Care turn admission', () => {
           appendMessage,
         },
         receipts: { ...composition.runtime.receipts, receiptFor: async () => null },
+        effects: {
+          ...composition.runtime.effects,
+          reserve: vi.fn(async () => ({ kind: 'RESERVED' as const })),
+        } as typeof composition.runtime.effects,
       },
     });
 
@@ -127,7 +188,7 @@ describe('Customer Care turn admission', () => {
       headers: { authorization: 'Bearer care-session' },
       payload: { message: 'Where is my order?', module: 'support', idempotency_key: 'care-request-1' },
     });
-    expect(response.statusCode).toBe(403);
+    expect(response.statusCode, JSON.stringify(response.json())).toBe(403);
     expect(response.json()).toMatchObject({ error_code: 'CAPABILITY_NOT_ENABLED' });
     expect(appendMessage).not.toHaveBeenCalled();
     await app.close();
@@ -166,6 +227,10 @@ describe('Customer Care turn admission', () => {
         },
         receipts: { ...composition.runtime.receipts, receiptFor: async () => null, storeReceipt: vi.fn() },
         audit: { ...composition.runtime.audit, record: vi.fn() },
+        effects: {
+          ...composition.runtime.effects,
+          reserve: vi.fn(async () => ({ kind: 'RESERVED' as const })),
+        } as typeof composition.runtime.effects,
       },
     });
 

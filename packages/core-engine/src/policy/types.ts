@@ -201,9 +201,10 @@ export interface PolicyRegistryPort {
   getSkill(skill_id: string): PolicyRegistrySkill | undefined;
   /**
    * @param agent_id - Agent id from the server-bound context.
+   * @param tenant_id - Tenant binding for tenant-scoped authority registries and caches.
    * @returns The registry row, or `undefined` when the agent is not registered.
    */
-  getAgent(agent_id: string): PolicyRegistryAgent | undefined;
+  getAgent(agent_id: string, tenant_id?: string): PolicyRegistryAgent | undefined;
 }
 
 /* ------------------------------------------------------------------------------------------------

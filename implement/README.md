@@ -1,12 +1,12 @@
 # AI Revenue & Engagement Platform — Implementation Blueprint
-> **BLUEPRINT STATUS — pack contract; NOT IMPLEMENTED, DEPLOYED, MEASURED, or runtime evidence.**
-> This index governs the ten target documents below; it records ownership, conflicts, and verification rules rather than an existing product.
+> **BLUEPRINT STATUS — design and contract pack; not a deployment or production-measurement report.** The repository also contains a current runtime: API, worker agents, two consoles, and PostgreSQL migrations.
+> This index governs the ten target documents below; it records ownership, conflicts, and verification rules alongside the current implementation.
 
 ## 1. Executive Technical Overview
 
 The AI Revenue & Engagement Platform (AgentOS Customer360) is a target multi-tenant orchestration platform for Marketing, Sales, and Customer Care. SRS §15 / API-003 names Facebook, TikTok, Zalo, Email, SMS, and Web/App Chat; LINE, WhatsApp, payment providers, and vertical adapters are `[OPTIONAL-EXTENSION][UNCONFIRMED][ASM-001]`, not baseline channel replacements.
 
-**This is documentation only.** Every code, SQL, YAML, JSON, TypeScript, OpenAPI, schema, and pipeline block is a **target snippet** `[BLUEPRINT][NOT-RUNTIME-EVIDENCE]`, not an existing file or measured result. Non-SRS numeric performance, size, cost, or KPI targets are `[PROVISIONAL][ASM-002]`; provider choices are `[UNCONFIRMED][ASM-001]`, pricing/promotion limits ASM-003, refund/compensation limits ASM-004, and long-term data/retention choices ASM-005. SRS security, evidence, consent, and idempotency invariants are mandatory and are not made provisional by this notice.
+**This is a design and contract reference.** The current runtime is in `apps/api`, `apps/worker`, `apps/tenant-console`, `apps/platform-admin`, and `packages/database`: an API, a worker with Care/Sales/Marketing agents, two consoles, and PostgreSQL migrations. The snippets in this pack describe target contracts and architecture; they are not, by themselves, deployment or production-measurement evidence. Non-SRS numeric performance, size, cost, or KPI targets are `[PROVISIONAL][ASM-002]`; provider choices are `[UNCONFIRMED][ASM-001]`, pricing/promotion limits ASM-003, refund/compensation limits ASM-004, and long-term data/retention choices ASM-005. SRS security, evidence, consent, and idempotency invariants are mandatory and are not made provisional by this notice.
 
 The platform design bridges probabilistic Large Language Models (LLMs) with deterministic enterprise systems of record (SoR) through a strict 11-step end-to-end orchestration lifecycle (`SIGNAL` -> `CONTEXT` -> `HYPOTHESIS` -> `DECISION` -> `PLAN` -> `ACTION` -> `APPROVAL` -> `EXECUTION` -> `EVIDENCE` -> `OUTCOME` -> `LEARNING`). That lifecycle is designed to deliver idempotent transactional integrity (`effect_key`, BR-005/BR-006), an owner-approved floor-price guardrail ($P_{floor}$) that rejects sub-floor quotes without ever replacing the ERP/POS/Web/App price of record, retrieval-grounded answers from the Second Brain RAG, and customer-context isolation (NFR-006) with tenant-level isolation as an additional layer. Whether these outcomes hold in operation is a design objective to be validated against measured data - not an achieved, measured, or certified result.
 
@@ -52,7 +52,7 @@ The platform design bridges probabilistic Large Language Models (LLMs) with dete
 
 ## 3. Implementation Blueprint Table of Contents
 
-These 9 documents are the target implementation blueprint set for the platform, located in `implement/`. Every one of them is a **target blueprint/specification for a system that has not been built or deployed**; none reports implemented code, measured results, or production state.
+These 9 documents are the target implementation blueprint set for the platform, located in `implement/`. They explain intended contracts and boundaries alongside the current runtime; none is a deployment or production-state report.
 
 | File | Document Title | Document Nature | Primary Scope & Contents |
 |---|---|---|---|
@@ -70,7 +70,7 @@ These 9 documents are the target implementation blueprint set for the platform, 
 
 ## 4. Intended Build Sequence for Implementers
 
-The sequence below is the build order the blueprint assumes for an eventual implementation. It is a plan, not a report of completed work: none of these steps has been executed, and no artifact referenced below is deployed.
+The sequence below is the build order the blueprint assumes for an eventual implementation of capabilities beyond the current runtime. It is a plan, not a deployment or production-evidence report; current implementation and verification records live in the runtime source, tests, and operations documents.
 
 ```text
 Step 1: Environment Provisioning (01-tech-stack-and-environment.md)
@@ -97,10 +97,10 @@ Step 5: Frontend & Observability Verification (07, 08, 09)
    └── Validate OTel token metering and fail-closed circuits in staging
 ```
 
-Each step's acceptance evidence must be produced by the implementing team when the work is actually done; this blueprint asserts none of it today.
+Each step's acceptance evidence belongs in the implementing team's verification record when the work is done; this blueprint does not replace current runtime evidence or claim production readiness.
 ## 5. Documentation Contract, Status Vocabulary, and Authority Order
 
-This pack is a **target blueprint; NOT IMPLEMENTED, DEPLOYED, MEASURED, or runtime evidence**. The following labels are normative for every file in `implement/`:
+This pack is a **target/design blueprint, not itself deployment or production measurement evidence**. The following labels are normative for the documents in `implement/`:
 
 | Label | Meaning and permitted use |
 |---|---|

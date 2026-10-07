@@ -11,7 +11,8 @@ export interface AdapterPort {
    * Sends one already-authorized action draft to the provider.
    *
    * @param draft Immutable action draft produced by the orchestrator's dispatch guard.
+   * @param options Optional cancellation signal owned by the orchestrator's deadline guard.
    * @returns The provider receipt, or a timeout/error receipt when the outcome is not confirmed.
    */
-  dispatch(draft: ActionDraft): Promise<ExecutionReceipt>;
+  dispatch(draft: ActionDraft, options?: { readonly signal?: AbortSignal }): Promise<ExecutionReceipt>;
 }

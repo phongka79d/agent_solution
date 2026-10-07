@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type {
   AgentRunLog,
@@ -6,6 +6,7 @@ import type {
   CustomerEventRepository,
   DurableTaskRecord,
   RedisInjectedClient,
+  RunResponseRecord,
 } from '@agentos/database';
 
 import type { IEffectGuard } from '@agentos/core-engine/contracts';
@@ -25,6 +26,7 @@ import {
   createStartRunPort,
   createTakeoverLeasePort,
 } from './bindings.js';
+import { parseLlmRequestTimeoutMs } from './bindings/turn-intent.js';
 
 const TENANT = '11111111-1111-4111-8111-111111111111';
 const RUN = 'run-a';
@@ -81,6 +83,25 @@ function log(overrides: Partial<AgentRunLog> = {}): AgentRunLog {
     started_at: NOW,
     completed_at: '2026-09-23T00:00:00.012Z',
     created_at: '2026-09-23T00:00:01.000Z',
+    ...overrides,
+  };
+}
+
+const OTHER_TENANT = '22222222-2222-4222-8222-222222222222';
+
+function response(overrides: Partial<RunResponseRecord> = {}): RunResponseRecord {
+  return {
+    tenant_id: TENANT,
+    run_id: RUN,
+    answer: 'The approved answer.',
+    sources: [{
+      source_record_id: 'faq-1',
+      source_version: 'v1',
+      source_file: 'customer-care/faq.md',
+    }],
+    conversation_id: null,
+    message_id: null,
+    created_at: NOW,
     ...overrides,
   };
 }
@@ -195,6 +216,115 @@ describe('createDurableRunPort', () => {
     });
   });
 
+  it('projects a persisted answer and closed source references for a completed task', async () => {
+    const completed = task({ state: 'completed', last_error_class: null, error_details: null });
+    const reads: Array<[string, string]> = [];
+    const port = createDurableRunPort(
+      {
+        getTask: async () => completed,
+        listTasks: async () => ({ items: [], next_cursor: null }),
+        requeueFailed: async () => completed,
+      },
+      { readRunLogs: async () => [], readEvidenceChain: async () => [] },
+      { getReservation: async () => null },
+      undefined,
+      {
+        read: async (tenant_id, run_id) => {
+          reads.push([tenant_id, run_id]);
+          return response();
+        },
+      },
+    );
+
+    await expect(port.read({ tenant_id: TENANT, run_id: RUN })).resolves.toMatchObject({
+      run_id: RUN,
+      lifecycle_state: 'completed',
+      answer: 'The approved answer.',
+      sources: [{
+        source_record_id: 'faq-1',
+        source_version: 'v1',
+        source_file: 'customer-care/faq.md',
+      }],
+    });
+    expect(reads).toEqual([[TENANT, RUN]]);
+  });
+
+  it('does not read or project a response while a task is pending', async () => {
+    const pending = task({ state: 'waiting' });
+    let responseReads = 0;
+    const port = createDurableRunPort(
+      {
+        getTask: async () => pending,
+        listTasks: async () => ({ items: [], next_cursor: null }),
+        requeueFailed: async () => pending,
+      },
+      { readRunLogs: async () => [], readEvidenceChain: async () => [] },
+      { getReservation: async () => null },
+      undefined,
+      {
+        read: async () => {
+          responseReads += 1;
+          return response();
+        },
+      },
+    );
+
+    await expect(port.read({ tenant_id: TENANT, run_id: RUN })).resolves.toEqual({
+      run_id: RUN,
+      task_version: 4,
+      lifecycle_state: 'waiting',
+      correlation_id: 'corr-a',
+    });
+    expect(responseReads).toBe(0);
+  });
+
+  it('does not expose a task or response across tenant boundaries', async () => {
+    const completed = task({ state: 'completed', last_error_class: null, error_details: null });
+    let responseReads = 0;
+    const port = createDurableRunPort(
+      {
+        getTask: async (tenant_id) => tenant_id === TENANT ? completed : null,
+        listTasks: async () => ({ items: [], next_cursor: null }),
+        requeueFailed: async () => completed,
+      },
+      { readRunLogs: async () => [], readEvidenceChain: async () => [] },
+      { getReservation: async () => null },
+      undefined,
+      {
+        read: async () => {
+          responseReads += 1;
+          return response();
+        },
+      },
+    );
+
+    await expect(port.read({ tenant_id: OTHER_TENANT, run_id: RUN })).resolves.toBeNull();
+    expect(responseReads).toBe(0);
+  });
+
+  it('refuses malformed persisted source references instead of returning stored JSONB', async () => {
+    const completed = task({ state: 'completed', last_error_class: null, error_details: null });
+    const port = createDurableRunPort(
+      {
+        getTask: async () => completed,
+        listTasks: async () => ({ items: [], next_cursor: null }),
+        requeueFailed: async () => completed,
+      },
+      { readRunLogs: async () => [], readEvidenceChain: async () => [] },
+      { getReservation: async () => null },
+      undefined,
+      {
+        read: async () => response({
+          sources: [{ source_record_id: 'faq-1', source_version: 'v1', source_file: 'faq.md', secret: 'do not leak' }],
+        }),
+      },
+    );
+
+    await expect(port.read({ tenant_id: TENANT, run_id: RUN })).rejects.toThrow(
+      'RUN_RESPONSE_PROJECTION_INVALID',
+    );
+  });
+
   it('requeues only a proved side-effect-free failure under the original effect key', async () => {
     let requeues = 0;
     const failed = task();
@@ -283,6 +413,7 @@ describe('createApprovalReadPort', () => {
       is_paused: true,
       review_comment: null,
       decided_at: null,
+      expires_at: '2026-09-26T00:00:00.000Z',
       created_at: NOW,
     },
     action: {
@@ -317,9 +448,32 @@ describe('createApprovalReadPort', () => {
       next_cursor: null,
     });
     await expect(port.detail(TENANT, detail.approval.id)).resolves.toEqual(
-      expect.objectContaining({ tenant_id: TENANT, expires_at: null }),
+      expect.objectContaining({ tenant_id: TENANT, expires_at: '2026-09-26T00:00:00.000Z' }),
     );
   });
+  it('maps an expired approval detail with its deadline instead of treating it as an internal error', async () => {
+    const expired = {
+      ...detail,
+      approval: {
+        ...detail.approval,
+        decision: 'EXPIRED' as const,
+        is_paused: false,
+        decided_at: NOW,
+      },
+    };
+    const port = createApprovalReadPort({
+      listPending: async () => ({ items: [], next_cursor: null }),
+      getDetail: async () => expired,
+    });
+
+    await expect(port.detail(TENANT, detail.approval.id)).resolves.toEqual(
+      expect.objectContaining({
+        status: 'EXPIRED',
+        expires_at: '2026-09-26T00:00:00.000Z',
+      }),
+    );
+  });
+
 });
 
 describe('createTakeoverLeasePort', () => {
@@ -584,6 +738,8 @@ describe('createStartRunPort', () => {
       correlation_id: 'corr-1',
       lifecycle_state: 'queued',
       admission: 'ADMITTED',
+      conversation_id: 'conv-1',
+      session_id: 'session-1',
     });
     expect(persistedStatePayload).toMatchObject({
       signal: {
@@ -594,6 +750,54 @@ describe('createStartRunPort', () => {
         },
       },
     });
+  });
+
+  it('reserves a campaign draft under its own effect key and complete input fingerprint', async () => {
+    const computeEffectKey = vi.fn(() => 'effect-campaign');
+    const computeRequestFingerprint = vi.fn(() => DIGEST_A);
+    let reservationValues: readonly unknown[] = [];
+    let persistedSignal: Record<string, unknown> | undefined;
+    const runner = createTestRunner((sql, values) => {
+      if (sql.includes('INSERT INTO agentos.effect_reservations')) {
+        reservationValues = values;
+        return [{
+          tenant_id: TENANT, effect_key: 'effect-campaign', request_id: 'draft-1',
+          request_fingerprint: DIGEST_A, run_id: 'campaign-run', step_index: 0,
+          skill_id: 'campaign.draft', status: 'RESERVED', response_receipt: null,
+          reserved_at: new Date(), resolved_at: null, expires_at: new Date(Date.now() + 100000), expired: false,
+        }];
+      }
+      if (sql.includes('INSERT INTO agentos.platform_durable_tasks')) {
+        persistedSignal = JSON.parse(String(values[6])) as Record<string, unknown>;
+        return [{
+          tenant_id: TENANT, run_id: 'campaign-run', correlation_id: 'corr-campaign',
+          current_step: 0, state: 'queued', task_version: 1, retry_count: 0, max_retries: 3,
+          last_error_class: null, last_error_details: null, lease_owner: null, lease_expires_at: null,
+          state_payload: persistedSignal, created_at: new Date(), updated_at: new Date(),
+        }];
+      }
+      return [];
+    });
+    const port = createStartRunPort({
+      guard: { ...guard, computeEffectKey, computeRequestFingerprint },
+      workflows: { getTask: async () => null },
+      ids: () => 'campaign-run',
+      runner,
+    });
+    const payload = {
+      module: 'marketing', skill_id: 'skill.mkt.generate_content',
+      input: { segment_id: 'inactive_90d', objective: 'winback' },
+    };
+    const started = await port.start({
+      tenant_id: TENANT, correlation_id: 'corr-campaign', request_id: 'draft-1',
+      admission_skill_id: 'campaign.draft', source_channel: 'WEB_CHAT',
+      event_type: 'campaign.requested', session_id: 'operator-a', channel_type: 'WEB_CHAT', payload,
+    });
+    expect(started.admission).toBe('ADMITTED');
+    expect(computeEffectKey).toHaveBeenCalledWith(expect.objectContaining({ skill_id: 'campaign.draft' }));
+    expect(computeRequestFingerprint).toHaveBeenCalledWith(payload);
+    expect(reservationValues).toContain('campaign.draft');
+    expect(persistedSignal).toMatchObject({ signal: { event_type: 'campaign.requested', payload } });
   });
 
   it('returns existing task identity on REPLAY / IN_FLIGHT duplicate', async () => {
@@ -710,5 +914,69 @@ describe('createStartRunPort', () => {
         http_status: 409,
       },
     });
+  });
+
+  it('persists a preclaimed queued admission without reserving a second effect slot', async () => {
+    const createQueuedAdmissionTask = vi.fn(async (input: {
+      readonly tenant_id: string;
+      readonly run_id: string;
+      readonly correlation_id: string;
+      readonly state_payload?: unknown;
+    }) => task({
+      tenant_id: input.tenant_id,
+      run_id: input.run_id,
+      correlation_id: input.correlation_id,
+      current_step: 0,
+      state: 'queued',
+      state_payload: input.state_payload,
+    }));
+    const port = createStartRunPort({
+      guard,
+      workflows: { getTask: async () => null, createQueuedAdmissionTask },
+      ids: () => 'unused-run-id',
+    });
+
+    const started = await port.start({
+      tenant_id: TENANT,
+      correlation_id: 'corr-preclaimed',
+      request_id: 'req-preclaimed',
+      admission_reservation: {
+        run_id: 'preclaimed-run',
+        effect_key: 'effect-care-1',
+        request_fingerprint: DIGEST_A,
+      },
+      source_channel: 'WEB_CHAT',
+      event_type: 'message.received',
+      session_id: 'session-1',
+      channel_type: 'WEB_CHAT',
+      payload: { message: 'hello', conversation_id: 'conv-1' },
+    });
+
+    expect(started).toMatchObject({
+      run_id: 'preclaimed-run',
+      task_version: 4,
+      lifecycle_state: 'queued',
+      admission: 'ADMITTED',
+    });
+    expect(createQueuedAdmissionTask).toHaveBeenCalledWith(expect.objectContaining({
+      run_id: 'preclaimed-run',
+      correlation_id: 'corr-preclaimed',
+      state_payload: expect.objectContaining({ signal: expect.any(Object) }),
+    }));
+  });
+});
+
+describe('LLM timeout configuration', () => {
+  it('defaults when the timeout is omitted', () => {
+    expect(parseLlmRequestTimeoutMs(undefined)).toBe(30_000);
+  });
+
+  it('rejects non-positive or non-integer timeout values', () => {
+    expect(() => parseLlmRequestTimeoutMs('0')).toThrow(/positive integer/);
+    expect(() => parseLlmRequestTimeoutMs('1.5')).toThrow(/positive integer/);
+  });
+
+  it('clamps a configured timeout to the adapter maximum', () => {
+    expect(parseLlmRequestTimeoutMs(String(86_400_001))).toBe(86_400_000);
   });
 });

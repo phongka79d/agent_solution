@@ -50,11 +50,15 @@ export interface ChannelSignatureScheme {
   readonly provider: string;
   /** Lower-case header name carrying the digest. */
   readonly header: string;
-  /** `true` when the header value is `<algorithm>=<hex>`, as Meta's `X-Hub-Signature-256` is. */
+  /** `true` when the header value is `<algorithm>=<digest>`, as Meta's scheme is. */
   readonly prefixed: boolean;
+  /** Encoding of the digest in the provider header. */
+  readonly encoding: 'HEX' | 'BASE64';
   readonly material: SignedMaterial;
-  /** Required for `TIMESTAMP_BODY`; the header that carries the signed instant. */
+  /** Required for timestamp-bound schemes; the header that carries the signed instant. */
   readonly timestamp_header: string | null;
+  /** Maximum accepted timestamp age. `null` means this provider uses delivery-id replay control. */
+  readonly replay_window_seconds: number | null;
   /** Whether this scheme is required by the six baseline channels or is an extension. */
   readonly status: 'BASELINE' | 'EXTENSION';
 }
@@ -69,8 +73,10 @@ export const CHANNEL_SIGNATURE_SCHEMES: Readonly<Record<ChannelId, ChannelSignat
     provider: 'first-party widget token',
     header: 'x-widget-signature',
     prefixed: false,
+    encoding: 'HEX',
     material: 'RAW_BODY',
     timestamp_header: null,
+    replay_window_seconds: null,
     status: 'BASELINE',
   },
   APP_CHAT: {
@@ -78,8 +84,10 @@ export const CHANNEL_SIGNATURE_SCHEMES: Readonly<Record<ChannelId, ChannelSignat
     provider: 'first-party app token',
     header: 'x-widget-signature',
     prefixed: false,
+    encoding: 'HEX',
     material: 'RAW_BODY',
     timestamp_header: null,
+    replay_window_seconds: null,
     status: 'BASELINE',
   },
   MESSENGER: {
@@ -87,8 +95,10 @@ export const CHANNEL_SIGNATURE_SCHEMES: Readonly<Record<ChannelId, ChannelSignat
     provider: 'Meta Send API v19.0',
     header: 'x-hub-signature-256',
     prefixed: true,
+    encoding: 'HEX',
     material: 'RAW_BODY',
     timestamp_header: null,
+    replay_window_seconds: null,
     status: 'BASELINE',
   },
   TIKTOK: {
@@ -96,8 +106,10 @@ export const CHANNEL_SIGNATURE_SCHEMES: Readonly<Record<ChannelId, ChannelSignat
     provider: 'TikTok Open Platform Messaging API',
     header: 'x-tiktok-signature',
     prefixed: false,
+    encoding: 'HEX',
     material: 'RAW_BODY',
     timestamp_header: null,
+    replay_window_seconds: null,
     status: 'BASELINE',
   },
   ZALO: {
@@ -105,8 +117,10 @@ export const CHANNEL_SIGNATURE_SCHEMES: Readonly<Record<ChannelId, ChannelSignat
     provider: 'Zalo OA OpenAPI',
     header: 'x-zalo-signature',
     prefixed: false,
+    encoding: 'HEX',
     material: 'APP_ID_BODY_SECRET',
     timestamp_header: 'x-zevent-timestamp',
+    replay_window_seconds: 300,
     status: 'BASELINE',
   },
   EMAIL: {
@@ -114,8 +128,10 @@ export const CHANNEL_SIGNATURE_SCHEMES: Readonly<Record<ChannelId, ChannelSignat
     provider: 'SendGrid / Mailgun transactional webhook',
     header: 'x-mailgun-signature',
     prefixed: false,
+    encoding: 'HEX',
     material: 'RAW_BODY',
     timestamp_header: null,
+    replay_window_seconds: null,
     status: 'BASELINE',
   },
   SMS: {
@@ -123,8 +139,10 @@ export const CHANNEL_SIGNATURE_SCHEMES: Readonly<Record<ChannelId, ChannelSignat
     provider: 'Chunghwa Telecom / Twilio-compatible SMS gateway',
     header: 'x-twilio-signature',
     prefixed: false,
+    encoding: 'HEX',
     material: 'RAW_BODY',
     timestamp_header: null,
+    replay_window_seconds: null,
     status: 'BASELINE',
   },
   INSTAGRAM: {
@@ -132,8 +150,10 @@ export const CHANNEL_SIGNATURE_SCHEMES: Readonly<Record<ChannelId, ChannelSignat
     provider: 'Meta Send API v19.0',
     header: 'x-hub-signature-256',
     prefixed: true,
+    encoding: 'HEX',
     material: 'RAW_BODY',
     timestamp_header: null,
+    replay_window_seconds: null,
     status: 'EXTENSION',
   },
   LINE: {
@@ -141,8 +161,10 @@ export const CHANNEL_SIGNATURE_SCHEMES: Readonly<Record<ChannelId, ChannelSignat
     provider: 'LINE Messaging API',
     header: 'x-line-signature',
     prefixed: false,
+    encoding: 'BASE64',
     material: 'RAW_BODY',
     timestamp_header: null,
+    replay_window_seconds: null,
     status: 'EXTENSION',
   },
   WHATSAPP: {
@@ -150,8 +172,10 @@ export const CHANNEL_SIGNATURE_SCHEMES: Readonly<Record<ChannelId, ChannelSignat
     provider: 'WhatsApp Business Cloud API',
     header: 'x-hub-signature-256',
     prefixed: true,
+    encoding: 'HEX',
     material: 'RAW_BODY',
     timestamp_header: null,
+    replay_window_seconds: null,
     status: 'EXTENSION',
   },
 });
@@ -201,6 +225,37 @@ function headerValue(headers: Readonly<Record<string, string | undefined>>, name
   return null;
 }
 
+/** Converts the injected hex HMAC to the base64 wire encoding used by LINE and similar providers. */
+function hexToBase64(value: string): string | null {
+  if (value.length === 0 || value.length % 2 !== 0 || !/^[0-9a-f]+$/i.test(value)) return null;
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  let result = '';
+  for (let offset = 0; offset < value.length; offset += 6) {
+    const first = Number.parseInt(value.slice(offset, offset + 2), 16);
+    const second = offset + 2 < value.length ? Number.parseInt(value.slice(offset + 2, offset + 4), 16) : 0;
+    const third = offset + 4 < value.length ? Number.parseInt(value.slice(offset + 4, offset + 6), 16) : 0;
+    const count = Math.min(3, (value.length - offset) / 2);
+    result += alphabet[first >> 2];
+    result += alphabet[((first & 3) << 4) | (second >> 4)];
+    result += count > 1 ? alphabet[((second & 15) << 2) | (third >> 6)] : '=';
+    result += count > 2 ? alphabet[third & 63] : '=';
+  }
+  return result;
+}
+
+function digestMatches(expectedHex: string, provided: string, encoding: ChannelSignatureScheme['encoding']): boolean {
+  if (encoding === 'BASE64') {
+    const expected = hexToBase64(expectedHex);
+    if (expected === null || expected.length !== provided.length) return false;
+    let difference = 0;
+    for (let index = 0; index < expected.length; index += 1) {
+      difference |= expected.charCodeAt(index) ^ provided.charCodeAt(index);
+    }
+    return difference === 0;
+  }
+  return hexDigestsMatch(expectedHex, provided);
+}
+
 /**
  * Verifies one inbound delivery against its channel's scheme.
  *
@@ -219,6 +274,8 @@ export function verifyChannelSignature(input: {
   readonly raw_body: string;
   readonly headers: Readonly<Record<string, string | undefined>>;
   readonly hmac: HmacSha256Hex;
+  /** Host clock in milliseconds; required to enforce a configured timestamp replay window. */
+  readonly now_ms?: number;
 }): ChannelVerificationResult {
   const scheme = CHANNEL_SIGNATURE_SCHEMES[input.channel];
   if (scheme === undefined) {
@@ -228,27 +285,41 @@ export function verifyChannelSignature(input: {
   if (input.secret === null || input.secret.length === 0) {
     return { ok: false, reason: 'SECRET_UNAVAILABLE' };
   }
+  if (scheme.material === 'APP_ID_BODY_SECRET' && (input.app_id === undefined || input.app_id.length === 0)) {
+    return { ok: false, reason: 'SECRET_UNAVAILABLE' };
+  }
 
   const provided = headerValue(input.headers, scheme.header);
   if (provided === null) {
     return { ok: false, reason: 'SIGNATURE_MISSING' };
   }
 
-  let material: string;
-  if (scheme.material === 'APP_ID_BODY_SECRET') {
-    const appId = input.app_id ?? '';
-    if (appId.length === 0) {
-      return { ok: false, reason: 'SECRET_UNAVAILABLE' };
-    }
-    // `HMAC-SHA256(app_id + body + secret)` per `06` §4.1: the secret is the HMAC key, so the
-    // material is `app_id` followed by the body.
-    material = `${appId}${input.raw_body}`;
-  } else if (scheme.material === 'TIMESTAMP_BODY') {
-    const timestampHeader = scheme.timestamp_header;
-    if (timestampHeader === null) {
+  let timestamp: string | null = null;
+  if (scheme.timestamp_header !== null) {
+    timestamp = headerValue(input.headers, scheme.timestamp_header);
+    if (timestamp === null) {
       return { ok: false, reason: 'TIMESTAMP_MISSING' };
     }
-    const timestamp = headerValue(input.headers, timestampHeader);
+    if (scheme.replay_window_seconds !== null) {
+      if (input.now_ms === undefined) {
+        return { ok: false, reason: 'SIGNATURE_INVALID' };
+      }
+      const parsed = Number(timestamp);
+      const timestampMs = parsed < 100_000_000_000 ? parsed * 1000 : parsed;
+      if (!Number.isFinite(parsed) || Math.abs(input.now_ms - timestampMs) > scheme.replay_window_seconds * 1000) {
+        return { ok: false, reason: 'SIGNATURE_INVALID' };
+      }
+    }
+  } else if (scheme.replay_window_seconds !== null && input.now_ms === undefined) {
+    return { ok: false, reason: 'SIGNATURE_INVALID' };
+  }
+
+  let material: string;
+  if (scheme.material === 'APP_ID_BODY_SECRET') {
+    // `HMAC-SHA256(app_id + body + secret)` per `06` §4.1: the secret is the HMAC key, so the
+    // material is `app_id` followed by the body.
+    material = `${input.app_id}${input.raw_body}`;
+  } else if (scheme.material === 'TIMESTAMP_BODY') {
     if (timestamp === null) {
       return { ok: false, reason: 'TIMESTAMP_MISSING' };
     }
@@ -260,7 +331,7 @@ export function verifyChannelSignature(input: {
   const expected = input.hmac(input.secret, material);
   const presented = scheme.prefixed ? stripPrefix(provided) : provided;
 
-  if (presented === null || !hexDigestsMatch(expected, presented)) {
+  if (presented === null || !digestMatches(expected, presented, scheme.encoding)) {
     return { ok: false, reason: 'SIGNATURE_INVALID' };
   }
 
@@ -307,7 +378,7 @@ export const CHANNEL_PAYLOAD_PATHS: Readonly<Record<ChannelId, ChannelPayloadPat
     received_at: ['occurred_at', 'received_at'],
   },
   MESSENGER: {
-    provider_message_id: ['entry.0.messaging.0.message.mid', 'entry.0.messaging.0.sender.id'],
+    provider_message_id: ['entry.0.messaging.0.message.mid'],
     sender_handle: ['entry.0.messaging.0.sender.id'],
     text: ['entry.0.messaging.0.message.text'],
     received_at: ['entry.0.time'],

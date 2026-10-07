@@ -2,7 +2,7 @@
  * Operator modal for confirming R13 side-effect-free run retry execution.
  */
 
-import React, { useState } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ApiError } from '@agentos/ui-foundation';
 import { adminOperationsClient } from '../../lib/admin-operations-client';
 import type { AgentRunProjection, RunRetryRequest, TaskAcceptedResponse } from './types';
@@ -12,7 +12,6 @@ interface RetryRunModalProps {
   readonly isOpen: boolean;
   readonly onClose: () => void;
   readonly onSuccess: (receipt: TaskAcceptedResponse) => void;
-  readonly defaultOperatorId?: string;
 }
 
 export function RetryRunModal({
@@ -20,30 +19,52 @@ export function RetryRunModal({
   isOpen,
   onClose,
   onSuccess,
-  defaultOperatorId = 'OP-CONSOLE',
 }: RetryRunModalProps) {
-  const [operatorId, setOperatorId] = useState(defaultOperatorId);
+  const reasonRef = useRef<HTMLTextAreaElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const isSubmittingRef = useRef(false);
+  const onCloseRef = useRef(onClose);
   const [reason, setReason] = useState('Operator-authorized retry of verified side-effect-free failure');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  isSubmittingRef.current = isSubmitting;
+  onCloseRef.current = onClose;
+
+  useEffect(() => {
+    if (!isOpen) return;
+    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    reasonRef.current?.focus();
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !isSubmittingRef.current) onCloseRef.current();
+    };
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('keydown', closeOnEscape);
+      previousFocusRef.current?.focus();
+      previousFocusRef.current = null;
+    };
+  }, [isOpen]);
 
   if (!isOpen || !run) return null;
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
     setErrorMessage(null);
 
     try {
-      const trimmedOperatorId = operatorId.trim();
       const trimmedReason = reason.trim();
-      const requestPayload: RunRetryRequest = {
-        ...(trimmedOperatorId ? { operator_id: trimmedOperatorId } : {}),
-        ...(trimmedReason ? { reason: trimmedReason } : {}),
-      };
+      const requestPayload: RunRetryRequest = trimmedReason ? { reason: trimmedReason } : {};
       const receipt = await adminOperationsClient.retryRun(run.run_id, requestPayload);
-
-      // Claim success ONLY after authoritative wire response received
+      if (
+        typeof receipt?.task_id !== 'string'
+        || typeof receipt?.task_version !== 'number'
+        || typeof receipt?.status !== 'string'
+        || typeof receipt?.correlation_id !== 'string'
+      ) {
+        throw new Error('Retry response was not an accepted task receipt.');
+      }
       onSuccess(receipt);
       onClose();
     } catch (err: unknown) {
@@ -61,71 +82,78 @@ export function RetryRunModal({
 
   return (
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-labelledby="retry-modal-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+      aria-describedby="retry-modal-description"
+      className="platform-scrim fixed inset-0 z-50 flex items-center justify-center p-4"
+      onKeyDown={(event) => {
+        if (event.key !== 'Tab') return;
+        const focusable = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), textarea:not([disabled])') ?? []);
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable.at(-1);
+        if (!first || !last) return;
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }}
     >
-      <div className="w-full max-w-md rounded-lg border border-slate-800 bg-slate-950 p-6 shadow-xl">
-        <h2 id="retry-modal-title" className="text-sm font-semibold text-slate-100 font-mono">
+      <div className="platform-card platform-card--raised w-full max-w-md p-6">
+        <h2 id="retry-modal-title" className="font-mono text-sm font-semibold text-ink">
           Confirm Safe Run Retry
         </h2>
-        <p className="mt-1 text-xs text-slate-400">
-          Target run: <span className="font-mono text-sky-400">{run.run_id}</span>
+        <p id="retry-modal-description" className="mt-1 text-xs text-muted">
+          Target run: <span className="font-mono text-brand">{run.run_id}</span>
         </p>
 
-        <div className="mt-3 rounded border border-amber-900/60 bg-amber-950/40 p-2.5 text-[11px] text-amber-300">
+        <div className="platform-alert platform-alert--warning mt-3 text-[11px]">
           Verified side-effect-free class: <span className="font-mono font-bold">{run.last_error_class}</span>.
           Re-queuing will re-dispatch execution with an incremented task version.
         </div>
 
         {errorMessage && (
-          <div className="mt-3 rounded border border-rose-900/60 bg-rose-950/40 p-2.5 text-[11px] text-rose-300">
+          <div className="platform-alert platform-alert--danger mt-3 text-[11px]">
             {errorMessage}
           </div>
         )}
 
         <form onSubmit={handleSubmit} className="mt-4 space-y-3">
-          <div>
-            <label htmlFor="retry-operator-id" className="block text-xs font-medium text-slate-300 mb-1">
-              Operator Identifier
-            </label>
-            <input
-              id="retry-operator-id"
-              type="text"
-              required
-              value={operatorId}
-              onChange={(e) => setOperatorId(e.target.value)}
-              className="w-full rounded border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-100 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500 font-mono"
-            />
-          </div>
 
           <div>
-            <label htmlFor="retry-reason" className="block text-xs font-medium text-slate-300 mb-1">
+            <label htmlFor="retry-reason" className="block text-xs font-medium text-ink mb-1">
               Reason / Justification
             </label>
             <textarea
               id="retry-reason"
-              rows={2}
+              ref={reasonRef}
+              rows={3}
+              required
+              maxLength={1000}
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              className="w-full rounded border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-100 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+              className="ui-input min-h-24 resize-y text-xs"
             />
           </div>
 
-          <div className="mt-5 flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+          <div className="mt-5 flex items-center justify-end gap-2 border-t border-line pt-3">
             <button
               type="button"
               onClick={onClose}
               disabled={isSubmitting}
-              className="rounded px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800 disabled:opacity-50"
+              className="ui-button ui-button--ghost ui-button--sm"
             >
               Cancel
             </button>
             <button
               type="submit"
-              disabled={isSubmitting || !operatorId.trim()}
-              className="rounded bg-rose-700 px-4 py-1.5 text-xs font-medium text-white hover:bg-rose-600 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
+              disabled={isSubmitting || !reason.trim()}
+              className="ui-button ui-button--danger"
             >
               {isSubmitting ? 'Submitting R13...' : 'Execute Retry'}
             </button>

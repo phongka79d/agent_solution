@@ -26,7 +26,8 @@ import {
   OrchestratorError,
   type ReservationOutcome,
 } from '../contracts/types.js';
-import { isSha256Hex, sha256CanonicalJson } from './canonical-json.js';
+import { computeEffectKey as deriveEffectKey, computeRequestFingerprint as deriveRequestFingerprint } from '../effects/effect-key.js';
+import { isSha256Hex } from './canonical-json.js';
 
 /**
  * The 72-hour idempotency window of §03 §3: `expires_at` bounds how long an unproven effect is
@@ -112,13 +113,7 @@ export class EffectGuard implements IEffectGuard {
       );
     }
 
-    return sha256CanonicalJson({
-      tenant_id: input.tenant_id,
-      skill_id: input.skill_id,
-      step_index: input.step_index,
-      action_revision: input.action_revision,
-      request_id: input.request_id,
-    });
+    return deriveEffectKey(input);
   }
 
   /**
@@ -129,8 +124,8 @@ export class EffectGuard implements IEffectGuard {
    * @returns SHA-256 over the RFC 8785 canonical payload, as 64 lower-case hexadecimal characters.
    * @throws OrchestratorError `CANONICAL_JSON_INVALID` when the payload is not canonicalizable.
    */
-  computeRequestFingerprint(payload: Record<string, unknown>): string {
-    return sha256CanonicalJson(payload);
+  public computeRequestFingerprint(payload: Record<string, unknown>): string {
+    return deriveRequestFingerprint(payload);
   }
 
   /**
@@ -209,14 +204,9 @@ export class EffectGuard implements IEffectGuard {
   }
 
   /**
-   * Settles a reservation: `SUCCEEDED` with the verified receipt, or `FAILED` for a
-   * provider-confirmed absence (§4.4).
-   *
-   * @param input - Settlement request. An indeterminate outcome is deliberately unrepresentable.
-   * @returns Nothing once the durable row is settled.
-   * @throws OrchestratorError `RESERVATION_NOT_SETTLEABLE` when no `RESERVED` row was settled —
-   *   already settled, reopened by recovery, or expired — because silently reporting success for an
-   *   unsettled effect is exactly the fabrication NFR-002 forbids.
+   * Settles a reservation with provider-confirmed truth. A durable repository may support
+   * reconciliation after a FAILED/EXPIRED escalation; lightweight bindings retain the strict
+   * RESERVED-only primitive.
    */
   async resolve(input: {
     tenant_id: string;
@@ -224,6 +214,11 @@ export class EffectGuard implements IEffectGuard {
     status: 'SUCCEEDED' | 'FAILED';
     receipt?: unknown;
   }): Promise<void> {
+    if (this.repository.resolve !== undefined) {
+      await this.repository.resolve(input);
+      return;
+    }
+
     const settled = await this.repository.settleReservation({
       tenant_id: input.tenant_id,
       effect_key: input.effect_key,

@@ -13,10 +13,9 @@
  * replayed key carrying a different payload is detected as a conflict instead of being merged.
  */
 
-import { createHash } from 'node:crypto';
-
+import { sha256Hex } from '../durability/canonical-json.js';
+import { OrchestratorError } from '../contracts/types.js';
 import { canonicalizeJson } from './canonical-json.js';
-
 /** Immutable inbound request identity bound into an `effect_key`. */
 export interface EffectKeyInput {
   readonly tenant_id: string;
@@ -36,14 +35,44 @@ export interface EffectKeyInput {
  * @returns 64-character lowercase hex SHA-256 digest.
  */
 export function computeEffectKey(input: EffectKeyInput): string {
-  const canonicalIdentity = canonicalizeJson({
+  if (input.tenant_id.trim().length === 0) {
+    throw new OrchestratorError(
+      'TENANT_CONTEXT_REQUIRED',
+      'effect_key cannot be derived without a tenant identity (NFR-006).',
+    );
+  }
+  if (input.skill_id.trim().length === 0) {
+    throw new OrchestratorError(
+      'SKILL_ID_REQUIRED',
+      'effect_key cannot be derived without the registry skill id bound to the action (BR-005).',
+    );
+  }
+  if (input.request_id.trim().length === 0) {
+    throw new OrchestratorError(
+      'REQUEST_ID_REQUIRED',
+      'effect_key is derived from the immutable inbound request identity (BR-005).',
+    );
+  }
+  if (!Number.isInteger(input.step_index) || input.step_index < 0) {
+    throw new OrchestratorError(
+      'STEP_INDEX_INVALID',
+      `effect_key requires a non-negative integer step_index (received ${String(input.step_index)}).`,
+    );
+  }
+  if (!Number.isInteger(input.action_revision) || input.action_revision < 0) {
+    throw new OrchestratorError(
+      'ACTION_REVISION_INVALID',
+      `effect_key requires a non-negative integer action_revision (received ${String(input.action_revision)}).`,
+    );
+  }
+
+  return sha256Hex(canonicalizeJson({
     tenant_id: input.tenant_id,
     skill_id: input.skill_id,
     step_index: input.step_index,
     action_revision: input.action_revision,
     request_id: input.request_id,
-  });
-  return createHash('sha256').update(canonicalIdentity, 'utf8').digest('hex');
+  }));
 }
 
 /**
@@ -53,5 +82,5 @@ export function computeEffectKey(input: EffectKeyInput): string {
  * @returns 64-character lowercase hex SHA-256 digest of the canonical payload.
  */
 export function computeRequestFingerprint(payload: Record<string, unknown>): string {
-  return createHash('sha256').update(canonicalizeJson(payload), 'utf8').digest('hex');
+  return sha256Hex(canonicalizeJson(payload));
 }

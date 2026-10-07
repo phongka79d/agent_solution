@@ -39,15 +39,29 @@ function isNonEmptyText(value: unknown): value is string {
 }
 
 /** The retry policy must be a usable budget; an unusable one would silently disable the bound. */
-function assertUsableRetryPolicy(policy: RetryPolicy, skill_id: string): void {
+function assertUsableRetryPolicy(policy: unknown, skill_id: string): void {
+  if (typeof policy !== 'object' || policy === null || Array.isArray(policy)) {
+    throw new SkillError(
+      'INVALID_SKILL_CONTRACT',
+      'retry_policy must be an object with bounded retry fields',
+      skill_id,
+    );
+  }
+  const candidate = policy as Partial<RetryPolicy>;
+  const max_retries = candidate.max_retries;
+  const initial_interval_ms = candidate.initial_interval_ms;
+  const backoff_multiplier = candidate.backoff_multiplier;
   const usable =
-    Number.isSafeInteger(policy.max_retries) &&
-    policy.max_retries >= 0 &&
-    Number.isFinite(policy.initial_interval_ms) &&
-    policy.initial_interval_ms >= 0 &&
-    Number.isFinite(policy.backoff_multiplier) &&
-    policy.backoff_multiplier >= 1 &&
-    Array.isArray(policy.non_retryable_errors);
+    typeof max_retries === 'number' &&
+    Number.isSafeInteger(max_retries) &&
+    max_retries >= 0 &&
+    typeof initial_interval_ms === 'number' &&
+    Number.isFinite(initial_interval_ms) &&
+    initial_interval_ms >= 0 &&
+    typeof backoff_multiplier === 'number' &&
+    Number.isFinite(backoff_multiplier) &&
+    backoff_multiplier >= 1 &&
+    Array.isArray(candidate.non_retryable_errors);
 
   if (!usable) {
     throw new SkillError(
@@ -61,7 +75,14 @@ function assertUsableRetryPolicy(policy: RetryPolicy, skill_id: string): void {
 /** The five mandatory §5 baseline cases must all be present, whatever else the row declares. */
 function assertBaselineCases(test_cases: readonly TestCaseSpec[], skill_id: string): void {
   const missing = BASELINE_TEST_CASE_IDS.filter(
-    (testId) => !test_cases.some((testCase) => testCase.test_id === testId),
+    (testId) =>
+      !test_cases.some(
+        (testCase) =>
+          typeof testCase === 'object' &&
+          testCase !== null &&
+          !Array.isArray(testCase) &&
+          (testCase as TestCaseSpec).test_id === testId,
+      ),
   );
 
   if (missing.length > 0) {
@@ -81,6 +102,12 @@ function assertBaselineCases(test_cases: readonly TestCaseSpec[], skill_id: stri
  * @throws {SkillError} The most specific refusal code for the first violated invariant.
  */
 export function assertRegistrable(skill: ISkillContract, registered_ids: ReadonlySet<string>): void {
+  if (typeof skill !== 'object' || skill === null || Array.isArray(skill)) {
+    throw new SkillError(
+      'INVALID_SKILL_CONTRACT',
+      'skill registration must be a non-null object',
+    );
+  }
   const skill_id = skill.skill_id;
 
   if (isNonEmptyText(skill_id) && registered_ids.has(skill_id)) {
@@ -138,6 +165,13 @@ export function assertRegistrable(skill: ISkillContract, registered_ids: Readonl
     );
   }
 
+  if (!Array.isArray(skill.allowed_agents)) {
+    throw new SkillError(
+      'MISSING_ALLOWED_AGENTS',
+      'allowed_agents is SRS §11 field 4 and must be an array',
+      skill_id,
+    );
+  }
   if (skill.allowed_agents.length === 0) {
     throw new SkillError(
       'MISSING_ALLOWED_AGENTS',
@@ -181,7 +215,15 @@ export function assertRegistrable(skill: ISkillContract, registered_ids: Readonl
     );
   }
 
-  if (EFFECT_BEARING.includes(skill.effect_class) && skill.retry_policy.retry_on_timeout) {
+  if (
+    typeof skill.retry_policy !== 'object' ||
+    skill.retry_policy === null ||
+    Array.isArray(skill.retry_policy)
+  ) {
+    assertUsableRetryPolicy(skill.retry_policy, skill_id);
+  }
+  const retry_policy = skill.retry_policy as RetryPolicy;
+  if (EFFECT_BEARING.includes(skill.effect_class) && retry_policy.retry_on_timeout) {
     throw new SkillError(
       'INVALID_SKILL_CONTRACT',
       'an effect-bearing row must declare retry_on_timeout: false; a timed-out external effect is reconciled by effect_key, never retried blind (§1.1 invariant 3, BR-006)',
@@ -189,8 +231,23 @@ export function assertRegistrable(skill: ISkillContract, registered_ids: Readonl
     );
   }
 
-  assertUsableRetryPolicy(skill.retry_policy, skill_id);
+  assertUsableRetryPolicy(retry_policy, skill_id);
+  if (!Array.isArray(skill.test_cases)) {
+    throw new SkillError(
+      'MISSING_BASELINE_TEST_CASES',
+      'test_cases must be an array containing every §5 baseline case',
+      skill_id,
+    );
+  }
   assertBaselineCases(skill.test_cases, skill_id);
+
+  if (typeof skill.audit_spec !== 'object' || skill.audit_spec === null || Array.isArray(skill.audit_spec)) {
+    throw new SkillError(
+      'INVALID_SKILL_CONTRACT',
+      'audit_spec must be an object containing an evidence_card',
+      skill_id,
+    );
+  }
 
   if (!isNonEmptyText(skill.audit_spec.evidence_card)) {
     throw new SkillError(

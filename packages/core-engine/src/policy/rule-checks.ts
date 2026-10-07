@@ -89,7 +89,7 @@ export function checkBinding(
   if (
     target.length > 0
     && target !== context.agent_id.trim()
-    && registry.getAgent(target) !== undefined
+    && registry.getAgent(target, context.tenant_id) !== undefined
   ) {
     return deny(
       'PEP-TOPOLOGY',
@@ -113,6 +113,7 @@ export function checkBinding(
 export async function checkPrice(params: {
   readonly tenant_id: string;
   readonly skill_id: string;
+  readonly mutating: boolean;
   readonly payload: Record<string, unknown>;
   readonly authoritativeSource: AuthoritativeSourcePort | undefined;
   readonly priceFloor: PriceFloorSource | undefined;
@@ -126,6 +127,16 @@ export async function checkPrice(params: {
       `ERR_ARBITRARY_PRICING: price-bearing skill ${params.skill_id} carries no usable catalog `
         + 'reference id, and a price that is not traceable to the catalog is never invented '
         + '(BR-001, SRS §13).',
+    );
+  }
+  const effective = readNumberField(params.payload, EFFECTIVE_PRICE_FIELDS);
+
+  if (params.mutating && effective.state === 'ABSENT') {
+    return deny(
+      'BR-001',
+      'ERR_ARBITRARY_PRICING',
+      `ERR_ARBITRARY_PRICING: mutating price-bearing skill ${params.skill_id} carries no effective `
+        + 'price, so the price intent cannot be traced to an approved floor (BR-001, SRS §13).',
     );
   }
 
@@ -201,7 +212,6 @@ export async function checkPrice(params: {
     );
   }
 
-  const effective = readNumberField(params.payload, EFFECTIVE_PRICE_FIELDS);
 
   if (effective.state === 'INVALID') {
     return deny(

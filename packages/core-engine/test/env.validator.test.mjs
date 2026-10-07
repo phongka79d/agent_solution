@@ -126,8 +126,6 @@ test('accepts a complete local environment and applies the documented defaults',
         SESSION_MUTEX_TTL_SECONDS: undefined,
         IDEMPOTENCY_TTL_SECONDS: undefined,
         EMBEDDING_DIMENSIONS: undefined,
-        PRIMARY_REASONING_MODEL: undefined,
-        FAST_COMPLETION_MODEL: undefined,
         ERP_TIMEOUT_MS: undefined,
         LOG_LEVEL: undefined,
         TEMPORAL_NAMESPACE: undefined,
@@ -148,6 +146,12 @@ test('accepts a complete local environment and applies the documented defaults',
   assert.equal(data.SESSION_MUTEX_TTL_SECONDS, 30);
   assert.equal(data.IDEMPOTENCY_TTL_SECONDS, 259200);
   assert.equal(data.EMBEDDING_DIMENSIONS, 1536);
+  assert.equal(data.DEFAULT_LLM_PROVIDER, 'openai-compatible');
+  assert.equal(data.OPENAI_BASE_URL, 'https://api.openai.com/v1');
+  assert.equal(data.OPENAI_STRUCTURED_OUTPUT_MODE, 'json_object');
+  assert.equal(data.LLM_REQUEST_TIMEOUT_MS, 30000);
+  assert.equal(data.MAX_TOKENS_PER_RUN, 4096);
+
   assert.equal(data.PRIMARY_REASONING_MODEL, 'gpt-4o');
   assert.equal(data.FAST_COMPLETION_MODEL, 'gpt-4o-mini');
   assert.equal(data.ERP_TIMEOUT_MS, 5000);
@@ -155,6 +159,25 @@ test('accepts a complete local environment and applies the documented defaults',
   assert.equal(data.STORAGE_PROVIDER, 's3');
   assert.equal(data.MOCK_ERP_ENABLED, true);
   assert.equal(data.TEMPORAL_NAMESPACE, 'default');
+});
+test('treats a blank OpenAI base URL as the documented default', () => {
+  const data = expectOk(parseEnvironment(validLocalEnv({ OPENAI_BASE_URL: '' })));
+  assert.equal(data.OPENAI_BASE_URL, 'https://api.openai.com/v1');
+});
+
+test('validates the OpenAI-compatible provider boundary and bounded runtime settings', () => {
+  expectFailure(parseEnvironment(validLocalEnv({ DEFAULT_LLM_PROVIDER: 'anthropic' })), 'DEFAULT_LLM_PROVIDER');
+  expectFailure(parseEnvironment(validLocalEnv({ OPENAI_BASE_URL: 'https://user:password@example.com/v1' })), 'OPENAI_BASE_URL');
+  expectFailure(parseEnvironment(validLocalEnv({ OPENAI_BASE_URL: 'https://api.example.com/v1?tenant=secret' })), 'OPENAI_BASE_URL');
+  expectFailure(parseEnvironment(validLocalEnv({ OPENAI_STRUCTURED_OUTPUT_MODE: 'text' })), 'OPENAI_STRUCTURED_OUTPUT_MODE');
+  expectFailure(parseEnvironment(validLocalEnv({ PRIMARY_REASONING_MODEL: undefined })), 'PRIMARY_REASONING_MODEL');
+  expectFailure(parseEnvironment(validLocalEnv({ PRIMARY_REASONING_MODEL: '' })), 'PRIMARY_REASONING_MODEL');
+  expectFailure(parseEnvironment(validLocalEnv({ FAST_COMPLETION_MODEL: undefined })), 'FAST_COMPLETION_MODEL');
+  expectFailure(parseEnvironment(validLocalEnv({ FAST_COMPLETION_MODEL: '' })), 'FAST_COMPLETION_MODEL');
+  expectFailure(parseEnvironment(validLocalEnv({ LLM_REQUEST_TIMEOUT_MS: '0' })), 'LLM_REQUEST_TIMEOUT_MS');
+  expectFailure(parseEnvironment(validLocalEnv({ MAX_TOKENS_PER_RUN: '4097' })), 'MAX_TOKENS_PER_RUN');
+  expectFailure(parseEnvironment(managedEnv('staging', { OPENAI_BASE_URL: 'http://provider.internal/v1' })), 'OPENAI_BASE_URL');
+  expectOk(parseEnvironment(validLocalEnv({ OPENAI_BASE_URL: 'http://localhost:8080/v1/' })));
 });
 
 test('missing APP_ENV fails and names APP_ENV', () => {

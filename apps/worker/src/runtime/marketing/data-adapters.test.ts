@@ -94,6 +94,28 @@ describe('createMarketingConsentPort', () => {
     expect(decision.consent_timestamp).toBe('2026-01-01T10:00:00.000Z');
     expect(decision.source_uri).toBe('urn:agentos:consent:consent-row-1');
   });
+  it('denies a granted row that has no opt-in timestamp', async () => {
+    const row = {
+      ...createFakeConsentRow(),
+      opt_in_timestamp: null,
+    } as unknown as ConsentRow;
+    const repository: MarketingConsentRepository = {
+      findConsent: vi.fn().mockResolvedValue(row),
+    };
+    const port = createMarketingConsentPort({
+      serverBoundTenantId: VALID_TENANT,
+      verifyCustomerBinding: vi.fn().mockResolvedValue(true),
+      repository,
+    });
+
+    await expect(
+      port.check({ tenant_id: VALID_TENANT, customer_id: CUSTOMER_ID, channel: 'LINE_FLEX' }),
+    ).resolves.toMatchObject({
+      allowed: false,
+      consent_timestamp: null,
+      suppression_reason: 'CONSENT_TIMESTAMP_MISSING',
+    });
+  });
 
   it('denies outreach without repository access when customer binding verifier is not configured', async () => {
     const findConsent = vi.fn();

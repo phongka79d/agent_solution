@@ -26,9 +26,17 @@ import type {
   ApprovalDecisionResponse,
 } from '../../gateway/contracts.js';
 import { correlationIdOf, fail, replyFailure } from '../../gateway/http.js';
+import {
+  approvalDecisionRouteSchema,
+  approvalDetailRouteSchema,
+  approvalsListRouteSchema,
+  registerOpenApiSchemas,
+} from './openapi-schemas.js';
 
 /** The five baseline SCR-003 decisions. */
 const DECISIONS: readonly ApprovalDecision[] = ['APPROVE', 'REJECT', 'MODIFY', 'PAUSE', 'CANCEL'];
+
+const MAX_REASON_LENGTH = 1000;
 
 function isDecision(value: unknown): value is ApprovalDecision {
   return typeof value === 'string' && (DECISIONS as readonly string[]).includes(value);
@@ -49,6 +57,7 @@ export function registerApprovalRoutes(
   app: FastifyInstance,
   deps: { readonly runtime: GatewayRuntime; readonly credentials: CredentialStore },
 ): void {
+  registerOpenApiSchemas(app);
   const preHandler = authenticate(deps);
 
   // -------------------------------------------------------------------------
@@ -57,7 +66,7 @@ export function registerApprovalRoutes(
 
   app.get<{ Querystring: { status?: string; cursor?: string; limit?: string } }>(
     '/approvals',
-    { preHandler },
+    { preHandler, schema: approvalsListRouteSchema },
     async (request, reply) => {
       const runtime = deps.runtime;
       const correlation_id = correlationIdOf(request, runtime);
@@ -72,11 +81,19 @@ export function registerApprovalRoutes(
           fail('VALIDATION_FAILED', 'status must be PENDING: it is the only supported queue filter');
         }
 
+        const rawLimit = request.query.limit;
+        let parsedLimit: number | undefined;
+        if (rawLimit !== undefined) {
+          if (!/^\d+$/.test(rawLimit) || rawLimit === '0') {
+            fail('VALIDATION_FAILED', 'limit must be a positive integer');
+          }
+          parsedLimit = Number.parseInt(rawLimit, 10);
+        }
         const page = await runtime.approvals.list({
           tenant_id: principal.tenant_id,
           status: 'PENDING',
           ...(request.query.cursor === undefined ? {} : { cursor: request.query.cursor }),
-          ...(request.query.limit === undefined ? {} : { limit: Number(request.query.limit) }),
+          ...(parsedLimit === undefined ? {} : { limit: parsedLimit }),
         });
 
         await runtime.audit.record({
@@ -102,7 +119,7 @@ export function registerApprovalRoutes(
 
   app.get<{ Params: { approval_id: string } }>(
     '/approvals/:approval_id',
-    { preHandler },
+    { preHandler, schema: approvalDetailRouteSchema },
     async (request, reply) => {
       const runtime = deps.runtime;
       const correlation_id = correlationIdOf(request, runtime);
@@ -140,7 +157,7 @@ export function registerApprovalRoutes(
 
   app.post<{ Params: { approval_id: string } }>(
     '/approvals/:approval_id/decision',
-    { preHandler },
+    { preHandler, schema: approvalDecisionRouteSchema },
     async (request, reply) => {
       const runtime = deps.runtime;
       const correlation_id = correlationIdOf(request, runtime);
@@ -166,6 +183,9 @@ export function registerApprovalRoutes(
         if (typeof candidate.reason !== 'string' || candidate.reason.trim().length === 0) {
           fail('VALIDATION_FAILED', 'reason is mandatory for every decision');
         }
+        if (candidate.reason.length > MAX_REASON_LENGTH) {
+          fail('VALIDATION_FAILED', `reason exceeds the ${MAX_REASON_LENGTH} character limit`);
+        }
         if (typeof candidate.expected_payload_sha256 !== 'string' || candidate.expected_payload_sha256.length === 0) {
           fail(
             'VALIDATION_FAILED',
@@ -183,6 +203,36 @@ export function registerApprovalRoutes(
         const detail = await runtime.approvals.detail(principal.tenant_id, approval_id);
         if (detail === null) {
           fail('NOT_FOUND', 'this tenant holds no approval with that identifier');
+        }
+        if (detail.status === 'EXPIRED') {
+          fail('APPROVAL_EXPIRED', 'this approval crossed its review deadline and cannot receive a decision');
+        }
+
+
+        let require_distinct_approver = false;
+        const governance = runtime.governance;
+        if (governance !== undefined) {
+          try {
+            const settings = await governance.get(principal.tenant_id);
+            require_distinct_approver = settings.require_distinct_approver;
+          } catch {
+            fail('PROVIDER_TIMEOUT', 'governance settings could not be read; the decision was refused');
+          }
+        }
+
+        if (require_distinct_approver) {
+          let run: { readonly session_id?: string } | null = null;
+          try {
+            run = await runtime.runs.read({ tenant_id: principal.tenant_id, run_id: detail.run_id });
+          } catch {
+            fail('PROVIDER_TIMEOUT', 'the draft owner could not be read; the decision was refused');
+          }
+          if (run === null || run.session_id === undefined || run.session_id.length === 0) {
+            fail('PROVIDER_TIMEOUT', 'the draft owner could not be read; the decision was refused');
+          }
+          if (run.session_id === operator_id) {
+            fail('APPROVER_MUST_DIFFER', 'the approver must differ from the draft owner');
+          }
         }
 
         const decided = await runtime.approvals.decide({

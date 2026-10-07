@@ -127,7 +127,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/offline/consents.json`](../fixtures/offline/consents.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-APV-CONSENT-REVOKED.json`](../fixtures/scenarios/GOV-APV-CONSENT-REVOKED.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-APV-CONSENT-REVOKED.json`](../fixtures/scenarios/GOV-APV-CONSENT-REVOKED.json).
 
 <a id="case-gov-apv-double-decision"></a>
 
@@ -232,7 +232,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-APV-DOUBLE-DECISION.json`](../fixtures/scenarios/GOV-APV-DOUBLE-DECISION.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-APV-DOUBLE-DECISION.json`](../fixtures/scenarios/GOV-APV-DOUBLE-DECISION.json).
 
 <a id="case-gov-apv-execution-gap"></a>
 
@@ -340,7 +340,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-APV-EXECUTION-GAP.json`](../fixtures/scenarios/GOV-APV-EXECUTION-GAP.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-APV-EXECUTION-GAP.json`](../fixtures/scenarios/GOV-APV-EXECUTION-GAP.json).
 
 <a id="case-gov-apv-expiry"></a>
 
@@ -445,7 +445,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-APV-EXPIRY.json`](../fixtures/scenarios/GOV-APV-EXPIRY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-APV-EXPIRY.json`](../fixtures/scenarios/GOV-APV-EXPIRY.json).
 
 <a id="case-gov-apv-forged-ticket"></a>
 
@@ -559,7 +559,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-APV-FORGED-TICKET.json`](../fixtures/scenarios/GOV-APV-FORGED-TICKET.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-APV-FORGED-TICKET.json`](../fixtures/scenarios/GOV-APV-FORGED-TICKET.json).
 
 <a id="case-gov-apv-no-sixth-decision"></a>
 
@@ -674,7 +674,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-APV-NO-SIXTH-DECISION.json`](../fixtures/scenarios/GOV-APV-NO-SIXTH-DECISION.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-APV-NO-SIXTH-DECISION.json`](../fixtures/scenarios/GOV-APV-NO-SIXTH-DECISION.json).
 
 <a id="case-gov-apv-queue-integrity"></a>
 
@@ -788,7 +788,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-APV-QUEUE-INTEGRITY.json`](../fixtures/scenarios/GOV-APV-QUEUE-INTEGRITY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-APV-QUEUE-INTEGRITY.json`](../fixtures/scenarios/GOV-APV-QUEUE-INTEGRITY.json).
 
 <a id="case-gov-apv-role-denied"></a>
 
@@ -891,7 +891,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-APV-ROLE-DENIED.json`](../fixtures/scenarios/GOV-APV-ROLE-DENIED.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-APV-ROLE-DENIED.json`](../fixtures/scenarios/GOV-APV-ROLE-DENIED.json).
 
 <a id="case-gov-apv-stale-payload"></a>
 
@@ -996,7 +996,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-APV-STALE-PAYLOAD.json`](../fixtures/scenarios/GOV-APV-STALE-PAYLOAD.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-APV-STALE-PAYLOAD.json`](../fixtures/scenarios/GOV-APV-STALE-PAYLOAD.json).
 
 <a id="case-gov-apv-wrong-tenant"></a>
 
@@ -1101,4 +1101,4 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/offline/tenants.json`](../fixtures/offline/tenants.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-APV-WRONG-TENANT.json`](../fixtures/scenarios/GOV-APV-WRONG-TENANT.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-APV-WRONG-TENANT.json`](../fixtures/scenarios/GOV-APV-WRONG-TENANT.json).

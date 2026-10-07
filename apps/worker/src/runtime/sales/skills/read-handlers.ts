@@ -18,6 +18,7 @@ import {
   productSku,
   readCatalogFromSor,
   readInventoryFromSor,
+  readInventoryFromSorBatch,
   type InventoryRead,
 } from './sor-readers.js';
 
@@ -50,11 +51,45 @@ interface CheckPriceInput {
   readonly sku_id: string;
   readonly customer_id: string;
   readonly requested_discount_percent?: number;
+  readonly proposed_price?: number;
 }
 
-const INJECTION_MARKERS = /(?:--|\/\*|\*\/|;|<script\b|ignore\s+previous|system\s*:|assistant\s*:|developer\s*:)/i;
+const INJECTION_MARKERS =
+  /(?:<script\b[^>]*>|<\/script>|\bignore\s+(?:all\s+)?previous\s+instructions\b|\b(?:reveal|disclose|show|print)\s+(?:the\s+)?(?:system|developer)\s+(?:prompt|instructions)\b|(?:^|\n)\s*(?:system|assistant|developer)\s*:\s*(?:you\s+are|ignore|follow|do\s+not|reveal|disclose|show|print)\b)/i;
 const RECOMMENDATION_TYPES = ['CROSS_SELL', 'UPSELL', 'SUBSTITUTE', 'BUNDLE', 'REPLENISHMENT'] as const;
 const RECOMMENDATION_THRESHOLD = 0.65;
+function normalizedProductText(product: {
+  readonly use_case?: string;
+  readonly key_attribute?: string;
+  readonly description?: string;
+  readonly categories?: readonly string[];
+  readonly tags?: readonly string[];
+  readonly attributes?: Readonly<Record<string, unknown>>;
+}): string {
+  const attributes = product.attributes === undefined
+    ? []
+    : Object.values(product.attributes).filter((value): value is string => typeof value === 'string');
+  return [
+    product.use_case,
+    product.key_attribute,
+    product.description,
+    ...(product.categories ?? []),
+    ...(product.tags ?? []),
+    ...attributes,
+  ]
+    .filter((value): value is string => typeof value === 'string')
+    .join(' ')
+    .toLocaleLowerCase();
+}
+
+function advisorUseCaseMatches(
+  product: Parameters<typeof normalizedProductText>[0],
+  use_case: string,
+): boolean {
+  const requiredTerms = use_case.toLocaleLowerCase().split(/\s+/).filter((term) => term.length > 0);
+  const searchable = normalizedProductText(product);
+  return requiredTerms.length > 0 && requiredTerms.every((term) => searchable.includes(term));
+}
 
 
 function eventText(event: CustomerEventTimeline['items'][number]): string {
@@ -79,16 +114,13 @@ export async function handleSearchProduct(
 ): Promise<Record<string, unknown>> {
   const { tenant_id } = invocation.context;
   const input = invocation.input;
-  const query = input.query.trim().toLocaleLowerCase();
-  const limit = input.limit ?? 5;
 
   if (
     input.tenant_id !== tenant_id
-    || query.length === 0
+    || typeof input.query !== 'string'
+    || input.query.trim().length === 0
     || INJECTION_MARKERS.test(input.query)
-    || !Number.isSafeInteger(limit)
-    || limit < 1
-    || limit > 20
+    || (input.limit !== undefined && (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 20))
   ) {
     throw new SalesSkillToolError(
       'MALFORMED_QUERY',
@@ -96,7 +128,11 @@ export async function handleSearchProduct(
     );
   }
 
+  const query = input.query.trim().toLocaleLowerCase();
+  const limit = input.limit ?? 5;
+
   const catalog = await readCatalogFromSor(options, tenant_id);
+  const advisorRequirements = options.advisor_state?.requirementsFor(tenant_id, invocation.context.correlation_id);
   const matched = catalog.items
     .filter((product) => {
       if (
@@ -106,21 +142,45 @@ export async function handleSearchProduct(
       ) {
         return false;
       }
+      if (
+        advisorRequirements?.use_case !== undefined
+        && !advisorUseCaseMatches(product, advisorRequirements.use_case)
+      ) {
+        return false;
+      }
       const searchable = [
         productSku(product),
         productName(product),
-        product.description,
-        ...(product.categories ?? []),
-        ...(product.tags ?? []),
+        normalizedProductText(product),
       ]
         .filter((value): value is string => typeof value === 'string')
         .join(' ')
         .toLocaleLowerCase();
-      return searchable.includes(query);
+      const terms = query.split(/\s+/).filter((term) => term.length > 0);
+      return terms.length > 0 && terms.every((term) => searchable.includes(term));
     })
-    .sort((left, right) => (productSku(left) ?? '').localeCompare(productSku(right) ?? ''));
+    .sort((left, right) => {
+      if (advisorRequirements?.use_case !== undefined) {
+        const requiredUseCase = advisorRequirements.use_case;
+        const leftUseCase = left.use_case?.trim().toLocaleLowerCase();
+        const rightUseCase = right.use_case?.trim().toLocaleLowerCase();
+        const leftAffinity = leftUseCase === requiredUseCase ? 2 : 1;
+        const rightAffinity = rightUseCase === requiredUseCase ? 2 : 1;
+        if (leftAffinity !== rightAffinity) return rightAffinity - leftAffinity;
+        const leftPrice = productListPrice(left) ?? Number.POSITIVE_INFINITY;
+        const rightPrice = productListPrice(right) ?? Number.POSITIVE_INFINITY;
+        if (leftPrice !== rightPrice) return leftPrice - rightPrice;
+      }
+      return (productSku(left) ?? '').localeCompare(productSku(right) ?? '');
+    });
 
-  const products: Array<Record<string, unknown>> = [];
+  const prepared: Array<{
+    readonly product_id: string;
+    readonly sku: string;
+    readonly name: string;
+    readonly list_price: number;
+    readonly currency: string;
+  }> = [];
   for (const product of matched.slice(0, limit)) {
     const product_id = product.product_id ?? product.id;
     const sku = productSku(product);
@@ -140,22 +200,51 @@ export async function handleSearchProduct(
         'Authoritative catalog record is incomplete or invalid',
       );
     }
-
-    const inventory = await readInventoryFromSor(options, tenant_id, sku);
-    products.push({
+    const advisorBudget = advisorRequirements?.budget;
+    if (
+      advisorBudget !== undefined
+      && (
+        list_price > advisorBudget.amount
+        || product.currency.trim().toLocaleUpperCase() !== advisorBudget.currency
+      )
+    ) {
+      continue;
+    }
+    prepared.push({
       product_id,
       sku,
       name,
       list_price,
       currency: product.currency,
-      in_stock: inventory.item.total_available_to_promise! > 0,
+    });
+  }
+
+  const inventory = await readInventoryFromSorBatch(
+    options,
+    tenant_id,
+    prepared.map((product) => product.sku),
+  );
+  const products: Array<Record<string, unknown>> = [];
+  for (const product of prepared) {
+    const inventoryRead = inventory.found.get(product.sku);
+    const available = inventoryRead?.item.total_available_to_promise;
+    if (advisorRequirements !== undefined && (available === undefined || available <= 0)) {
+      continue;
+    }
+    if (advisorRequirements !== undefined && products.length === 0) {
+      options.advisor_state?.recordCandidateSku(tenant_id, invocation.context.correlation_id, product.sku);
+    }
+    products.push({
+      ...product,
+      in_stock: available === undefined ? null : available > 0,
     });
   }
 
   return {
     products,
-    total_found: matched.length,
+    total_found: products.length,
   };
+
 }
 
 export async function handleCheckStock(
@@ -164,7 +253,11 @@ export async function handleCheckStock(
 ): Promise<Record<string, unknown>> {
   const { tenant_id } = invocation.context;
   const input = invocation.input;
-  if (input.tenant_id !== tenant_id || input.sku_id.trim().length === 0) {
+  if (
+    input.tenant_id !== tenant_id
+    || typeof input.sku_id !== 'string'
+    || input.sku_id.trim().length === 0
+  ) {
     throw new SalesSkillToolError(
       'AUTHORITATIVE_SOURCE_UNAVAILABLE',
       'Inventory request tenant or SKU is invalid',
@@ -173,6 +266,7 @@ export async function handleCheckStock(
 
   const inventory = await readInventoryFromSor(options, tenant_id, input.sku_id);
   const available_quantity = inventory.item.total_available_to_promise!;
+  options.advisor_state?.recordStock(tenant_id, invocation.context.correlation_id, input.sku_id, available_quantity);
   return {
     sku_id: input.sku_id,
     available_quantity,
@@ -291,6 +385,16 @@ export async function handleRecommendProduct(
   }
 
   const catalog = await readCatalogFromSor(options, tenant_id);
+  const advisorRequirements = options.advisor_state?.requirementsFor(tenant_id, correlation_id);
+  const advisorSku = advisorRequirements === undefined
+    ? undefined
+    : options.advisor_state?.candidateSkuFor(tenant_id, correlation_id);
+  if (advisorRequirements !== undefined && (advisorSku === undefined || advisorSku.trim().length === 0)) {
+    throw new SalesSkillToolError(
+      'EVIDENCE_REQUIRED',
+      'Advisor recommendation requires the SKU selected by this run’s verified catalog search',
+    );
+  }
   const cartSkus = new Set(input.current_cart_skus);
   const eventTextValue = timeline?.items.map(eventText).join(' ') ?? '';
   const candidates = catalog.items
@@ -300,6 +404,7 @@ export async function handleRecommendProduct(
         isActiveProduct(product)
         && product.tenant_id === tenant_id
         && sku !== undefined
+        && (advisorSku === undefined || sku === advisorSku)
         && !cartSkus.has(sku)
       );
     })
@@ -308,7 +413,8 @@ export async function handleRecommendProduct(
   for (const product of candidates) {
     const sku = productSku(product);
     const name = productName(product);
-    const list_price = productListPrice(product);
+    const catalogListPrice = productListPrice(product);
+    let list_price = catalogListPrice;
     const currency = typeof product.currency === 'string' ? product.currency.trim() : undefined;
     if (
       sku === undefined
@@ -322,13 +428,48 @@ export async function handleRecommendProduct(
       continue;
     }
 
+    const advisorBudget = advisorRequirements?.budget;
+    if (
+      advisorBudget !== undefined
+      && (
+        list_price > advisorBudget.amount
+        || currency.toLocaleUpperCase() !== advisorBudget.currency
+      )
+    ) {
+      continue;
+    }
+
     let inventory: InventoryRead;
     try {
       inventory = await readInventoryFromSor(options, tenant_id, sku);
     } catch {
       continue;
     }
-    if (inventory.item.total_available_to_promise! <= 0) continue;
+    const available = inventory.item.total_available_to_promise!;
+    if (available <= 0) continue;
+    options.advisor_state?.recordStock(tenant_id, correlation_id, sku, available);
+    // SAL-03 must ground the customer-visible price in the same authoritative check_price path
+    // used by direct price inquiries before exposing a recommendation.
+    if (invocation.context.caller_agent === 'SAL-03' || (options.price_floor !== undefined && options.price_floor !== null)) {
+      let priceCheck: Record<string, unknown>;
+      try {
+        priceCheck = await handleCheckPrice(options, {
+          ...invocation,
+          input: {
+            tenant_id,
+            sku_id: sku,
+            customer_id: customer.customer_id,
+          },
+        });
+      } catch {
+        continue;
+      }
+      const checkedListPrice = priceCheck.list_price;
+      if (typeof checkedListPrice !== 'number' || !Number.isFinite(checkedListPrice) || checkedListPrice < 0) {
+        continue;
+      }
+      list_price = checkedListPrice;
+    }
 
     const productTerms = [
       sku,
@@ -388,6 +529,7 @@ export async function handleRecommendProduct(
         suppression_cleared: true,
       },
       confidence,
+      ranking_method: 'authoritative_catalog_order',
       expected_outcome: {
         conversion_probability: revenue.conversion_probability,
         expected_revenue: revenue.expected_revenue,
@@ -406,7 +548,7 @@ export async function handleCheckPrice(
   options: SalesSkillToolPortOptions,
   invocation: SkillToolInvocation<CheckPriceInput>,
 ): Promise<Record<string, unknown>> {
-  const { tenant_id } = invocation.context;
+  const { tenant_id, correlation_id } = invocation.context;
   const input = invocation.input;
 
   if (input.tenant_id !== tenant_id) {
@@ -414,6 +556,34 @@ export async function handleCheckPrice(
       'IDENTITY_UNVERIFIED',
       'Check price request tenant does not match the server-bound tenant',
     );
+  }
+
+  const advisorRequirements = options.advisor_state?.requirementsFor(tenant_id, correlation_id);
+  if (advisorRequirements !== undefined) {
+    const verifiedCustomer = await options.context.verifiedCustomerFor(tenant_id, correlation_id);
+    if (
+      verifiedCustomer === null
+      || verifiedCustomer.tenant_id !== tenant_id
+      || verifiedCustomer.customer_id !== input.customer_id
+    ) {
+      throw new SalesSkillToolError(
+        'IDENTITY_UNVERIFIED',
+        'Price quote requires the server-verified customer for this session',
+      );
+    }
+    if (verifiedCustomer.consent_marketing !== true || verifiedCustomer.suppression_active) {
+      throw new SalesSkillToolError(
+        'CONSENT_REQUIRED',
+        'Price quote is unavailable without current customer consent',
+      );
+    }
+    const available = options.advisor_state?.stockFor(tenant_id, correlation_id, input.sku_id);
+    if (available === undefined || available <= 0) {
+      throw new SalesSkillToolError(
+        'OUT_OF_STOCK',
+        `Price quote requires a successful in-stock check for SKU ${input.sku_id}`,
+      );
+    }
   }
 
   const priceFloorPort = options.price_floor;
@@ -429,6 +599,7 @@ export async function handleCheckPrice(
     decision = await priceFloorPort.read({
       tenant_id: input.tenant_id,
       sku_id: input.sku_id,
+      ...(input.proposed_price === undefined ? {} : { proposed_price: input.proposed_price }),
     });
   } catch {
     throw new SalesSkillToolError(
@@ -489,20 +660,50 @@ export async function handleCheckPrice(
     );
   }
 
+  const advisorBudget = advisorRequirements?.budget;
+  if (
+    advisorBudget !== undefined
+    && (
+      decision.list_price > advisorBudget.amount
+      || decision.currency.trim().toLocaleUpperCase() !== advisorBudget.currency
+    )
+  ) {
+    throw new SalesSkillToolError(
+      'BUDGET_EXCEEDED',
+      `Verified API-001 quote exceeds the server-stamped ${advisorBudget.currency} budget for SKU ${input.sku_id}`,
+    );
+  }
   const clock = options.now ?? (() => new Date());
   const quote_expires_at = new Date(clock().getTime() + decision.quote_ttl_seconds * 1000).toISOString();
 
   let final_price = decision.list_price;
   let discount_allowed = true;
 
-  if (
-    typeof input.requested_discount_percent === 'number'
-    && Number.isFinite(input.requested_discount_percent)
-    && input.requested_discount_percent > 0
-  ) {
-    const discounted = Number((decision.list_price * (1 - input.requested_discount_percent / 100)).toFixed(2));
-    if (discounted >= decision.p_floor) {
-      final_price = discounted;
+  if (typeof input.requested_discount_percent === 'number') {
+    if (
+      Number.isFinite(input.requested_discount_percent)
+      && input.requested_discount_percent > 0
+      && input.requested_discount_percent <= 100
+    ) {
+      const discounted = Number((decision.list_price * (1 - input.requested_discount_percent / 100)).toFixed(2));
+      if (discounted >= decision.p_floor) {
+        final_price = discounted;
+        discount_allowed = true;
+      } else {
+        final_price = decision.list_price;
+        discount_allowed = false;
+      }
+    } else {
+      final_price = decision.list_price;
+      discount_allowed = false;
+    }
+  } else if (typeof input.proposed_price === 'number') {
+    if (
+      Number.isFinite(input.proposed_price)
+      && input.proposed_price >= decision.p_floor
+      && input.proposed_price <= decision.list_price
+    ) {
+      final_price = input.proposed_price;
       discount_allowed = true;
     } else {
       final_price = decision.list_price;

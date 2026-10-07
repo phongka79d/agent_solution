@@ -46,7 +46,10 @@ export interface ConnectorReadResult {
  */
 export interface RegisteredConnector {
   readonly descriptor: ConnectorDescriptor;
-  readonly dispatch: (draft: ActionDraft) => Promise<ExecutionReceipt>;
+  readonly dispatch: (
+    draft: ActionDraft,
+    options?: { readonly signal?: AbortSignal },
+  ) => Promise<ExecutionReceipt>;
   readonly read?: (input: {
     readonly tenant_id: string;
     readonly resource: string;

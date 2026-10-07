@@ -4,6 +4,200 @@ import type {
   SignalEnvelope,
 } from '@agentos/core-engine/contracts';
 import type { SkillEffectClass } from '@agentos/skills';
+export type SalesLexiconWarningCode = 'SALES_LEXICON_READ_FAILED';
+
+export interface SalesLexicon {
+  readonly price: readonly string[];
+  readonly inventory: readonly string[];
+  readonly recommend: readonly string[];
+  readonly customer_lookup: readonly string[];
+  readonly product_search: readonly string[];
+  readonly cart_recovery: readonly string[];
+  readonly replenishment: readonly string[];
+}
+
+export interface SalesLexiconPort {
+  read(tenant_id: string): Promise<Partial<SalesLexicon> | undefined>;
+}
+
+export const BUILTIN_SALES_LEXICON: SalesLexicon = Object.freeze({
+  price: Object.freeze([
+    'price',
+    'pricing',
+    'discount',
+    'cost',
+    'how much',
+    'quote',
+    'quotation',
+    'rate',
+    'fee',
+    'p_floor',
+    'giá',
+    'chiết khấu',
+    'bao nhiêu',
+    'báo giá',
+    'mức giá',
+    'phí',
+  ]),
+  inventory: Object.freeze([
+    'stock',
+    'inventory',
+    'available',
+    'availability',
+    'in stock',
+    'out of stock',
+    'quantity',
+    'còn hàng',
+    'tồn kho',
+    'sẵn có',
+    'hết hàng',
+    'số lượng',
+  ]),
+  recommend: Object.freeze([
+    'recommend',
+    'recommendation',
+    'recommendations',
+    'suggest',
+    'suggestion',
+    'suggestions',
+    'cross-sell',
+    'upsell',
+    'bundle',
+    'substitute',
+    'pair with',
+    'complementary',
+    'tư vấn',
+    'gợi ý',
+    'đề xuất',
+    'bán chéo',
+    'bán thêm',
+    'thay thế',
+    'kết hợp',
+  ]),
+  customer_lookup: Object.freeze([
+    'customer',
+    'profile',
+    'account',
+    'my account',
+    'purchase history',
+    'order history',
+    'loyalty',
+    'my details',
+    'user info',
+    'member info',
+    'khách hàng',
+    'hồ sơ',
+    'tài khoản',
+    'lịch sử mua',
+    'lịch sử đơn hàng',
+    'thành viên',
+    'thông tin người dùng',
+  ]),
+  product_search: Object.freeze([
+    'search',
+    'find',
+    'looking for',
+    'look for',
+    'catalog',
+    'browse',
+    'show me',
+    'products',
+    'product',
+    'tìm',
+    'tìm kiếm',
+    'đang tìm',
+    'danh mục',
+    'duyệt',
+    'cho xem',
+    'sản phẩm',
+    'mặt hàng',
+    'cần mua',
+    'muốn mua',
+    'có bán',
+    'mua',
+  ]),
+  cart_recovery: Object.freeze([
+    'abandoned cart',
+    'abandoned-cart',
+    'abandonedcart',
+    'cart recovery',
+    'cart-recovery',
+    'cartrecovery',
+    'recover cart',
+    'recover-cart',
+    'recovercart',
+    'left in cart',
+    'items left in cart',
+    'resume my cart',
+    'forgot my cart',
+    'giỏ hàng bị bỏ',
+    'khôi phục giỏ hàng',
+    'bỏ quên giỏ hàng',
+    'tiếp tục giỏ hàng',
+  ]),
+  replenishment: Object.freeze([
+    'replenish',
+    'replenishment',
+    'reorder',
+    'repurchase',
+    'recurring order',
+    'refill',
+    'subscribe again',
+    'order again',
+    'buy again',
+    'mua lại',
+    'đặt lại',
+    'mua thêm',
+    'đặt hàng lại',
+    'đăng ký lại',
+    'mua lần nữa',
+  ]),
+});
+
+const SALES_LEXICON_CATEGORIES = [
+  'price',
+  'inventory',
+  'recommend',
+  'customer_lookup',
+  'product_search',
+  'cart_recovery',
+  'replenishment',
+] as const satisfies readonly (keyof SalesLexicon)[];
+
+function escapeRegexTerm(term: string): string {
+  return term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function matchesLexicon(text: string, terms: readonly string[]): boolean {
+  const usableTerms = terms.filter((term) => typeof term === 'string' && term.length > 0);
+  if (usableTerms.length === 0) return false;
+  const pattern = usableTerms
+    .slice()
+    .sort((left, right) => right.length - left.length)
+    .map(escapeRegexTerm)
+    .join('|');
+  // Unicode letter/number boundaries preserve the old \\b semantics for English while matching
+  // Vietnamese diacritics, which JavaScript's ASCII \\b does not treat as word characters.
+  return new RegExp(`(?<![\\p{L}\\p{N}_])(?:${pattern})(?![\\p{L}\\p{N}_])`, 'iu').test(text);
+}
+
+export function mergeSalesLexicon(
+  tenantLexicon: Partial<SalesLexicon> | undefined,
+): SalesLexicon {
+  const merged: Record<keyof SalesLexicon, readonly string[]> = {
+    ...BUILTIN_SALES_LEXICON,
+  };
+  for (const category of SALES_LEXICON_CATEGORIES) {
+    const terms = tenantLexicon?.[category];
+    if (terms !== undefined) {
+      merged[category] = Object.freeze(
+        terms.filter((term): term is string => typeof term === 'string' && term.length > 0),
+      );
+    }
+  }
+  return Object.freeze(merged);
+}
+
 
 /** Minimal skill registry row interface required for policy extraction (implement/05 §3, §6.5). */
 export interface SkillRegistryRowMetadata {
@@ -136,45 +330,66 @@ export function cleanSearchQuery(text: string): string {
 }
 
 /** Identifies if text expresses a price inquiry (disabled in P2). */
-export function isPriceInquiry(text: string): boolean {
+export function isPriceInquiry(
+  text: string,
+  lexicon: SalesLexicon = BUILTIN_SALES_LEXICON,
+): boolean {
   if (!text) return false;
-  return /\b(price|pricing|discount|cost|how much|quote|quotation|rate|fee|p_floor)\b/i.test(text);
+  return matchesLexicon(text, lexicon.price);
 }
 
 /** Identifies if text expresses an inventory / stock check. */
-export function isInventoryInquiry(text: string): boolean {
+export function isInventoryInquiry(
+  text: string,
+  lexicon: SalesLexicon = BUILTIN_SALES_LEXICON,
+): boolean {
   if (!text) return false;
-  return /\b(stock|inventory|available|availability|in stock|out of stock|quantity)\b/i.test(text);
+  return matchesLexicon(text, lexicon.inventory);
 }
 
 /** Identifies if text expresses a recommendation / cross-sell request. */
-export function isRecommendInquiry(text: string): boolean {
+export function isRecommendInquiry(
+  text: string,
+  lexicon: SalesLexicon = BUILTIN_SALES_LEXICON,
+): boolean {
   if (!text) return false;
-  return /\b(recommend|recommendation|recommendations|suggest|suggestion|suggestions|cross-sell|upsell|bundle|substitute|pair with|complementary)\b/i.test(text);
+  return matchesLexicon(text, lexicon.recommend);
 }
 
 /** Identifies if text expresses a customer lookup / profile inquiry. */
-export function isCustomerLookupInquiry(text: string): boolean {
+export function isCustomerLookupInquiry(
+  text: string,
+  lexicon: SalesLexicon = BUILTIN_SALES_LEXICON,
+): boolean {
   if (!text) return false;
-  return /\b(customer|profile|account|my account|purchase history|order history|loyalty|my details|user info|member info)\b/i.test(text);
+  return matchesLexicon(text, lexicon.customer_lookup);
 }
 
 /** Identifies if text expresses a product catalog search. */
-export function isProductSearchInquiry(text: string): boolean {
+export function isProductSearchInquiry(
+  text: string,
+  lexicon: SalesLexicon = BUILTIN_SALES_LEXICON,
+): boolean {
   if (!text) return false;
-  return /\b(search|find|looking for|look for|catalog|browse|show me|products?)\b/i.test(text);
+  return matchesLexicon(text, lexicon.product_search);
 }
 
 /** Identifies if text expresses a cart recovery inquiry. */
-export function isCartRecoveryInquiry(text: string): boolean {
+export function isCartRecoveryInquiry(
+  text: string,
+  lexicon: SalesLexicon = BUILTIN_SALES_LEXICON,
+): boolean {
   if (!text) return false;
-  return /\b(abandoned[ -]?cart|cart[ -]?recovery|recover[ -]?cart|left in cart|items left in cart|resume my cart|forgot my cart)\b/i.test(text);
+  return matchesLexicon(text, lexicon.cart_recovery);
 }
 
 /** Identifies if text expresses a replenishment / reorder inquiry. */
-export function isReplenishmentInquiry(text: string): boolean {
+export function isReplenishmentInquiry(
+  text: string,
+  lexicon: SalesLexicon = BUILTIN_SALES_LEXICON,
+): boolean {
   if (!text) return false;
-  return /\b(replenish|replenishment|reorder|repurchase|recurring order|refill|subscribe again|order again|buy again)\b/i.test(text);
+  return matchesLexicon(text, lexicon.replenishment);
 }
 
 export interface CartRecoveryData {
@@ -214,7 +429,11 @@ export function extractCartRecoveryData(signal: SignalEnvelope): CartRecoveryDat
   return null;
 }
 
-export function isReplenishmentSignal(signal: SignalEnvelope, text: string): boolean {
+export function isReplenishmentSignal(
+  signal: SignalEnvelope,
+  text: string,
+  lexicon: SalesLexicon = BUILTIN_SALES_LEXICON,
+): boolean {
   const payload = (signal.payload ?? {}) as Record<string, unknown>;
   const rawRef =
     payload.prior_purchase_reference ??
@@ -229,7 +448,7 @@ export function isReplenishmentSignal(signal: SignalEnvelope, text: string): boo
     signal.event_type === 'replenishment.cycle' ||
     signal.event_type === 'customer.repurchase' ||
     signal.event_type.includes('replenishment');
-  const hasText = isReplenishmentInquiry(text);
+  const hasText = isReplenishmentInquiry(text, lexicon);
 
   return hasRef || isReplenishmentEvent || hasText;
 }

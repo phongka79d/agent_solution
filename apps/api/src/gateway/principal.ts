@@ -19,11 +19,35 @@
  * permission the operator holds, and the operator id a route acts on is never one the caller sent.
  */
 
+import { createHmac, timingSafeEqual } from 'node:crypto';
+
 import type { FastifyReply, FastifyRequest } from 'fastify';
 
 import type { ChannelId, GatewayPrincipal, OperatorPermission } from './contracts.js';
 import type { GatewayRuntime } from './ports.js';
 import { fail } from './http.js';
+
+const SIGNED_SESSION_TOKEN_PARTS = 2;
+const SESSION_CHANNELS: readonly ChannelId[] = Object.freeze([
+  'WEB_CHAT',
+  'APP_CHAT',
+  'MESSENGER',
+  'INSTAGRAM',
+  'TIKTOK',
+  'ZALO',
+  'EMAIL',
+  'SMS',
+  'LINE',
+  'WHATSAPP',
+]);
+
+interface SignedSessionBinding {
+  readonly tenant_id: string;
+  readonly conversation_id: string;
+  readonly session_id: string;
+  readonly exp: number;
+  readonly channel?: ChannelId;
+}
 
 // ============================================================================
 // Credentials (`06` §8.0 tenant binding; `04` §5 identity resolution)
@@ -47,6 +71,7 @@ export interface OperatorCredential {
   readonly token: string;
   readonly tenant_id: string;
   readonly operator_id: string;
+  readonly scope?: 'company' | 'platform';
   readonly permissions: readonly OperatorPermission[];
 }
 
@@ -59,6 +84,75 @@ export interface SessionCredential {
   readonly channel: ChannelId;
 }
 
+/**
+ * Verifies a server-issued conversation session token.
+ *
+ * The payload is deliberately bound to the tenant, conversation and channel session. The HMAC is
+ * compared as bytes with a constant-time primitive before any binding is returned to authentication.
+ * A missing/invalid/expired token is indistinguishable from an unknown credential.
+ */
+export function verifyConversationSessionToken(
+  token: string,
+  session_secret: string,
+  now_seconds = Math.floor(Date.now() / 1000),
+): SessionCredential | null {
+  const parts = token.split('.');
+  if (parts.length !== SIGNED_SESSION_TOKEN_PARTS) return null;
+  const encodedPayload = parts[0];
+  const encodedSignature = parts[1];
+  if (encodedPayload === undefined || encodedSignature === undefined) return null;
+
+  let binding: SignedSessionBinding;
+  try {
+    const rawBinding = Buffer.from(encodedPayload, 'base64url').toString('utf8');
+    const parsed: unknown = JSON.parse(rawBinding);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
+    const candidate = parsed as Record<string, unknown>;
+    const tenant_id = candidate['tenant_id'];
+    const conversation_id = candidate['conversation_id'];
+    const session_id = candidate['session_id'];
+    const exp = candidate['exp'];
+    const channel = candidate['channel'];
+    if (
+      typeof tenant_id !== 'string' ||
+      tenant_id.length === 0 ||
+      typeof conversation_id !== 'string' ||
+      conversation_id.length === 0 ||
+      typeof session_id !== 'string' ||
+      session_id.length === 0 ||
+      typeof exp !== 'number' ||
+      !Number.isInteger(exp) ||
+      exp <= now_seconds
+    ) {
+      return null;
+    }
+    if (channel !== undefined && (typeof channel !== 'string' || !SESSION_CHANNELS.includes(channel as ChannelId))) {
+      return null;
+    }
+    binding = {
+      tenant_id,
+      conversation_id,
+      session_id,
+      exp,
+      ...(channel === undefined ? {} : { channel: channel as ChannelId }),
+    };
+
+    const expected = createHmac('sha256', session_secret).update(rawBinding, 'utf8').digest();
+    const provided = Buffer.from(encodedSignature, 'base64url');
+    if (provided.length !== expected.length || !timingSafeEqual(expected, provided)) return null;
+  } catch {
+    return null;
+  }
+
+  return {
+    token,
+    tenant_id: binding.tenant_id,
+    conversation_id: binding.conversation_id,
+    session_id: binding.session_id,
+    channel: binding.channel ?? 'WEB_CHAT',
+  };
+}
+
 /** One storefront widget session credential; the origin it may be used from is part of the row. */
 export interface WidgetCredential {
   readonly token: string;
@@ -68,8 +162,9 @@ export interface WidgetCredential {
 }
 
 /**
- * The credential lookup the gateway authenticates against. Tokens are opaque: the only operation
- * is an exact lookup, so a credential the store does not hold authenticates nothing.
+ * The credential lookup the gateway authenticates against. Static rows remain supported for tests
+ * and for credentials managed by an external identity store; signed session tokens are additionally
+ * accepted when the deployment supplies the same HMAC secret used by the conversation port.
  */
 export interface CredentialStore {
   resolveOperator(token: string): OperatorCredential | null;
@@ -78,21 +173,15 @@ export interface CredentialStore {
 }
 
 /**
- * Builds a credential store over injected rows. It is a pure factory: no environment variable, no
- * file and no secret is read here, so a deployment (and a test) supplies exactly the credentials
- * it means to trust.
- *
- * A token belongs to one row. A token present in more than one set resolves by the lookup order
- * documented on {@link resolvePrincipal}, and rows are matched by exact string equality — never by
- * prefix, pattern or decoded structure.
- *
- * @param config The operator, session and widget rows this store resolves.
- * @returns A store whose lookups are `null` for every token it does not hold.
+ * Builds a credential store over injected rows. A token belongs to one row and rows are matched by
+ * exact string equality. Signed conversation tokens are verified against the configured deployment
+ * secret; arbitrary static test tokens continue to resolve exactly as before.
  */
 export function createCredentialStore(config: {
   readonly operators: readonly OperatorCredential[];
   readonly sessions: readonly SessionCredential[];
   readonly widgets: readonly WidgetCredential[];
+  readonly session_secret?: string;
 }): CredentialStore {
   const operators = new Map<string, OperatorCredential>(
     config.operators.map((credential) => [credential.token, credential]),
@@ -103,10 +192,17 @@ export function createCredentialStore(config: {
   const widgets = new Map<string, WidgetCredential>(
     config.widgets.map((credential) => [credential.token, credential]),
   );
+  const session_secret = config.session_secret ?? process.env.SESSION_SECRET;
 
   return {
     resolveOperator: (token) => operators.get(token) ?? null,
-    resolveConversationSession: (token) => sessions.get(token) ?? null,
+    resolveConversationSession: (token) => {
+      const stored = sessions.get(token);
+      // Injected rows are opaque credentials; their exact match remains authoritative even when
+      // the deployment also enables signed session-token verification.
+      if (stored !== undefined) return stored;
+      return session_secret === undefined ? null : verifyConversationSessionToken(token, session_secret);
+    },
     resolveWidgetSession: (token) => widgets.get(token) ?? null,
   };
 }
@@ -177,6 +273,7 @@ function resolvePrincipal(
       kind: 'OPERATOR',
       tenant_id: operator.tenant_id,
       operator_id: operator.operator_id,
+      ...(operator.scope === undefined ? {} : { scope: operator.scope }),
       permissions: operator.permissions,
     };
   }
@@ -186,6 +283,7 @@ function resolvePrincipal(
     return {
       kind: 'CHANNEL_SESSION',
       tenant_id: session.tenant_id,
+      channel: session.channel,
       conversation_id: session.conversation_id,
       session_id: session.session_id,
       // A session-bound caller holds no operator permission; authority is never implied by a session.
@@ -285,6 +383,13 @@ export function authenticate(deps: {
         'AUTHENTICATION_FAILED',
         'the presented credential did not resolve to a known principal; no unauthenticated request reaches a route handler',
       );
+    }
+    if (principal.kind === 'WIDGET_SESSION') {
+      const widget = credentials.resolveWidgetSession(presented.token);
+      const origin = headerValue(request, 'origin');
+      if (widget === null || origin === null || origin !== widget.origin) {
+        fail('AUTHENTICATION_FAILED', 'the widget credential is not valid for this request origin');
+      }
     }
 
     enforceTenantBinding(principal, tenantAssertions(request, presented));

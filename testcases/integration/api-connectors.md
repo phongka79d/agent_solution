@@ -190,7 +190,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 - [`fixtures/offline/catalog.json`](../fixtures/offline/catalog.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-API-001.json`](../fixtures/scenarios/INT-API-001.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-API-001.json`](../fixtures/scenarios/INT-API-001.json).
 
 <a id="case-int-api-002-add-to-cart"></a>
 
@@ -305,7 +305,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/events.json`](../fixtures/offline/events.json)
 - [`fixtures/offline/platform.json`](../fixtures/offline/platform.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-API-002-add_to_cart.json`](../fixtures/scenarios/INT-API-002-add_to_cart.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-API-002-add_to_cart.json`](../fixtures/scenarios/INT-API-002-add_to_cart.json).
 
 <a id="case-int-api-002-checkout"></a>
 
@@ -419,7 +419,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/events.json`](../fixtures/offline/events.json)
 - [`fixtures/offline/platform.json`](../fixtures/offline/platform.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-API-002-checkout.json`](../fixtures/scenarios/INT-API-002-checkout.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-API-002-checkout.json`](../fixtures/scenarios/INT-API-002-checkout.json).
 
 <a id="case-int-api-002-click"></a>
 
@@ -533,7 +533,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/events.json`](../fixtures/offline/events.json)
 - [`fixtures/offline/platform.json`](../fixtures/offline/platform.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-API-002-click.json`](../fixtures/scenarios/INT-API-002-click.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-API-002-click.json`](../fixtures/scenarios/INT-API-002-click.json).
 
 <a id="case-int-api-002-product-view"></a>
 
@@ -646,7 +646,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/events.json`](../fixtures/offline/events.json)
 - [`fixtures/offline/platform.json`](../fixtures/offline/platform.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-API-002-product_view.json`](../fixtures/scenarios/INT-API-002-product_view.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-API-002-product_view.json`](../fixtures/scenarios/INT-API-002-product_view.json).
 
 <a id="case-int-api-002-purchase"></a>
 
@@ -769,7 +769,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/events.json`](../fixtures/offline/events.json)
 - [`fixtures/offline/platform.json`](../fixtures/offline/platform.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-API-002-purchase.json`](../fixtures/scenarios/INT-API-002-purchase.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-API-002-purchase.json`](../fixtures/scenarios/INT-API-002-purchase.json).
 
 <a id="case-int-api-002-search"></a>
 
@@ -883,7 +883,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/events.json`](../fixtures/offline/events.json)
 - [`fixtures/offline/platform.json`](../fixtures/offline/platform.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-API-002-search.json`](../fixtures/scenarios/INT-API-002-search.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-API-002-search.json`](../fixtures/scenarios/INT-API-002-search.json).
 
 <a id="case-int-api-002-session"></a>
 
@@ -996,7 +996,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/events.json`](../fixtures/offline/events.json)
 - [`fixtures/offline/platform.json`](../fixtures/offline/platform.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-API-002-session.json`](../fixtures/scenarios/INT-API-002-session.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-API-002-session.json`](../fixtures/scenarios/INT-API-002-session.json).
 
 <a id="case-int-api-003-email"></a>
 
@@ -1103,7 +1103,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/platform.json`](../fixtures/offline/platform.json)
 - [`fixtures/offline/events.json`](../fixtures/offline/events.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-API-003-EMAIL.json`](../fixtures/scenarios/INT-API-003-EMAIL.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-API-003-EMAIL.json`](../fixtures/scenarios/INT-API-003-EMAIL.json).
 
 <a id="case-int-api-003-messenger"></a>
 
@@ -1210,7 +1210,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/platform.json`](../fixtures/offline/platform.json)
 - [`fixtures/offline/events.json`](../fixtures/offline/events.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-API-003-MESSENGER.json`](../fixtures/scenarios/INT-API-003-MESSENGER.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-API-003-MESSENGER.json`](../fixtures/scenarios/INT-API-003-MESSENGER.json).
 
 <a id="case-int-api-003-partial"></a>
 
@@ -1321,7 +1321,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/platform.json`](../fixtures/offline/platform.json)
 - [`fixtures/offline/events.json`](../fixtures/offline/events.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-API-003-PARTIAL.json`](../fixtures/scenarios/INT-API-003-PARTIAL.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-API-003-PARTIAL.json`](../fixtures/scenarios/INT-API-003-PARTIAL.json).
 
 <a id="case-int-api-003-sms"></a>
 
@@ -1428,7 +1428,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/platform.json`](../fixtures/offline/platform.json)
 - [`fixtures/offline/events.json`](../fixtures/offline/events.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-API-003-SMS.json`](../fixtures/scenarios/INT-API-003-SMS.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-API-003-SMS.json`](../fixtures/scenarios/INT-API-003-SMS.json).
 
 <a id="case-int-api-003-tiktok"></a>
 
@@ -1535,7 +1535,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/platform.json`](../fixtures/offline/platform.json)
 - [`fixtures/offline/events.json`](../fixtures/offline/events.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-API-003-TIKTOK.json`](../fixtures/scenarios/INT-API-003-TIKTOK.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-API-003-TIKTOK.json`](../fixtures/scenarios/INT-API-003-TIKTOK.json).
 
 <a id="case-int-api-003-web-chat"></a>
 
@@ -1642,7 +1642,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/platform.json`](../fixtures/offline/platform.json)
 - [`fixtures/offline/events.json`](../fixtures/offline/events.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-API-003-WEB_CHAT.json`](../fixtures/scenarios/INT-API-003-WEB_CHAT.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-API-003-WEB_CHAT.json`](../fixtures/scenarios/INT-API-003-WEB_CHAT.json).
 
 <a id="case-int-api-003-zalo"></a>
 
@@ -1749,7 +1749,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/platform.json`](../fixtures/offline/platform.json)
 - [`fixtures/offline/events.json`](../fixtures/offline/events.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-API-003-ZALO.json`](../fixtures/scenarios/INT-API-003-ZALO.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-API-003-ZALO.json`](../fixtures/scenarios/INT-API-003-ZALO.json).
 
 <a id="case-int-api-idemp"></a>
 
@@ -1864,4 +1864,4 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-API-IDEMP.json`](../fixtures/scenarios/INT-API-IDEMP.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-API-IDEMP.json`](../fixtures/scenarios/INT-API-IDEMP.json).

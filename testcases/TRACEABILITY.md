@@ -2,7 +2,7 @@
 
 # Traceability - case index
 
-383 cases, every ID taken verbatim from the source modules (mixed case and dots preserved; no ID normalisation anywhere). One row per case; the reverse direction is in [`COVERAGE.md`](COVERAGE.md). Nothing in this file is evidence of execution: there is no application runtime in this repository and every case stays `NOT_RUN`.
+383 cases, every ID taken verbatim from the source modules (mixed case and dots preserved; no ID normalisation anywhere). One row per case; the reverse direction is in [`COVERAGE.md`](COVERAGE.md). Nothing in this file is evidence of execution: the repository runtime is not exercised by generation and every case stays `NOT_RUN`.
 
 ## Baseline preservation
 

@@ -22,6 +22,8 @@
 
 import { createHash, createHmac } from 'node:crypto';
 
+import { canonicalizeJson as databaseCanonicalizeJson } from '@agentos/database/canonical-json';
+
 import { OrchestratorError } from '../contracts/types.js';
 
 /**
@@ -51,7 +53,14 @@ export function isSha256Hex(value: string): boolean {
  *   canonical JSON; the message carries the path of the offending value.
  */
 export function canonicalizeJson(value: unknown): string {
-  return serialize(value, '$');
+  try {
+    return databaseCanonicalizeJson(value);
+  } catch (error) {
+    const detail = error instanceof Error
+      ? error.message.replace(/^CANONICAL_JSON_INVALID:\s*/, '')
+      : String(error);
+    throw new OrchestratorError('CANONICAL_JSON_INVALID', detail);
+  }
 }
 
 /**
@@ -87,134 +96,3 @@ export function hmacSha256Hex(secret: string, message: string): string {
   return createHmac('sha256', secret).update(message, 'utf8').digest('hex');
 }
 
-/**
- * Serializes one value, carrying the path of the current node for diagnostics.
- *
- * @param value - Node to serialize.
- * @param path - JSON-pointer-like location used in the refusal message.
- * @returns Canonical JSON text for the node.
- * @throws OrchestratorError `CANONICAL_JSON_INVALID` for any non-representable value.
- */
-function serialize(value: unknown, path: string): string {
-  if (value === null) {
-    return 'null';
-  }
-
-  switch (typeof value) {
-    case 'boolean':
-      return value ? 'true' : 'false';
-    case 'number':
-      if (!Number.isFinite(value)) {
-        throw new OrchestratorError(
-          'CANONICAL_JSON_INVALID',
-          `${path} is the non-finite number ${String(value)}`,
-        );
-      }
-      return JSON.stringify(value);
-    case 'string':
-      assertWellFormedUnicode(value, path);
-      return JSON.stringify(value);
-    case 'object':
-      return Array.isArray(value) ? serializeArray(value, path) : serializeObject(value, path);
-    default:
-      // undefined, function, symbol, bigint: JSON has no member for them, and dropping the member
-      // would change the hashed bytes without the caller noticing.
-      throw new OrchestratorError(
-        'CANONICAL_JSON_INVALID',
-        `${path} is a ${typeof value} value, which has no canonical JSON form`,
-      );
-  }
-}
-
-/**
- * Serializes an array in source order. A sparse hole is a rejection, not a `null`.
- *
- * @param items - Array node.
- * @param path - Location of the array itself.
- * @returns Canonical JSON text `[...]`.
- * @throws OrchestratorError `CANONICAL_JSON_INVALID` for a hole or an unrepresentable element.
- */
-function serializeArray(items: readonly unknown[], path: string): string {
-  const parts: string[] = [];
-
-  for (let index = 0; index < items.length; index += 1) {
-    parts.push(serialize(items[index], `${path}[${index}]`));
-  }
-
-  return `[${parts.join(',')}]`;
-}
-
-/**
- * Serializes a plain object with members sorted by UTF-16 code unit.
- *
- * @param record - Object node.
- * @param path - Location of the object itself.
- * @returns Canonical JSON text `{...}`.
- * @throws OrchestratorError `CANONICAL_JSON_INVALID` for a non-plain object, an ill-formed key, or
- *   an unrepresentable member value.
- */
-function serializeObject(record: object, path: string): string {
-  const prototype = Object.getPrototypeOf(record) as object | null;
-
-  if (prototype !== Object.prototype && prototype !== null) {
-    throw new OrchestratorError(
-      'CANONICAL_JSON_INVALID',
-      `${path} is a ${describePrototype(prototype)}; only plain objects are canonical JSON`,
-    );
-  }
-
-  const members = record as Record<string, unknown>;
-  const parts = Object.keys(members)
-    .sort()
-    .map((key) => {
-      assertWellFormedUnicode(key, `${path}.${key}`);
-      return `${JSON.stringify(key)}:${serialize(members[key], `${path}.${key}`)}`;
-    });
-
-  return `{${parts.join(',')}}`;
-}
-
-/**
- * Names a non-plain object's prototype for a refusal message. The prototype is read with an `in`
- * guard rather than an inline cast, so nothing is asserted about a shape that was never checked.
- *
- * @param prototype - Prototype of the rejected object.
- * @returns A readable type name such as `Date instance`, or a generic description.
- */
-function describePrototype(prototype: object): string {
-  if ('constructor' in prototype) {
-    const { constructor } = prototype;
-
-    if (typeof constructor === 'function' && constructor.name.length > 0) {
-      return `${constructor.name} instance`;
-    }
-  }
-
-  return 'non-plain object';
-}
-
-/**
- * Ensures a string is valid Unicode. A lone surrogate has no UTF-8 encoding, so it would otherwise
- * be replaced and hashed as U+FFFD — a silent conversion that hides an upstream encoding bug.
- *
- * @param value - String to check.
- * @param path - Location used in the refusal message.
- * @throws OrchestratorError `CANONICAL_JSON_INVALID` when the string is not well formed.
- */
-function assertWellFormedUnicode(value: string, path: string): void {
-  for (let index = 0; index < value.length; index += 1) {
-    const codeUnit = value.charCodeAt(index);
-
-    if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
-      const next = value.charCodeAt(index + 1);
-
-      if (!(next >= 0xdc00 && next <= 0xdfff)) {
-        throw new OrchestratorError('CANONICAL_JSON_INVALID', `${path} contains a lone high surrogate`);
-      }
-
-      index += 1;
-    } else if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
-      throw new OrchestratorError('CANONICAL_JSON_INVALID', `${path} contains a lone low surrogate`);
-    }
-  }
-}

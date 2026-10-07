@@ -9,7 +9,6 @@
  * 4. EvidenceCardDrawer renders segregated sections with distinct visual hierarchies.
  */
 
-import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { EvidenceClassification } from '@agentos/ui-foundation';
@@ -98,9 +97,9 @@ describe('SCR-004 Evidence Classification Contract (FACT vs HYPOTHESIS)', () => 
       // Verified Facts tier label and SoR description
       expect(html).toContain('Verified Facts');
       expect(html).toContain('System of Record ground truth (ERP, POS, WMS, Payment Gateway)');
-      expect(html).toContain('FACT');
+      expect(html).toContain('Verified Facts (1)');
       expect(html).toContain('Recorded Confidence: 100%');
-      expect(html).toContain('Source: <strong class="text-slate-300">ERP</strong>');
+      expect(html).toMatch(/Source: <strong[^>]*>ERP<\/strong>/);
 
       // Must NOT render HYPOTHESIS warning banner
       expect(html).not.toContain('AI model inferences');
@@ -116,10 +115,10 @@ describe('SCR-004 Evidence Classification Contract (FACT vs HYPOTHESIS)', () => 
         />
       );
 
-      // AI Hypotheses tier label and description
-      expect(html).toContain('AI Hypotheses &amp; Inferences');
-      expect(html).toContain('AI model predictions; strictly segregated and NEVER persisted as ground truth');
-      expect(html).toContain('HYPOTHESIS');
+      // Localized AI Hypotheses tier label and description
+      expect(html).toContain('Dự đoán (1)');
+      expect(html).toContain('AI model predictions; strictly segregated and NEVER persisted as ground truth.');
+      expect(html).toContain('Dự đoán');
 
       // Mandatory warning banner separating inference from ground truth
       expect(html).toContain('ATTENTION:');
@@ -143,9 +142,9 @@ describe('SCR-004 Evidence Classification Contract (FACT vs HYPOTHESIS)', () => 
 
       // Both sections are present
       expect(html).toContain('Verified Facts (1)');
-      expect(html).toContain('AI Hypotheses &amp; Inferences (1)');
+      expect(html).toContain('Dự đoán (1)');
 
-      // The warning banner exists specifically in the HYPOTHESIS section
+      // The warning banner exists specifically in the localized hypothesis section
       expect(html).toContain('The items below are AI model inferences');
 
       // Confidence scores are preserved independently

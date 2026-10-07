@@ -15,3 +15,21 @@
  * @returns The lower-case hex digest.
  */
 export type HmacSha256Hex = (secret: string, message: string) => string;
+
+/**
+ * Signs a mock-ERP request over the provider's canonical request material:
+ * `METHOD path\nraw body`.
+ *
+ * The HMAC implementation remains host-supplied so this package stays runtime-agnostic. Callers
+ * must pass the exact raw body bytes represented as a UTF-8 string; an empty string is the body of
+ * a bodyless request.
+ */
+export function signMockRequest(
+  secret: string,
+  method: string,
+  path: string,
+  rawBody: string,
+  hmac: HmacSha256Hex,
+): string {
+  return hmac(secret, `${method.toUpperCase()} ${path}\n${rawBody}`);
+}

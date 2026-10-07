@@ -10,8 +10,8 @@
  * There is deliberately no WebSocket dependency in this workspace, and the package DAG grants
  * `apps/api` no provider SDK, so the RFC 6455 server handshake and frame codec are implemented
  * here over `node:http` and `node:crypto`. The surface is intentionally small: text frames,
- * ping/pong, close, and a bounded payload. No extension, no compression, no subprotocol is
- * negotiated — a client that asks for one gets a plain connection.
+ * ping/pong, close, and a bounded payload. Access credentials are accepted only in the
+ * `Authorization` header or `Sec-WebSocket-Protocol`; no extension or compression is negotiated.
  */
 
 import { createHash } from 'node:crypto';
@@ -38,6 +38,12 @@ export const WS_CLOSE_POLICY_VIOLATION = 4408;
 /** Largest accepted frame payload; a larger frame is a policy violation, not a buffer to grow. */
 export const WS_MAX_PAYLOAD_BYTES = 262_144;
 
+/** Maximum number of simultaneously connected operators for one tenant. */
+export const WS_MAX_CONNECTIONS_PER_TENANT = 32;
+
+/** A partial frame cannot grow beyond payload + the largest RFC 6455 header. */
+const WS_MAX_BUFFER_BYTES = WS_MAX_PAYLOAD_BYTES + 14;
+
 const OPCODE_CONTINUATION = 0x0;
 const OPCODE_TEXT = 0x1;
 const OPCODE_BINARY = 0x2;
@@ -61,7 +67,7 @@ interface WsFrame {
  */
 export function encodeFrame(opcode: number, payload: Buffer): Buffer {
   const length = payload.length;
-
+  if (length > WS_MAX_PAYLOAD_BYTES) throw new Error('WS_PROTOCOL_VIOLATION');
   if (length < 126) {
     const header = Buffer.allocUnsafe(2);
     header[0] = 0x80 | opcode;
@@ -101,6 +107,7 @@ export function decodeFrames(buffer: Buffer): { readonly frames: readonly WsFram
     const second = buffer[offset + 1];
     if (first === undefined || second === undefined) break;
 
+    if ((first & 0x70) !== 0) throw new Error('WS_PROTOCOL_VIOLATION');
     const fin = (first & 0x80) !== 0;
     const opcode = first & 0x0f;
     const masked = (second & 0x80) !== 0;
@@ -120,7 +127,11 @@ export function decodeFrames(buffer: Buffer): { readonly frames: readonly WsFram
     }
 
     if (length > WS_MAX_PAYLOAD_BYTES) throw new Error('WS_PROTOCOL_VIOLATION');
+    if ((opcode & 0x8) !== 0 && (!fin || length > 125)) throw new Error('WS_PROTOCOL_VIOLATION');
     if (opcode === OPCODE_CONTINUATION) throw new Error('WS_PROTOCOL_VIOLATION');
+
+    // Fragmented messages are refused rather than accumulated without a bounded message buffer.
+    if (!fin) throw new Error('WS_PROTOCOL_VIOLATION');
 
     // A browser client always masks; an unmasked client frame is a protocol violation.
     if (!masked) throw new Error('WS_PROTOCOL_VIOLATION');
@@ -146,6 +157,8 @@ export function decodeFrames(buffer: Buffer): { readonly frames: readonly WsFram
     offset = cursor;
   }
 
+  if (buffer.length - offset > WS_MAX_BUFFER_BYTES) throw new Error('WS_PROTOCOL_VIOLATION');
+
   return { frames, rest: buffer.subarray(offset) };
 }
 
@@ -161,41 +174,52 @@ interface WsSession {
   readonly tenant_id: string;
   readonly operator_id: string;
   readonly seen_commands: Set<string>;
+  readonly timers: Set<NodeJS.Timeout>;
   closed: boolean;
+  cleanup_done: boolean;
   unsubscribe: (() => void) | null;
+  teardown: (() => void) | null;
 }
 
 /**
- * Extracts the credential the handshake presented.
- *
- * A browser cannot set an `Authorization` header on a WebSocket, so the operator session may also
- * arrive as a `token` query parameter. Both are treated identically: an opaque value looked up in
- * the credential store. Neither is parsed, decoded or trusted beyond that lookup.
+ * Extracts credentials the handshake presented. Query-string credentials are intentionally absent:
+ * browsers may send a bearer value through `Authorization` (non-browser clients) or as a
+ * `Sec-WebSocket-Protocol` value (browser-compatible).
  */
-function presentedToken(request: IncomingMessage, url: URL): string | null {
+function presentedCredentials(request: IncomingMessage): readonly { readonly token: string; readonly protocol?: string }[] {
+  const credentials: { readonly token: string; readonly protocol?: string }[] = [];
   const header = request.headers.authorization;
   if (typeof header === 'string' && header.toLowerCase().startsWith('bearer ')) {
     const token = header.slice(7).trim();
-    if (token.length > 0) return token;
+    if (token.length > 0) credentials.push({ token });
   }
 
-  const fromQuery = url.searchParams.get('token');
-  return fromQuery !== null && fromQuery.length > 0 ? fromQuery : null;
+  const rawProtocols = request.headers['sec-websocket-protocol'];
+  const protocolValues = Array.isArray(rawProtocols) ? rawProtocols : typeof rawProtocols === 'string' ? [rawProtocols] : [];
+  for (const raw of protocolValues) {
+    for (const protocol of raw.split(',')) {
+      const value = protocol.trim();
+      if (value.length === 0) continue;
+      const token = value.toLowerCase().startsWith('bearer ') ? value.slice(7).trim() : value;
+      if (token.length > 0) credentials.push({ token, protocol: value });
+    }
+  }
+  return credentials;
 }
 
 /** Writes a close frame with the given application code and ends the socket. */
 function closeWith(socket: Duplex, code: number): void {
   const reason = Buffer.allocUnsafe(2);
   reason.writeUInt16BE(code, 0);
-  if (!socket.destroyed) {
+  if (!socket.destroyed && socket.writable) {
     socket.write(encodeFrame(OPCODE_CLOSE, reason));
     socket.end();
   }
 }
 
-/** Sends one JSON text frame when the socket is still usable. */
-function send(socket: Duplex, event: WsServerEvent): void {
-  if (socket.destroyed || !socket.writable) return;
+/** Sends one JSON text frame when the socket and session are still usable. */
+function send(socket: Duplex, session: WsSession, event: WsServerEvent): void {
+  if (session.closed || socket.destroyed || !socket.writable) return;
   socket.write(encodeFrame(OPCODE_TEXT, Buffer.from(JSON.stringify(event), 'utf8')));
 }
 
@@ -256,6 +280,7 @@ export function registerWebSocketStream(
   app: FastifyInstance,
   deps: { readonly runtime: GatewayRuntime; readonly credentials: CredentialStore },
 ): void {
+  const connectionsByTenant = new Map<string, Map<WsSession, Duplex>>();
   const server: Server = app.server;
 
   server.on('upgrade', (request: IncomingMessage, socket: Duplex, head: Buffer) => {
@@ -274,8 +299,21 @@ export function registerWebSocketStream(
       return;
     }
 
-    const token = presentedToken(request, url);
-    const operator: OperatorCredential | null = token === null ? null : deps.credentials.resolveOperator(token);
+    if (url.searchParams.has('token')) {
+      refuseUpgrade(socket, 401, JSON.stringify({ error_code: 'AUTHENTICATION_FAILED', retryable: false }));
+      return;
+    }
+
+    const presented = presentedCredentials(request);
+    let operator: OperatorCredential | null = null;
+    let negotiatedProtocol: string | undefined;
+    for (const candidate of presented) {
+      operator = deps.credentials.resolveOperator(candidate.token);
+      if (operator !== null) {
+        negotiatedProtocol = candidate.protocol;
+        break;
+      }
+    }
 
     if (operator === null) {
       refuseUpgrade(socket, 401, JSON.stringify({ error_code: 'AUTHENTICATION_FAILED', retryable: false }));
@@ -290,20 +328,26 @@ export function registerWebSocketStream(
       return;
     }
 
+    const protocolHeader = negotiatedProtocol === undefined ? '' : `sec-websocket-protocol: ${negotiatedProtocol}\r\n`;
     socket.write(
       'HTTP/1.1 101 Switching Protocols\r\n' +
         'upgrade: websocket\r\n' +
         'connection: Upgrade\r\n' +
         `sec-websocket-accept: ${acceptKey(clientKey)}\r\n` +
+        protocolHeader +
         '\r\n',
     );
 
+    const abort = new AbortController();
     const session: WsSession = {
       tenant_id: operator.tenant_id,
       operator_id: operator.operator_id,
       seen_commands: new Set<string>(),
+      timers: new Set<NodeJS.Timeout>(),
       closed: false,
+      cleanup_done: false,
       unsubscribe: null,
+      teardown: null,
     };
 
     const principal: GatewayPrincipal = {
@@ -312,38 +356,84 @@ export function registerWebSocketStream(
       operator_id: operator.operator_id,
       permissions: operator.permissions,
     };
+    const connections = connectionsByTenant.get(operator.tenant_id) ?? new Map<WsSession, Duplex>();
+    connectionsByTenant.set(operator.tenant_id, connections);
 
-    const abort = new AbortController();
+    const teardown = (): void => {
+      if (session.cleanup_done) return;
+      session.cleanup_done = true;
+      session.closed = true;
+      abort.abort();
+      const unsubscribe = session.unsubscribe;
+      session.unsubscribe = null;
+      unsubscribe?.();
+      for (const timer of session.timers) clearTimeout(timer);
+      session.timers.clear();
+      if (connections.get(session) === socket) connections.delete(session);
+      if (connections.size === 0) connectionsByTenant.delete(operator.tenant_id);
+    };
+    session.teardown = teardown;
+
+    while (connections.size >= WS_MAX_CONNECTIONS_PER_TENANT) {
+      const oldest = connections.entries().next().value as [WsSession, Duplex] | undefined;
+      if (oldest === undefined) break;
+      const [oldSession, oldSocket] = oldest;
+      oldSession.teardown?.();
+      closeWith(oldSocket, WS_CLOSE_POLICY_VIOLATION);
+    }
+    connections.set(session, socket);
 
     // Server events are relayed after the handshake; a subscription that cannot be opened is
     // reported in-band rather than silently leaving the operator with a mute socket.
     void (async () => {
       try {
-        for await (const frame of deps.runtime.streams.subscribe({
+        const stream = deps.runtime.streams.subscribe({
           tenant_id: operator.tenant_id,
           signal: abort.signal,
-        })) {
-          if (session.closed) break;
-          send(socket, { event: frame.event, data: frame.data });
+        });
+        const iterator = stream[Symbol.asyncIterator]();
+        session.unsubscribe = () => {
+          const returnMethod = iterator.return;
+          if (returnMethod !== undefined) {
+            void Promise.resolve(returnMethod.call(iterator)).catch(() => undefined);
+          }
+        };
+        while (!session.closed) {
+          const result = await iterator.next();
+          if (result.done === true || session.closed) break;
+          send(socket, session, { event: result.value.event, data: result.value.data });
         }
       } catch {
         if (!session.closed) {
-          send(socket, { event: 'stream.error', data: { reason: 'subscription_unavailable' } });
+          send(socket, session, { event: 'stream.error', data: { reason: 'subscription_unavailable' } });
         }
+      } finally {
+        session.unsubscribe?.();
+        session.unsubscribe = null;
       }
     })();
 
     let buffer: Buffer = Buffer.concat([head]);
+    if (buffer.length > WS_MAX_BUFFER_BYTES) {
+      teardown();
+      closeWith(socket, WS_CLOSE_POLICY_VIOLATION);
+      return;
+    }
 
     socket.on('data', (chunk: Buffer) => {
       if (session.closed) return;
       buffer = Buffer.concat([buffer, chunk]);
+      if (buffer.length > WS_MAX_BUFFER_BYTES) {
+        teardown();
+        closeWith(socket, WS_CLOSE_POLICY_VIOLATION);
+        return;
+      }
 
       let decoded: { readonly frames: readonly WsFrame[]; readonly rest: Buffer };
       try {
         decoded = decodeFrames(buffer);
       } catch {
-        session.closed = true;
+        teardown();
         closeWith(socket, WS_CLOSE_POLICY_VIOLATION);
         return;
       }
@@ -352,13 +442,15 @@ export function registerWebSocketStream(
 
       for (const frame of decoded.frames) {
         if (frame.opcode === OPCODE_CLOSE) {
-          session.closed = true;
+          teardown();
           closeWith(socket, 1000);
           return;
         }
 
         if (frame.opcode === OPCODE_PING) {
-          socket.write(encodeFrame(OPCODE_PONG, frame.payload));
+          if (!session.closed && !socket.destroyed && socket.writable) {
+            socket.write(encodeFrame(OPCODE_PONG, frame.payload));
+          }
           continue;
         }
 
@@ -366,13 +458,13 @@ export function registerWebSocketStream(
 
         const command = parseCommand(frame.payload.toString('utf8'));
         if (command === null) {
-          send(socket, { event: 'stream.error', data: { reason: 'invalid_command' } });
+          send(socket, session, { event: 'stream.error', data: { reason: 'invalid_command' } });
           continue;
         }
 
         // A replayed command is acknowledged once and never applied twice (`06` §8.1.2 R10).
         if (session.seen_commands.has(command.command_id)) {
-          send(socket, {
+          send(socket, session, {
             event: 'command.duplicate',
             data: { command_id: command.command_id, applied: false },
           });
@@ -383,7 +475,7 @@ export function registerWebSocketStream(
         void (async () => {
           const handler = deps.runtime.streams.onCommand;
           if (handler === undefined) {
-            send(socket, {
+            send(socket, session, {
               event: 'stream.error',
               data: { command_id: command.command_id, reason: 'no_command_handler' },
             });
@@ -398,16 +490,16 @@ export function registerWebSocketStream(
               payload: command.payload ?? {},
             });
 
-            send(socket, {
+            send(socket, session, {
               event: 'command.acknowledged',
               data: { command_id: command.command_id, acknowledged: result.acknowledged },
             });
 
             for (const event of result.events) {
-              send(socket, { event: event.event, data: event.data });
+              send(socket, session, { event: event.event, data: event.data });
             }
           } catch {
-            send(socket, {
+            send(socket, session, {
               event: 'stream.error',
               data: { command_id: command.command_id, reason: 'command_failed' },
             });
@@ -415,13 +507,6 @@ export function registerWebSocketStream(
         })();
       }
     });
-
-    const teardown = (): void => {
-      if (session.closed) return;
-      session.closed = true;
-      abort.abort();
-      session.unsubscribe?.();
-    };
 
     socket.on('close', teardown);
     socket.on('end', teardown);

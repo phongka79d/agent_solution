@@ -242,7 +242,7 @@ export interface ChainBreak {
   readonly record: string | null;
   /**
    * 0-based index of the record in the order it was read back (ascending `step_index` for evidence,
-   * ascending event time for audit), or `-1` for a break that belongs to no single record.
+   * ascending `chain_seq` for audit), or `-1` for a break that belongs to no single record.
    */
   readonly row: number;
   readonly detail: string;
@@ -681,9 +681,9 @@ export function verifyEvidenceChain(
  * `audit_records`, because the migration gives that table no signature column, so a record whose
  * fields no longer reproduce its `chain_hash` is reported as `CHAIN_HASH_MISMATCH` and a record
  * whose event time is not the UTC-millisecond rendering the writer hashed is reported as
- * `TIMESTAMP_INVALID` rather than verified with different bytes. The walk itself is the same one the
- * evidence chain uses, so a deleted interior record appears as a missing predecessor and a second
- * child of one predecessor as a fork.
+ * `TIMESTAMP_INVALID` rather than verified with different bytes. The records are read in database
+ * `chain_seq` order, while the walk itself follows links, so a deleted interior record appears as a
+ * missing predecessor and a second child of one predecessor as a fork.
  *
  * @param records The tenant's records, as {@link AuditRepository} reads them.
  * @param params Scope the breaks name.

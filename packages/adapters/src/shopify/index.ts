@@ -29,7 +29,9 @@ export class ShopifyRefusalError extends Error {
     readonly refusal_code:
       | 'TENANT_UNSCOPED'
       | 'SHOP_UNSCOPED'
+      | 'INVALID_SHOP_DOMAIN'
       | 'SECRET_UNAVAILABLE'
+      | 'CREDENTIAL_EXPIRED'
       | 'SIGNATURE_MISSING'
       | 'SIGNATURE_INVALID'
       | 'STATE_INVALID'
@@ -65,6 +67,8 @@ export interface ShopifyInstallStateStore {
     readonly tenant_id: string;
     readonly shop: string;
     readonly state_hash: string;
+    /** Store compares this to its persisted expires_at atomically before consuming. */
+    readonly now?: string;
   }): Promise<boolean> | boolean;
 }
 
@@ -73,6 +77,8 @@ export interface ShopifyInstallation {
   readonly shop: string;
   readonly credential_ref: string;
   readonly installed_at: string;
+  /** Provider credential expiry; absent only when the provider grants a non-expiring token. */
+  readonly expires_at?: string | null;
   readonly revoked_at: string | null;
 }
 
@@ -98,7 +104,12 @@ export interface ShopifyDeliveryReplayStore {
 }
 
 export type ShopifyOAuthExchangeResult =
-  | { readonly ok: true; readonly access_token: string; readonly credential_ref: string }
+  | {
+      readonly ok: true;
+      readonly access_token: string;
+      readonly credential_ref: string;
+      readonly expires_at?: string | null;
+    }
   | { readonly ok: false; readonly reason: 'TIMEOUT' | 'PROVIDER_REJECTED' | 'UNKNOWN' };
 
 export interface ShopifyOAuthTransport {
@@ -155,6 +166,47 @@ function requireScope(value: string, code: 'TENANT_UNSCOPED' | 'SHOP_UNSCOPED'):
   }
 }
 
+function requireShop(shop: string): void {
+  requireScope(shop, 'SHOP_UNSCOPED');
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.myshopify\.com$/i.test(shop)) {
+    throw new ShopifyRefusalError('INVALID_SHOP_DOMAIN', 'shop must be a valid *.myshopify.com domain');
+  }
+}
+
+function credentialExpired(installation: ShopifyInstallation, now: Date): boolean {
+  if (installation.expires_at === undefined || installation.expires_at === null) return false;
+  const expiresAt = Date.parse(installation.expires_at);
+  return !Number.isFinite(expiresAt) || expiresAt <= now.getTime();
+}
+
+function base64FromHex(value: string): string | null {
+  if (value.length === 0 || value.length % 2 !== 0 || !/^[0-9a-f]+$/i.test(value)) return null;
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  let result = '';
+  for (let offset = 0; offset < value.length; offset += 6) {
+    const first = Number.parseInt(value.slice(offset, offset + 2), 16);
+    const second = offset + 2 < value.length ? Number.parseInt(value.slice(offset + 2, offset + 4), 16) : 0;
+    const third = offset + 4 < value.length ? Number.parseInt(value.slice(offset + 4, offset + 6), 16) : 0;
+    const count = Math.min(3, (value.length - offset) / 2);
+    result += alphabet[first >> 2];
+    result += alphabet[((first & 3) << 4) | (second >> 4)];
+    result += count > 1 ? alphabet[((second & 15) << 2) | (third >> 6)] : '=';
+    result += count > 2 ? alphabet[third & 63] : '=';
+  }
+  return result;
+}
+
+function signatureMatches(expected: string, provided: string, encoding: 'HEX' | 'BASE64' = 'HEX'): boolean {
+  const encoded = encoding === 'BASE64' ? base64FromHex(expected) : expected;
+  if (encoded === null || encoded.length !== provided.length) return false;
+  if (encoding === 'HEX') return hexDigestsMatch(encoded, provided);
+  let difference = 0;
+  for (let index = 0; index < encoded.length; index += 1) {
+    difference |= encoded.charCodeAt(index) ^ provided.charCodeAt(index);
+  }
+  return difference === 0;
+}
+
 function genericTransportRefusal(
   failure: 'TIMEOUT' | 'PROVIDER_REJECTED' | 'UNKNOWN',
 ): ShopifyRefusalError {
@@ -165,17 +217,6 @@ function genericTransportRefusal(
       : 'Shopify outcome is unconfirmed and requires reconciliation',
   );
 }
-
-function signatureMatches(expected: string, provided: string): boolean {
-  if (expected.length === provided.length && hexDigestsMatch(expected, provided)) return true;
-  // HMAC-SHA256 helpers normally return lower-case hex, but a host may provide an encoded value.
-  let difference = expected.length === provided.length ? 0 : 1;
-  for (let index = 0; index < expected.length; index += 1) {
-    difference |= expected.charCodeAt(index) ^ (provided.charCodeAt(index) || 0);
-  }
-  return difference === 0;
-}
-
 async function resolveSecret(
   resolver: SecretResolver,
   secret_ref: string,
@@ -203,7 +244,7 @@ export async function issueShopifyInstallState(input: {
   readonly store: ShopifyInstallStateStore;
 }): Promise<string> {
   requireScope(input.tenant_id, 'TENANT_UNSCOPED');
-  requireScope(input.shop, 'SHOP_UNSCOPED');
+  requireShop(input.shop);
   if (input.raw_state.length === 0) {
     throw new ShopifyRefusalError('STATE_INVALID', 'OAuth state is required');
   }
@@ -238,12 +279,14 @@ export interface ShopifyCallbackVerificationInput {
   readonly hash_state: (raw_state: string) => Promise<string> | string;
   readonly hmac: HmacSha256Hex;
   readonly state_store: ShopifyInstallStateStore;
+  /** The host's current instant; the store must reject expired states atomically. */
+  readonly now?: string;
 }
 
 export async function verifyShopifyCallback(input: ShopifyCallbackVerificationInput): Promise<{ readonly ok: true } | { readonly ok: false; readonly reason: ShopifyRefusalError['refusal_code'] }> {
   try {
     requireScope(input.tenant_id, 'TENANT_UNSCOPED');
-    requireScope(input.shop, 'SHOP_UNSCOPED');
+    requireShop(input.shop);
     if (input.state.length === 0) {
       return { ok: false, reason: 'STATE_INVALID' };
     }
@@ -268,6 +311,7 @@ export async function verifyShopifyCallback(input: ShopifyCallbackVerificationIn
       tenant_id: input.tenant_id,
       shop: input.shop,
       state_hash,
+      ...(input.now === undefined ? {} : { now: input.now }),
     });
     return consumed ? { ok: true } : { ok: false, reason: 'STATE_REPLAYED' };
   } catch (error) {
@@ -289,13 +333,15 @@ export async function completeShopifyInstallation(input: {
   readonly client_secret_ref: string;
   readonly secret_resolver: SecretResolver;
   readonly installed_at: string;
+  readonly now?: () => Date;
 }): Promise<{ readonly status: 'INSTALLED' | 'ALREADY_INSTALLED'; readonly installation: ShopifyInstallation }> {
   requireScope(input.tenant_id, 'TENANT_UNSCOPED');
-  requireScope(input.shop, 'SHOP_UNSCOPED');
+  requireShop(input.shop);
   const callback = await verifyShopifyCallback({
     ...input.callback,
     tenant_id: input.tenant_id,
     shop: input.shop,
+    ...(input.now === undefined ? {} : { now: input.now().toISOString() }),
   });
   if (!callback.ok) {
     throw new ShopifyRefusalError(callback.reason, 'signed callback or OAuth state was refused');
@@ -331,8 +377,12 @@ export async function completeShopifyInstallation(input: {
     shop: input.shop,
     credential_ref: exchanged.credential_ref,
     installed_at: input.installed_at,
+    ...(exchanged.expires_at === undefined ? {} : { expires_at: exchanged.expires_at }),
     revoked_at: null,
   };
+  if (credentialExpired(installation, input.now?.() ?? new Date())) {
+    throw new ShopifyRefusalError('CREDENTIAL_EXPIRED', 'OAuth exchange returned an expired credential');
+  }
   await input.existing.save(installation);
   return { status: 'INSTALLED', installation };
 }
@@ -352,7 +402,7 @@ export async function verifyShopifyWebhook(input: {
 }): Promise<{ readonly ok: true; readonly replayed: false } | { readonly ok: false; readonly reason: ShopifyRefusalError['refusal_code'] } | { readonly ok: true; readonly replayed: true }> {
   try {
     requireScope(input.tenant_id, 'TENANT_UNSCOPED');
-    requireScope(input.shop, 'SHOP_UNSCOPED');
+    requireShop(input.shop);
     if (input.delivery_id.length === 0) return { ok: false, reason: 'DELIVERY_REPLAYED' };
     const installation = await input.installations.find({ tenant_id: input.tenant_id, shop: input.shop });
     if (installation === null || installation.revoked_at !== null) {
@@ -363,7 +413,7 @@ export async function verifyShopifyWebhook(input: {
     }
     const secret = await resolveSecret(input.secret_resolver, input.webhook_secret_ref);
     const expected = input.hmac(secret, input.raw_body);
-    if (!signatureMatches(expected, input.provided_signature)) {
+    if (!signatureMatches(expected, input.provided_signature, 'BASE64')) {
       return { ok: false, reason: 'SIGNATURE_INVALID' };
     }
     const claimed = await input.replay.claim({ tenant_id: input.tenant_id, delivery_id: input.delivery_id });
@@ -422,6 +472,7 @@ export class ShopifyAdminClient implements ShopifyGraphqlAdminClient {
       readonly transport: ShopifyGraphqlTransport;
       readonly installations: ShopifyInstallationStore;
       readonly secret_resolver: SecretResolver;
+      readonly now?: () => Date;
     },
   ) {}
 
@@ -432,10 +483,13 @@ export class ShopifyAdminClient implements ShopifyGraphqlAdminClient {
     readonly variables?: Readonly<Record<string, unknown>>;
   }): Promise<ShopifyGraphqlResult> {
     requireScope(input.tenant_id, 'TENANT_UNSCOPED');
-    requireScope(input.shop, 'SHOP_UNSCOPED');
+    requireShop(input.shop);
     const installation = await this.deps.installations.find({ tenant_id: input.tenant_id, shop: input.shop });
     if (installation === null || installation.revoked_at !== null) {
       throw new ShopifyRefusalError('SHOP_BINDING_MISMATCH', 'shop is not installed for this tenant');
+    }
+    if (credentialExpired(installation, this.deps.now?.() ?? new Date())) {
+      throw new ShopifyRefusalError('CREDENTIAL_EXPIRED', 'Shopify access credential has expired');
     }
     const access_token = await resolveSecret(this.deps.secret_resolver, installation.credential_ref);
     let result: ShopifyGraphqlTransportResult;
@@ -533,6 +587,7 @@ export function createShopifyConnector(deps: ShopifyConnectorDeps): RegisteredCo
     if (shop === null || shop.trim().length === 0) {
       throw new ShopifyRefusalError('SHOP_BINDING_MISMATCH', 'tenant has no server-resolved Shopify shop');
     }
+    requireShop(shop);
     if (input.key !== undefined && input.key !== shop) {
       throw new ShopifyRefusalError('SHOP_BINDING_MISMATCH', 'requested shop is not bound to the tenant');
     }

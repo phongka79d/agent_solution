@@ -1,5 +1,8 @@
 import type { SkillToolInvocation, SkillToolPort } from '@agentos/skills';
 
+import { MARKETING_APPROVED_DOCUMENT_ALLOWLIST } from '../knowledge-adapter.js';
+import { auditMarketingBrand } from '../brand-guard.js';
+
 import type {
   InputMktAnalyzeSignal,
   InputMktAuditBrand,
@@ -8,8 +11,10 @@ import type {
   InputMktEvaluateAttribution,
   InputMktGenerateContent,
   InputMktSegmentAudience,
+  MarketingKnowledgePort,
   MarketingSkillToolPortOptions,
 } from './types.js';
+import type { MarketingKnowledgeDocument } from '../contracts.js';
 
 /**
  * Error thrown by the Marketing skill tool port.
@@ -26,16 +31,42 @@ export class MarketingSkillToolError extends Error {
   }
 }
 
+async function readApprovedMarketingDocuments(
+  knowledge: MarketingKnowledgePort,
+  tenant_id: string,
+): Promise<readonly MarketingKnowledgeDocument[]> {
+  return Promise.all(
+    MARKETING_APPROVED_DOCUMENT_ALLOWLIST.map((path) => knowledge.readApproved(tenant_id, path)),
+  );
+}
+
 /**
  * Creates the unified SkillToolPort for Marketing skills.
  * Routes each skill_id and tool_binding to its injected port, failing closed
- * with UNBOUND_PROVIDER when an owner/provider/connector is not bound.
+ * with UNBOUND_PROVIDER when an owner/provider/connector is not bound. Approved knowledge may
+ * back the brand guard only; content generation never falls back to deterministic local copy.
  */
 export function createMarketingSkillToolPort(
   options: MarketingSkillToolPortOptions,
 ): SkillToolPort {
+  const knowledgeBackedBrandGuard = options.knowledge
+    ? {
+        async auditBrandCompliance(input: InputMktAuditBrand) {
+          const docs = await readApprovedMarketingDocuments(options.knowledge!, input.tenant_id);
+          const result = auditMarketingBrand(input, docs);
+          return {
+            ...result,
+            violations: [...result.violations],
+          };
+        },
+      }
+    : null;
+  const brandGuard = options.brand_guard ?? knowledgeBackedBrandGuard;
   return {
     async invoke<TInput, TOutput>(invocation: SkillToolInvocation<TInput>): Promise<TOutput> {
+      if (typeof invocation.input !== 'object' || invocation.input === null) {
+        throw new MarketingSkillToolError('VALIDATION_FAILED', 'Marketing tool invocation input must be an object');
+      }
       const { skill_id, tool_binding, input, context } = invocation;
 
       // 1. skill.mkt.analyze_market_signal -> API-002.EventIngestion
@@ -77,6 +108,51 @@ export function createMarketingSkillToolPort(
         skill_id === 'skill.mkt.check_consent' &&
         tool_binding === 'API-002.ConsentStore'
       ) {
+        const typedConsentInput = input as unknown as InputMktCheckConsent;
+        if (typedConsentInput.tenant_id !== context.tenant_id) {
+          throw new MarketingSkillToolError(
+            'TENANT_CONTEXT_MISMATCH',
+            'Consent input tenant must match the server-resolved execution tenant',
+          );
+        }
+        if (typeof typedConsentInput.channel !== 'string' || typedConsentInput.channel.trim().length === 0) {
+          throw new MarketingSkillToolError(
+            'INVALID_CHANNEL',
+            'Consent checking requires an explicit contactable channel',
+          );
+        }
+        const segmentId = typedConsentInput.segment_id;
+        const customerId = typedConsentInput.customer_id;
+        const hasSegmentId = typeof segmentId === 'string' && segmentId.trim().length > 0;
+        const hasCustomerId = typeof customerId === 'string' && customerId.trim().length > 0;
+        if (hasSegmentId && hasCustomerId) {
+          throw new MarketingSkillToolError(
+            'CONSENT_IDENTITY_AMBIGUOUS',
+            'Consent checking requires exactly one of customer_id or segment_id',
+          );
+        }
+        if (hasSegmentId) {
+          if (!options.audience_consent) {
+            throw new MarketingSkillToolError(
+              'CONSENT_AGGREGATE_PORT_UNAVAILABLE',
+              'Tenant-scoped aggregate consent guard is required for campaign segments; no customer identity is assumed',
+            );
+          }
+          return (await options.audience_consent.checkAudienceConsent(
+            {
+              tenant_id: typedConsentInput.tenant_id,
+              segment_id: segmentId,
+              channel: typedConsentInput.channel,
+            },
+            context,
+          )) as TOutput;
+        }
+        if (!hasCustomerId) {
+          throw new MarketingSkillToolError(
+            'CUSTOMER_IDENTITY_REQUIRED',
+            'A customer_id or explicitly typed segment_id is required for consent checking',
+          );
+        }
         const consentPort =
           options.consent ?? options.consent_port ?? options.consentPort;
         if (!consentPort) {
@@ -102,10 +178,57 @@ export function createMarketingSkillToolPort(
             'Core.LLMContentEngine is unbound: no content generation engine is configured',
           );
         }
-        return (await options.content_engine.generateContent(
-          input as unknown as InputMktGenerateContent,
-          context,
-        )) as TOutput;
+        try {
+          const generated = await options.content_engine.generateContent(
+            input as unknown as InputMktGenerateContent,
+            context,
+          );
+          const content = generated as unknown as {
+            readonly headline: string;
+            readonly body_content: string;
+            readonly cta_text: string;
+            readonly subject?: string;
+            readonly title?: string;
+            readonly preheader?: string;
+            readonly brand_audit_text?: string;
+          };
+          const copyFields = [
+            ['subject', content.subject],
+            ['title', content.title],
+            ['headline', content.headline],
+            ['body_content', content.body_content],
+            ['cta_text', content.cta_text],
+            ['preheader', content.preheader],
+          ] as const;
+          for (const [fieldName, value] of copyFields) {
+            if (value !== undefined && (typeof value !== 'string' || value.trim().length === 0)) {
+              throw new MarketingSkillToolError(
+                'PROVIDER_ERROR',
+                `Core.LLMContentEngine returned an invalid ${fieldName} copy field`,
+              );
+            }
+          }
+          const auditFields = copyFields
+            .map(([, value]) => value)
+            .filter((value): value is string => typeof value === 'string');
+          return {
+            ...(generated as object),
+            // Recompose on the server so every rendered copy surface is audited. A provider-supplied
+            // summary may omit subject/title/preheader and is never treated as complete evidence.
+            brand_audit_text: auditFields.join('\n'),
+          } as TOutput;
+        } catch (error) {
+          if (error instanceof MarketingSkillToolError) throw error;
+          const providerCode = error !== null && typeof error === 'object' && 'code' in error
+            && typeof error.code === 'string'
+            ? error.code
+            : 'PROVIDER_ERROR';
+          throw new MarketingSkillToolError(
+            'PROVIDER_ERROR',
+            `Core.LLMContentEngine provider failed (${providerCode})`,
+            { provider_code: providerCode },
+          );
+        }
       }
 
       // 5. skill.mkt.audit_brand_compliance -> SecondBrain.BrandGuard
@@ -113,13 +236,13 @@ export function createMarketingSkillToolPort(
         skill_id === 'skill.mkt.audit_brand_compliance' &&
         tool_binding === 'SecondBrain.BrandGuard'
       ) {
-        if (!options.brand_guard) {
+        if (!brandGuard) {
           throw new MarketingSkillToolError(
             'UNBOUND_PROVIDER',
             'SecondBrain.BrandGuard is unbound: no BrandGuard compliance engine is configured',
           );
         }
-        return (await options.brand_guard.auditBrandCompliance(
+        return (await brandGuard.auditBrandCompliance(
           input as unknown as InputMktAuditBrand,
           context,
         )) as TOutput;

@@ -28,6 +28,7 @@ import type { IEvidenceLogger } from '../contracts/ports.js';
 import {
   OrchestratorError,
   type AgentRunLogRecord,
+  type ExecutionReceipt,
   type ImmutableEvidenceRecord,
 } from '../contracts/types.js';
 import { canonicalizeJson } from '../effects/canonical-json.js';
@@ -89,6 +90,17 @@ export class MemoryEvidenceLogger implements IEvidenceLogger {
     return existing ?? null;
   }
 
+  /** Durable step lookup for receipt bindings when action_revision is not inferable from a plan. */
+  public async findImmutableRecordByStep(params: {
+    tenant_id: string;
+    run_id: string;
+    step_index: number;
+  }): Promise<ImmutableEvidenceRecord | null> {
+    const existing = this.evidence.get(scopedKey(params.tenant_id, params.run_id))
+      ?.find((record) => record.step_index === params.step_index);
+    return existing ?? null;
+  }
+
   public async createImmutableRecord(params: {
     run_id: string;
     tenant_id: string;
@@ -123,7 +135,7 @@ export class MemoryEvidenceLogger implements IEvidenceLogger {
     const evidence_id = `ev_${sha256Hex(
       `${params.tenant_id}|${params.run_id}|${params.effect_key}|${params.step_index}`,
     ).slice(0, 16)}`;
-
+    const receipt = projectExecutionReceipt(params.payload['receipt']);
     const record: ImmutableEvidenceRecord = {
       evidence_id,
       run_id: params.run_id,
@@ -136,6 +148,7 @@ export class MemoryEvidenceLogger implements IEvidenceLogger {
       chain_hash,
       signature,
       created_at: new Date(this.now()).toISOString(),
+      ...(receipt === null ? {} : { receipt }),
     };
 
     const key = scopedKey(params.tenant_id, params.run_id);
@@ -231,6 +244,52 @@ export class MemoryEvidenceLogger implements IEvidenceLogger {
   }
 }
 
+
+function projectExecutionReceipt(value: unknown): ExecutionReceipt | null {
+  if (!isPlainRecord(value)) return null;
+  const responsePayload = value['response_payload'];
+  const tokenUsage = value['token_usage'];
+  if (
+    typeof value['execution_id'] !== 'string'
+    || (value['adapter_status'] !== 'SUCCESS' && value['adapter_status'] !== 'ERROR' && value['adapter_status'] !== 'TIMEOUT')
+    || (value['provider_reference'] !== null && typeof value['provider_reference'] !== 'string')
+    || !isPlainRecord(responsePayload)
+    || typeof value['latency_ms'] !== 'number'
+    || !Number.isFinite(value['latency_ms'])
+    || !isPlainRecord(tokenUsage)
+    || typeof tokenUsage['prompt'] !== 'number'
+    || typeof tokenUsage['completion'] !== 'number'
+    || typeof tokenUsage['total_cost_usd'] !== 'number'
+    || !Number.isFinite(tokenUsage['prompt'])
+    || !Number.isFinite(tokenUsage['completion'])
+    || !Number.isFinite(tokenUsage['total_cost_usd'])
+  ) {
+    return null;
+  }
+  try {
+    return JSON.parse(canonicalizeJson({
+      execution_id: value['execution_id'],
+      adapter_status: value['adapter_status'],
+      provider_reference: value['provider_reference'],
+      response_payload: responsePayload,
+      latency_ms: value['latency_ms'],
+      token_usage: {
+        prompt: tokenUsage['prompt'],
+        completion: tokenUsage['completion'],
+        total_cost_usd: tokenUsage['total_cost_usd'],
+      },
+    })) as ExecutionReceipt;
+  } catch {
+    return null;
+  }
+}
+
+/** Reject arrays/classes while traversing receipt payloads from an evidence record. */
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
 /** Composite store key: NUL-separated so `tenant_id` + identity can never collide by concatenation. */
 function scopedKey(...parts: readonly string[]): string {
   return parts.join('\u0000');

@@ -87,10 +87,10 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 | # | Action | Expected |
 |---|---|---|
-| 1 | Evaluate all six gates against the registry with no runtime present | Every gate produces a status row; each is NOT_RUN and names the runtime artifacts it lacks. |
+| 1 | Evaluate all six gates with runtime artifacts absent from the registry | Every gate produces a status row; each is NOT_RUN and names the runtime artifacts it lacks. |
 | 2 | Check that no gate is missing from the report | Six rows exist, one per gate; a gate that cannot be evaluated is still reported rather than omitted. |
 | 3 | Attempt to mark an unevaluated gate as passed by omission | The attempt is refused and the report explicitly states that absent evidence is not a pass; the roadmap figure counts zero passed gates. |
-| 4 | Attempt to run the gates against the mock environment to produce a status | The mock environment produces specification coverage only; the gate statuses stay NOT_RUN because no runtime artifact exists. |
+| 4 | Attempt to run the gates against the mock environment to produce a status | The mock environment produces specification coverage only; the gate statuses stay NOT_RUN because no required runtime artifact exists. |
 
 **Assertions**
 
@@ -119,7 +119,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 **Prerequisites**
 
-- The repository contains no application runtime, so all six gates are NOT_RUN; a PASS for any gate here would be a reporting defect and is BLOCKED_PREREQUISITE.
+- The evidence registry marks runtime artifacts absent, so all six gates are NOT_RUN; a PASS for any gate here would be a reporting defect and is BLOCKED_PREREQUISITE.
 
 **References**
 
@@ -131,7 +131,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/live/env.example`](../fixtures/live/env.example)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-GATE-MISSING-RUNTIME.json`](../fixtures/scenarios/GOV-GATE-MISSING-RUNTIME.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-GATE-MISSING-RUNTIME.json`](../fixtures/scenarios/GOV-GATE-MISSING-RUNTIME.json).
 
 <a id="case-gov-gate-mock-not-evidence"></a>
 
@@ -233,7 +233,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 **Prerequisites**
 
-- No live adapter, provider or upstream system is reachable in this repository, so every artifact here is mock or absent and no gate can be evidenced; any claim to the contrary is BLOCKED_PREREQUISITE.
+- No live adapter, provider or upstream system is reachable in this case, so every artifact here is mock or absent and no gate can be evidenced; any claim to the contrary is BLOCKED_PREREQUISITE.
 
 **References**
 
@@ -246,7 +246,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/live/env.example`](../fixtures/live/env.example)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-GATE-MOCK-NOT-EVIDENCE.json`](../fixtures/scenarios/GOV-GATE-MOCK-NOT-EVIDENCE.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-GATE-MOCK-NOT-EVIDENCE.json`](../fixtures/scenarios/GOV-GATE-MOCK-NOT-EVIDENCE.json).
 
 <a id="case-gov-gate-p0"></a>
 
@@ -284,7 +284,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 1. Namespace gov-gate-<case_id>-<worker_id>; the gate registry and the evidence registry are read from fixtures/offline/governance.json (gate_registry, gate_evidence_state) and no evidence may be created, simulated or back-dated inside the run.
 2. Frozen clock 2026-01-15T10:00:00Z; every required evidence artifact is classified as runtime, mock or design before any status is written.
 3. P0 entry conditions are recorded as: canonical contracts, Customer 360, the Agent/Skill/Workflow contract, authority, policy, evidence, audit and the connector framework exist with frozen contracts.
-4. The evidence registry for P0 lists pep_deny_audit_rows, trace_chain_reconstruction, rls_isolation_report with the kinds pep_deny_audit_rows=mock, trace_chain_reconstruction=design, rls_isolation_report=design, and the repository contains no application runtime.
+4. The evidence registry for P0 lists pep_deny_audit_rows, trace_chain_reconstruction, rls_isolation_report with the kinds pep_deny_audit_rows=mock, trace_chain_reconstruction=design, rls_isolation_report=design, and the case evidence includes no application-runtime artifact.
 
 **Inputs** (synthetic test configuration, never production policy)
 
@@ -323,7 +323,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 **Assertions**
 
-- P0 is never reported PASS: with no runtime the admissible outcomes are NOT_RUN for a missing runtime and BLOCKED_PREREQUISITE for a missing lock, and each required artifact is listed with its own kind and status.
+- P0 is never reported PASS: when the required runtime artifact is absent, the admissible outcomes are NOT_RUN for the missing evidence and BLOCKED_PREREQUISITE for a missing lock, and each required artifact is listed with its own kind and status.
 - A mock or substituted-boundary artifact is never accepted as gate evidence; mock coverage is reported as specification coverage only.
 - The exit criterion 'no authority bypass and no lost trace' is evaluated only against artifacts of kind runtime, and design or absent artifacts are listed as gaps against the owning role Platform/QA.
 - All 3 required evidence items are reported individually, so a partial pack cannot be summarised as done.
@@ -348,7 +348,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 **Prerequisites**
 
-- P0 requires real runtime evidence (pep_deny_audit_rows, trace_chain_reconstruction, rls_isolation_report) from live adapters, real data and upstream receipts; no such runtime exists in this repository, so the gate is NOT_RUN and any PASS claim is BLOCKED_PREREQUISITE.
+- P0 requires real runtime evidence (pep_deny_audit_rows, trace_chain_reconstruction, rls_isolation_report) from live adapters, real data and upstream receipts; no such runtime evidence is present in this case, so the gate is NOT_RUN and any PASS claim is BLOCKED_PREREQUISITE.
 
 **References**
 
@@ -360,7 +360,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/live/env.example`](../fixtures/live/env.example)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-GATE-P0.json`](../fixtures/scenarios/GOV-GATE-P0.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-GATE-P0.json`](../fixtures/scenarios/GOV-GATE-P0.json).
 
 <a id="case-gov-gate-p1"></a>
 
@@ -398,7 +398,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 1. Namespace gov-gate-<case_id>-<worker_id>; the gate registry and the evidence registry are read from fixtures/offline/governance.json (gate_registry, gate_evidence_state) and no evidence may be created, simulated or back-dated inside the run.
 2. Frozen clock 2026-01-15T10:00:00Z; every required evidence artifact is classified as runtime, mock or design before any status is written.
 3. P1 entry conditions are recorded as: the conversation agent, intent detection, identity resolution, ERP lookup, order status, FAQ and escalation paths are implemented.
-4. The evidence registry for P1 lists conversation_transcript, erp_lookup_receipt, case_outcome_record with the kinds conversation_transcript=mock, erp_lookup_receipt=mock, case_outcome_record=mock, and the repository contains no application runtime.
+4. The evidence registry for P1 lists conversation_transcript, erp_lookup_receipt, case_outcome_record with the kinds conversation_transcript=mock, erp_lookup_receipt=mock, case_outcome_record=mock, and the case evidence includes no application-runtime artifact.
 
 **Inputs** (synthetic test configuration, never production policy)
 
@@ -437,7 +437,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 **Assertions**
 
-- P1 is never reported PASS: with no runtime the admissible outcomes are NOT_RUN for a missing runtime and BLOCKED_PREREQUISITE for a missing lock, and each required artifact is listed with its own kind and status.
+- P1 is never reported PASS: when the required runtime artifact is absent, the admissible outcomes are NOT_RUN for the missing evidence and BLOCKED_PREREQUISITE for a missing lock, and each required artifact is listed with its own kind and status.
 - A mock or substituted-boundary artifact is never accepted as gate evidence; mock coverage is reported as specification coverage only.
 - The exit criterion 'one real conversation handled end to end with evidence' is evaluated only against artifacts of kind runtime, and design or absent artifacts are listed as gaps against the owning role Customer Care/QA.
 - All 3 required evidence items are reported individually, so a partial pack cannot be summarised as done.
@@ -462,7 +462,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 **Prerequisites**
 
-- P1 requires real runtime evidence (conversation_transcript, erp_lookup_receipt, case_outcome_record) from live adapters, real data and upstream receipts; no such runtime exists in this repository, so the gate is NOT_RUN and any PASS claim is BLOCKED_PREREQUISITE.
+- P1 requires real runtime evidence (conversation_transcript, erp_lookup_receipt, case_outcome_record) from live adapters, real data and upstream receipts; no such runtime evidence is present in this case, so the gate is NOT_RUN and any PASS claim is BLOCKED_PREREQUISITE.
 
 **References**
 
@@ -474,7 +474,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/live/env.example`](../fixtures/live/env.example)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-GATE-P1.json`](../fixtures/scenarios/GOV-GATE-P1.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-GATE-P1.json`](../fixtures/scenarios/GOV-GATE-P1.json).
 
 <a id="case-gov-gate-p2"></a>
 
@@ -512,7 +512,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 1. Namespace gov-gate-<case_id>-<worker_id>; the gate registry and the evidence registry are read from fixtures/offline/governance.json (gate_registry, gate_evidence_state) and no evidence may be created, simulated or back-dated inside the run.
 2. Frozen clock 2026-01-15T10:00:00Z; every required evidence artifact is classified as runtime, mock or design before any status is written.
 3. P2 entry conditions are recorded as: qualification, product search, recommendation, cart recovery, cross-sell and order assistance are implemented.
-4. The evidence registry for P2 lists order_confirmation, revenue_attribution_row with the kinds order_confirmation=mock, revenue_attribution_row=mock, and the repository contains no application runtime.
+4. The evidence registry for P2 lists order_confirmation, revenue_attribution_row with the kinds order_confirmation=mock, revenue_attribution_row=mock, and the case evidence includes no application-runtime artifact.
 
 **Inputs** (synthetic test configuration, never production policy)
 
@@ -549,7 +549,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 **Assertions**
 
-- P2 is never reported PASS: with no runtime the admissible outcomes are NOT_RUN for a missing runtime and BLOCKED_PREREQUISITE for a missing lock, and each required artifact is listed with its own kind and status.
+- P2 is never reported PASS: when the required runtime artifact is absent, the admissible outcomes are NOT_RUN for the missing evidence and BLOCKED_PREREQUISITE for a missing lock, and each required artifact is listed with its own kind and status.
 - A mock or substituted-boundary artifact is never accepted as gate evidence; mock coverage is reported as specification coverage only.
 - The exit criterion 'AI action to order to revenue evidence' is evaluated only against artifacts of kind runtime, and design or absent artifacts are listed as gaps against the owning role Sales/Finance.
 - All 2 required evidence items are reported individually, so a partial pack cannot be summarised as done.
@@ -574,7 +574,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 **Prerequisites**
 
-- P2 requires real runtime evidence (order_confirmation, revenue_attribution_row) from live adapters, real data and upstream receipts; no such runtime exists in this repository, so the gate is NOT_RUN and any PASS claim is BLOCKED_PREREQUISITE.
+- P2 requires real runtime evidence (order_confirmation, revenue_attribution_row) from live adapters, real data and upstream receipts; no such runtime evidence is present in this case, so the gate is NOT_RUN and any PASS claim is BLOCKED_PREREQUISITE.
 
 **References**
 
@@ -586,7 +586,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/live/env.example`](../fixtures/live/env.example)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-GATE-P2.json`](../fixtures/scenarios/GOV-GATE-P2.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-GATE-P2.json`](../fixtures/scenarios/GOV-GATE-P2.json).
 
 <a id="case-gov-gate-p3"></a>
 
@@ -624,7 +624,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 1. Namespace gov-gate-<case_id>-<worker_id>; the gate registry and the evidence registry are read from fixtures/offline/governance.json (gate_registry, gate_evidence_state) and no evidence may be created, simulated or back-dated inside the run.
 2. Frozen clock 2026-01-15T10:00:00Z; every required evidence artifact is classified as runtime, mock or design before any status is written.
 3. P3 entry conditions are recorded as: audience, campaign, content, approval, channel execution and attribution are implemented.
-4. The evidence registry for P3 lists approval_ticket, provider_send_receipt, attribution_report with the kinds approval_ticket=mock, provider_send_receipt=absent, attribution_report=mock, and the repository contains no application runtime.
+4. The evidence registry for P3 lists approval_ticket, provider_send_receipt, attribution_report with the kinds approval_ticket=mock, provider_send_receipt=absent, attribution_report=mock, and the case evidence includes no application-runtime artifact.
 
 **Inputs** (synthetic test configuration, never production policy)
 
@@ -663,7 +663,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 **Assertions**
 
-- P3 is never reported PASS: with no runtime the admissible outcomes are NOT_RUN for a missing runtime and BLOCKED_PREREQUISITE for a missing lock, and each required artifact is listed with its own kind and status.
+- P3 is never reported PASS: when the required runtime artifact is absent, the admissible outcomes are NOT_RUN for the missing evidence and BLOCKED_PREREQUISITE for a missing lock, and each required artifact is listed with its own kind and status.
 - A mock or substituted-boundary artifact is never accepted as gate evidence; mock coverage is reported as specification coverage only.
 - The exit criterion 'audience, campaign, approval, real channel execution and attribution all evidenced' is evaluated only against artifacts of kind runtime, and design or absent artifacts are listed as gaps against the owning role Marketing/QA.
 - All 3 required evidence items are reported individually, so a partial pack cannot be summarised as done.
@@ -688,7 +688,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 **Prerequisites**
 
-- P3 requires real runtime evidence (approval_ticket, provider_send_receipt, attribution_report) from live adapters, real data and upstream receipts; no such runtime exists in this repository, so the gate is NOT_RUN and any PASS claim is BLOCKED_PREREQUISITE.
+- P3 requires real runtime evidence (approval_ticket, provider_send_receipt, attribution_report) from live adapters, real data and upstream receipts; no such runtime evidence is present in this case, so the gate is NOT_RUN and any PASS claim is BLOCKED_PREREQUISITE.
 
 **References**
 
@@ -700,7 +700,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/live/env.example`](../fixtures/live/env.example)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-GATE-P3.json`](../fixtures/scenarios/GOV-GATE-P3.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-GATE-P3.json`](../fixtures/scenarios/GOV-GATE-P3.json).
 
 <a id="case-gov-gate-p4"></a>
 
@@ -739,7 +739,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 1. Namespace gov-gate-<case_id>-<worker_id>; the gate registry and the evidence registry are read from fixtures/offline/governance.json (gate_registry, gate_evidence_state) and no evidence may be created, simulated or back-dated inside the run.
 2. Frozen clock 2026-01-15T10:00:00Z; every required evidence artifact is classified as runtime, mock or design before any status is written.
 3. P4 entry conditions are recorded as: marketing, sales, care/success and retention can be orchestrated across one customer journey.
-4. The evidence registry for P4 lists handoff_packages, single_customer_context_proof with the kinds handoff_packages=mock, single_customer_context_proof=mock, and the repository contains no application runtime.
+4. The evidence registry for P4 lists handoff_packages, single_customer_context_proof with the kinds handoff_packages=mock, single_customer_context_proof=mock, and the case evidence includes no application-runtime artifact.
 
 **Inputs** (synthetic test configuration, never production policy)
 
@@ -776,7 +776,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 **Assertions**
 
-- P4 is never reported PASS: with no runtime the admissible outcomes are NOT_RUN for a missing runtime and BLOCKED_PREREQUISITE for a missing lock, and each required artifact is listed with its own kind and status.
+- P4 is never reported PASS: when the required runtime artifact is absent, the admissible outcomes are NOT_RUN for the missing evidence and BLOCKED_PREREQUISITE for a missing lock, and each required artifact is listed with its own kind and status.
 - A mock or substituted-boundary artifact is never accepted as gate evidence; mock coverage is reported as specification coverage only.
 - The exit criterion 'marketing to sales to care to retention without losing customer context' is evaluated only against artifacts of kind runtime, and design or absent artifacts are listed as gaps against the owning role Solution Architect/QA.
 - All 2 required evidence items are reported individually, so a partial pack cannot be summarised as done.
@@ -801,7 +801,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 **Prerequisites**
 
-- P4 requires real runtime evidence (handoff_packages, single_customer_context_proof) from live adapters, real data and upstream receipts; no such runtime exists in this repository, so the gate is NOT_RUN and any PASS claim is BLOCKED_PREREQUISITE.
+- P4 requires real runtime evidence (handoff_packages, single_customer_context_proof) from live adapters, real data and upstream receipts; no such runtime evidence is present in this case, so the gate is NOT_RUN and any PASS claim is BLOCKED_PREREQUISITE.
 
 **References**
 
@@ -813,7 +813,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/live/env.example`](../fixtures/live/env.example)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-GATE-P4.json`](../fixtures/scenarios/GOV-GATE-P4.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-GATE-P4.json`](../fixtures/scenarios/GOV-GATE-P4.json).
 
 <a id="case-gov-gate-p5"></a>
 
@@ -852,7 +852,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 1. Namespace gov-gate-<case_id>-<worker_id>; the gate registry and the evidence registry are read from fixtures/offline/governance.json (gate_registry, gate_evidence_state) and no evidence may be created, simulated or back-dated inside the run.
 2. Frozen clock 2026-01-15T10:00:00Z; every required evidence artifact is classified as runtime, mock or design before any status is written.
 3. P5 entry conditions are recorded as: low-risk actions are qualified for promotion from recommend to draft to auto-execute while high-risk actions keep approval.
-4. The evidence registry for P5 lists promotion_decision_log, high_risk_approval_still_required_proof with the kinds promotion_decision_log=design, high_risk_approval_still_required_proof=mock, and the repository contains no application runtime.
+4. The evidence registry for P5 lists promotion_decision_log, high_risk_approval_still_required_proof with the kinds promotion_decision_log=design, high_risk_approval_still_required_proof=mock, and the case evidence includes no application-runtime artifact.
 
 **Inputs** (synthetic test configuration, never production policy)
 
@@ -889,7 +889,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 **Assertions**
 
-- P5 is never reported PASS: with no runtime the admissible outcomes are NOT_RUN for a missing runtime and BLOCKED_PREREQUISITE for a missing lock, and each required artifact is listed with its own kind and status.
+- P5 is never reported PASS: when the required runtime artifact is absent, the admissible outcomes are NOT_RUN for the missing evidence and BLOCKED_PREREQUISITE for a missing lock, and each required artifact is listed with its own kind and status.
 - A mock or substituted-boundary artifact is never accepted as gate evidence; mock coverage is reported as specification coverage only.
 - The exit criterion 'a low-risk action promoted with high-risk approval still required' is evaluated only against artifacts of kind runtime, and design or absent artifacts are listed as gaps against the owning role Governance/Finance.
 - All 2 required evidence items are reported individually, so a partial pack cannot be summarised as done.
@@ -914,7 +914,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 **Prerequisites**
 
-- P5 requires real runtime evidence (promotion_decision_log, high_risk_approval_still_required_proof) from live adapters, real data and upstream receipts; no such runtime exists in this repository, so the gate is NOT_RUN and any PASS claim is BLOCKED_PREREQUISITE.
+- P5 requires real runtime evidence (promotion_decision_log, high_risk_approval_still_required_proof) from live adapters, real data and upstream receipts; no such runtime evidence is present in this case, so the gate is NOT_RUN and any PASS claim is BLOCKED_PREREQUISITE.
 
 **References**
 
@@ -926,4 +926,4 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/live/env.example`](../fixtures/live/env.example)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-GATE-P5.json`](../fixtures/scenarios/GOV-GATE-P5.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-GATE-P5.json`](../fixtures/scenarios/GOV-GATE-P5.json).

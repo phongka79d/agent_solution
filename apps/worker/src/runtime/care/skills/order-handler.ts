@@ -11,6 +11,12 @@ export async function handleOrderConnector<TOutput>(
   erpRead: ErpReadPort,
   findVerifiedIdentity: (tenant_id: string, id: string) => Promise<VerifiedCustomerIdentity | null>,
 ): Promise<TOutput> {
+  if (typeof invocation.input !== 'object' || invocation.input === null) {
+    throw new CareSkillToolError(
+      'VALIDATION_FAILED',
+      'tool invocation input must be an object',
+    );
+  }
   const input = invocation.input as {
     readonly tenant_id: string;
     readonly order_identifier: string;
@@ -18,6 +24,13 @@ export async function handleOrderConnector<TOutput>(
     readonly verification_reference: string;
     readonly verification_status: string;
   };
+  const contextTenantId = invocation.context?.tenant_id;
+  if (typeof contextTenantId !== 'string' || contextTenantId.length === 0 || input.tenant_id !== contextTenantId) {
+    throw new CareSkillToolError(
+      'TENANT_SCOPE_MISMATCH',
+      'order lookup tenant_id must match the orchestrator-bound tenant',
+    );
+  }
 
   // 1. Server-side verification FIRST (ZERO connector calls made if this fails)
   if (input.verification_status !== 'VERIFIED') {
@@ -50,6 +63,7 @@ export async function handleOrderConnector<TOutput>(
       tenant_id: input.tenant_id,
       resource: 'orders',
       key: input.order_identifier,
+      customer_id: input.customer_id,
     });
   } catch (error) {
     if (error instanceof ErpRefusalError && error.refusal_code === 'PROVIDER_REJECTED') {
@@ -98,7 +112,8 @@ export async function handleOrderConnector<TOutput>(
   const statusStr = typeof rawStatus === 'string' ? rawStatus.toUpperCase().trim() : '';
   let status: 'PENDING' | 'PROCESSING' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED' | 'RETURNED' | null = null;
   if (statusStr === 'SHIPPED' || statusStr === 'FULFILLED') status = 'SHIPPED';
-  else if (statusStr === 'DELIVERED' || statusStr === 'PAID') status = 'DELIVERED';
+  else if (statusStr === 'DELIVERED' || statusStr === 'COMPLETED') status = 'DELIVERED';
+  else if (statusStr === 'PAID' || statusStr === 'CONFIRMED') status = 'PROCESSING';
   else if (statusStr === 'PENDING') status = 'PENDING';
   else if (statusStr === 'PROCESSING') status = 'PROCESSING';
   else if (statusStr === 'CANCELLED' || statusStr === 'CANCELED') status = 'CANCELLED';
@@ -126,7 +141,10 @@ export async function handleOrderConnector<TOutput>(
         || typeof item?.product_name !== 'string'
         || typeof item?.quantity !== 'number'
         || !Number.isInteger(item.quantity)
+        || item.quantity <= 0
         || typeof item?.unit_price !== 'number'
+        || !Number.isFinite(item.unit_price)
+        || item.unit_price < 0
         || typeof item?.currency !== 'string'
       ) {
         throw new CareSkillToolError(
@@ -147,7 +165,10 @@ export async function handleOrderConnector<TOutput>(
     && typeof order.product_name === 'string'
     && typeof order.quantity === 'number'
     && Number.isInteger(order.quantity)
+    && order.quantity > 0
     && typeof order.unit_price === 'number'
+    && Number.isFinite(order.unit_price)
+    && order.unit_price >= 0
     && typeof order.currency === 'string'
   ) {
     line_items = [
@@ -169,7 +190,7 @@ export async function handleOrderConnector<TOutput>(
   const total_price = typeof order.total_price === 'number'
     ? order.total_price
     : (typeof order.total_amount === 'number' ? order.total_amount : null);
-  if (total_price === null) {
+  if (total_price === null || !Number.isFinite(total_price) || total_price < 0) {
     throw new CareSkillToolError(
       'AUTHORITATIVE_SOURCE_UNAVAILABLE',
       'Provider order missing authoritative total price',

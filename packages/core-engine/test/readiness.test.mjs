@@ -30,6 +30,8 @@ function validEnv(overrides = {}) {
     QDRANT_URL: 'http://localhost:6333',
     QDRANT_API_KEY: 'qdrant-local-api-key-7c1f',
     OPENAI_API_KEY: 'openai-local-api-key-4b9e',
+    PRIMARY_REASONING_MODEL: 'gpt-4o',
+    FAST_COMPLETION_MODEL: 'gpt-4o-mini',
     ERP_API_BASE_URL: 'http://localhost:8081/api/v1',
     EVENT_INGESTION_BASE_URL: 'http://localhost:8081/events/v1',
     EVENT_INGESTION_HMAC_SECRET: 'event-ingestion-signing-value-51',

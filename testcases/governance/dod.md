@@ -57,7 +57,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 1. Namespace gov-dod-<case_id>-<worker_id>; the DoD pillar registry is read from fixtures/offline/governance.json (dod_pillars, dod_state) and no pillar may be added, removed, merged or re-kinded inside the run.
 2. Frozen clock 2026-01-15T10:00:00Z; each pillar is scored against its own artifact and kind, so a document cannot stand in for a runtime artifact and mock coverage cannot close any pillar.
 3. Pillar 1 (CANONICAL_SCHEMAS) is expected to be justified by the artifact '28 entity schemas + RLS + C360 view', which the evidence registry holds in the form 'design'.
-4. The repository has no application runtime, so a runtime pillar cannot be closed and a blueprint pillar can only reach DESIGN_ONLY.
+4. the evidence registry has no application-runtime artifact, so a runtime pillar cannot be closed and a blueprint pillar can only reach DESIGN_ONLY.
 
 **Inputs** (synthetic test configuration, never production policy)
 
@@ -110,7 +110,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 **Prerequisites**
 
-- The repository has no application runtime, so pillar 1 cannot be evidenced here; its status is DESIGN_ONLY and any completion claim is BLOCKED_PREREQUISITE.
+- The required runtime artifact is absent from the evidence registry, so pillar 1 cannot be evidenced here; its status is DESIGN_ONLY and any completion claim is BLOCKED_PREREQUISITE.
 
 **References**
 
@@ -122,7 +122,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/live/env.example`](../fixtures/live/env.example)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-DOD-01.json`](../fixtures/scenarios/GOV-DOD-01.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-DOD-01.json`](../fixtures/scenarios/GOV-DOD-01.json).
 
 <a id="case-gov-dod-02"></a>
 
@@ -157,7 +157,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 1. Namespace gov-dod-<case_id>-<worker_id>; the DoD pillar registry is read from fixtures/offline/governance.json (dod_pillars, dod_state) and no pillar may be added, removed, merged or re-kinded inside the run.
 2. Frozen clock 2026-01-15T10:00:00Z; each pillar is scored against its own artifact and kind, so a document cannot stand in for a runtime artifact and mock coverage cannot close any pillar.
 3. Pillar 2 (AGENT_IDENTITIES) is expected to be justified by the artifact '13 agent roles bound', which the evidence registry holds in the form 'design'.
-4. The repository has no application runtime, so a runtime pillar cannot be closed and a blueprint pillar can only reach DESIGN_ONLY.
+4. the evidence registry has no application-runtime artifact, so a runtime pillar cannot be closed and a blueprint pillar can only reach DESIGN_ONLY.
 
 **Inputs** (synthetic test configuration, never production policy)
 
@@ -210,7 +210,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 **Prerequisites**
 
-- The repository has no application runtime, so pillar 2 cannot be evidenced here; its status is DESIGN_ONLY and any completion claim is BLOCKED_PREREQUISITE.
+- The required runtime artifact is absent from the evidence registry, so pillar 2 cannot be evidenced here; its status is DESIGN_ONLY and any completion claim is BLOCKED_PREREQUISITE.
 
 **References**
 
@@ -222,7 +222,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/live/env.example`](../fixtures/live/env.example)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-DOD-02.json`](../fixtures/scenarios/GOV-DOD-02.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-DOD-02.json`](../fixtures/scenarios/GOV-DOD-02.json).
 
 <a id="case-gov-dod-03"></a>
 
@@ -256,7 +256,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 1. Namespace gov-dod-<case_id>-<worker_id>; the DoD pillar registry is read from fixtures/offline/governance.json (dod_pillars, dod_state) and no pillar may be added, removed, merged or re-kinded inside the run.
 2. Frozen clock 2026-01-15T10:00:00Z; each pillar is scored against its own artifact and kind, so a document cannot stand in for a runtime artifact and mock coverage cannot close any pillar.
 3. Pillar 3 (SKILL_CONTRACTS) is expected to be justified by the artifact '23 skills, 11-field schema', which the evidence registry holds in the form 'design'.
-4. The repository has no application runtime, so a runtime pillar cannot be closed and a blueprint pillar can only reach DESIGN_ONLY.
+4. the evidence registry has no application-runtime artifact, so a runtime pillar cannot be closed and a blueprint pillar can only reach DESIGN_ONLY.
 
 **Inputs** (synthetic test configuration, never production policy)
 
@@ -309,7 +309,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 **Prerequisites**
 
-- The repository has no application runtime, so pillar 3 cannot be evidenced here; its status is DESIGN_ONLY and any completion claim is BLOCKED_PREREQUISITE.
+- The required runtime artifact is absent from the evidence registry, so pillar 3 cannot be evidenced here; its status is DESIGN_ONLY and any completion claim is BLOCKED_PREREQUISITE.
 
 **References**
 
@@ -321,7 +321,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/live/env.example`](../fixtures/live/env.example)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-DOD-03.json`](../fixtures/scenarios/GOV-DOD-03.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-DOD-03.json`](../fixtures/scenarios/GOV-DOD-03.json).
 
 <a id="case-gov-dod-04"></a>
 
@@ -356,7 +356,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 1. Namespace gov-dod-<case_id>-<worker_id>; the DoD pillar registry is read from fixtures/offline/governance.json (dod_pillars, dod_state) and no pillar may be added, removed, merged or re-kinded inside the run.
 2. Frozen clock 2026-01-15T10:00:00Z; each pillar is scored against its own artifact and kind, so a document cannot stand in for a runtime artifact and mock coverage cannot close any pillar.
 3. Pillar 4 (ADAPTER_SPECS) is expected to be justified by the artifact 'API-001/002/003 + channel adapters', which the evidence registry holds in the form 'design'.
-4. The repository has no application runtime, so a runtime pillar cannot be closed and a blueprint pillar can only reach DESIGN_ONLY.
+4. the evidence registry has no application-runtime artifact, so a runtime pillar cannot be closed and a blueprint pillar can only reach DESIGN_ONLY.
 
 **Inputs** (synthetic test configuration, never production policy)
 
@@ -409,7 +409,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 **Prerequisites**
 
-- The repository has no application runtime, so pillar 4 cannot be evidenced here; its status is DESIGN_ONLY and any completion claim is BLOCKED_PREREQUISITE.
+- The required runtime artifact is absent from the evidence registry, so pillar 4 cannot be evidenced here; its status is DESIGN_ONLY and any completion claim is BLOCKED_PREREQUISITE.
 
 **References**
 
@@ -421,7 +421,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/live/env.example`](../fixtures/live/env.example)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-DOD-04.json`](../fixtures/scenarios/GOV-DOD-04.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-DOD-04.json`](../fixtures/scenarios/GOV-DOD-04.json).
 
 <a id="case-gov-dod-05"></a>
 
@@ -457,7 +457,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 1. Namespace gov-dod-<case_id>-<worker_id>; the DoD pillar registry is read from fixtures/offline/governance.json (dod_pillars, dod_state) and no pillar may be added, removed, merged or re-kinded inside the run.
 2. Frozen clock 2026-01-15T10:00:00Z; each pillar is scored against its own artifact and kind, so a document cannot stand in for a runtime artifact and mock coverage cannot close any pillar.
 3. Pillar 5 (POLICY_SECURITY) is expected to be justified by the artifact 'PEP, AUTH-0..5, BR-001..010', which the evidence registry holds in the form 'design'.
-4. The repository has no application runtime, so a runtime pillar cannot be closed and a blueprint pillar can only reach DESIGN_ONLY.
+4. the evidence registry has no application-runtime artifact, so a runtime pillar cannot be closed and a blueprint pillar can only reach DESIGN_ONLY.
 
 **Inputs** (synthetic test configuration, never production policy)
 
@@ -510,7 +510,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 **Prerequisites**
 
-- The repository has no application runtime, so pillar 5 cannot be evidenced here; its status is DESIGN_ONLY and any completion claim is BLOCKED_PREREQUISITE.
+- The required runtime artifact is absent from the evidence registry, so pillar 5 cannot be evidenced here; its status is DESIGN_ONLY and any completion claim is BLOCKED_PREREQUISITE.
 
 **References**
 
@@ -522,7 +522,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/live/env.example`](../fixtures/live/env.example)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-DOD-05.json`](../fixtures/scenarios/GOV-DOD-05.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-DOD-05.json`](../fixtures/scenarios/GOV-DOD-05.json).
 
 <a id="case-gov-dod-06"></a>
 
@@ -558,7 +558,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 1. Namespace gov-dod-<case_id>-<worker_id>; the DoD pillar registry is read from fixtures/offline/governance.json (dod_pillars, dod_state) and no pillar may be added, removed, merged or re-kinded inside the run.
 2. Frozen clock 2026-01-15T10:00:00Z; each pillar is scored against its own artifact and kind, so a document cannot stand in for a runtime artifact and mock coverage cannot close any pillar.
 3. Pillar 6 (APPROVAL_ROUTING) is expected to be justified by the artifact 'AUTH-4 gate, SCR-003 queue, signed tickets', which the evidence registry holds in the form 'design'.
-4. The repository has no application runtime, so a runtime pillar cannot be closed and a blueprint pillar can only reach DESIGN_ONLY.
+4. the evidence registry has no application-runtime artifact, so a runtime pillar cannot be closed and a blueprint pillar can only reach DESIGN_ONLY.
 
 **Inputs** (synthetic test configuration, never production policy)
 
@@ -611,7 +611,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 **Prerequisites**
 
-- The repository has no application runtime, so pillar 6 cannot be evidenced here; its status is DESIGN_ONLY and any completion claim is BLOCKED_PREREQUISITE.
+- The required runtime artifact is absent from the evidence registry, so pillar 6 cannot be evidenced here; its status is DESIGN_ONLY and any completion claim is BLOCKED_PREREQUISITE.
 
 **References**
 
@@ -623,7 +623,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/live/env.example`](../fixtures/live/env.example)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-DOD-06.json`](../fixtures/scenarios/GOV-DOD-06.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-DOD-06.json`](../fixtures/scenarios/GOV-DOD-06.json).
 
 <a id="case-gov-dod-07"></a>
 
@@ -660,7 +660,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 1. Namespace gov-dod-<case_id>-<worker_id>; the DoD pillar registry is read from fixtures/offline/governance.json (dod_pillars, dod_state) and no pillar may be added, removed, merged or re-kinded inside the run.
 2. Frozen clock 2026-01-15T10:00:00Z; each pillar is scored against its own artifact and kind, so a document cannot stand in for a runtime artifact and mock coverage cannot close any pillar.
 3. Pillar 7 (LIVE_EXECUTION) is expected to be justified by the artifact 'unique effect_key against live adapters', which the evidence registry holds in the form 'absent'.
-4. The repository has no application runtime, so a runtime pillar cannot be closed and a blueprint pillar can only reach DESIGN_ONLY.
+4. the evidence registry has no application-runtime artifact, so a runtime pillar cannot be closed and a blueprint pillar can only reach DESIGN_ONLY.
 
 **Inputs** (synthetic test configuration, never production policy)
 
@@ -713,7 +713,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 **Prerequisites**
 
-- The repository has no application runtime, so pillar 7 cannot be evidenced here; its status is NOT_RUN and any completion claim is BLOCKED_PREREQUISITE.
+- The required runtime artifact is absent from the evidence registry, so pillar 7 cannot be evidenced here; its status is NOT_RUN and any completion claim is BLOCKED_PREREQUISITE.
 
 **References**
 
@@ -725,7 +725,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/live/env.example`](../fixtures/live/env.example)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-DOD-07.json`](../fixtures/scenarios/GOV-DOD-07.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-DOD-07.json`](../fixtures/scenarios/GOV-DOD-07.json).
 
 <a id="case-gov-dod-08"></a>
 
@@ -761,7 +761,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 1. Namespace gov-dod-<case_id>-<worker_id>; the DoD pillar registry is read from fixtures/offline/governance.json (dod_pillars, dod_state) and no pillar may be added, removed, merged or re-kinded inside the run.
 2. Frozen clock 2026-01-15T10:00:00Z; each pillar is scored against its own artifact and kind, so a document cannot stand in for a runtime artifact and mock coverage cannot close any pillar.
 3. Pillar 8 (LIVE_EVIDENCE) is expected to be justified by the artifact 'upstream SoR receipts verified', which the evidence registry holds in the form 'absent'.
-4. The repository has no application runtime, so a runtime pillar cannot be closed and a blueprint pillar can only reach DESIGN_ONLY.
+4. the evidence registry has no application-runtime artifact, so a runtime pillar cannot be closed and a blueprint pillar can only reach DESIGN_ONLY.
 
 **Inputs** (synthetic test configuration, never production policy)
 
@@ -814,7 +814,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 **Prerequisites**
 
-- The repository has no application runtime, so pillar 8 cannot be evidenced here; its status is NOT_RUN and any completion claim is BLOCKED_PREREQUISITE.
+- The required runtime artifact is absent from the evidence registry, so pillar 8 cannot be evidenced here; its status is NOT_RUN and any completion claim is BLOCKED_PREREQUISITE.
 
 **References**
 
@@ -826,7 +826,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/live/env.example`](../fixtures/live/env.example)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-DOD-08.json`](../fixtures/scenarios/GOV-DOD-08.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-DOD-08.json`](../fixtures/scenarios/GOV-DOD-08.json).
 
 <a id="case-gov-dod-09"></a>
 
@@ -862,7 +862,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 1. Namespace gov-dod-<case_id>-<worker_id>; the DoD pillar registry is read from fixtures/offline/governance.json (dod_pillars, dod_state) and no pillar may be added, removed, merged or re-kinded inside the run.
 2. Frozen clock 2026-01-15T10:00:00Z; each pillar is scored against its own artifact and kind, so a document cannot stand in for a runtime artifact and mock coverage cannot close any pillar.
 3. Pillar 9 (OUTCOME_CAPTURE) is expected to be justified by the artifact 'empirical metrics on pilot traffic', which the evidence registry holds in the form 'absent'.
-4. The repository has no application runtime, so a runtime pillar cannot be closed and a blueprint pillar can only reach DESIGN_ONLY.
+4. the evidence registry has no application-runtime artifact, so a runtime pillar cannot be closed and a blueprint pillar can only reach DESIGN_ONLY.
 
 **Inputs** (synthetic test configuration, never production policy)
 
@@ -915,7 +915,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 **Prerequisites**
 
-- The repository has no application runtime, so pillar 9 cannot be evidenced here; its status is NOT_RUN and any completion claim is BLOCKED_PREREQUISITE.
+- The required runtime artifact is absent from the evidence registry, so pillar 9 cannot be evidenced here; its status is NOT_RUN and any completion claim is BLOCKED_PREREQUISITE.
 
 **References**
 
@@ -927,7 +927,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/live/env.example`](../fixtures/live/env.example)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-DOD-09.json`](../fixtures/scenarios/GOV-DOD-09.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-DOD-09.json`](../fixtures/scenarios/GOV-DOD-09.json).
 
 <a id="case-gov-dod-10"></a>
 
@@ -962,7 +962,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 1. Namespace gov-dod-<case_id>-<worker_id>; the DoD pillar registry is read from fixtures/offline/governance.json (dod_pillars, dod_state) and no pillar may be added, removed, merged or re-kinded inside the run.
 2. Frozen clock 2026-01-15T10:00:00Z; each pillar is scored against its own artifact and kind, so a document cannot stand in for a runtime artifact and mock coverage cannot close any pillar.
 3. Pillar 10 (AUTOMATED_CI_PASS) is expected to be justified by the artifact 'CI pipeline + full E2E suite executed', which the evidence registry holds in the form 'absent'.
-4. The repository has no application runtime, so a runtime pillar cannot be closed and a blueprint pillar can only reach DESIGN_ONLY.
+4. the evidence registry has no application-runtime artifact, so a runtime pillar cannot be closed and a blueprint pillar can only reach DESIGN_ONLY.
 
 **Inputs** (synthetic test configuration, never production policy)
 
@@ -1015,7 +1015,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 **Prerequisites**
 
-- The repository has no application runtime, so pillar 10 cannot be evidenced here; its status is NOT_RUN and any completion claim is BLOCKED_PREREQUISITE.
+- The required runtime artifact is absent from the evidence registry, so pillar 10 cannot be evidenced here; its status is NOT_RUN and any completion claim is BLOCKED_PREREQUISITE.
 
 **References**
 
@@ -1027,7 +1027,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/live/env.example`](../fixtures/live/env.example)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-DOD-10.json`](../fixtures/scenarios/GOV-DOD-10.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-DOD-10.json`](../fixtures/scenarios/GOV-DOD-10.json).
 
 <a id="case-gov-dod-completeness"></a>
 
@@ -1139,7 +1139,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 **Prerequisites**
 
-- No runtime exists in this repository, so the four runtime pillars cannot be satisfied and no capability can be declared done; completion is BLOCKED_PREREQUISITE.
+- The required runtime artifacts are absent from the evidence registry, so the four runtime pillars cannot be satisfied and no capability can be declared done; completion is BLOCKED_PREREQUISITE.
 
 **References**
 
@@ -1150,4 +1150,4 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-DOD-COMPLETENESS.json`](../fixtures/scenarios/GOV-DOD-COMPLETENESS.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-DOD-COMPLETENESS.json`](../fixtures/scenarios/GOV-DOD-COMPLETENESS.json).

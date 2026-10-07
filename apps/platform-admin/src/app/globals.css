@@ -1,3 +1,113 @@
+@import '@agentos/ui-foundation/tokens.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+:root {
+  --font-ui: 'Inter';
+  --font-mono: 'JetBrains Mono';
+}
+
+html,
+body {
+  background: var(--color-canvas);
+  color: var(--color-text);
+  font-family: var(--font-ui), ui-sans-serif, system-ui, sans-serif;
+}
+
+body {
+  min-width: 320px;
+}
+
+/* Platform-specific layers stay semantic so new operator surfaces use the
+   shared Stitch tokens instead of page-local colour values. */
+.platform-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: var(--elevation-l1);
+}
+
+.platform-card--raised {
+  border-color: var(--color-border-strong);
+  box-shadow: var(--elevation-l2);
+}
+
+.platform-scrim {
+  background: var(--elevation-scrim);
+  backdrop-filter: blur(var(--elevation-scrim-blur));
+}
+
+.platform-drawer {
+  background: var(--color-surface);
+  border-color: var(--elevation-l3-border);
+  box-shadow: var(--elevation-l3);
+}
+
+.platform-search {
+  align-items: center;
+  background: var(--color-surface-subtle);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-control);
+  color: var(--color-text-muted);
+  display: flex;
+  gap: var(--space-md);
+  height: 32px;
+  max-width: 360px;
+  padding: 0 var(--space-lg);
+  width: min(40vw, 360px);
+}
+
+.platform-search input {
+  background: transparent;
+  border: 0;
+  color: var(--color-text);
+  font: inherit;
+  min-width: 0;
+  outline: 0;
+  width: 100%;
+}
+
+.platform-search input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.platform-alert {
+  border-radius: var(--radius-control);
+  border: 1px solid var(--color-border-subtle);
+  padding: var(--space-lg);
+}
+
+.platform-alert--danger {
+  background: var(--color-danger-bg);
+  border-color: var(--color-danger-border);
+  color: var(--color-danger);
+}
+
+.platform-alert--warning {
+  background: var(--color-warning-bg);
+  border-color: var(--color-warning-border);
+  color: var(--color-warning);
+}
+
+.platform-alert--success {
+  background: var(--color-success-bg);
+  border-color: var(--color-success-border);
+  color: var(--color-success);
+}
+
+.platform-drawer-shell {
+  align-items: stretch;
+  display: flex;
+  inset: 0;
+  justify-content: flex-end;
+  position: fixed;
+  z-index: 50;
+}
+
+@media (max-width: 767px) {
+  .platform-search {
+    display: none;
+  }
+}

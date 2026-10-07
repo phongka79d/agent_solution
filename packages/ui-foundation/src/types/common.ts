@@ -16,6 +16,29 @@ export type SourceStatus =
   | 'NOT_INSTRUMENTED'
   | 'UNAVAILABLE'
   | 'FAIL_CLOSED';
+export type SourceFreshness = 'LIVE' | 'STALE' | 'UNKNOWN';
+
+export type ProductCapabilityStatus =
+  | 'INTEGRATED'
+  | 'PARTIAL'
+  | 'NOT_INTEGRATED'
+  | 'NOT_CONFIGURED'
+  | 'BLOCKED'
+  | 'DEMO_ONLY';
+
+export type UiRequestState =
+  | 'loading'
+  | 'empty'
+  | 'permission_denied'
+  | 'dependency_unavailable'
+  | 'version_conflict'
+  | 'fail_closed';
+
+export interface ObservedAt {
+  readonly observed_at: string | null;
+  readonly source: SourceFreshness;
+}
+
 
 export type EvidenceClassification = 'FACT' | 'SIGNAL' | 'HYPOTHESIS' | 'DECISION' | 'ACTION';
 export type AuthorityVerdict = 'AUTH-0' | 'AUTH-1' | 'AUTH-2' | 'AUTH-3' | 'AUTH-4' | 'AUTH-5';

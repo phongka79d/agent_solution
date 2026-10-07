@@ -112,6 +112,7 @@ interface MutableApprovalRecord {
   review_comment: string | null;
   decided_at: string | null;
   created_at: string;
+  expires_at: string;
 }
 
 type QueuedApprovalDecision = 'APPROVE' | 'REJECT' | 'MODIFY' | 'PAUSE' | 'CANCEL';
@@ -617,6 +618,7 @@ function createInMemoryAdapterRepositories() {
         review_comment: null,
         is_paused: true,
         created_at: FROZEN_TIME_ISO,
+        expires_at: new Date(Date.parse(FROZEN_TIME_ISO) + 72 * 60 * 60 * 1000).toISOString(),
         decided_at: null,
       };
       approvals.set(approval_id, approval);

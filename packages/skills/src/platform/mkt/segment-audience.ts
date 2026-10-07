@@ -12,14 +12,15 @@ import type { PlatformSkillDependencies, PlatformSkillRow } from '../../contract
 import { definePlatformRow, type PlatformRowSpec } from '../row.js';
 
 /**
- * §4.1 field 3 `Input*` of the row, normalized: `max_segment_size` carries a JSON-Schema `default`
- * and is therefore optional — an absent value is defaulted by the schema, never invented here.
+ * §4.1 field 3 `Input*` of the row, normalized. Audience policy is supplied by the
+ * tenant-bound composition root; the row never invents a size default.
  */
 export interface InputMktSegmentAudience {
   tenant_id: string;
   rfm_criteria: 'CHAMPIONS' | 'LOYAL' | 'POTENTIAL_LOYALIST' | 'AT_RISK' | 'HIBERNATING';
   min_days_inactive: number;
   max_segment_size?: number;
+  channel?: 'LINE' | 'WHATSAPP' | 'EMAIL' | 'SMS' | 'ZALO' | 'TIKTOK' | 'MESSENGER' | 'INSTAGRAM';
 }
 
 /** §4.1 field 4 `Output*` of the row. */
@@ -49,7 +50,11 @@ const spec: Omit<PlatformRowSpec, 'skill_id'> = {
         enum: ['CHAMPIONS', 'LOYAL', 'POTENTIAL_LOYALIST', 'AT_RISK', 'HIBERNATING'],
       },
       min_days_inactive: { type: 'integer', minimum: 0 },
-      max_segment_size: { type: 'integer', default: 5000 },
+      max_segment_size: { type: 'integer', minimum: 1 },
+      channel: {
+        type: 'string',
+        enum: ['LINE', 'WHATSAPP', 'EMAIL', 'SMS', 'ZALO', 'TIKTOK', 'MESSENGER', 'INSTAGRAM'],
+      },
     },
     additionalProperties: false,
   },

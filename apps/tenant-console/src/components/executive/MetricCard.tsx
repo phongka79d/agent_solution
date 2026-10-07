@@ -6,7 +6,7 @@
 
 'use client';
 
-import React from 'react';
+import type { ReactNode } from 'react';
 import type {
   BaselineIndicatorDefinition,
   KpiMetricItem,
@@ -21,26 +21,26 @@ export interface MetricCardProps {
 export function getBadgeStyle(status: SourceStatus): string {
   switch (status) {
     case 'LIVE':
-      return 'bg-emerald-950 text-emerald-300 border-emerald-700/80';
+      return 'bg-success-bg text-success border-success-border';
     case 'STALE':
-      return 'bg-amber-950 text-amber-300 border-amber-700/80';
+      return 'bg-warning-bg text-warning border-warning-border';
     case 'NO_DATA':
-      return 'bg-slate-800 text-slate-300 border-slate-700';
+      return 'bg-neutral-bg text-muted border-neutral-border';
     case 'NOT_INSTRUMENTED':
-      return 'bg-indigo-950 text-indigo-300 border-indigo-700/80';
+      return 'bg-ai-bg text-ai-text border-ai-border';
     case 'UNAVAILABLE':
-      return 'bg-rose-950 text-rose-300 border-rose-700/80';
+      return 'bg-danger-bg text-danger border-danger-border';
     case 'FAIL_CLOSED':
-      return 'bg-red-950 text-red-200 border-red-700 font-bold';
+      return 'bg-danger-bg text-danger border-danger-border font-bold';
     default:
-      return 'bg-slate-800 text-slate-300 border-slate-700';
+      return 'bg-neutral-bg text-muted border-neutral-border';
   }
 }
 
 export function formatValue(
   value: number | string | null | undefined | Record<string, unknown>,
   format: BaselineIndicatorDefinition['format']
-): React.ReactNode {
+): ReactNode {
   if (value === null || value === undefined) {
     return null;
   }
@@ -54,19 +54,19 @@ export function formatValue(
     }
     const firstStr = Object.values(obj).find((v) => typeof v === 'string');
     if (typeof firstStr === 'string') {
-      return <span className="text-xl font-bold font-mono text-slate-100">{firstStr}</span>;
+      return <span className="text-xl font-bold font-mono text-ink">{firstStr}</span>;
     }
     return null;
   }
 
   if (typeof value === 'string') {
-    return <span className="text-xl font-bold font-mono text-slate-100">{value}</span>;
+    return <span className="text-xl font-bold font-mono text-ink">{value}</span>;
   }
 
   switch (format) {
     case 'currency':
       return (
-        <span className="text-2xl font-bold font-mono text-slate-100">
+        <span className="text-2xl font-bold font-mono text-ink">
           NT${' '}
           {new Intl.NumberFormat('zh-TW', {
             maximumFractionDigits: 0,
@@ -75,7 +75,7 @@ export function formatValue(
       );
     case 'percent':
       return (
-        <span className="text-2xl font-bold font-mono text-slate-100">
+        <span className="text-2xl font-bold font-mono text-ink">
           {new Intl.NumberFormat('en-US', {
             minimumFractionDigits: 1,
             maximumFractionDigits: 2,
@@ -85,14 +85,14 @@ export function formatValue(
       );
     case 'number':
       return (
-        <span className="text-2xl font-bold font-mono text-slate-100">
+        <span className="text-2xl font-bold font-mono text-ink">
           {new Intl.NumberFormat('en-US').format(value)}
         </span>
       );
     case 'status':
-      return <span className="text-xl font-bold font-mono text-slate-100">{String(value)}</span>;
+      return <span className="text-xl font-bold font-mono text-ink">{String(value)}</span>;
     default:
-      return <span className="text-xl font-bold font-mono text-slate-100">{String(value)}</span>;
+      return <span className="text-xl font-bold font-mono text-ink">{String(value)}</span>;
   }
 }
 
@@ -126,21 +126,21 @@ export function MetricCard({ definition, metric }: MetricCardProps) {
     <article
       tabIndex={0}
       aria-label={`${definition.label} indicator: ${status}`}
-      className="p-4 rounded-lg bg-slate-900 border border-slate-800 hover:border-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500 transition-all flex flex-col justify-between"
+      className="ui-metric-card flex flex-col justify-between rounded-lg border border-line bg-surface p-4 transition-all hover:border-line-strong focus:outline-none focus:ring-2 focus:ring-interactive"
     >
       <div>
         <div className="flex items-start justify-between gap-2 mb-2">
           <div>
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-ink-body">
               {definition.label}
             </h3>
-            <span className="text-[10px] font-mono text-slate-500">{definition.key}</span>
+            <span className="text-[10px] font-mono text-muted">{definition.key}</span>
           </div>
           <div className="flex flex-wrap items-center gap-1 justify-end">
             {isProvisional && (
               <span
                 title="Provisional metric pending calibration"
-                className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-slate-800 text-amber-300 border border-slate-700"
+                className="rounded border border-warning-border bg-warning-bg px-1.5 py-0.5 text-[10px] font-mono text-warning"
               >
                 PROVISIONAL
               </span>
@@ -160,27 +160,27 @@ export function MetricCard({ definition, metric }: MetricCardProps) {
             formatValue(metric.value, definition.format)
           ) : (
             <div className="flex flex-col">
-              <span className="text-2xl font-mono font-bold text-slate-500" aria-label="No data">
+              <span className="text-2xl font-mono font-bold text-muted" aria-label="No data">
                 —
               </span>
-              <span className="text-[11px] text-slate-500 mt-0.5">{reasonLabel}</span>
+              <span className="mt-0.5 text-[11px] text-muted">{reasonLabel}</span>
             </div>
           )}
         </div>
       </div>
 
-      <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-500 font-mono">
+      <div className="mt-3 flex items-center justify-between border-t border-line pt-2 text-[11px] font-mono text-muted">
         {isStale && metric?.observed_at ? (
-          <span className="text-amber-400/90 truncate" title={`Observed at: ${metric.observed_at}`}>
+          <span className="truncate text-warning" title={`Observed at: ${metric.observed_at}`}>
             Stale: {metric.observed_at}
           </span>
         ) : metric?.window ? (
           <span>Window: {metric.window}</span>
         ) : (
-          <span className="text-slate-600">Awaiting stream telemetry</span>
+          <span className="text-muted">Awaiting stream telemetry</span>
         )}
         {metric?.reason && (
-          <span className="truncate max-w-[140px] text-slate-400" title={metric.reason}>
+          <span className="max-w-[140px] truncate text-muted" title={metric.reason}>
             {metric.reason}
           </span>
         )}

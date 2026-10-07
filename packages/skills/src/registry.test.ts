@@ -28,6 +28,17 @@ describe('createSkillRegistry', () => {
     );
   });
 
+  it('refuses a non-object contract with a SkillError instead of leaking a TypeError', () => {
+    expectRefusal(
+      () => createSkillRegistry().register(null as never),
+      'INVALID_SKILL_CONTRACT',
+    );
+    expectRefusal(
+      () => createSkillRegistry().register({} as never),
+      'INVALID_SKILL_CONTRACT',
+    );
+  });
+
   it('refuses a row that authorizes no agent', () => {
     expectRefusal(
       () => createSkillRegistry().register(fixtureRow({ allowed_agents: [] })),

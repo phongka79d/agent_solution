@@ -35,9 +35,14 @@ export interface SkillRuntimeOptions extends SkillEngineSeams {
   readonly now?: () => number;
   /** Injected jitter source; never a hidden `Math.random` call. */
   readonly random?: () => number;
+  /** Injected breaker factory; the default keeps an independent breaker per `(tenant_id, skill_id)`. */
+  readonly breakerFor?: (
+    tenant_id: string,
+    skill_id: string,
+    guarded_dependency?: string,
+  ) => CircuitBreaker;
+  /** Injected sleep seam for deterministic retry tests; defaults to a timer-backed delay. */
   readonly sleep?: (ms: number) => Promise<void>;
-  /** Breaker factory; defaults to one breaker per `guarded_dependency` key. */
-  readonly breakerFor?: (guarded_dependency: string) => CircuitBreaker;
 }
 
 /** The one entry point into skill execution. */
@@ -88,8 +93,9 @@ export function createSkillRuntimeEngine(options: SkillRuntimeOptions): SkillRun
   const breakers = new Map<string, CircuitBreaker>();
   const breakerFor =
     options.breakerFor ??
-    ((guarded_dependency: string): CircuitBreaker => {
-      const existing = breakers.get(guarded_dependency);
+    ((tenant_id: string, skill_id: string): CircuitBreaker => {
+      const key = `${tenant_id}\u0000${skill_id}`;
+      const existing = breakers.get(key);
       if (existing !== undefined) {
         return existing;
       }
@@ -98,7 +104,7 @@ export function createSkillRuntimeEngine(options: SkillRuntimeOptions): SkillRun
         DEFAULT_RESET_TIMEOUT_MS,
         now,
       );
-      breakers.set(guarded_dependency, created);
+      breakers.set(key, created);
       return created;
     });
 
@@ -147,11 +153,59 @@ export function createSkillRuntimeEngine(options: SkillRuntimeOptions): SkillRun
         evaluateAuthority,
       });
 
-      // 6. Schema validation and normalization. The normalized payload — defaults applied, unknown
+      // 6. Caller-controlled effect identity never enters a skill payload. It belongs to the
+      // server-resolved dispatch envelope and the canonical BR-005 derivation below.
+      if (
+        typeof request.input === 'object' &&
+        request.input !== null &&
+        !Array.isArray(request.input) &&
+        Object.hasOwn(request.input, 'effect_key')
+      ) {
+        throw new SkillError(
+          'EFFECT_KEY_IN_INPUT',
+          'effect_key is server-resolved dispatch identity and must not be supplied inside skill input',
+          skill_id,
+        );
+      }
+
+      // 7. Tenant binding is checked against the raw inbound object before normalization. A schema
+      // that strips unknown members must not turn a cross-tenant assertion into an absent field.
+      const inputRecord =
+        typeof request.input === 'object' &&
+        request.input !== null &&
+        !Array.isArray(request.input)
+          ? (request.input as Record<string, unknown>)
+          : null;
+      if (
+        inputRecord !== null &&
+        Object.hasOwn(inputRecord, 'tenant_id') &&
+        inputRecord['tenant_id'] !== tenant_id
+      ) {
+        throw new SkillError(
+          'CROSS_TENANT_ASSERTION',
+          'input tenant_id must equal the server-resolved dispatch tenant; payload assertions never cross tenant boundaries',
+          skill_id,
+        );
+      }
+
+      // 8. Schema validation and normalization. The normalized payload — defaults applied, unknown
       //    keys stripped — is the payload the digest is taken over and the one executed.
       const normalized = skill.validateInput(request.input);
+      if (
+        typeof normalized === 'object' &&
+        normalized !== null &&
+        !Array.isArray(normalized) &&
+        Object.hasOwn(normalized, 'tenant_id') &&
+        (normalized as Record<string, unknown>)['tenant_id'] !== tenant_id
+      ) {
+        throw new SkillError(
+          'CROSS_TENANT_ASSERTION',
+          'normalized input tenant_id must equal the server-resolved dispatch tenant',
+          skill_id,
+        );
+      }
 
-      // 7. Approval binding: only an AUTH-4 route owes a bound approval, and only for THIS payload.
+      // 8. Approval binding: only an AUTH-4 route owes a bound approval, and only for THIS payload.
       const approval_id =
         admission.verdict === 'AWAITING_HUMAN_APPROVAL'
           ? assertApprovalCoversPayload({
@@ -162,20 +216,20 @@ export function createSkillRuntimeEngine(options: SkillRuntimeOptions): SkillRun
             })
           : undefined;
 
-      // 8. Effect identity (BR-005): derived from the immutable inbound request, never adopted.
+      // 9. Effect identity (BR-005): derived from the immutable inbound request, never adopted.
       const effect_key = resolveDispatchEffectKey(request, deriveEffectKey);
 
-      // 9. Circuit-breaker admission: an OPEN provider is refused before any adapter call.
-      const breaker = breakerFor(skill.guarded_dependency);
+      // 10. Circuit-breaker admission: an OPEN provider is refused before any adapter call.
+      const breaker = breakerFor(tenant_id, skill_id, skill.guarded_dependency);
       if (!breaker.canExecute()) {
         throw new SkillError(
           'CIRCUIT_BREAKER_OPEN',
-          `the guarded dependency ${skill.guarded_dependency} is unavailable; the breaker refuses before any adapter call (NFR-004)`,
+          `the guarded dependency ${skill.guarded_dependency} is unavailable for this tenant/skill stream; the breaker refuses before any adapter call (NFR-004)`,
           skill_id,
         );
       }
 
-      // 10. Bounded execution under the row's deadline and retry budget.
+      // 11. Bounded execution under the row's deadline and retry budget.
       const context: ExecutionContext = {
         run_id,
         tenant_id,
@@ -202,10 +256,21 @@ export function createSkillRuntimeEngine(options: SkillRuntimeOptions): SkillRun
         ...(request.signal === undefined ? {} : { signal: request.signal }),
       });
 
-      // 11. Response validation: an unvalidated adapter answer is never a success, and only a fully
-      //     validated invocation resets the breaker.
+      // 11. Response validation: a malformed response is never success. For an effect-bearing row,
+      // the provider may already have committed before returning malformed bytes, so the outcome is
+      // unknown and must be reconciled by effect_key rather than reported as a schema-only failure.
       const violations = validateAgainstSchema(skill.output_schema, execution.output);
       if (violations.length > 0) {
+        if (skill.effect_class === 'EFFECT' || skill.effect_class === 'APPROVAL') {
+          breaker.recordFailure();
+          throw new SkillError(
+            'EFFECT_UNKNOWN',
+            `the adapter response failed output_schema after an effect-bearing call (${violations
+              .map((violation) => `${violation.path}: ${violation.keyword} ${violation.message}`)
+              .join('; ')}); reconcile by effect_key before any retry`,
+            skill_id,
+          );
+        }
         throw new SkillError(
           'OUTPUT_SCHEMA_VALIDATION_ERROR',
           `the adapter response failed this row's output_schema: ${violations

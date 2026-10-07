@@ -5,7 +5,7 @@
  */
 'use client';
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import type { CopilotDraft } from './types';
 
 export interface CopilotComposerProps {
@@ -56,16 +56,16 @@ export function CopilotComposer({
   };
 
   return (
-    <div className="p-3 sm:p-4 bg-slate-900 border-t border-slate-800 space-y-3">
+    <div className="tenant-copilot-composer">
       {/* Copilot Suggested Response Card (AUTH-2 Internal Draft Mode) */}
       {copilotDraft && (
-        <div className="p-3 bg-slate-950 border border-sky-900/70 rounded-lg shadow-sm">
+        <div className="tenant-copilot-draft">
           <div className="flex flex-wrap justify-between items-center gap-2 mb-1.5">
             <div className="flex items-center gap-2">
-              <span className="text-[10px] font-mono font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-sky-950 text-sky-300 border border-sky-800">
+              <span className="tenant-summary-badge tenant-summary-badge--info">
                 AUTH-2 Internal Draft
               </span>
-              <span className="text-xs font-semibold text-sky-400">
+              <span className="text-sm font-semibold text-info">
                 Copilot Suggestion (Invisible to Customer)
               </span>
             </div>
@@ -73,24 +73,23 @@ export function CopilotComposer({
               <button
                 type="button"
                 onClick={handleApplyDraft}
-                className="text-xs text-sky-300 hover:text-sky-200 font-semibold px-2 py-0.5 rounded bg-sky-900/40 hover:bg-sky-900/60 border border-sky-800 transition-colors"
-                title="Copies draft into operator composer for manual review"
+                className="ui-button ui-button--secondary ui-button--sm"
               >
                 Insert into Composer
               </button>
               <button
                 type="button"
                 onClick={onDiscardDraft}
-                className="text-xs text-slate-400 hover:text-slate-300 px-2 py-0.5 transition-colors"
+                className="ui-button ui-button--ghost ui-button--sm"
               >
                 Discard
               </button>
             </div>
           </div>
-          <p className="text-xs text-slate-200 italic leading-relaxed pl-1 border-l-2 border-sky-800/80 my-1">
+          <p className="tenant-copilot-quote">
             "{copilotDraft.text}"
           </p>
-          <span className="text-[10px] text-slate-500 block">
+          <span className="block text-xs text-muted">
             Internal draft requires human operator review. It will not be sent until you click Send.
           </span>
         </div>
@@ -99,8 +98,8 @@ export function CopilotComposer({
       {/* Outbound Control State Bar & Module Selector */}
       <div className="flex flex-wrap justify-between items-center gap-2 text-xs">
         <div className="flex items-center gap-2">
-          <span className="text-slate-400 text-[11px] font-medium">Module:</span>
-          <div className="inline-flex rounded-md shadow-sm border border-slate-800 bg-slate-950 p-0.5">
+          <span className="text-xs font-medium text-muted">Module:</span>
+          <div className="tenant-module-selector">
             {(['support', 'sales', 'marketing', 'auto'] as const).map((mod) => (
               <button
                 key={mod}
@@ -108,8 +107,8 @@ export function CopilotComposer({
                 onClick={() => setSelectedModule(mod)}
                 className={`px-2 py-1 text-[11px] font-mono rounded capitalize transition-colors ${
                   selectedModule === mod
-                    ? 'bg-sky-700 text-white font-semibold'
-                    : 'text-slate-400 hover:text-slate-200'
+                    ? 'tenant-module-selector__active'
+                    : 'text-muted hover:text-ink'
                 }`}
               >
                 {mod}
@@ -120,11 +119,11 @@ export function CopilotComposer({
 
         <div className="text-[11px] font-mono">
           {isTakenOver ? (
-            <span className="text-amber-400 font-semibold">
+            <span className="text-warning font-semibold">
               Mode: HUMAN_ACTIVE (Autonomous Outbound Hard-Locked)
             </span>
           ) : (
-            <span className="text-slate-400">
+            <span className="text-muted">
               Mode: AI_CONTROLLED (Outbound bot responses active)
             </span>
           )}
@@ -148,18 +147,18 @@ export function CopilotComposer({
               ? 'Type message to customer as human operator (Enter to send, Shift+Enter for new line)...'
               : 'Acquire takeover to suppress autonomous AI replies, or type to send operator message...'
           }
-          className="flex-1 bg-slate-950 border border-slate-800 focus:border-sky-600 rounded-lg p-2.5 text-xs text-slate-200 outline-none resize-none h-20 transition-colors placeholder:text-slate-500 disabled:opacity-50"
+          className="ui-input flex-1 h-20 resize-none rounded-lg p-2.5 text-xs outline-none transition-colors placeholder:text-muted disabled:opacity-50"
           maxLength={4000}
         />
         <button
           type="button"
           onClick={() => void handleSend()}
           disabled={disabled || isSending || !inputText.trim()}
-          className="px-5 h-10 bg-sky-600 hover:bg-sky-500 disabled:bg-slate-800 disabled:text-slate-500 text-white rounded-lg text-xs font-semibold shadow-sm transition-colors flex items-center justify-center shrink-0"
+          className="ui-button ui-button--primary h-10 shrink-0 px-5 text-xs shadow-sm disabled:opacity-50"
         >
           {isSending ? (
             <span className="inline-flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+              <span className="w-2 h-2 rounded-full bg-primary-ink animate-pulse" />
               Submitting...
             </span>
           ) : (
@@ -168,7 +167,7 @@ export function CopilotComposer({
         </button>
       </div>
 
-      <div className="flex justify-between items-center text-[10px] text-slate-500 px-1">
+      <div className="flex justify-between items-center px-1 text-[10px] text-muted">
         <span>Idempotency-protected execution via POST /api/v1/conversations/{'{id}'}/messages</span>
         <span>{inputText.length} / 4000 characters</span>
       </div>

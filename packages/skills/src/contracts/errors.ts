@@ -53,7 +53,10 @@ export type SkillErrorCode =
   | 'APPROVAL_PAYLOAD_MISMATCH'
 
   // --- payload and effect identity (§3, §6.3, §6.5) -------------------------------------------
-  /** The input failed the row's `input_schema`; zero adapter calls are made. */
+  /** The input asserted a tenant different from the server-resolved dispatch tenant. */
+  | 'CROSS_TENANT_ASSERTION'
+  /** The caller attempted to provide effect identity inside the skill payload. */
+  | 'EFFECT_KEY_IN_INPUT'
   | 'SCHEMA_VALIDATION_ERROR'
   /** The adapter response failed the row's `output_schema`; the result is not a success. */
   | 'OUTPUT_SCHEMA_VALIDATION_ERROR'
@@ -61,8 +64,6 @@ export type SkillErrorCode =
   | 'EFFECT_KEY_REQUIRED'
   /** A presented `effect_key` is not the canonical BR-005 derivation of this dispatch identity. */
   | 'EFFECT_KEY_NOT_DETERMINISTIC'
-
-  // --- execution resilience (§6.5, §8) --------------------------------------------------------
   /** The guarded dependency is `OPEN`; the call is refused before any adapter call. */
   | 'CIRCUIT_BREAKER_OPEN'
   /** The attempt exceeded `timeout_ms`; classified by the row's `retry_policy`. */

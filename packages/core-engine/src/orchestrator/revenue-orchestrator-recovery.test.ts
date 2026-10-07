@@ -34,11 +34,13 @@ import {
   type RoutingDecision,
   type SignalEnvelope,
   type DurableLeaseManager,
-  type IStatefulWorkflowEngine,
   type DurableTaskGuard,
   type DurableTaskCheckpoint,
+  type IRunStageRecorder,
+  type IStatefulWorkflowEngine,
 } from '../contracts/index.js';
 import { computeEffectKey } from '../effects/effect-key.js';
+import { sha256CanonicalJson } from '../durability/canonical-json.js';
 import { MemoryEffectGuard } from '../effects/memory-effect-guard.js';
 import { MemoryEvidenceLogger } from '../evidence/evidence-logger.js';
 import { evaluateAuthorityVerdict } from '../policy/authority.js';
@@ -144,6 +146,7 @@ interface HarnessOptions {
   readonly workflowEngine?: IStatefulWorkflowEngine;
   /** Lease manager override, so a case can assert the attempt's release. */
   readonly leaseManager?: DurableLeaseManager;
+  readonly runStageRecorder?: IRunStageRecorder;
   readonly reconcile?: (input: {
     readonly tenant_id: string;
     readonly effect_key: string;
@@ -222,6 +225,7 @@ function harness(options: HarnessOptions = {}) {
       returnToAgent: async () => undefined,
     },
     leaseManager: options.leaseManager ?? new MemoryLeaseManager(),
+    ...(options.runStageRecorder === undefined ? {} : { runStageRecorder: options.runStageRecorder }),
     workerId: 'worker-test',
   });
   return { orchestrator, effectGuard, workflow, memoryWorkflow, evidenceLogger, hydrate, deriveHypothesis, resolveRouting, formulatePlan, dispatch, reconcile };
@@ -276,14 +280,15 @@ describe('RevenueOrchestrator', () => {
       acquireLease: vi.fn(async () => true),
       releaseLease: vi.fn(async () => undefined),
     };
-    const { orchestrator } = harness({
+    const { orchestrator, dispatch } = harness({
       workflowEngine: workflow,
       leaseManager,
       dispatch: options.dispatch ?? (async () => receipt()),
       steps: [plannedStep],
     });
 
-    return { orchestrator, run_id, workflow, leaseManager, checkpoint };
+    return { orchestrator, run_id, workflow, leaseManager, checkpoint, dispatch };
+
   }
   it('parks a restarted mutating step on the checkpoint waiting requires', async () => {
     // §4.2 stores `waiting` with a REPLACED payload, so the park must carry the complete checkpoint:
@@ -368,6 +373,121 @@ describe('RevenueOrchestrator', () => {
     expect(claim).toHaveBeenCalledTimes(1);
     expect(resumed.lifecycle_state).toBe('completed');
     expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(orchestrator.visitedStages.filter((stage) => stage === 'LEARNING')).toHaveLength(1);
+    expect(orchestrator.visitedStages.at(-1)).toBe('LEARNING');
+  });
+
+
+  it('resumes a MODIFY with the revised payload and binds its new digest', async () => {
+    const { orchestrator, dispatch, memoryWorkflow } = harness({
+      steps: [step({ required_authority: 'AUTH-4' satisfies AuthorityLevel, mutating: false })],
+    });
+
+    const paused = await orchestrator.processSignal(signal());
+    const approval = memoryWorkflow.listApprovals(TENANT, paused.run_id)[0];
+    if (approval === undefined) throw new Error('the AUTH-4 pause must leave one PENDING approval row');
+    const modifiedPayload = { tenant_id: TENANT, text: 'operator-edited' };
+    const modifiedDigest = sha256CanonicalJson(modifiedPayload);
+
+    const resumed = await orchestrator.resumeTask(paused.run_id, {
+      tenant_id: TENANT,
+      event_type: 'human.modify',
+      approval_id: approval.approval_id,
+      operator_id: 'operator-1',
+      expected_payload_sha256: approval.payload_sha256,
+      modifications: { text: modifiedPayload.text },
+    });
+
+    expect(resumed.lifecycle_state).toBe('completed');
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    const dispatched = getDispatchedAction(dispatch, 0);
+    expect(dispatched.action_revision).toBe(1);
+    expect(dispatched.payload).toEqual(modifiedPayload);
+    expect(dispatched.approval_payload_digest).toBe(modifiedDigest);
+    expect(dispatched.approval_payload_digest).not.toBe(approval.payload_sha256);
+    expect(memoryWorkflow.listApprovals(TENANT, paused.run_id)[0]?.payload_sha256).toBe(modifiedDigest);
+  });
+
+  it('automatic recovery dispatches a persisted modified revision instead of re-drafting revision zero', async () => {
+    const modifiedPayload = { text: 'operator-edited' };
+    const modifiedAction: ActionDraft = {
+      ...({
+        action_id: 'action-modified-recovery',
+        run_id: 'run-requeued-1',
+        tenant_id: TENANT,
+        agent_id: 'SAL-01' as PlatformAgentId,
+        skill_id: 'skill.test.dispatch',
+        adapter_target: 'web',
+        step_index: 1,
+        mutating: false,
+        price_bearing: false,
+        request_id: SIGNAL_ID,
+        required_authority: 'AUTH-4' as AuthorityLevel,
+      }),
+      action_revision: 1,
+      effect_key: 'effect-key-revision-1',
+      payload: modifiedPayload,
+      approval_id: 'approval-modified-recovery',
+      approval_payload_digest: sha256CanonicalJson(modifiedPayload),
+    };
+    const { orchestrator, dispatch } = reattemptHarness({
+      step: step({ required_authority: 'AUTH-4' satisfies AuthorityLevel, mutating: false }),
+      pendingAction: modifiedAction,
+    });
+
+    const result = await orchestrator.processQueuedSignal('run-requeued-1', signal(), {
+      worker_id: 'worker-test',
+    });
+
+    expect(result.lifecycle_state).toBe('completed');
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    const dispatched = getDispatchedAction(dispatch, 0);
+    expect(dispatched.action_revision).toBe(1);
+    expect(dispatched.payload).toEqual(modifiedPayload);
+    expect(dispatched.approval_payload_digest).toBe(sha256CanonicalJson(modifiedPayload));
+  });
+  it('records OUTCOME and LEARNING when queued recovery completes remaining steps', async () => {
+    const run_id = 'run-requeued-learning';
+    const plannedStep = step({ mutating: false });
+    const checkpoint = {
+      signal: signal(),
+      plan: plan([plannedStep]),
+      context: context(),
+      current_step: 1,
+      pending_action: null,
+      previous_evidence_hash: GENESIS_HASH,
+      request_id: SIGNAL_ID,
+    };
+    const workflow = {
+      getTask: vi.fn(async () => ({
+        task_version: 1,
+        state: 'running' as const,
+        correlation_id: 'corr-1',
+        state_payload: checkpoint,
+        lease_owner: 'worker-test',
+        lease_expires_at: new Date(Date.now() + 30_000).toISOString(),
+      })),
+      updateTaskProgress: vi.fn(async () => undefined),
+      transitionTask: vi.fn(async () => undefined),
+      recordFailure: vi.fn(async () => ({ requeued: true })),
+    } as unknown as IStatefulWorkflowEngine;
+    const events: string[] = [];
+    const runStageRecorder: IRunStageRecorder = {
+      nextAttemptOrdinal: async () => 1,
+      append: async ({ stage }) => {
+        events.push(stage);
+      },
+    };
+    const { orchestrator } = harness({
+      workflowEngine: workflow,
+      runStageRecorder,
+      steps: [plannedStep],
+    });
+
+    const result = await orchestrator.processQueuedSignal(run_id, signal(), { worker_id: 'worker-test' });
+
+    expect(result.lifecycle_state).toBe('completed');
+    expect(events).toEqual(['ACTION', 'APPROVAL', 'EXECUTION', 'EVIDENCE', 'OUTCOME', 'LEARNING']);
   });
 
   it('still lets a rejection resolve the run while an operator holds the lock', async () => {

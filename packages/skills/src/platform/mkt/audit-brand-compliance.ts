@@ -16,6 +16,11 @@ export interface InputMktAuditBrand {
   tenant_id: string;
   draft_text: string;
   channel: string;
+  subject?: string;
+  title?: string;
+  headline?: string;
+  cta_text?: string;
+  preheader?: string;
 }
 
 /**
@@ -45,6 +50,11 @@ const spec: Omit<PlatformRowSpec, 'skill_id'> = {
       tenant_id: { type: 'string' },
       draft_text: { type: 'string' },
       channel: { type: 'string' },
+      subject: { type: 'string' },
+      title: { type: 'string' },
+      headline: { type: 'string' },
+      cta_text: { type: 'string' },
+      preheader: { type: 'string' },
     },
     additionalProperties: false,
   },

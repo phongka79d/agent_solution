@@ -1,20 +1,27 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import http from 'node:http';
+import { createHmac } from 'node:crypto';
 import { once } from 'node:events';
+import { readFileSync } from 'node:fs';
+import http from 'node:http';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { signMockRequest } from '../../../packages/adapters/dist/index.js';
 import { TENANT_ID } from '../src/fixtures.mjs';
-import { signBody } from '../src/hmac.mjs';
+import { signRequest } from '../src/hmac.mjs';
 import { createServer } from '../src/server.mjs';
 
 const SECRET = 'local-mock-erp-hmac-secret-value';
+const DEMO_TENANT_ID = '99999999-9999-4999-8999-999999999999';
 const SERVER_PATH = fileURLToPath(new URL('../src/server.mjs', import.meta.url));
+const DEMO_PACK_PATH = fileURLToPath(new URL('../src/demo/novamart.json', import.meta.url));
+
+const nodeHmacSha256Hex = (secret, message) => createHmac('sha256', secret).update(message, 'utf8').digest('hex');
 
 function post(server, path, body, { secret = SECRET, tenant = TENANT_ID, signature } = {}) {
   const raw = JSON.stringify(body);
-  const sig = signature === undefined ? signBody(secret, raw) : signature;
+  const sig = signature === undefined ? signRequest(secret, 'POST', path, raw) : signature;
   const { port } = server.address();
   return new Promise((resolve, reject) => {
     const req = http.request({
@@ -44,7 +51,7 @@ function post(server, path, body, { secret = SECRET, tenant = TENANT_ID, signatu
 /**
  * A signed read: the tenant scope travels in the header, because a GET has no body to carry it.
  */
-function get(server, path, { secret = SECRET, tenant = TENANT_ID } = {}) {
+function get(server, path, { secret = SECRET, tenant = TENANT_ID, signature = signRequest(secret, 'GET', path, '') } = {}) {
   const { port } = server.address();
   return new Promise((resolve, reject) => {
     const req = http.request({
@@ -54,7 +61,7 @@ function get(server, path, { secret = SECRET, tenant = TENANT_ID } = {}) {
       method: 'GET',
       headers: {
         'content-length': 0,
-        'x-mock-signature': signBody(secret, ''),
+        'x-mock-signature': signature,
         ...(tenant === null ? {} : { 'x-tenant-id': tenant }),
       },
     }, (res) => {
@@ -95,6 +102,46 @@ test('APP_ENV=staging exits and names APP_ENV without printing the secret', asyn
   assert.notEqual(code, 0);
   assert.match(stderr, /\[APP_ENV\]/);
   assert.equal(stderr.includes('SENTINEL_SECRET_DO_NOT_LEAK_123456'), false);
+});
+test('unknown demo pack is refused without exposing boot secrets', () => {
+  assert.throws(
+    () => createServer({
+      APP_ENV: 'local',
+      MOCK_SECRET_KEY: SECRET,
+      MOCK_ERP_DEMO_PACK: 'unknown-pack',
+    }),
+    (error) => error?.stderr?.includes('[MOCK_ERP_DEMO_PACK]') === true
+      && error?.stderr?.includes(SECRET) === false,
+  );
+});
+test('NovaMart fixture keeps canonical counts and verified C05/C06 ownership', () => {
+  const pack = JSON.parse(readFileSync(DEMO_PACK_PATH, 'utf8'));
+  for (const [name, count] of Object.entries({
+    products: 24,
+    skus: 28,
+    customers: 12,
+    orders: 20,
+    events: 53,
+    segments: 2,
+    campaigns: 1,
+    engagement_events: 8,
+    cases: 4,
+  })) {
+    assert.equal(pack[name].length, count);
+  }
+
+  const byCode = new Map(pack.customers.map((customer) => [customer.customer_code, customer]));
+  const c05 = byCode.get('C05');
+  const c06 = byCode.get('C06');
+  assert.equal(c05.identity_verified, true);
+  assert.equal(c05.web_chat_identity.channel_identifier, 'sess-novamart-c05');
+  assert.equal(c06.identity_verified, true);
+  assert.equal(c06.web_chat_identity.channel_identifier, 'sess-novamart-c06');
+  assert.notEqual(c05.customer_id, c06.customer_id);
+
+  const order = pack.orders.find((candidate) => candidate.order_number === 'ORD-DEMO-005');
+  assert.equal(order.customer_code, 'C05');
+  assert.equal(order.customer_id, c05.customer_id);
 });
 
 test('local /health returns 200', async () => {
@@ -137,6 +184,66 @@ test('catalog and inventory lookups return timestamped authoritative envelopes',
         available_to_promise: 5,
       } ],
     }]);
+  } finally {
+    server.close();
+  }
+});
+
+test('mock verifier accepts the shared adapter signer', async () => {
+  const server = await start();
+  const path = '/api/v1/catalog/items';
+  try {
+    const signature = signMockRequest(SECRET, 'GET', path, '', nodeHmacSha256Hex);
+    const catalog = await get(server, path, { signature });
+    assert.equal(catalog.status, 200);
+  } finally {
+    server.close();
+  }
+});
+test('NovaMart selection serves 28 SKUs, strict stock, and signed owner-approved prices', async () => {
+  const server = await start(
+    { MOCK_ERP_DEMO_PACK: 'novamart' },
+    { now: () => new Date('2026-09-28T00:00:00.000Z') },
+  );
+  try {
+    const catalog = await get(server, '/api/v1/catalog/items', { tenant: DEMO_TENANT_ID });
+    assert.equal(catalog.status, 200);
+    assert.equal(catalog.body.items.length, 28);
+    assert.equal(catalog.body.items.some((item) => item.sku === 'NM-L01-BLK'), true);
+    assert.equal(catalog.body.items.every((item) => item.tenant_id === DEMO_TENANT_ID), true);
+
+    const inventory = await post(server, '/api/v1/inventory/lookup', {
+      tenant_id: DEMO_TENANT_ID,
+      sku_ids: ['NM-L01-BLK'],
+    }, { tenant: DEMO_TENANT_ID });
+    assert.equal(inventory.status, 200);
+    assert.equal(inventory.body.items[0].available_quantity, 5);
+    assert.equal(inventory.body.items[0].reserved_qty, 1);
+    assert.equal(inventory.body.items[0].warehouse_breakdown.length, 2);
+
+    const price = await post(server, '/api/v1/prices/lookup', {
+      tenant_id: DEMO_TENANT_ID,
+      sku_id: 'NM-L01-BLK',
+    }, { tenant: DEMO_TENANT_ID });
+    assert.equal(price.status, 200);
+    assert.equal(price.body.owner_approved, true);
+    assert.equal(price.body.list_price, 18_900_000);
+    assert.equal(price.body.p_floor, 18_900_000);
+    assert.equal(price.body.currency, 'VND');
+    assert.equal(price.body.floor_source, 'novamart-demo-v1');
+    assert.equal(price.body.quote_ttl_seconds, 900);
+    assert.equal(price.body.quote_expires_at, '2026-09-28T00:15:00.000Z');
+    assert.equal(price.body.signature, price.body.quote_signature);
+    const { signature, quote_signature, ...unsigned } = price.body;
+    assert.equal(signature, signRequest(SECRET, 'POST', '/api/v1/prices/lookup', JSON.stringify(unsigned)));
+    assert.equal(JSON.stringify(price.body).includes(SECRET), false);
+
+    const unknownSku = await post(server, '/api/v1/inventory/lookup', {
+      tenant_id: DEMO_TENANT_ID,
+      sku_ids: ['NM-NOT-A-SKU'],
+    }, { tenant: DEMO_TENANT_ID });
+    assert.equal(unknownSku.status, 404);
+    assert.deepEqual(unknownSku.body, { code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE' });
   } finally {
     server.close();
   }
@@ -318,6 +425,118 @@ test('an unscoped read is refused instead of answering for an unnamed tenant', a
     server.close();
   }
 });
+test('NovaMart order and customer reads stay tenant and customer scoped', async () => {
+  const server = await start({ MOCK_ERP_DEMO_PACK: 'novamart' });
+  try {
+    const order = await post(server, '/api/v1/orders/status', {
+      tenant_id: DEMO_TENANT_ID,
+      key: 'ORD-DEMO-005',
+      customer_id: '99000000-0000-4000-8000-000000000005',
+    }, { tenant: DEMO_TENANT_ID });
+    assert.equal(order.status, 200);
+    assert.equal(order.body.order_id, 'ORD-DEMO-005');
+    assert.equal(order.body.customer_code, 'C05');
+    assert.equal(order.body.customer_id, '99000000-0000-4000-8000-000000000005');
+    assert.equal(order.body.status, 'DELIVERED');
+
+    const c06Status = await post(server, '/api/v1/orders/status', {
+      tenant_id: DEMO_TENANT_ID,
+      key: 'ORD-DEMO-005',
+      customer_id: '99000000-0000-4000-8000-000000000006',
+    }, { tenant: DEMO_TENANT_ID });
+    assert.equal(c06Status.status, 404);
+    assert.deepEqual(c06Status.body, { code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE' });
+    const anonymous = await post(server, '/api/v1/orders/status', {
+      tenant_id: DEMO_TENANT_ID,
+      key: 'ORD-DEMO-005',
+    }, { tenant: DEMO_TENANT_ID });
+    assert.equal(anonymous.status, 404);
+    assert.deepEqual(anonymous.body, { code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE' });
+    const wrongTenant = await post(server, '/api/v1/orders/status', {
+      tenant_id: TENANT_ID,
+      key: 'ORD-DEMO-005',
+    });
+    assert.equal(wrongTenant.status, 404);
+    assert.deepEqual(wrongTenant.body, { code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE' });
+
+    const customer = await post(server, '/api/v1/customers/lookup', {
+      tenant_id: DEMO_TENANT_ID,
+      customer_id: '99000000-0000-4000-8000-000000000005',
+    }, { tenant: DEMO_TENANT_ID });
+    assert.equal(customer.status, 200);
+    assert.equal(customer.body.customer_tier, 'GOLD');
+    const c06 = await post(server, '/api/v1/customers/lookup', {
+      tenant_id: DEMO_TENANT_ID,
+      customer_id: '99000000-0000-4000-8000-000000000006',
+    }, { tenant: DEMO_TENANT_ID });
+    assert.equal(c06.status, 200);
+    assert.equal(c06.body.customer_code, 'C06');
+    assert.equal(c06.body.identity_verified, true);
+    assert.equal(c06.body.web_chat_identity.channel_identifier, 'sess-novamart-c06');
+    assert.equal(c06.body.web_chat_identity.verified, true);
+    assert.notEqual(c06.body.customer_id, customer.body.customer_id);
+
+    const history = await post(server, '/api/v1/customers/sales-history', {
+      tenant_id: DEMO_TENANT_ID,
+      customer_id: '99000000-0000-4000-8000-000000000005',
+    }, { tenant: DEMO_TENANT_ID });
+    assert.equal(history.status, 200);
+    assert.equal(history.body.currency, 'VND');
+
+    // Customer lookup by customer_code, logical_customer_ref, phone, email
+    const byCode = await post(server, '/api/v1/customers/lookup', {
+      tenant_id: DEMO_TENANT_ID,
+      customer_id: 'C01',
+    }, { tenant: DEMO_TENANT_ID });
+    assert.equal(byCode.status, 200);
+    assert.equal(byCode.body.customer_code, 'C01');
+    assert.equal(byCode.body.customer_id, '99000000-0000-4000-8000-000000000001');
+
+    const byLogicalRef = await post(server, '/api/v1/customers/lookup', {
+      tenant_id: DEMO_TENANT_ID,
+      key: 'c01',
+    }, { tenant: DEMO_TENANT_ID });
+    assert.equal(byLogicalRef.status, 200);
+    assert.equal(byLogicalRef.body.customer_id, '99000000-0000-4000-8000-000000000001');
+
+    const byPhone = await post(server, '/api/v1/customers/lookup', {
+      tenant_id: DEMO_TENANT_ID,
+      customer_id: '+84900000001',
+    }, { tenant: DEMO_TENANT_ID });
+    assert.equal(byPhone.status, 200);
+    assert.equal(byPhone.body.customer_code, 'C01');
+
+    // Sales history queried by customer code returns orders and canonical customer_id
+    const historyByCode = await post(server, '/api/v1/customers/sales-history', {
+      tenant_id: DEMO_TENANT_ID,
+      customer_id: 'C01',
+    }, { tenant: DEMO_TENANT_ID });
+    assert.equal(historyByCode.status, 200);
+    assert.equal(historyByCode.body.customer_id, '99000000-0000-4000-8000-000000000001');
+    assert.ok(historyByCode.body.total_order_count > 0);
+
+    // Order status queried with customer code succeeds
+    const orderStatusByCode = await post(server, '/api/v1/orders/status', {
+      key: 'ORD-DEMO-001',
+      customer_id: 'C01',
+    }, { tenant: DEMO_TENANT_ID });
+    assert.equal(orderStatusByCode.status, 200);
+    assert.equal(orderStatusByCode.body.order_id, 'ORD-DEMO-001');
+
+    const crossTenantCustomer = await post(server, '/api/v1/customers/lookup', {
+      tenant_id: TENANT_ID,
+      customer_id: '99000000-0000-4000-8000-000000000005',
+    });
+    assert.equal(crossTenantCustomer.status, 404);
+    const crossTenantHistory = await post(server, '/api/v1/customers/sales-history', {
+      tenant_id: TENANT_ID,
+      customer_id: '99000000-0000-4000-8000-000000000005',
+    });
+    assert.equal(crossTenantHistory.status, 404);
+  } finally {
+    server.close();
+  }
+});
 
 test('orders status returns documented order DTO or indistinguishable 404 for unknown/wrong customer', async () => {
   const server = await start();
@@ -326,7 +545,7 @@ test('orders status returns documented order DTO or indistinguishable 404 for un
     const success = await post(
       server,
       '/api/v1/orders/status',
-      { key: 'ORD-A-1' },
+      { key: 'ORD-A-1', customer_id: 'aaaaaaaa-0000-4000-8000-00000000000a' },
       { tenant: careTenant },
     );
     assert.equal(success.status, 200);

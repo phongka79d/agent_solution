@@ -5,9 +5,10 @@ Customer Engagement Platform: Second Brain knowledge and the five AI memory laye
 canonical entities, API-001/002/003 connectors, Customer 360, the service-case FSM and the
 11-step Revenue Orchestrator with its durable worker lifecycle.
 
-This repository has no application runtime. Every record below is a *specification* of an
-externally observable acceptance test (design status ``NOT_RUN``); nothing here was executed,
-and no provider, ERP, vector store or model was called while producing this file.
+The repository includes an API, a worker with Care/Sales/Marketing agents, two consoles
+(Tenant Console and Platform Admin), and PostgreSQL migrations. Every record below remains a
+specification of an externally observable acceptance scenario (design status ``NOT_RUN``);
+the generator does not execute the runtime or call a provider, ERP, vector store or model.
 """
 
 # --------------------------------------------------------------------------------------

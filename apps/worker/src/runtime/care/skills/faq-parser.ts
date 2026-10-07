@@ -61,26 +61,32 @@ export function parseFaqMarkdown(content: string, source_file: string): ParsedFa
 
 /** Deterministic token-overlap scoring for query matching. */
 export function scoreFaqMatch(entry: FaqEntry, queryTokens: readonly string[], queryText: string): number {
+  const normalizedQuery = queryText.trim().toLowerCase();
+  const validTokens = queryTokens
+    .map((t) => (typeof t === 'string' ? t.trim().toLowerCase() : ''))
+    .filter((t) => t.length > 0);
+  if (normalizedQuery.length === 0 || validTokens.length === 0) {
+    return 0;
+  }
+
   const qLower = entry.question.toLowerCase();
   const aLower = entry.approved_answer.toLowerCase();
 
   // Full phrase match in question gives maximum confidence
-  if (qLower.includes(queryText)) {
+  if (qLower.includes(normalizedQuery)) {
     return 1.0;
   }
 
   // Count token matches
   let qMatches = 0;
   let aMatches = 0;
-  for (const token of queryTokens) {
-    if (qLower.includes(token)) qMatches++;
-    else if (aLower.includes(token)) aMatches++;
+  for (const tokenLower of validTokens) {
+    if (qLower.includes(tokenLower)) qMatches++;
+    else if (aLower.includes(tokenLower)) aMatches++;
   }
 
-  if (queryTokens.length === 0) return 0;
-
-  const qScore = qMatches / queryTokens.length;
-  const aScore = (aMatches / queryTokens.length) * 0.4;
+  const qScore = qMatches / validTokens.length;
+  const aScore = (aMatches / validTokens.length) * 0.4;
   const total = Math.min(1.0, qScore + aScore);
 
   return total;

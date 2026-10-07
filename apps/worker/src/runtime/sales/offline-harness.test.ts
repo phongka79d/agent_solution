@@ -108,7 +108,7 @@ describe('SalesOfflineHarness', () => {
         customer_id: 'cust-a',
         current_cart_skus: [],
       },
-      context: { ...readContext, caller_agent: 'SAL-03', granted_authority: 'AUTH-1' as const },
+      context: { ...readContext, caller_agent: 'SAL-02', granted_authority: 'AUTH-1' as const },
     });
 
     expect(customer).toEqual({

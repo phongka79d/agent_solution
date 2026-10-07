@@ -24,7 +24,6 @@ export interface InputCareIssueRetentionOffer {
   target_cart_id?: string;
   max_discount_value?: number;
   price_protection_details?: PriceProtectionDetails;
-  effect_key: string;
 }
 
 /** Output of `skill.care.issue_retention_offer` (§4.3 skill 23). */
@@ -51,7 +50,7 @@ export const CARE_ISSUE_RETENTION_OFFER_SKILL_ID = 'skill.care.issue_retention_o
 const input_schema: Record<string, unknown> = {
   $schema: 'https://json-schema.org/draft/2020-12/schema',
   type: 'object',
-  required: ['tenant_id', 'customer_id', 'offer_scenario', 'effect_key'],
+  required: ['tenant_id', 'customer_id', 'offer_scenario'],
   properties: {
     tenant_id: { type: 'string' },
     customer_id: { type: 'string' },
@@ -71,7 +70,6 @@ const input_schema: Record<string, unknown> = {
         new_price: { type: 'number' },
       },
     },
-    effect_key: { type: 'string' },
   },
   additionalProperties: false,
 };

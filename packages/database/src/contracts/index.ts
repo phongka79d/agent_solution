@@ -365,11 +365,10 @@ export type KnowledgeNamespace =
 export type KnowledgeDocumentStatus = 'draft' | 'review' | 'approved';
 
 /**
- * Payload stored on every point of the `second_brain_knowledge` collection.
+ * Shared metadata carried by every point in the `second_brain_knowledge` collection.
  */
-export interface KnowledgeChunkPayload {
+interface KnowledgeChunkPayloadBase {
   readonly tenant_id: string;
-  readonly namespace: KnowledgeNamespace;
   readonly file_path: string;
   readonly source_version: string;
   readonly document_status: KnowledgeDocumentStatus;
@@ -378,9 +377,21 @@ export interface KnowledgeChunkPayload {
   readonly chunk_index: number;
   readonly text_content: string;
   readonly updated_at: string;
-  /** Present only on customer-namespace chunks; the customer filter keys on it. */
-  readonly customer_id?: string;
 }
+
+/**
+ * Payload stored on every point. Customer-namespace points must carry a customer id; organizational
+ * points cannot smuggle one in as an unverified scope.
+ */
+export type KnowledgeChunkPayload =
+  | (KnowledgeChunkPayloadBase & {
+      readonly namespace: Exclude<KnowledgeNamespace, 'customer'>;
+      readonly customer_id?: never;
+    })
+  | (KnowledgeChunkPayloadBase & {
+      readonly namespace: 'customer';
+      readonly customer_id: string;
+    });
 
 /**
  * A single Qdrant `must` condition: a payload key matched against one value.

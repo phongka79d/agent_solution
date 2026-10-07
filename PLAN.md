@@ -9,4 +9,4 @@ Nguồn chân lý yêu cầu: [Đề bài SRS v0.1](De_bai_Xay_dung_He_thong_AI_
 
 Ba module Marketing, Sales và Customer Support kết nối với ứng dụng, dữ liệu hiện có của doanh nghiệp qua API. Doanh nghiệp có thể chọn một hoặc nhiều module, dùng chung phần lõi nhưng tách riêng dữ liệu và cấu hình.
 
-Trạng thái: bản thiết kế sản phẩm, chưa phải hệ thống hoặc API đã triển khai. Giả định ASM-001..005 chưa khóa.
+Trạng thái: bộ kế hoạch vẫn là tài liệu định hướng sản phẩm; runtime hiện tại gồm API, worker chạy các agent Care/Sales/Marketing, hai console Tenant Console và Platform Admin, cùng các migration PostgreSQL. Các giả định ASM-001..005 chưa khóa.

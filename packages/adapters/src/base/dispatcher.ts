@@ -32,9 +32,15 @@ export function createAdapterDispatcher(deps: {
       new UnknownConnectorError(connector_id));
 
   return {
-    dispatch: async (action: ActionDraft): Promise<ExecutionReceipt> => {
+    dispatch: async (
+      action: ActionDraft,
+      options?: { readonly timeout_ms?: number; readonly signal?: AbortSignal },
+    ): Promise<ExecutionReceipt> => {
       try {
-        return await deps.registry.resolve(action.adapter_target).dispatch(action);
+        const connectorOptions = options?.signal === undefined
+          ? undefined
+          : { signal: options.signal };
+        return await deps.registry.resolve(action.adapter_target).dispatch(action, connectorOptions);
       } catch (error) {
         if (error instanceof UnknownConnectorError) {
           throw refuse(action.adapter_target);

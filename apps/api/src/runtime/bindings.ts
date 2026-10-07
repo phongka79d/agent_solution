@@ -37,3 +37,7 @@ export type {
   CustomerIdentityLookup,
   CustomerOperatorCustomerLookup,
 } from './bindings/approval-identity-port.js';
+export { createGovernancePort } from './bindings/governance-port.js';
+export { createCompanyCrmPort } from './bindings/company-crm-port.js';
+export { createPlatformDirectoryPort } from './bindings/platform-directory.js';
+export { createCompanyProjectionPort } from './bindings/company-projection-port.js';

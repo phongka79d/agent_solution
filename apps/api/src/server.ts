@@ -6,10 +6,12 @@ import { packageName as coreEnginePackageName } from '@agentos/core-engine';
 import { packageName as databasePackageName } from '@agentos/database';
 import { packageName as skillsPackageName } from '@agentos/skills';
 import Fastify, { type FastifyInstance } from 'fastify';
+import fastifySwagger from '@fastify/swagger';
 
 import { registerRoutes, type RouteDependencies } from './routes/index.js';
 import { createGatewayComposition } from './runtime/composition.js';
 import {
+  CORRELATION_HEADER,
   GatewayFailureError,
   correlationIdOf,
   failureFor,
@@ -18,6 +20,7 @@ import {
 } from './gateway/http.js';
 import type { GatewayFailure } from './gateway/contracts.js';
 import { installRawBodyPreservation } from './gateway/raw-body.js';
+import { installCors } from './gateway/cors.js';
 import { registerWebSocketStream } from './gateway/websocket.js';
 
 export const DEFAULT_PORT = 4000;
@@ -40,6 +43,34 @@ export const DEPENDENCIES: readonly string[] = [
 ];
 
 /**
+ * Pino paths are rooted at the serialized request object (`req`). Keep this list explicit: adding a
+ * broad wildcard would make future non-sensitive fields unreadable and can hide useful diagnostics.
+ */
+export const FASTIFY_REDACT_PATHS = [
+  'req.headers.authorization',
+  'req.headers.cookie',
+  'req.headers.x-api-key',
+  'req.body.token',
+  'req.body.tokens',
+  'req.body.access_token',
+  'req.body.accessToken',
+  'req.body.refresh_token',
+  'req.body.refreshToken',
+  'req.body.secret',
+  'req.body.secrets',
+  'req.body.password',
+  'req.body.session_id',
+  'req.body.sessionId',
+  'req.body.session_token',
+  'req.body.sessionToken',
+  'req.body.email',
+  'req.body.phone',
+  'req.body.customer.email',
+  'req.body.customer.phone',
+] as const;
+
+
+/**
  * Builds the HTTP surface.
  *
  * The route groups are registered with the injected runtime, credential store and canonical-event
@@ -49,8 +80,54 @@ export const DEPENDENCIES: readonly string[] = [
  * @param deps The gateway composition: runtime, credentials and the connector-layer derivation.
  * @returns A Fastify instance answering `/health` and the `/api/v1` surface.
  */
-export function buildServer(deps: RouteDependencies): FastifyInstance {
-  const app = Fastify({ logger: false });
+export function buildServer(
+  deps: RouteDependencies,
+  options?: { readonly loggerStream?: NodeJS.WritableStream },
+): FastifyInstance {
+  const app = Fastify({
+    logger: {
+      // Unit tests stay silent unless they capture the stream to assert on redaction.
+      enabled: options?.loggerStream !== undefined || process.env.NODE_ENV !== 'test',
+      level: process.env.LOG_LEVEL ?? 'info',
+      redact: {
+        paths: [...FASTIFY_REDACT_PATHS],
+        censor: '[REDACTED]',
+      },
+      ...(options?.loggerStream === undefined ? {} : { stream: options.loggerStream }),
+    },
+  });
+  void app.register(fastifySwagger, {
+    openapi: {
+      openapi: '3.1.0',
+      info: {
+        title: 'AgentOS API',
+        description: 'AgentOS gateway API contract.',
+        version: '1.0.0',
+      },
+      components: {
+        securitySchemes: {
+          bearerAuth: { type: 'http', scheme: 'bearer' },
+        },
+      },
+    },
+    refResolver: {
+      buildLocalReference(json, _baseUri, _fragment, i) {
+        const id = json['$id'];
+        return typeof id === 'string' ? id : `def-${i}`;
+      },
+    },
+  });
+
+  // Resolve before authentication/parsing so every framework and route log carries the same id.
+  app.addHook('onRequest', async (request) => {
+    const correlation_id = correlationIdOf(request, deps.runtime);
+    request.log = request.log.child({ correlation_id });
+  });
+
+  // The canonical id is also present on successful responses and framework-level failures.
+  app.addHook('onSend', async (request, reply) => {
+    reply.header(CORRELATION_HEADER, correlationIdOf(request, deps.runtime));
+  });
 
   if (deps.close !== undefined) {
     app.addHook('onClose', async () => {
@@ -81,6 +158,10 @@ export function buildServer(deps: RouteDependencies): FastifyInstance {
     service: 'api',
     dependencies: [...DEPENDENCIES],
   }));
+
+  // The embedded demo widget calls this gateway from its approved console origin with its own
+  // scoped credential; the policy answers that origin only and never a wildcard caller.
+  installCors(app, process.env.CORS_ALLOWED_ORIGINS);
 
   // R04 verifies the signature over the bytes the caller actually sent, so the preserving parser is
   // installed by the composition root before any route can read a delivery (`06` §8.1.1).

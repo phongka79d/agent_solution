@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import { type Customer360Fact, type HydratedContext, type HypothesisRecord, type RoutingDecision, type SignalEnvelope } from '@agentos/core-engine/contracts';
 import { SalesAgentRuntime, type SalesPurchaseEvidencePort, type SkillRegistryPort, type SkillRegistryRowMetadata } from './agent-runtime.js';
+import { extractVerifiedPurchases } from './replenishment-evaluator.js';
 import { type SalesReplenishmentPolicyPort } from './skills/types.js';
 
 
@@ -1383,6 +1384,24 @@ describe('SalesAgentRuntime', () => {
       const plan = await runtime.formulatePlan(routing, noChannelContext, hypothesis);
       expect(plan.steps).toHaveLength(0);
       expect(plan.fallback_strategy).toBe('FAIL_CLOSED');
+    });
+    it('sorts verified purchases newest-first and refuses non-finite evidence values', async () => {
+      const sorted = await extractVerifiedPurchases(verifiedContext, {
+        read: async () => [
+          { order_id: 'ORD-OLD', order_date: '2026-07-01T00:00:00Z', items: ['SKU-RUN-456'] },
+          { order_id: 'ORD-NEW', order_date: '2026-08-01T00:00:00Z', items: ['SKU-RUN-456'] },
+        ],
+      });
+      expect(sorted.map((purchase) => purchase.order_id)).toEqual(['ORD-NEW', 'ORD-OLD']);
+
+      await expect(extractVerifiedPurchases(verifiedContext, {
+        read: async () => [{
+          order_id: 'ORD-NAN',
+          order_date: '2026-08-01T00:00:00Z',
+          items: ['SKU-RUN-456'],
+          quantity: Number.NaN,
+        }],
+      })).rejects.toThrow('purchase evidence missing');
     });
   });
 

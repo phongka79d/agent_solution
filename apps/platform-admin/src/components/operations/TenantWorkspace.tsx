@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ApiError } from '@agentos/ui-foundation';
+import { Button, Modal } from '@agentos/ui-foundation/react';
 import { adminOperationsClient } from '../../lib/admin-operations-client';
 import type {
   AutonomyInspectionResponse,
@@ -20,7 +21,13 @@ type ConnectorState = (typeof CONNECTOR_STATES)[number];
 type PolicyRow = { readonly skillId: string; readonly state: string };
 
 type ActionName = 'pause' | 'resume' | 'demote';
-
+type PendingAction = {
+  readonly name: ActionName;
+  readonly operation: () => Promise<unknown>;
+  readonly success: string;
+  readonly title: string;
+  readonly detail: string;
+};
 function displayText(value: unknown): string {
   return typeof value === 'string' && value.trim().length > 0 ? value : UNAVAILABLE;
 }
@@ -150,8 +157,8 @@ function PanelSection({
 }) {
   const headingId = `${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-heading`;
   return (
-    <section className="rounded-lg border border-slate-800 bg-slate-900/50 p-5" aria-labelledby={headingId}>
-      <h2 id={headingId} className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-300">
+    <section className="platform-card p-5" aria-labelledby={headingId}>
+      <h2 id={headingId} className="text-sm font-semibold uppercase tracking-[0.16em] text-ink">
         {title}
       </h2>
       <div className="mt-4">{children}</div>
@@ -166,11 +173,14 @@ export function TenantWorkspace() {
   const [action, setAction] = useState<ActionName | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [demoteSkillId, setDemoteSkillId] = useState('');
   const [demoteReason, setDemoteReason] = useState('');
 
   const loadWorkspace = useCallback(async () => {
     setLoading(true);
+    setTenant(null);
+    setInspection(null);
     setNotice(null);
     try {
       const [tenantResult, autonomyResult] = await Promise.allSettled([
@@ -217,46 +227,59 @@ export function TenantWorkspace() {
     }
   };
 
+  const requestAction = (next: PendingAction) => {
+    setPendingAction(next);
+  };
+
+  const confirmPendingAction = () => {
+    if (!pendingAction) return;
+    const current = pendingAction;
+    setPendingAction(null);
+    void runAction(current.name, current.operation, current.success);
+  };
+
   const submitDemotion = () => {
     const skillId = demoteSkillId.trim();
     const reason = demoteReason.trim();
     if (skillId.length === 0 || reason.length === 0) return;
-    void runAction(
-      'demote',
-      () => adminOperationsClient.demoteAutonomy({ skill_id: skillId, reason }),
-      'Demotion applied; server state reloaded.',
-    );
+    requestAction({
+      name: 'demote',
+      operation: () => adminOperationsClient.demoteAutonomy({ skill_id: skillId, reason }),
+      success: 'Demotion applied; server state reloaded.',
+      title: 'Confirm autonomy demotion',
+      detail: `Demote ${skillId} with the recorded reason “${reason}”? This changes server-owned autonomy state.`,
+    });
   };
 
   return (
     <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
-      <header className="flex flex-col gap-2 border-b border-slate-800 pb-5 sm:flex-row sm:items-end sm:justify-between">
+      <header className="flex flex-col gap-2 border-b border-line pb-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-sky-400">P5 / Tenant Administration</p>
-          <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-100">Tenant workspace</h1>
-          <p className="mt-1 max-w-2xl text-sm text-slate-400">
+          <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-brand">P5 / Tenant Administration</p>
+          <h1 className="mt-2 text-2xl font-semibold tracking-tight text-ink">Tenant workspace</h1>
+          <p className="mt-1 max-w-2xl text-sm text-muted">
             Server-backed readiness and controlled autonomy state. Missing fields remain unavailable.
           </p>
         </div>
-        <div className="text-right font-mono text-xs text-slate-500">
+        <div className="text-right font-mono text-xs text-muted">
           <div>Tenant: {displayText(tenant?.tenant_id)}</div>
           <div>Workspace: {displayText(tenant?.status)}</div>
         </div>
       </header>
 
       {loading && tenant === null && inspection === null ? (
-        <p role="status" className="rounded-lg border border-slate-800 bg-slate-900/40 p-5 text-sm text-slate-400">
+        <p role="status" className="platform-card p-5 text-sm text-muted">
           Loading server state…
         </p>
       ) : null}
 
       {errorMessage ? (
-        <p role="alert" className="rounded-lg border border-rose-900 bg-rose-950/40 p-4 text-sm text-rose-200">
+        <p role="alert" className="platform-alert platform-alert--danger text-sm">
           {errorMessage}
         </p>
       ) : null}
       {notice ? (
-        <p role="status" className="rounded-lg border border-emerald-900 bg-emerald-950/30 p-4 text-sm text-emerald-200">
+        <p role="status" className="platform-alert platform-alert--success text-sm">
           {notice}
         </p>
       ) : null}
@@ -265,18 +288,18 @@ export function TenantWorkspace() {
         <PanelSection title="Capabilities">
           <dl className="grid gap-3 text-sm sm:grid-cols-2">
             <div>
-              <dt className="text-xs uppercase tracking-wider text-slate-500">Configuration</dt>
-              <dd className="mt-1 font-mono text-slate-200">{capabilities.status}</dd>
+              <dt className="text-xs uppercase tracking-wider text-muted">Configuration</dt>
+              <dd className="mt-1 font-mono text-ink">{capabilities.status}</dd>
             </div>
             <div>
-              <dt className="text-xs uppercase tracking-wider text-slate-500">Configured</dt>
-              <dd className="mt-1 text-slate-200">
+              <dt className="text-xs uppercase tracking-wider text-muted">Configured</dt>
+              <dd className="mt-1 text-ink-body">
                 {capabilities.configured.length > 0 ? capabilities.configured.join(', ') : UNAVAILABLE}
               </dd>
             </div>
             <div className="sm:col-span-2">
-              <dt className="text-xs uppercase tracking-wider text-slate-500">Unconfigured</dt>
-              <dd className="mt-1 text-slate-200">
+              <dt className="text-xs uppercase tracking-wider text-muted">Unconfigured</dt>
+              <dd className="mt-1 text-ink-body">
                 {capabilities.unconfigured.length > 0 ? capabilities.unconfigured.join(', ') : UNAVAILABLE}
               </dd>
             </div>
@@ -286,43 +309,43 @@ export function TenantWorkspace() {
         <PanelSection title="Connector readiness">
           <dl className="grid gap-3 text-sm sm:grid-cols-2">
             <div>
-              <dt className="text-xs uppercase tracking-wider text-slate-500">Binding</dt>
-              <dd className="mt-1 font-mono text-slate-200">{connectors.status}</dd>
+              <dt className="text-xs uppercase tracking-wider text-muted">Binding</dt>
+              <dd className="mt-1 font-mono text-ink">{connectors.status}</dd>
             </div>
             <div>
-              <dt className="text-xs uppercase tracking-wider text-slate-500">Enablement</dt>
-              <dd className="mt-1 font-mono text-slate-200">{connectors.enabled}</dd>
+              <dt className="text-xs uppercase tracking-wider text-muted">Enablement</dt>
+              <dd className="mt-1 font-mono text-ink">{connectors.enabled}</dd>
             </div>
           </dl>
-          <p className="mt-4 text-xs text-slate-500">Readiness vocabulary is limited to UNBOUND, DISABLED, and BOUND.</p>
+          <p className="mt-4 text-xs text-muted">Readiness vocabulary is limited to UNBOUND, DISABLED, and BOUND.</p>
         </PanelSection>
 
         <PanelSection title="Autonomy policy">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-sm text-slate-400">
+            <p className="text-sm text-muted">
               Tenant pause state:{' '}
-              <span className="font-mono text-slate-200">
+              <span className="font-mono text-ink">
                 {inspection?.paused === true ? 'PAUSED' : inspection?.paused === false ? 'NOT PAUSED' : UNAVAILABLE}
               </span>
             </p>
             <button
               type="button"
               disabled={loading || inspection === null || action !== null}
-              onClick={() =>
-                void runAction(
-                  isPaused ? 'resume' : 'pause',
-                  isPaused ? () => adminOperationsClient.resumeAutonomy() : () => adminOperationsClient.pauseAutonomy(),
-                  `${isPaused ? 'Resume' : 'Pause'} applied; server state reloaded.`,
-                )
-              }
-              className="rounded-md border border-sky-700 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-sky-200 transition hover:bg-sky-950 disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={() => requestAction({
+                name: isPaused ? 'resume' : 'pause',
+                operation: isPaused ? () => adminOperationsClient.resumeAutonomy() : () => adminOperationsClient.pauseAutonomy(),
+                success: `${isPaused ? 'Resume' : 'Pause'} applied; server state reloaded.`,
+                title: `Confirm ${isPaused ? 'autonomy resume' : 'autonomy pause'}`,
+                detail: `This will ${isPaused ? 'resume' : 'pause'} autonomy for the current tenant. The server response is authoritative.`,
+              })}
+              className="ui-button ui-button--secondary ui-button--sm disabled:cursor-not-allowed"
             >
               {action === 'pause' || action === 'resume' ? 'Updating…' : isPaused ? 'Resume autonomy' : 'Pause autonomy'}
             </button>
           </div>
-          <div className="mt-4 overflow-x-auto rounded-md border border-slate-800">
-            <table className="min-w-full text-left text-sm">
-              <thead className="border-b border-slate-800 bg-slate-950/60 text-xs uppercase tracking-wider text-slate-500">
+          <div className="mt-4 overflow-x-auto rounded-md border border-line">
+            <table className="ui-table min-w-full text-left text-sm">
+              <thead>
                 <tr>
                   <th scope="col" className="px-3 py-2 font-medium">Skill</th>
                   <th scope="col" className="px-3 py-2 font-medium">State</th>
@@ -331,38 +354,38 @@ export function TenantWorkspace() {
               <tbody className="divide-y divide-slate-800">
                 {policies.length > 0 ? policies.map((policy, index) => (
                   <tr key={`${policy.skillId}-${index}`}>
-                    <td className="px-3 py-2 font-mono text-slate-300">{policy.skillId}</td>
-                    <td className="px-3 py-2 font-mono text-slate-200">{policy.state}</td>
+                    <td className="font-mono text-ink-body">{policy.skillId}</td>
+                    <td className="font-mono text-ink">{policy.state}</td>
                   </tr>
                 )) : (
                   <tr>
-                    <td colSpan={2} className="px-3 py-3 font-mono text-slate-500">{UNAVAILABLE}</td>
+                    <td colSpan={2} className="font-mono text-muted">{UNAVAILABLE}</td>
                   </tr>
                 )}
               </tbody>
             </table>
           </div>
-          <div className="mt-5 border-t border-slate-800 pt-4">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">Demote a skill</h3>
-            <p className="mt-1 text-xs text-slate-500">Demotion accepts a skill id and operator reason only; server policy fields remain server-owned.</p>
+          <div className="mt-5 border-t border-line pt-4">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-ink-body">Demote a skill</h3>
+            <p className="mt-1 text-xs text-muted">Demotion accepts a skill id and operator reason only; server policy fields remain server-owned.</p>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <div>
-                <label htmlFor="demote-skill-id" className="text-xs text-slate-500">Skill id</label>
+                <label htmlFor="demote-skill-id" className="text-xs text-muted">Skill id</label>
                 <input
                   id="demote-skill-id"
                   value={demoteSkillId}
                   onChange={(event) => setDemoteSkillId(event.target.value)}
-                  className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+                  className="ui-input mt-1 w-full text-sm"
                   placeholder="skill id"
                 />
               </div>
               <div>
-                <label htmlFor="demote-reason" className="text-xs text-slate-500">Reason</label>
+                <label htmlFor="demote-reason" className="text-xs text-muted">Reason</label>
                 <input
                   id="demote-reason"
                   value={demoteReason}
                   onChange={(event) => setDemoteReason(event.target.value)}
-                  className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+                  className="ui-input mt-1 w-full text-sm"
                   placeholder="operator reason"
                 />
               </div>
@@ -371,7 +394,7 @@ export function TenantWorkspace() {
               type="button"
               disabled={loading || action !== null || demoteSkillId.trim().length === 0 || demoteReason.trim().length === 0}
               onClick={submitDemotion}
-              className="mt-3 rounded-md border border-amber-700 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-amber-200 transition hover:bg-amber-950 disabled:cursor-not-allowed disabled:opacity-50"
+              className="ui-button ui-button--secondary ui-button--sm mt-3 disabled:cursor-not-allowed"
             >
               {action === 'demote' ? 'Demoting…' : 'Demote skill'}
             </button>
@@ -382,17 +405,31 @@ export function TenantWorkspace() {
           {unresolvedInputs.length > 0 ? (
             <ul className="space-y-2 text-sm" role="list">
               {unresolvedInputs.map((input) => (
-                <li key={input} className="flex items-center justify-between gap-3 rounded-md border border-slate-800 bg-slate-950/50 px-3 py-2">
-                  <span className="font-mono text-slate-300">{input}</span>
-                  <span className="font-mono text-amber-300">{UNRESOLVED}</span>
+                <li key={input} className="flex items-center justify-between gap-3 rounded-md border border-line bg-surface-low px-3 py-2">
+                  <span className="font-mono text-ink-body">{input}</span>
+                  <span className="font-mono text-warning">{UNRESOLVED}</span>
                 </li>
               ))}
             </ul>
           ) : (
-            <p className="font-mono text-sm text-slate-500">{UNAVAILABLE}</p>
+            <p className="font-mono text-sm text-muted">{UNAVAILABLE}</p>
           )}
         </PanelSection>
       </div>
+      <Modal
+        open={pendingAction !== null}
+        title={pendingAction?.title ?? 'Confirm autonomy change'}
+        description={pendingAction?.detail ?? ''}
+        onClose={() => setPendingAction(null)}
+        actions={(
+          <>
+            <Button variant="secondary" onClick={() => setPendingAction(null)} disabled={action !== null}>Cancel</Button>
+            <Button onClick={confirmPendingAction} loading={action !== null}>Apply change</Button>
+          </>
+        )}
+      >
+        <span className="sr-only">Confirm autonomy change</span>
+      </Modal>
     </div>
   );
 }

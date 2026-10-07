@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest';
-import { ApiError, HttpClient, buildApiUrl, buildQueryString } from './http-client.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ApiError, DEFAULT_TIMEOUT_MS, HttpClient, apiOrigin, buildApiUrl, buildQueryString } from './http-client.js';
 import type { ApiErrorEnvelope } from './types/common.js';
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 
 function createMockJsonResponse<T>(data: T, status = 200, headersInit: Record<string, string> = {}): Response {
   const headers = new Headers({
@@ -259,5 +263,53 @@ describe('raw stream transport', () => {
     expect(spy.getLastUrl()).toBe('http://localhost:4000/api/v1/storefront/stream');
     expect(spy.getHeaders()).toMatchObject({ Accept: 'text/event-stream, application/json', 'x-tenant-id': 'tenant-a', 'x-operator-id': 'op-a' });
     expect(response.status).toBe(202);
+  });
+});
+
+describe('HTTP deadline and production configuration', () => {
+  it('aborts a request when its configured timeout elapses', async () => {
+    const fetchImpl: typeof fetch = async (_input, init) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+    });
+    const client = new HttpClient({ baseUrl: 'http://localhost:4000', fetch: fetchImpl, timeoutMs: 5 });
+    await expect(client.requestRaw('/slow')).rejects.toThrow('aborted');
+  });
+  it('uses the default 15 second AbortSignal deadline', async () => {
+    vi.useFakeTimers();
+    let requestSignal: AbortSignal | undefined;
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      requestSignal = init?.signal ?? undefined;
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+      });
+    };
+    const client = new HttpClient({ baseUrl: 'http://localhost:4000', fetch: fetchImpl });
+    const request = client.requestRaw('/slow');
+    const assertion = expect(request).rejects.toThrow('aborted');
+    expect(requestSignal).toBeInstanceOf(AbortSignal);
+    await vi.advanceTimersByTimeAsync(DEFAULT_TIMEOUT_MS - 1);
+    expect(requestSignal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await assertion;
+  });
+
+
+  it('does not use localhost as an implicit production origin', () => {
+    const previousOrigin = process.env.NEXT_PUBLIC_API_URL;
+    const previousNodeEnv = process.env.NODE_ENV;
+    const previousCi = process.env.CI;
+    delete process.env.CI;
+    delete process.env.NEXT_PUBLIC_API_URL;
+    process.env.NODE_ENV = 'production';
+    try {
+      expect(() => apiOrigin()).toThrow(/API_ORIGIN_NOT_CONFIGURED/);
+    } finally {
+      if (previousOrigin === undefined) delete process.env.NEXT_PUBLIC_API_URL;
+      else process.env.NEXT_PUBLIC_API_URL = previousOrigin;
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+      if (previousCi === undefined) delete process.env.CI;
+      else process.env.CI = previousCi;
+    }
   });
 });

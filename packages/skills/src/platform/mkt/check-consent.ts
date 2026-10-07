@@ -11,10 +11,11 @@
 import type { PlatformSkillDependencies, PlatformSkillRow } from '../../contracts/index.js';
 import { definePlatformRow, type PlatformRowSpec } from '../row.js';
 
-/** §4.1 field 3 `Input*` of the row, normalized: no property carries a JSON-Schema `default`. */
+/** §4.1 field 3 `Input*` of the row, normalized. Exactly one identity kind is required. */
 export interface InputMktCheckConsent {
   tenant_id: string;
-  customer_id: string;
+  customer_id?: string;
+  segment_id?: string;
   channel: 'LINE' | 'WHATSAPP' | 'SMS' | 'EMAIL' | 'ZALO' | 'TIKTOK' | 'MESSENGER' | 'INSTAGRAM';
 }
 
@@ -40,15 +41,20 @@ const spec: Omit<PlatformRowSpec, 'skill_id'> = {
   input_schema: {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
     type: 'object',
-    required: ['tenant_id', 'customer_id', 'channel'],
+    required: ['tenant_id', 'channel'],
     properties: {
       tenant_id: { type: 'string' },
       customer_id: { type: 'string' },
+      segment_id: { type: 'string' },
       channel: {
         type: 'string',
         enum: ['LINE', 'WHATSAPP', 'SMS', 'EMAIL', 'ZALO', 'TIKTOK', 'MESSENGER', 'INSTAGRAM'],
       },
     },
+    oneOf: [
+      { required: ['customer_id'], not: { required: ['segment_id'] } },
+      { required: ['segment_id'], not: { required: ['customer_id'] } },
+    ],
     additionalProperties: false,
   },
   output_schema: {

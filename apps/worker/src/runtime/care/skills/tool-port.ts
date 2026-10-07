@@ -7,6 +7,8 @@ import {
 } from '@agentos/database';
 import type { SkillToolInvocation, SkillToolPort } from '@agentos/skills';
 
+import { createTenantKnowledgeRootResolver, parseTenantAllowlist, TenantKnowledgeRootError } from '../../knowledge-root.js';
+
 import { handleCaseManagement } from './case-handler.js';
 import { CareSkillToolError } from './errors.js';
 import { handleFaqEngine } from './faq-handler.js';
@@ -44,9 +46,43 @@ async function defaultFindVerifiedIdentity(
  */
 export function createCareSkillToolPort(options: CareSkillOptions): SkillToolPort {
   const defaultKnowledgeRoot = fileURLToPath(new URL('../../../../../../packages/second-brain', import.meta.url));
-  const knowledgeRoot = (options.env.CARE_KNOWLEDGE_ROOT?.trim() || defaultKnowledgeRoot);
+  const configuredRoot = options.env.KNOWLEDGE_ROOT;
+  const knowledgeRoot = configuredRoot === undefined ? defaultKnowledgeRoot : configuredRoot;
+  const knowledgeRootResolver = createTenantKnowledgeRootResolver({
+    root_dir: knowledgeRoot,
+    tenant_ids: parseTenantAllowlist(options.env.KNOWLEDGE_TENANT_IDS),
+    // The shipped package root is intentionally retained for non-demo tests. It
+    // contains draft documents, and handleFaqEngine still applies approved filtering.
+    allow_unbound: configuredRoot === undefined,
+  });
   const caseRepository = options.case_repository ?? new ServiceCaseRepository();
   const handoffRepository = options.handoff_repository ?? new CareHandoffRepository();
+
+  const resolveKnowledgeRoot = (invocation: SkillToolInvocation<unknown>): string => {
+    const input = invocation.input as { readonly tenant_id?: unknown } | undefined;
+    const inputTenant = input?.tenant_id;
+    if (typeof inputTenant !== 'string' || inputTenant.trim().length === 0) {
+      throw new CareSkillToolError(
+        'INVALID_TENANT',
+        'FAQ lookup requires a non-empty server-bound tenant ID',
+      );
+    }
+    const contextTenant = invocation.context?.tenant_id;
+    if (typeof contextTenant !== 'string' || contextTenant.trim().length === 0 || inputTenant.trim() !== contextTenant.trim()) {
+      throw new CareSkillToolError(
+        'TENANT_SCOPE_MISMATCH',
+        'FAQ lookup tenant must match the server-resolved execution tenant',
+      );
+    }
+    try {
+      return knowledgeRootResolver.resolve(contextTenant);
+    } catch (error) {
+      if (error instanceof TenantKnowledgeRootError) {
+        throw new CareSkillToolError(error.code, error.message);
+      }
+      throw error;
+    }
+  };
 
   return {
     async invoke<TInput, TOutput>(invocation: SkillToolInvocation<TInput>): Promise<TOutput> {
@@ -59,7 +95,8 @@ export function createCareSkillToolPort(options: CareSkillOptions): SkillToolPor
 
       const binding = invocation.tool_binding;
       if (binding === 'SecondBrain.FAQEngine') {
-        return handleFaqEngine(invocation, knowledgeRoot);
+        const root = resolveKnowledgeRoot(invocation as SkillToolInvocation<unknown>);
+        return handleFaqEngine(invocation, root);
       }
 
       if (binding === 'Orchestrator.HandoffBus') {

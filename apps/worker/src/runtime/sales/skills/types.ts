@@ -3,10 +3,13 @@ import type { ConsentSource, ConsentState } from '@agentos/core-engine';
 import type { SkillRegistry, SkillRuntimeEngine, SkillToolPort } from '@agentos/skills';
 import type { ErpReadPort } from '../../connectors.js';
 import type {
+  SalesAdvisorExecutionState,
+} from '../advisor-adapters.js';
+import type {
   SalesContextAggregatorLike,
   SalesRecommendationRevenueEvidencePort,
 } from './tool-port.js';
-
+export type { SalesAdvisorExecutionState } from '../advisor-adapters.js';
 export type { ErpReadPort } from '../../connectors.js';
 export type {
   SalesContextAggregatorLike,
@@ -14,6 +17,7 @@ export type {
   SalesRecommendationRevenueEvidencePort,
   SalesSkillToolPortOptions,
 } from './tool-port.js';
+
 
 /** Customer 360 verified purchase/order evidence entry. */
 export interface VerifiedPurchaseEvidence {
@@ -37,8 +41,8 @@ export interface SalesCustomer360Fact extends Customer360Fact {
 export interface SalesPriceFloorQuery {
   readonly tenant_id: string;
   readonly sku_id: string;
+  readonly proposed_price?: number | undefined;
 }
-
 /** Owner-approved floor decision with full provenance and quote TTL. */
 export interface SalesPriceFloorApproved {
   readonly ok?: true;
@@ -95,6 +99,7 @@ export interface SalesPriceFloorPort {
 export interface SalesCartItem {
   readonly sku_id: string;
   readonly quantity: number;
+  readonly proposed_price?: number | undefined;
 }
 
 /** Inbound payload for API-002.CommerceCartAPI. */
@@ -107,6 +112,7 @@ export interface SalesCartInput {
   readonly offer_id?: string | undefined;
   readonly discount_amount?: number | undefined;
   readonly discount_percent?: number | undefined;
+  readonly proposed_price?: number | undefined;
 }
 
 /** Canonical output schema of API-002.CommerceCartAPI. */
@@ -328,6 +334,7 @@ export interface SalesSkillOptions {
   readonly context: Pick<SalesContextAggregatorLike, 'verifiedCustomerFor' | 'verifiedTimelineFor'> & Partial<SalesContextAggregatorLike>;
   readonly revenue_evidence?: SalesRecommendationRevenueEvidencePort | undefined;
   readonly now?: (() => Date) | undefined;
+  readonly advisor_state?: SalesAdvisorExecutionState | undefined;
   readonly resolve_correlation_id: (tenant_id: string, run_id: string) => Promise<string>;
   readonly resolve_grant: (tenant_id: string, agent_id: string) => Promise<AssignableAuthority | null>;
 

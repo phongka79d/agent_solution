@@ -191,7 +191,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/business.json`](../fixtures/offline/business.json)
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.analyze_churn_risk-DENY.json`](../fixtures/scenarios/UNIT-care.analyze_churn_risk-DENY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.analyze_churn_risk-DENY.json`](../fixtures/scenarios/UNIT-care.analyze_churn_risk-DENY.json).
 
 <a id="case-unit-care-analyze-churn-risk-happy"></a>
 
@@ -296,7 +296,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/business.json`](../fixtures/offline/business.json)
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.analyze_churn_risk-HAPPY.json`](../fixtures/scenarios/UNIT-care.analyze_churn_risk-HAPPY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.analyze_churn_risk-HAPPY.json`](../fixtures/scenarios/UNIT-care.analyze_churn_risk-HAPPY.json).
 
 <a id="case-unit-care-analyze-churn-risk-timeout"></a>
 
@@ -407,7 +407,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/business.json`](../fixtures/offline/business.json)
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.analyze_churn_risk-TIMEOUT.json`](../fixtures/scenarios/UNIT-care.analyze_churn_risk-TIMEOUT.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.analyze_churn_risk-TIMEOUT.json`](../fixtures/scenarios/UNIT-care.analyze_churn_risk-TIMEOUT.json).
 
 <a id="case-unit-care-escalate-to-human-deny"></a>
 
@@ -520,7 +520,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/business.json`](../fixtures/offline/business.json)
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.escalate_to_human-DENY.json`](../fixtures/scenarios/UNIT-care.escalate_to_human-DENY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.escalate_to_human-DENY.json`](../fixtures/scenarios/UNIT-care.escalate_to_human-DENY.json).
 
 <a id="case-unit-care-escalate-to-human-happy"></a>
 
@@ -627,7 +627,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/business.json`](../fixtures/offline/business.json)
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.escalate_to_human-HAPPY.json`](../fixtures/scenarios/UNIT-care.escalate_to_human-HAPPY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.escalate_to_human-HAPPY.json`](../fixtures/scenarios/UNIT-care.escalate_to_human-HAPPY.json).
 
 <a id="case-unit-care-escalate-to-human-timeout"></a>
 
@@ -740,7 +740,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/business.json`](../fixtures/offline/business.json)
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.escalate_to_human-TIMEOUT.json`](../fixtures/scenarios/UNIT-care.escalate_to_human-TIMEOUT.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.escalate_to_human-TIMEOUT.json`](../fixtures/scenarios/UNIT-care.escalate_to_human-TIMEOUT.json).
 
 <a id="case-unit-care-initiate-return-deny"></a>
 
@@ -858,7 +858,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.initiate_return-DENY.json`](../fixtures/scenarios/UNIT-care.initiate_return-DENY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.initiate_return-DENY.json`](../fixtures/scenarios/UNIT-care.initiate_return-DENY.json).
 
 <a id="case-unit-care-initiate-return-happy"></a>
 
@@ -970,7 +970,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.initiate_return-HAPPY.json`](../fixtures/scenarios/UNIT-care.initiate_return-HAPPY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.initiate_return-HAPPY.json`](../fixtures/scenarios/UNIT-care.initiate_return-HAPPY.json).
 
 <a id="case-unit-care-initiate-return-timeout"></a>
 
@@ -1088,7 +1088,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.initiate_return-TIMEOUT.json`](../fixtures/scenarios/UNIT-care.initiate_return-TIMEOUT.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.initiate_return-TIMEOUT.json`](../fixtures/scenarios/UNIT-care.initiate_return-TIMEOUT.json).
 
 <a id="case-unit-care-issue-retention-offer-deny"></a>
 
@@ -1204,7 +1204,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 - [`fixtures/offline/catalog.json`](../fixtures/offline/catalog.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.issue_retention_offer-DENY.json`](../fixtures/scenarios/UNIT-care.issue_retention_offer-DENY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.issue_retention_offer-DENY.json`](../fixtures/scenarios/UNIT-care.issue_retention_offer-DENY.json).
 
 <a id="case-unit-care-issue-retention-offer-happy"></a>
 
@@ -1314,7 +1314,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 - [`fixtures/offline/catalog.json`](../fixtures/offline/catalog.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.issue_retention_offer-HAPPY.json`](../fixtures/scenarios/UNIT-care.issue_retention_offer-HAPPY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.issue_retention_offer-HAPPY.json`](../fixtures/scenarios/UNIT-care.issue_retention_offer-HAPPY.json).
 
 <a id="case-unit-care-issue-retention-offer-timeout"></a>
 
@@ -1430,7 +1430,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 - [`fixtures/offline/catalog.json`](../fixtures/offline/catalog.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.issue_retention_offer-TIMEOUT.json`](../fixtures/scenarios/UNIT-care.issue_retention_offer-TIMEOUT.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.issue_retention_offer-TIMEOUT.json`](../fixtures/scenarios/UNIT-care.issue_retention_offer-TIMEOUT.json).
 
 <a id="case-unit-care-lookup-order-deny"></a>
 
@@ -1545,7 +1545,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.lookup_order-DENY.json`](../fixtures/scenarios/UNIT-care.lookup_order-DENY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.lookup_order-DENY.json`](../fixtures/scenarios/UNIT-care.lookup_order-DENY.json).
 
 <a id="case-unit-care-lookup-order-happy"></a>
 
@@ -1654,7 +1654,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.lookup_order-HAPPY.json`](../fixtures/scenarios/UNIT-care.lookup_order-HAPPY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.lookup_order-HAPPY.json`](../fixtures/scenarios/UNIT-care.lookup_order-HAPPY.json).
 
 <a id="case-unit-care-lookup-order-timeout"></a>
 
@@ -1768,7 +1768,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.lookup_order-TIMEOUT.json`](../fixtures/scenarios/UNIT-care.lookup_order-TIMEOUT.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.lookup_order-TIMEOUT.json`](../fixtures/scenarios/UNIT-care.lookup_order-TIMEOUT.json).
 
 <a id="case-unit-care-manage-case-deny"></a>
 
@@ -1885,7 +1885,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.manage_case-DENY.json`](../fixtures/scenarios/UNIT-care.manage_case-DENY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.manage_case-DENY.json`](../fixtures/scenarios/UNIT-care.manage_case-DENY.json).
 
 <a id="case-unit-care-manage-case-happy"></a>
 
@@ -1996,7 +1996,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.manage_case-HAPPY.json`](../fixtures/scenarios/UNIT-care.manage_case-HAPPY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.manage_case-HAPPY.json`](../fixtures/scenarios/UNIT-care.manage_case-HAPPY.json).
 
 <a id="case-unit-care-manage-case-timeout"></a>
 
@@ -2113,7 +2113,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.manage_case-TIMEOUT.json`](../fixtures/scenarios/UNIT-care.manage_case-TIMEOUT.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.manage_case-TIMEOUT.json`](../fixtures/scenarios/UNIT-care.manage_case-TIMEOUT.json).
 
 <a id="case-unit-care-search-faq-deny"></a>
 
@@ -2224,7 +2224,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/business.json`](../fixtures/offline/business.json)
 - [`fixtures/offline/knowledge.json`](../fixtures/offline/knowledge.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.search_faq-DENY.json`](../fixtures/scenarios/UNIT-care.search_faq-DENY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.search_faq-DENY.json`](../fixtures/scenarios/UNIT-care.search_faq-DENY.json).
 
 <a id="case-unit-care-search-faq-happy"></a>
 
@@ -2329,7 +2329,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/business.json`](../fixtures/offline/business.json)
 - [`fixtures/offline/knowledge.json`](../fixtures/offline/knowledge.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.search_faq-HAPPY.json`](../fixtures/scenarios/UNIT-care.search_faq-HAPPY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.search_faq-HAPPY.json`](../fixtures/scenarios/UNIT-care.search_faq-HAPPY.json).
 
 <a id="case-unit-care-search-faq-timeout"></a>
 
@@ -2440,7 +2440,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/business.json`](../fixtures/offline/business.json)
 - [`fixtures/offline/knowledge.json`](../fixtures/offline/knowledge.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.search_faq-TIMEOUT.json`](../fixtures/scenarios/UNIT-care.search_faq-TIMEOUT.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.search_faq-TIMEOUT.json`](../fixtures/scenarios/UNIT-care.search_faq-TIMEOUT.json).
 
 <a id="case-unit-care-track-shipping-deny"></a>
 
@@ -2549,7 +2549,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/business.json`](../fixtures/offline/business.json)
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.track_shipping-DENY.json`](../fixtures/scenarios/UNIT-care.track_shipping-DENY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.track_shipping-DENY.json`](../fixtures/scenarios/UNIT-care.track_shipping-DENY.json).
 
 <a id="case-unit-care-track-shipping-happy"></a>
 
@@ -2652,7 +2652,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/business.json`](../fixtures/offline/business.json)
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.track_shipping-HAPPY.json`](../fixtures/scenarios/UNIT-care.track_shipping-HAPPY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.track_shipping-HAPPY.json`](../fixtures/scenarios/UNIT-care.track_shipping-HAPPY.json).
 
 <a id="case-unit-care-track-shipping-timeout"></a>
 
@@ -2761,7 +2761,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/business.json`](../fixtures/offline/business.json)
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.track_shipping-TIMEOUT.json`](../fixtures/scenarios/UNIT-care.track_shipping-TIMEOUT.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-care.track_shipping-TIMEOUT.json`](../fixtures/scenarios/UNIT-care.track_shipping-TIMEOUT.json).
 
 <a id="case-unit-mkt-analyze-market-signal-deny"></a>
 
@@ -2872,7 +2872,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/tenants.json`](../fixtures/offline/tenants.json)
 - [`fixtures/offline/events.json`](../fixtures/offline/events.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.analyze_market_signal-DENY.json`](../fixtures/scenarios/UNIT-mkt.analyze_market_signal-DENY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.analyze_market_signal-DENY.json`](../fixtures/scenarios/UNIT-mkt.analyze_market_signal-DENY.json).
 
 <a id="case-unit-mkt-analyze-market-signal-happy"></a>
 
@@ -2976,7 +2976,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/tenants.json`](../fixtures/offline/tenants.json)
 - [`fixtures/offline/events.json`](../fixtures/offline/events.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.analyze_market_signal-HAPPY.json`](../fixtures/scenarios/UNIT-mkt.analyze_market_signal-HAPPY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.analyze_market_signal-HAPPY.json`](../fixtures/scenarios/UNIT-mkt.analyze_market_signal-HAPPY.json).
 
 <a id="case-unit-mkt-analyze-market-signal-timeout"></a>
 
@@ -3086,7 +3086,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/tenants.json`](../fixtures/offline/tenants.json)
 - [`fixtures/offline/events.json`](../fixtures/offline/events.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.analyze_market_signal-TIMEOUT.json`](../fixtures/scenarios/UNIT-mkt.analyze_market_signal-TIMEOUT.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.analyze_market_signal-TIMEOUT.json`](../fixtures/scenarios/UNIT-mkt.analyze_market_signal-TIMEOUT.json).
 
 <a id="case-unit-mkt-audit-brand-compliance-deny"></a>
 
@@ -3196,7 +3196,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/knowledge.json`](../fixtures/offline/knowledge.json)
 - [`fixtures/offline/catalog.json`](../fixtures/offline/catalog.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.audit_brand_compliance-DENY.json`](../fixtures/scenarios/UNIT-mkt.audit_brand_compliance-DENY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.audit_brand_compliance-DENY.json`](../fixtures/scenarios/UNIT-mkt.audit_brand_compliance-DENY.json).
 
 <a id="case-unit-mkt-audit-brand-compliance-happy"></a>
 
@@ -3300,7 +3300,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/knowledge.json`](../fixtures/offline/knowledge.json)
 - [`fixtures/offline/catalog.json`](../fixtures/offline/catalog.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.audit_brand_compliance-HAPPY.json`](../fixtures/scenarios/UNIT-mkt.audit_brand_compliance-HAPPY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.audit_brand_compliance-HAPPY.json`](../fixtures/scenarios/UNIT-mkt.audit_brand_compliance-HAPPY.json).
 
 <a id="case-unit-mkt-audit-brand-compliance-timeout"></a>
 
@@ -3410,7 +3410,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/knowledge.json`](../fixtures/offline/knowledge.json)
 - [`fixtures/offline/catalog.json`](../fixtures/offline/catalog.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.audit_brand_compliance-TIMEOUT.json`](../fixtures/scenarios/UNIT-mkt.audit_brand_compliance-TIMEOUT.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.audit_brand_compliance-TIMEOUT.json`](../fixtures/scenarios/UNIT-mkt.audit_brand_compliance-TIMEOUT.json).
 
 <a id="case-unit-mkt-check-consent-deny"></a>
 
@@ -3521,7 +3521,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 - [`fixtures/offline/consents.json`](../fixtures/offline/consents.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.check_consent-DENY.json`](../fixtures/scenarios/UNIT-mkt.check_consent-DENY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.check_consent-DENY.json`](../fixtures/scenarios/UNIT-mkt.check_consent-DENY.json).
 
 <a id="case-unit-mkt-check-consent-happy"></a>
 
@@ -3626,7 +3626,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 - [`fixtures/offline/consents.json`](../fixtures/offline/consents.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.check_consent-HAPPY.json`](../fixtures/scenarios/UNIT-mkt.check_consent-HAPPY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.check_consent-HAPPY.json`](../fixtures/scenarios/UNIT-mkt.check_consent-HAPPY.json).
 
 <a id="case-unit-mkt-check-consent-timeout"></a>
 
@@ -3736,7 +3736,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 - [`fixtures/offline/consents.json`](../fixtures/offline/consents.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.check_consent-TIMEOUT.json`](../fixtures/scenarios/UNIT-mkt.check_consent-TIMEOUT.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.check_consent-TIMEOUT.json`](../fixtures/scenarios/UNIT-mkt.check_consent-TIMEOUT.json).
 
 <a id="case-unit-mkt-dispatch-campaign-deny"></a>
 
@@ -3855,7 +3855,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 - [`fixtures/offline/consents.json`](../fixtures/offline/consents.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.dispatch_campaign-DENY.json`](../fixtures/scenarios/UNIT-mkt.dispatch_campaign-DENY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.dispatch_campaign-DENY.json`](../fixtures/scenarios/UNIT-mkt.dispatch_campaign-DENY.json).
 
 <a id="case-unit-mkt-dispatch-campaign-happy"></a>
 
@@ -3968,7 +3968,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 - [`fixtures/offline/consents.json`](../fixtures/offline/consents.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.dispatch_campaign-HAPPY.json`](../fixtures/scenarios/UNIT-mkt.dispatch_campaign-HAPPY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.dispatch_campaign-HAPPY.json`](../fixtures/scenarios/UNIT-mkt.dispatch_campaign-HAPPY.json).
 
 <a id="case-unit-mkt-dispatch-campaign-timeout"></a>
 
@@ -4087,7 +4087,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 - [`fixtures/offline/consents.json`](../fixtures/offline/consents.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.dispatch_campaign-TIMEOUT.json`](../fixtures/scenarios/UNIT-mkt.dispatch_campaign-TIMEOUT.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.dispatch_campaign-TIMEOUT.json`](../fixtures/scenarios/UNIT-mkt.dispatch_campaign-TIMEOUT.json).
 
 <a id="case-unit-mkt-evaluate-attribution-deny"></a>
 
@@ -4197,7 +4197,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 - [`fixtures/offline/catalog.json`](../fixtures/offline/catalog.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.evaluate_attribution-DENY.json`](../fixtures/scenarios/UNIT-mkt.evaluate_attribution-DENY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.evaluate_attribution-DENY.json`](../fixtures/scenarios/UNIT-mkt.evaluate_attribution-DENY.json).
 
 <a id="case-unit-mkt-evaluate-attribution-happy"></a>
 
@@ -4301,7 +4301,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 - [`fixtures/offline/catalog.json`](../fixtures/offline/catalog.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.evaluate_attribution-HAPPY.json`](../fixtures/scenarios/UNIT-mkt.evaluate_attribution-HAPPY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.evaluate_attribution-HAPPY.json`](../fixtures/scenarios/UNIT-mkt.evaluate_attribution-HAPPY.json).
 
 <a id="case-unit-mkt-evaluate-attribution-timeout"></a>
 
@@ -4411,7 +4411,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 - [`fixtures/offline/catalog.json`](../fixtures/offline/catalog.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.evaluate_attribution-TIMEOUT.json`](../fixtures/scenarios/UNIT-mkt.evaluate_attribution-TIMEOUT.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.evaluate_attribution-TIMEOUT.json`](../fixtures/scenarios/UNIT-mkt.evaluate_attribution-TIMEOUT.json).
 
 <a id="case-unit-mkt-generate-content-deny"></a>
 
@@ -4525,7 +4525,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/knowledge.json`](../fixtures/offline/knowledge.json)
 - [`fixtures/offline/catalog.json`](../fixtures/offline/catalog.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.generate_content-DENY.json`](../fixtures/scenarios/UNIT-mkt.generate_content-DENY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.generate_content-DENY.json`](../fixtures/scenarios/UNIT-mkt.generate_content-DENY.json).
 
 <a id="case-unit-mkt-generate-content-happy"></a>
 
@@ -4633,7 +4633,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/knowledge.json`](../fixtures/offline/knowledge.json)
 - [`fixtures/offline/catalog.json`](../fixtures/offline/catalog.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.generate_content-HAPPY.json`](../fixtures/scenarios/UNIT-mkt.generate_content-HAPPY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.generate_content-HAPPY.json`](../fixtures/scenarios/UNIT-mkt.generate_content-HAPPY.json).
 
 <a id="case-unit-mkt-generate-content-timeout"></a>
 
@@ -4746,7 +4746,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/knowledge.json`](../fixtures/offline/knowledge.json)
 - [`fixtures/offline/catalog.json`](../fixtures/offline/catalog.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.generate_content-TIMEOUT.json`](../fixtures/scenarios/UNIT-mkt.generate_content-TIMEOUT.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.generate_content-TIMEOUT.json`](../fixtures/scenarios/UNIT-mkt.generate_content-TIMEOUT.json).
 
 <a id="case-unit-mkt-segment-audience-deny"></a>
 
@@ -4857,7 +4857,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 - [`fixtures/offline/consents.json`](../fixtures/offline/consents.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.segment_audience-DENY.json`](../fixtures/scenarios/UNIT-mkt.segment_audience-DENY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.segment_audience-DENY.json`](../fixtures/scenarios/UNIT-mkt.segment_audience-DENY.json).
 
 <a id="case-unit-mkt-segment-audience-happy"></a>
 
@@ -4962,7 +4962,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 - [`fixtures/offline/consents.json`](../fixtures/offline/consents.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.segment_audience-HAPPY.json`](../fixtures/scenarios/UNIT-mkt.segment_audience-HAPPY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.segment_audience-HAPPY.json`](../fixtures/scenarios/UNIT-mkt.segment_audience-HAPPY.json).
 
 <a id="case-unit-mkt-segment-audience-timeout"></a>
 
@@ -5073,7 +5073,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 - [`fixtures/offline/consents.json`](../fixtures/offline/consents.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.segment_audience-TIMEOUT.json`](../fixtures/scenarios/UNIT-mkt.segment_audience-TIMEOUT.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-mkt.segment_audience-TIMEOUT.json`](../fixtures/scenarios/UNIT-mkt.segment_audience-TIMEOUT.json).
 
 <a id="case-unit-sales-check-price-deny"></a>
 
@@ -5186,7 +5186,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/catalog.json`](../fixtures/offline/catalog.json)
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.check_price-DENY.json`](../fixtures/scenarios/UNIT-sales.check_price-DENY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.check_price-DENY.json`](../fixtures/scenarios/UNIT-sales.check_price-DENY.json).
 
 <a id="case-unit-sales-check-price-happy"></a>
 
@@ -5293,7 +5293,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/catalog.json`](../fixtures/offline/catalog.json)
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.check_price-HAPPY.json`](../fixtures/scenarios/UNIT-sales.check_price-HAPPY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.check_price-HAPPY.json`](../fixtures/scenarios/UNIT-sales.check_price-HAPPY.json).
 
 <a id="case-unit-sales-check-price-timeout"></a>
 
@@ -5406,7 +5406,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/catalog.json`](../fixtures/offline/catalog.json)
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.check_price-TIMEOUT.json`](../fixtures/scenarios/UNIT-sales.check_price-TIMEOUT.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.check_price-TIMEOUT.json`](../fixtures/scenarios/UNIT-sales.check_price-TIMEOUT.json).
 
 <a id="case-unit-sales-check-stock-deny"></a>
 
@@ -5515,7 +5515,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/business.json`](../fixtures/offline/business.json)
 - [`fixtures/offline/catalog.json`](../fixtures/offline/catalog.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.check_stock-DENY.json`](../fixtures/scenarios/UNIT-sales.check_stock-DENY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.check_stock-DENY.json`](../fixtures/scenarios/UNIT-sales.check_stock-DENY.json).
 
 <a id="case-unit-sales-check-stock-happy"></a>
 
@@ -5618,7 +5618,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/business.json`](../fixtures/offline/business.json)
 - [`fixtures/offline/catalog.json`](../fixtures/offline/catalog.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.check_stock-HAPPY.json`](../fixtures/scenarios/UNIT-sales.check_stock-HAPPY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.check_stock-HAPPY.json`](../fixtures/scenarios/UNIT-sales.check_stock-HAPPY.json).
 
 <a id="case-unit-sales-check-stock-timeout"></a>
 
@@ -5727,7 +5727,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/business.json`](../fixtures/offline/business.json)
 - [`fixtures/offline/catalog.json`](../fixtures/offline/catalog.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.check_stock-TIMEOUT.json`](../fixtures/scenarios/UNIT-sales.check_stock-TIMEOUT.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.check_stock-TIMEOUT.json`](../fixtures/scenarios/UNIT-sales.check_stock-TIMEOUT.json).
 
 <a id="case-unit-sales-create-cart-deny"></a>
 
@@ -5846,7 +5846,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/catalog.json`](../fixtures/offline/catalog.json)
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.create_cart-DENY.json`](../fixtures/scenarios/UNIT-sales.create_cart-DENY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.create_cart-DENY.json`](../fixtures/scenarios/UNIT-sales.create_cart-DENY.json).
 
 <a id="case-unit-sales-create-cart-happy"></a>
 
@@ -5959,7 +5959,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/catalog.json`](../fixtures/offline/catalog.json)
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.create_cart-HAPPY.json`](../fixtures/scenarios/UNIT-sales.create_cart-HAPPY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.create_cart-HAPPY.json`](../fixtures/scenarios/UNIT-sales.create_cart-HAPPY.json).
 
 <a id="case-unit-sales-create-cart-timeout"></a>
 
@@ -6077,7 +6077,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/catalog.json`](../fixtures/offline/catalog.json)
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.create_cart-TIMEOUT.json`](../fixtures/scenarios/UNIT-sales.create_cart-TIMEOUT.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.create_cart-TIMEOUT.json`](../fixtures/scenarios/UNIT-sales.create_cart-TIMEOUT.json).
 
 <a id="case-unit-sales-create-order-deny"></a>
 
@@ -6200,7 +6200,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/catalog.json`](../fixtures/offline/catalog.json)
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.create_order-DENY.json`](../fixtures/scenarios/UNIT-sales.create_order-DENY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.create_order-DENY.json`](../fixtures/scenarios/UNIT-sales.create_order-DENY.json).
 
 <a id="case-unit-sales-create-order-happy"></a>
 
@@ -6317,7 +6317,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/catalog.json`](../fixtures/offline/catalog.json)
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.create_order-HAPPY.json`](../fixtures/scenarios/UNIT-sales.create_order-HAPPY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.create_order-HAPPY.json`](../fixtures/scenarios/UNIT-sales.create_order-HAPPY.json).
 
 <a id="case-unit-sales-create-order-timeout"></a>
 
@@ -6439,7 +6439,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/catalog.json`](../fixtures/offline/catalog.json)
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.create_order-TIMEOUT.json`](../fixtures/scenarios/UNIT-sales.create_order-TIMEOUT.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.create_order-TIMEOUT.json`](../fixtures/scenarios/UNIT-sales.create_order-TIMEOUT.json).
 
 <a id="case-unit-sales-recommend-product-deny"></a>
 
@@ -6553,7 +6553,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 - [`fixtures/offline/events.json`](../fixtures/offline/events.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.recommend_product-DENY.json`](../fixtures/scenarios/UNIT-sales.recommend_product-DENY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.recommend_product-DENY.json`](../fixtures/scenarios/UNIT-sales.recommend_product-DENY.json).
 
 <a id="case-unit-sales-recommend-product-happy"></a>
 
@@ -6661,7 +6661,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 - [`fixtures/offline/events.json`](../fixtures/offline/events.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.recommend_product-HAPPY.json`](../fixtures/scenarios/UNIT-sales.recommend_product-HAPPY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.recommend_product-HAPPY.json`](../fixtures/scenarios/UNIT-sales.recommend_product-HAPPY.json).
 
 <a id="case-unit-sales-recommend-product-timeout"></a>
 
@@ -6775,7 +6775,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 - [`fixtures/offline/events.json`](../fixtures/offline/events.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.recommend_product-TIMEOUT.json`](../fixtures/scenarios/UNIT-sales.recommend_product-TIMEOUT.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.recommend_product-TIMEOUT.json`](../fixtures/scenarios/UNIT-sales.recommend_product-TIMEOUT.json).
 
 <a id="case-unit-sales-retrieve-customer-deny"></a>
 
@@ -6886,7 +6886,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 - [`fixtures/offline/consents.json`](../fixtures/offline/consents.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.retrieve_customer-DENY.json`](../fixtures/scenarios/UNIT-sales.retrieve_customer-DENY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.retrieve_customer-DENY.json`](../fixtures/scenarios/UNIT-sales.retrieve_customer-DENY.json).
 
 <a id="case-unit-sales-retrieve-customer-happy"></a>
 
@@ -6991,7 +6991,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 - [`fixtures/offline/consents.json`](../fixtures/offline/consents.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.retrieve_customer-HAPPY.json`](../fixtures/scenarios/UNIT-sales.retrieve_customer-HAPPY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.retrieve_customer-HAPPY.json`](../fixtures/scenarios/UNIT-sales.retrieve_customer-HAPPY.json).
 
 <a id="case-unit-sales-retrieve-customer-timeout"></a>
 
@@ -7101,7 +7101,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 - [`fixtures/offline/consents.json`](../fixtures/offline/consents.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.retrieve_customer-TIMEOUT.json`](../fixtures/scenarios/UNIT-sales.retrieve_customer-TIMEOUT.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.retrieve_customer-TIMEOUT.json`](../fixtures/scenarios/UNIT-sales.retrieve_customer-TIMEOUT.json).
 
 <a id="case-unit-sales-search-product-deny"></a>
 
@@ -7208,7 +7208,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/business.json`](../fixtures/offline/business.json)
 - [`fixtures/offline/catalog.json`](../fixtures/offline/catalog.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.search_product-DENY.json`](../fixtures/scenarios/UNIT-sales.search_product-DENY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.search_product-DENY.json`](../fixtures/scenarios/UNIT-sales.search_product-DENY.json).
 
 <a id="case-unit-sales-search-product-happy"></a>
 
@@ -7309,7 +7309,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/business.json`](../fixtures/offline/business.json)
 - [`fixtures/offline/catalog.json`](../fixtures/offline/catalog.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.search_product-HAPPY.json`](../fixtures/scenarios/UNIT-sales.search_product-HAPPY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.search_product-HAPPY.json`](../fixtures/scenarios/UNIT-sales.search_product-HAPPY.json).
 
 <a id="case-unit-sales-search-product-timeout"></a>
 
@@ -7416,7 +7416,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/business.json`](../fixtures/offline/business.json)
 - [`fixtures/offline/catalog.json`](../fixtures/offline/catalog.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.search_product-TIMEOUT.json`](../fixtures/scenarios/UNIT-sales.search_product-TIMEOUT.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.search_product-TIMEOUT.json`](../fixtures/scenarios/UNIT-sales.search_product-TIMEOUT.json).
 
 <a id="case-unit-sales-send-message-deny"></a>
 
@@ -7538,7 +7538,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 - [`fixtures/offline/consents.json`](../fixtures/offline/consents.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.send_message-DENY.json`](../fixtures/scenarios/UNIT-sales.send_message-DENY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.send_message-DENY.json`](../fixtures/scenarios/UNIT-sales.send_message-DENY.json).
 
 <a id="case-unit-sales-send-message-happy"></a>
 
@@ -7654,7 +7654,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 - [`fixtures/offline/consents.json`](../fixtures/offline/consents.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.send_message-HAPPY.json`](../fixtures/scenarios/UNIT-sales.send_message-HAPPY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.send_message-HAPPY.json`](../fixtures/scenarios/UNIT-sales.send_message-HAPPY.json).
 
 <a id="case-unit-sales-send-message-timeout"></a>
 
@@ -7776,4 +7776,4 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 - [`fixtures/offline/consents.json`](../fixtures/offline/consents.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.send_message-TIMEOUT.json`](../fixtures/scenarios/UNIT-sales.send_message-TIMEOUT.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/UNIT-sales.send_message-TIMEOUT.json`](../fixtures/scenarios/UNIT-sales.send_message-TIMEOUT.json).

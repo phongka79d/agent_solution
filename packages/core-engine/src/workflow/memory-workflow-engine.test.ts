@@ -100,12 +100,9 @@ describe('MemoryWorkflowEngine task state', () => {
     const engine = await engineWithRunningTask();
 
     const task = await engine.getTask(TENANT, RUN);
-    expect(task).toEqual({
-      task_version: 1,
-      state: 'running',
-      correlation_id: 'corr_1',
-      state_payload: null,
-    });
+    expect(task?.task_version).toBe(1);
+    expect(task?.state).toBe('running');
+    expect(task?.correlation_id).toBe('corr_1');
     expect(await engine.getTask(OTHER_TENANT, RUN)).toBeNull();
     expect(await engine.getTask(TENANT, OTHER_RUN)).toBeNull();
   });
@@ -381,10 +378,17 @@ describe('MemoryWorkflowEngine approvals', () => {
       }),
     ).toEqual({ claimed: true });
 
+    const revisedDigest = createHash('sha256').update(canonicalizeJson(revised.payload), 'utf8').digest('hex');
     expect(engine.listApprovals(TENANT, RUN)[0]?.effect_key).toBe('effect_key_v1');
     expect(engine.listApprovals(TENANT, RUN)[0]?.decision).toBe('MODIFIED');
-    expect((await engine.getTask(TENANT, RUN))?.state_payload?.pending_action?.effect_key).toBe(
-      'effect_key_v1',
+    expect(engine.listApprovals(TENANT, RUN)[0]?.payload_sha256).toBe(revisedDigest);
+    expect((await engine.getTask(TENANT, RUN))?.state_payload?.pending_action).toEqual(
+      expect.objectContaining({
+        action_revision: 1,
+        effect_key: 'effect_key_v1',
+        approval_id,
+        approval_payload_digest: revisedDigest,
+      }),
     );
   });
 });

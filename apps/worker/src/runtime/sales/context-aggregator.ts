@@ -299,6 +299,11 @@ export class SalesContextAggregator implements IContextAggregator {
     });
     const working_memory: WorkingMemoryContext = {
       session_id: subject.session_id,
+      // The gateway stamps the conversation it admitted this run for; carrying that binding is what
+      // lets a completed conversational run publish its grounded response to the right thread.
+      ...(typeof subject.conversation_id === 'string' && subject.conversation_id.length > 0
+        ? { conversation_id: subject.conversation_id }
+        : {}),
       last_touch_channel: subject.channel_type,
       turn_count: 1,
       takeover_active,

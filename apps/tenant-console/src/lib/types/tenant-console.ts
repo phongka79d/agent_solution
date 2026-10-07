@@ -4,14 +4,39 @@
  */
 
 import type {
+  ApprovalDecisionRequest,
+  ApprovalDecisionResponse,
+  CompanyGovernanceResponse,
+} from '@agentos/api-contract';
+import type {
   EvidenceClassification,
   SourceStatus,
   TaskLifecycleState,
 } from '@agentos/ui-foundation';
 
+export type { AuthSession, Permission, TenantMembership, UserIdentity } from '@agentos/ui-foundation/auth';
+export type {
+  ApprovalDecisionRequest,
+  ApprovalDecisionResponse,
+  ApprovalDetailResponse,
+  ApprovalQueueItem,
+  CompanyActivityItem,
+  CompanyActivityResponse,
+  CompanyAiTeamAgent,
+  CompanyAiTeamResponse,
+  CompanyAttentionItem,
+  CompanyAttentionResponse,
+  CompanyGovernanceResponse,
+  CompanyIntegrationItem,
+  CompanyIntegrationsResponse,
+  CompanyOverviewResponse,
+  GetApprovalsParams,
+  GetApprovalsResponse,
+} from '@agentos/api-contract';
+
 // R14: Approval Center
-export type ApprovalDecision = 'APPROVE' | 'REJECT' | 'MODIFY' | 'PAUSE' | 'CANCEL';
-export type ApprovalDecisionStatus = 'QUEUED';
+export type ApprovalDecision = ApprovalDecisionRequest['decision'];
+export type ApprovalDecisionStatus = ApprovalDecisionResponse['status'];
 export type ApprovalStatus =
   | 'AWAITING_HUMAN'
   | 'PENDING'
@@ -22,60 +47,7 @@ export type ApprovalStatus =
   | 'CANCELLED'
   | 'QUEUED';
 
-export interface GetApprovalsParams {
-  readonly status?: 'PENDING' | undefined;
-  readonly cursor?: string | undefined;
-  readonly limit?: number | undefined;
-}
-
-export interface ApprovalQueueItem {
-  readonly approval_id: string;
-  readonly run_id: string;
-  readonly action_id: string;
-  readonly effect_key: string;
-  readonly payload: Record<string, unknown>;
-  readonly reason: string;
-  readonly status: 'PENDING' | ApprovalStatus;
-  readonly is_paused: boolean;
-  readonly decided_by: string | null;
-  readonly decided_at: string | null;
-  readonly decision_notes: string | null;
-  readonly created_at: string;
-  readonly payload_sha256: string;
-  readonly expires_at?: string | null | undefined;
-  readonly id?: string | undefined;
-  readonly title?: string | undefined;
-  readonly agent_id?: string | undefined;
-  readonly customer_id?: string | undefined;
-}
-
-export interface GetApprovalsResponse {
-  readonly items: readonly ApprovalQueueItem[];
-  readonly next_cursor: string | null;
-  readonly total_count?: number | undefined;
-}
-
-export interface ApprovalDetailResponse extends ApprovalQueueItem {
-  readonly tenant_id: string;
-  readonly expires_at: string | null;
-  readonly correlation_id?: string | undefined;
-}
-
-export interface ApprovalDecisionRequest {
-  readonly decision: ApprovalDecision;
-  readonly operator_id: string;
-  readonly reason: string;
-  readonly expected_payload_sha256: string;
-  readonly modified_payload?: Record<string, unknown> | undefined;
-}
-
-export interface ApprovalDecisionResponse {
-  readonly approval_id: string;
-  readonly task_id: string;
-  readonly status: ApprovalDecisionStatus;
-  readonly queued_at: string;
-  readonly correlation_id: string;
-}
+export type GovernanceSettingsResponse = CompanyGovernanceResponse;
 
 // R15: Customer 360 timeline
 export interface CustomerTimelineParams {
@@ -230,7 +202,6 @@ export type TakeoverMode = 'FULL_CONTROL' | 'CO_PILOT';
 export type ConversationWireStatus = 'ACTIVE' | 'HUMAN_TAKEOVER' | 'CLOSED';
 
 export interface ConversationTakeoverRequest {
-  readonly operator_id: string;
   readonly reason: string;
   readonly takeover_mode: TakeoverMode;
 }
@@ -242,8 +213,7 @@ export interface ConversationTakeoverResponse {
   readonly lease_expires_at: string;
 }
 export interface ConversationTakeoverHeartbeatRequest {
-  readonly operator_id: string;
-  readonly extend_seconds: number;
+  readonly extend_seconds?: number | undefined;
 }
 export interface ConversationTakeoverHeartbeatResponse {
   readonly conversation_id: string;
@@ -252,7 +222,6 @@ export interface ConversationTakeoverHeartbeatResponse {
   readonly lease_expires_at: string;
 }
 export interface ConversationResumeRequest {
-  readonly operator_id: string;
   readonly handoff_summary?: string | undefined;
   readonly next_agent_id?: string | undefined;
 }
@@ -261,9 +230,35 @@ export interface ConversationResumeResponse {
   readonly status: 'ACTIVE';
   readonly resumed_at: string;
 }
+export interface ConversationListParams {
+  readonly cursor?: string | undefined;
+  readonly limit?: number | undefined;
+}
+export interface ConversationListResponse {
+  readonly items: readonly Record<string, unknown>[];
+  readonly next_cursor?: string | null | undefined;
+  readonly nextCursor?: string | null | undefined;
+}
+export interface ConversationMessagesResponse {
+  readonly items: readonly Record<string, unknown>[];
+  readonly next_cursor?: string | null | undefined;
+  readonly nextCursor?: string | null | undefined;
+}
+export interface ConversationSummaryResponse extends Record<string, unknown> {}
+export interface CustomerListParams {
+  readonly query?: string | undefined;
+  readonly cursor?: string | undefined;
+  readonly limit?: number | undefined;
+}
+export interface CustomerListResponse {
+  readonly items: readonly Record<string, unknown>[];
+  readonly next_cursor?: string | null | undefined;
+  readonly nextCursor?: string | null | undefined;
+}
+export interface CustomerProfileResponse extends Record<string, unknown> {}
 export interface PostMessageRequest {
   readonly message: string;
-  readonly idempotency_key: string;
+  readonly idempotency_key?: string | undefined;
   readonly module?: 'marketing' | 'sales' | 'support' | 'auto' | undefined;
   readonly attachments?: readonly string[] | undefined;
   readonly sender?: 'operator' | 'customer' | 'ai' | undefined;
@@ -297,3 +292,4 @@ export interface EventIngestionResponse {
   readonly correlation_id: string;
   readonly status: 'QUEUED' | 'IGNORED' | 'PROCESSED';
 }
+

@@ -123,7 +123,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 - [`fixtures/offline/platform.json`](../fixtures/offline/platform.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-CASE-ASSIGNED-to-IN_PROGRESS.json`](../fixtures/scenarios/INT-CASE-ASSIGNED-to-IN_PROGRESS.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-CASE-ASSIGNED-to-IN_PROGRESS.json`](../fixtures/scenarios/INT-CASE-ASSIGNED-to-IN_PROGRESS.json).
 
 <a id="case-int-case-classified-to-assigned"></a>
 
@@ -220,7 +220,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/platform.json`](../fixtures/offline/platform.json)
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-CASE-CLASSIFIED-to-ASSIGNED.json`](../fixtures/scenarios/INT-CASE-CLASSIFIED-to-ASSIGNED.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-CASE-CLASSIFIED-to-ASSIGNED.json`](../fixtures/scenarios/INT-CASE-CLASSIFIED-to-ASSIGNED.json).
 
 <a id="case-int-case-concurrency"></a>
 
@@ -323,7 +323,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/platform.json`](../fixtures/offline/platform.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-CASE-CONCURRENCY.json`](../fixtures/scenarios/INT-CASE-CONCURRENCY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-CASE-CONCURRENCY.json`](../fixtures/scenarios/INT-CASE-CONCURRENCY.json).
 
 <a id="case-int-case-evidence-link"></a>
 
@@ -424,7 +424,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 - [`fixtures/offline/platform.json`](../fixtures/offline/platform.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-CASE-EVIDENCE-LINK.json`](../fixtures/scenarios/INT-CASE-EVIDENCE-LINK.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-CASE-EVIDENCE-LINK.json`](../fixtures/scenarios/INT-CASE-EVIDENCE-LINK.json).
 
 <a id="case-int-case-illegal"></a>
 
@@ -519,7 +519,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/platform.json`](../fixtures/offline/platform.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-CASE-ILLEGAL.json`](../fixtures/scenarios/INT-CASE-ILLEGAL.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-CASE-ILLEGAL.json`](../fixtures/scenarios/INT-CASE-ILLEGAL.json).
 
 <a id="case-int-case-in-progress-to-waiting-customer"></a>
 
@@ -619,7 +619,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/platform.json`](../fixtures/offline/platform.json)
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-CASE-IN_PROGRESS-to-WAITING_CUSTOMER.json`](../fixtures/scenarios/INT-CASE-IN_PROGRESS-to-WAITING_CUSTOMER.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-CASE-IN_PROGRESS-to-WAITING_CUSTOMER.json`](../fixtures/scenarios/INT-CASE-IN_PROGRESS-to-WAITING_CUSTOMER.json).
 
 <a id="case-int-case-new-to-classified"></a>
 
@@ -721,7 +721,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 - [`fixtures/offline/platform.json`](../fixtures/offline/platform.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-CASE-NEW-to-CLASSIFIED.json`](../fixtures/scenarios/INT-CASE-NEW-to-CLASSIFIED.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-CASE-NEW-to-CLASSIFIED.json`](../fixtures/scenarios/INT-CASE-NEW-to-CLASSIFIED.json).
 
 <a id="case-int-case-reopen"></a>
 
@@ -819,7 +819,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/platform.json`](../fixtures/offline/platform.json)
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-CASE-REOPEN.json`](../fixtures/scenarios/INT-CASE-REOPEN.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-CASE-REOPEN.json`](../fixtures/scenarios/INT-CASE-REOPEN.json).
 
 <a id="case-int-case-resolved-to-closed"></a>
 
@@ -912,7 +912,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/platform.json`](../fixtures/offline/platform.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-CASE-RESOLVED-to-CLOSED.json`](../fixtures/scenarios/INT-CASE-RESOLVED-to-CLOSED.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-CASE-RESOLVED-to-CLOSED.json`](../fixtures/scenarios/INT-CASE-RESOLVED-to-CLOSED.json).
 
 <a id="case-int-case-skip-denied"></a>
 
@@ -1016,7 +1016,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/platform.json`](../fixtures/offline/platform.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-CASE-SKIP-DENIED.json`](../fixtures/scenarios/INT-CASE-SKIP-DENIED.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-CASE-SKIP-DENIED.json`](../fixtures/scenarios/INT-CASE-SKIP-DENIED.json).
 
 <a id="case-int-case-sla-breach"></a>
 
@@ -1119,7 +1119,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/platform.json`](../fixtures/offline/platform.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-CASE-SLA-BREACH.json`](../fixtures/scenarios/INT-CASE-SLA-BREACH.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-CASE-SLA-BREACH.json`](../fixtures/scenarios/INT-CASE-SLA-BREACH.json).
 
 <a id="case-int-case-waiting-customer-to-resolved"></a>
 
@@ -1220,4 +1220,4 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 - [`fixtures/offline/platform.json`](../fixtures/offline/platform.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-CASE-WAITING_CUSTOMER-to-RESOLVED.json`](../fixtures/scenarios/INT-CASE-WAITING_CUSTOMER-to-RESOLVED.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/INT-CASE-WAITING_CUSTOMER-to-RESOLVED.json`](../fixtures/scenarios/INT-CASE-WAITING_CUSTOMER-to-RESOLVED.json).

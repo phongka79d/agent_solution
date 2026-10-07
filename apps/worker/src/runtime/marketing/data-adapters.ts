@@ -13,7 +13,17 @@
  * 5. Lazy database binding: no database pool connection on import.
  */
 
-import { assertTenantContext, findConsent as canonicalFindConsent, type ConsentRow } from '@agentos/database';
+import { assertTenantContext, findConsent as canonicalFindConsent, getProfile, type ConsentRow } from '@agentos/database';
+import type {
+  ExecutionContext,
+  InputMktAnalyzeSignal,
+  InputMktSegmentAudience,
+  MarketingAnalyticsPort,
+  MarketingCustomer360Port,
+  MarketingSignalReadPort,
+  OutputMktAnalyzeSignal,
+  OutputMktSegmentAudience,
+} from './skills/types.js';
 import {
   MarketingRuntimeError,
   type MarketingAudienceCandidate,
@@ -228,14 +238,16 @@ export function createMarketingConsentPort(options: MarketingConsentPortOptions)
         };
       }
 
-      if (!row.is_granted || row.opt_out_timestamp !== null) {
+      if (!row.is_granted || row.opt_in_timestamp === null || row.opt_out_timestamp !== null) {
         return {
           tenant_id: serverBoundTenantId,
           customer_id: customerId,
           channel: input.channel,
           allowed: false,
           consent_timestamp: row.opt_in_timestamp ? new Date(row.opt_in_timestamp).toISOString() : null,
-          suppression_reason: 'CONSENT_OPTED_OUT',
+          suppression_reason: row.opt_in_timestamp === null
+            ? 'CONSENT_TIMESTAMP_MISSING'
+            : 'CONSENT_OPTED_OUT',
           source_uri: `urn:agentos:consent:${row.id}`,
           source_version: row.updated_at ? new Date(row.updated_at).toISOString() : 'none',
         };
@@ -309,5 +321,148 @@ export function createMarketingResearchPort(options: MarketingResearchPortOption
       }
       return segmentAudience(input);
     },
+  };
+}
+/**
+ * Tenant-scoped Customer360 segmentation adapter used by the live Marketing campaign plan.
+ *
+ * The worker does not query commerce tables directly. Hosts bind the authoritative Customer360
+ * projection through `readAudience`; the adapter only enforces tenant identity and the approved
+ * audience bound before the result enters the skill registry.
+ */
+export interface MarketingCustomer360PortOptions {
+  readonly serverBoundTenantId: string;
+  readonly readAudience: (
+    input: InputMktSegmentAudience,
+    context: ExecutionContext,
+  ) => Promise<OutputMktSegmentAudience>;
+}
+
+export interface MarketingSignalReadPortOptions {
+  readonly serverBoundTenantId: string;
+  readonly readSignals: (
+    input: InputMktAnalyzeSignal,
+    context: ExecutionContext,
+  ) => Promise<OutputMktAnalyzeSignal>;
+}
+
+function assertBoundTenant(
+  inputTenant: unknown,
+  contextTenant: string,
+  boundTenant: string,
+): asserts inputTenant is string {
+  if (inputTenant !== boundTenant || contextTenant !== boundTenant) {
+    throw new MarketingRuntimeError(
+      'TENANT_CONTEXT_MISMATCH',
+      'Marketing adapter input, execution context, and server-bound tenant must match',
+    );
+  }
+}
+
+function assertBoundTenantAtCreation(tenantId: string): void {
+  if (typeof tenantId !== 'string' || tenantId.trim().length === 0) {
+    throw new MarketingRuntimeError('TENANT_CONTEXT_REQUIRED', 'A server-bound tenant is required');
+  }
+  assertTenantContext(tenantId);
+}
+
+export function createMarketingCustomer360Port(
+  options: MarketingCustomer360PortOptions,
+): MarketingCustomer360Port {
+  assertBoundTenantAtCreation(options.serverBoundTenantId);
+  const boundTenant = options.serverBoundTenantId;
+
+  return {
+    segmentAudience: async (
+      input: InputMktSegmentAudience,
+      context: ExecutionContext,
+    ): Promise<OutputMktSegmentAudience> => {
+      assertBoundTenant(input.tenant_id, context.tenant_id, boundTenant);
+      const maxSegmentSize = input.max_segment_size;
+      if (
+        typeof maxSegmentSize !== 'number'
+        || !Number.isSafeInteger(maxSegmentSize)
+        || maxSegmentSize < 1
+      ) {
+        throw new MarketingRuntimeError(
+          'ASM_003_UNAVAILABLE',
+          'Customer360 segmentation requires the server-resolved approved ASM-003 cap',
+        );
+      }
+      const output = await options.readAudience(input, context);
+      if (
+        output === null
+        || typeof output.segment_id !== 'string'
+        || output.segment_id.trim().length === 0
+        || !Number.isSafeInteger(output.matched_customer_count)
+        || output.matched_customer_count < 0
+        || !Array.isArray(output.customer_ids)
+        || output.customer_ids.length !== output.matched_customer_count
+        || output.customer_ids.length > maxSegmentSize
+        || output.customer_ids.some((customerId) => typeof customerId !== 'string' || customerId.trim() === '')
+        || typeof output.generated_at !== 'string'
+      ) {
+        throw new MarketingRuntimeError(
+          'SEGMENT_OUTPUT_INVALID',
+          'Customer360 returned an invalid or over-cap tenant-scoped audience',
+        );
+      }
+      return output;
+    },
+  };
+}
+
+/**
+ * Creates the tenant-scoped API-002 signal adapter. A signal reader is required: unlike a
+ * campaign cohort, market velocity cannot be inferred from a missing or unrelated event stream.
+ */
+export function createMarketingSignalReadPort(
+  options: MarketingSignalReadPortOptions,
+): MarketingSignalReadPort {
+  assertBoundTenantAtCreation(options.serverBoundTenantId);
+  const boundTenant = options.serverBoundTenantId;
+  return {
+    readSignals: async (
+      input: InputMktAnalyzeSignal,
+      context: ExecutionContext,
+    ): Promise<OutputMktAnalyzeSignal> => {
+      assertBoundTenant(input.tenant_id, context.tenant_id, boundTenant);
+      const output = await options.readSignals(input, context);
+      if (!output || !Array.isArray(output.signals) || typeof output.trend_velocity !== 'string') {
+        throw new MarketingRuntimeError('SIGNAL_OUTPUT_INVALID', 'API-002 returned an invalid signal result');
+      }
+      return output;
+    },
+  };
+}
+
+/**
+ * Analytics remains a real, tenant-scoped capability even when no measured conversion exists.
+ * The default deliberately refuses rather than returning zero-valued synthetic KPIs.
+ */
+export function createMarketingAnalyticsPort(
+  serverBoundTenantId: string,
+  evaluate: MarketingAnalyticsPort['evaluateAttribution'],
+): MarketingAnalyticsPort {
+  assertBoundTenantAtCreation(serverBoundTenantId);
+  return {
+    evaluateAttribution: async (input, context) => {
+      assertBoundTenant(input.tenant_id, context.tenant_id, serverBoundTenantId);
+      return evaluate(input, context);
+    },
+  };
+}
+
+/**
+ * Verifies an identity belongs to the server-bound tenant before any consent row is read.
+ * This is intentionally separate from the consent query so a foreign customer cannot probe
+ * another tenant's consent state.
+ */
+export function createMarketingCustomerBindingVerifier(serverBoundTenantId: string): CustomerBindingVerifier {
+  assertBoundTenantAtCreation(serverBoundTenantId);
+  return async (tenantId, customerId) => {
+    if (tenantId !== serverBoundTenantId) return false;
+    const profile = await getProfile(serverBoundTenantId, customerId);
+    return profile?.tenant_id === serverBoundTenantId && profile.customer_id === customerId;
   };
 }

@@ -7,8 +7,8 @@ export type { ErpReadPort } from '../../connectors.js';
 
 /** Environment variables consumed by the Care skill services. */
 export interface CareSkillEnv {
-  readonly CARE_TENANT_IDS?: string;
-  readonly CARE_KNOWLEDGE_ROOT?: string;
+  readonly KNOWLEDGE_TENANT_IDS?: string;
+  readonly KNOWLEDGE_ROOT?: string;
 }
 
 /** Verified customer identity record resolved server-side. */

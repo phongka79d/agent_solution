@@ -160,7 +160,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-AI-SYS-01.json`](../fixtures/scenarios/GOV-KPI-AI-SYS-01.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-AI-SYS-01.json`](../fixtures/scenarios/GOV-KPI-AI-SYS-01.json).
 
 <a id="case-gov-kpi-ai-sys-02"></a>
 
@@ -265,7 +265,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-AI-SYS-02.json`](../fixtures/scenarios/GOV-KPI-AI-SYS-02.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-AI-SYS-02.json`](../fixtures/scenarios/GOV-KPI-AI-SYS-02.json).
 
 <a id="case-gov-kpi-ai-sys-03"></a>
 
@@ -372,7 +372,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-AI-SYS-03.json`](../fixtures/scenarios/GOV-KPI-AI-SYS-03.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-AI-SYS-03.json`](../fixtures/scenarios/GOV-KPI-AI-SYS-03.json).
 
 <a id="case-gov-kpi-ai-sys-04"></a>
 
@@ -476,7 +476,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-AI-SYS-04.json`](../fixtures/scenarios/GOV-KPI-AI-SYS-04.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-AI-SYS-04.json`](../fixtures/scenarios/GOV-KPI-AI-SYS-04.json).
 
 <a id="case-gov-kpi-ai-sys-05"></a>
 
@@ -580,7 +580,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-AI-SYS-05.json`](../fixtures/scenarios/GOV-KPI-AI-SYS-05.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-AI-SYS-05.json`](../fixtures/scenarios/GOV-KPI-AI-SYS-05.json).
 
 <a id="case-gov-kpi-ai-sys-06"></a>
 
@@ -684,7 +684,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-AI-SYS-06.json`](../fixtures/scenarios/GOV-KPI-AI-SYS-06.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-AI-SYS-06.json`](../fixtures/scenarios/GOV-KPI-AI-SYS-06.json).
 
 <a id="case-gov-kpi-ai-sys-07"></a>
 
@@ -791,7 +791,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-AI-SYS-07.json`](../fixtures/scenarios/GOV-KPI-AI-SYS-07.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-AI-SYS-07.json`](../fixtures/scenarios/GOV-KPI-AI-SYS-07.json).
 
 <a id="case-gov-kpi-attribution-not-causation"></a>
 
@@ -913,7 +913,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-ATTRIBUTION-NOT-CAUSATION.json`](../fixtures/scenarios/GOV-KPI-ATTRIBUTION-NOT-CAUSATION.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-ATTRIBUTION-NOT-CAUSATION.json`](../fixtures/scenarios/GOV-KPI-ATTRIBUTION-NOT-CAUSATION.json).
 
 <a id="case-gov-kpi-attribution-window"></a>
 
@@ -1045,7 +1045,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-ATTRIBUTION-WINDOW.json`](../fixtures/scenarios/GOV-KPI-ATTRIBUTION-WINDOW.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-ATTRIBUTION-WINDOW.json`](../fixtures/scenarios/GOV-KPI-ATTRIBUTION-WINDOW.json).
 
 <a id="case-gov-kpi-cs-01"></a>
 
@@ -1149,7 +1149,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-CS-01.json`](../fixtures/scenarios/GOV-KPI-CS-01.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-CS-01.json`](../fixtures/scenarios/GOV-KPI-CS-01.json).
 
 <a id="case-gov-kpi-cs-02"></a>
 
@@ -1253,7 +1253,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-CS-02.json`](../fixtures/scenarios/GOV-KPI-CS-02.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-CS-02.json`](../fixtures/scenarios/GOV-KPI-CS-02.json).
 
 <a id="case-gov-kpi-cs-03"></a>
 
@@ -1358,7 +1358,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-CS-03.json`](../fixtures/scenarios/GOV-KPI-CS-03.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-CS-03.json`](../fixtures/scenarios/GOV-KPI-CS-03.json).
 
 <a id="case-gov-kpi-cs-04"></a>
 
@@ -1463,7 +1463,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-CS-04.json`](../fixtures/scenarios/GOV-KPI-CS-04.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-CS-04.json`](../fixtures/scenarios/GOV-KPI-CS-04.json).
 
 <a id="case-gov-kpi-cs-05"></a>
 
@@ -1567,7 +1567,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-CS-05.json`](../fixtures/scenarios/GOV-KPI-CS-05.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-CS-05.json`](../fixtures/scenarios/GOV-KPI-CS-05.json).
 
 <a id="case-gov-kpi-cs-06"></a>
 
@@ -1671,7 +1671,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-CS-06.json`](../fixtures/scenarios/GOV-KPI-CS-06.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-CS-06.json`](../fixtures/scenarios/GOV-KPI-CS-06.json).
 
 <a id="case-gov-kpi-currency-split"></a>
 
@@ -1779,7 +1779,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-CURRENCY-SPLIT.json`](../fixtures/scenarios/GOV-KPI-CURRENCY-SPLIT.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-CURRENCY-SPLIT.json`](../fixtures/scenarios/GOV-KPI-CURRENCY-SPLIT.json).
 
 <a id="case-gov-kpi-dictionary"></a>
 
@@ -1919,7 +1919,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-DICTIONARY.json`](../fixtures/scenarios/GOV-KPI-DICTIONARY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-DICTIONARY.json`](../fixtures/scenarios/GOV-KPI-DICTIONARY.json).
 
 <a id="case-gov-kpi-duplicate-events"></a>
 
@@ -2043,7 +2043,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/offline/events.json`](../fixtures/offline/events.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-DUPLICATE-EVENTS.json`](../fixtures/scenarios/GOV-KPI-DUPLICATE-EVENTS.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-DUPLICATE-EVENTS.json`](../fixtures/scenarios/GOV-KPI-DUPLICATE-EVENTS.json).
 
 <a id="case-gov-kpi-failed-execution-unknown"></a>
 
@@ -2155,7 +2155,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-FAILED-EXECUTION-UNKNOWN.json`](../fixtures/scenarios/GOV-KPI-FAILED-EXECUTION-UNKNOWN.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-FAILED-EXECUTION-UNKNOWN.json`](../fixtures/scenarios/GOV-KPI-FAILED-EXECUTION-UNKNOWN.json).
 
 <a id="case-gov-kpi-missing-cost"></a>
 
@@ -2278,7 +2278,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-MISSING-COST.json`](../fixtures/scenarios/GOV-KPI-MISSING-COST.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-MISSING-COST.json`](../fixtures/scenarios/GOV-KPI-MISSING-COST.json).
 
 <a id="case-gov-kpi-mkt-01"></a>
 
@@ -2382,7 +2382,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-MKT-01.json`](../fixtures/scenarios/GOV-KPI-MKT-01.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-MKT-01.json`](../fixtures/scenarios/GOV-KPI-MKT-01.json).
 
 <a id="case-gov-kpi-mkt-02"></a>
 
@@ -2486,7 +2486,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-MKT-02.json`](../fixtures/scenarios/GOV-KPI-MKT-02.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-MKT-02.json`](../fixtures/scenarios/GOV-KPI-MKT-02.json).
 
 <a id="case-gov-kpi-mkt-03"></a>
 
@@ -2590,7 +2590,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-MKT-03.json`](../fixtures/scenarios/GOV-KPI-MKT-03.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-MKT-03.json`](../fixtures/scenarios/GOV-KPI-MKT-03.json).
 
 <a id="case-gov-kpi-mkt-04"></a>
 
@@ -2694,7 +2694,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-MKT-04.json`](../fixtures/scenarios/GOV-KPI-MKT-04.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-MKT-04.json`](../fixtures/scenarios/GOV-KPI-MKT-04.json).
 
 <a id="case-gov-kpi-mkt-05"></a>
 
@@ -2798,7 +2798,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-MKT-05.json`](../fixtures/scenarios/GOV-KPI-MKT-05.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-MKT-05.json`](../fixtures/scenarios/GOV-KPI-MKT-05.json).
 
 <a id="case-gov-kpi-mkt-06"></a>
 
@@ -2902,7 +2902,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-MKT-06.json`](../fixtures/scenarios/GOV-KPI-MKT-06.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-MKT-06.json`](../fixtures/scenarios/GOV-KPI-MKT-06.json).
 
 <a id="case-gov-kpi-mkt-07"></a>
 
@@ -3006,7 +3006,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-MKT-07.json`](../fixtures/scenarios/GOV-KPI-MKT-07.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-MKT-07.json`](../fixtures/scenarios/GOV-KPI-MKT-07.json).
 
 <a id="case-gov-kpi-no-data-vs-zero"></a>
 
@@ -3116,7 +3116,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-NO-DATA-VS-ZERO.json`](../fixtures/scenarios/GOV-KPI-NO-DATA-VS-ZERO.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-NO-DATA-VS-ZERO.json`](../fixtures/scenarios/GOV-KPI-NO-DATA-VS-ZERO.json).
 
 <a id="case-gov-kpi-refund-cancel-exclusion"></a>
 
@@ -3238,7 +3238,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-REFUND-CANCEL-EXCLUSION.json`](../fixtures/scenarios/GOV-KPI-REFUND-CANCEL-EXCLUSION.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-REFUND-CANCEL-EXCLUSION.json`](../fixtures/scenarios/GOV-KPI-REFUND-CANCEL-EXCLUSION.json).
 
 <a id="case-gov-kpi-reopen-takeover"></a>
 
@@ -3350,7 +3350,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-REOPEN-TAKEOVER.json`](../fixtures/scenarios/GOV-KPI-REOPEN-TAKEOVER.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-REOPEN-TAKEOVER.json`](../fixtures/scenarios/GOV-KPI-REOPEN-TAKEOVER.json).
 
 <a id="case-gov-kpi-safety-invariants"></a>
 
@@ -3475,7 +3475,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-SAFETY-INVARIANTS.json`](../fixtures/scenarios/GOV-KPI-SAFETY-INVARIANTS.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-SAFETY-INVARIANTS.json`](../fixtures/scenarios/GOV-KPI-SAFETY-INVARIANTS.json).
 
 <a id="case-gov-kpi-sal-01"></a>
 
@@ -3579,7 +3579,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-SAL-01.json`](../fixtures/scenarios/GOV-KPI-SAL-01.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-SAL-01.json`](../fixtures/scenarios/GOV-KPI-SAL-01.json).
 
 <a id="case-gov-kpi-sal-02"></a>
 
@@ -3683,7 +3683,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-SAL-02.json`](../fixtures/scenarios/GOV-KPI-SAL-02.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-SAL-02.json`](../fixtures/scenarios/GOV-KPI-SAL-02.json).
 
 <a id="case-gov-kpi-sal-03"></a>
 
@@ -3787,7 +3787,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-SAL-03.json`](../fixtures/scenarios/GOV-KPI-SAL-03.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-SAL-03.json`](../fixtures/scenarios/GOV-KPI-SAL-03.json).
 
 <a id="case-gov-kpi-sal-04"></a>
 
@@ -3891,7 +3891,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-SAL-04.json`](../fixtures/scenarios/GOV-KPI-SAL-04.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-SAL-04.json`](../fixtures/scenarios/GOV-KPI-SAL-04.json).
 
 <a id="case-gov-kpi-sal-05"></a>
 
@@ -3995,7 +3995,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-SAL-05.json`](../fixtures/scenarios/GOV-KPI-SAL-05.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-SAL-05.json`](../fixtures/scenarios/GOV-KPI-SAL-05.json).
 
 <a id="case-gov-kpi-sal-06"></a>
 
@@ -4099,7 +4099,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-SAL-06.json`](../fixtures/scenarios/GOV-KPI-SAL-06.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-SAL-06.json`](../fixtures/scenarios/GOV-KPI-SAL-06.json).
 
 <a id="case-gov-kpi-sal-07"></a>
 
@@ -4203,7 +4203,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-SAL-07.json`](../fixtures/scenarios/GOV-KPI-SAL-07.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-SAL-07.json`](../fixtures/scenarios/GOV-KPI-SAL-07.json).
 
 <a id="case-gov-kpi-suc-01"></a>
 
@@ -4307,7 +4307,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-SUC-01.json`](../fixtures/scenarios/GOV-KPI-SUC-01.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-SUC-01.json`](../fixtures/scenarios/GOV-KPI-SUC-01.json).
 
 <a id="case-gov-kpi-suc-02"></a>
 
@@ -4411,7 +4411,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-SUC-02.json`](../fixtures/scenarios/GOV-KPI-SUC-02.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-SUC-02.json`](../fixtures/scenarios/GOV-KPI-SUC-02.json).
 
 <a id="case-gov-kpi-suc-03"></a>
 
@@ -4515,7 +4515,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-SUC-03.json`](../fixtures/scenarios/GOV-KPI-SUC-03.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-SUC-03.json`](../fixtures/scenarios/GOV-KPI-SUC-03.json).
 
 <a id="case-gov-kpi-suc-04"></a>
 
@@ -4619,7 +4619,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-SUC-04.json`](../fixtures/scenarios/GOV-KPI-SUC-04.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-SUC-04.json`](../fixtures/scenarios/GOV-KPI-SUC-04.json).
 
 <a id="case-gov-kpi-suc-05"></a>
 
@@ -4723,7 +4723,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-SUC-05.json`](../fixtures/scenarios/GOV-KPI-SUC-05.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-SUC-05.json`](../fixtures/scenarios/GOV-KPI-SUC-05.json).
 
 <a id="case-gov-kpi-target-not-locked"></a>
 
@@ -4841,7 +4841,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-TARGET-NOT-LOCKED.json`](../fixtures/scenarios/GOV-KPI-TARGET-NOT-LOCKED.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-TARGET-NOT-LOCKED.json`](../fixtures/scenarios/GOV-KPI-TARGET-NOT-LOCKED.json).
 
 <a id="case-gov-kpi-zero-denominator"></a>
 
@@ -4950,4 +4950,4 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-ZERO-DENOMINATOR.json`](../fixtures/scenarios/GOV-KPI-ZERO-DENOMINATOR.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-KPI-ZERO-DENOMINATOR.json`](../fixtures/scenarios/GOV-KPI-ZERO-DENOMINATOR.json).

@@ -13,13 +13,13 @@
     "algorithm": "sha256",
     "note": "SHA-256 of every generator input with CRLF normalized to LF; --check re-reads them so a review can pin exactly which sources were rendered.",
     "files": {
-      "testcases/_generate.py": "9c0dded35379e6dab34cd2400ab49c53629c82063d01fd8806cbe277403546ac",
+      "testcases/_generate.py": "3c7f84110381ba3c3e75a7a845a1549d2270d3633be82cee13ceae617ce4dcc1",
       "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md": "a29b443d83b3b1e83acfca73068999b3750aa7a4c53e9a45ce8de378865af141",
       "testcases/sources/requirements.json": "72f7ad7c6113cd5735dd31055186ead6d0fe30df00e2c2c82940e3f1bbdd2b13",
       "testcases/sources/baseline-ids.json": "e28a2ecd371796846c3ab5d5bcf33387b9b17191c6f84b8cd3c08eab385e9c2d",
       "testcases/sources/business.py": "662263bfe156126d03415033c5a9f03e994838013025e10db729255cb753fb92",
       "testcases/sources/governance.py": "fec72b9922a4b796b064bcc9f899338086453a0dcdaa2809600926447c0a5276",
-      "testcases/sources/platform.py": "bfb1d514b12daef83bb11688a53ae001a012ec484c80fbb5453cd82c070464cf",
+      "testcases/sources/platform.py": "6c0fa7ccb2f694224dc94cdd7920a5b62f511449b44922ca5243128f478db342",
       "testcases/sources/business/skills.py": "bf629730f94db0dff6b016e7eb949bc15c34db8449356c72531c07871d751fc0",
       "testcases/sources/business/sales.py": "da6fd747384ea74569b334dfe64943752121894f0248d2e76fd4cb45894aa255",
       "testcases/sources/business/e2e.py": "ac3c3899e7655cedcb3c0cc32728e06622ce2cd8be7fd7665fcdfaf4102d2baa",
@@ -32,7 +32,7 @@
       "testcases/sources/governance/nfr.py": "8f52ec6ac1ca683e993e8d0ab6466832323a54d26e232798c06e6b9abc908238",
       "testcases/sources/governance/asm.py": "bc91cd9deb18a4fc44afa84a732cc9758c32373163e61e9828e653b013e59a36",
       "testcases/sources/governance/kpi.py": "1c5d50c4100a30c5d68fe56969c0138eddc1ff7f12bfba1b4f5b671b79baedcb",
-      "testcases/sources/governance/gates.py": "be222b3f5363f56e7b3934135dbe56e042f0e48e2bdac980bb04feb2e8443dce",
+      "testcases/sources/governance/gates.py": "dc83c22cc66c95aa58152c90ca0bb40ba1ce81d06407313f83d7a3f00482dc0d",
       "testcases/sources/platform/knowledge_entities.py": "b467939e897263c0de780d9e4ef73d24270ea8ef2f73ad7713badc7a71608248",
       "testcases/sources/platform/connectors.py": "6cd52c81e26e4c29990298eef658c9ea9737537168b283354e5b966b5e7324ac",
       "testcases/sources/platform/customer_360.py": "7b85ecf30ce14ab009ab466ddb842d8d845b37da7e1b2d1e67ad5cc7a2c88e69",
@@ -42,7 +42,7 @@
       "testcases/generators/model.py": "350c4b6eb9d163eee1a367560410d861b7a81327fa36ad0afe47c83f767db632",
       "testcases/generators/inputs.py": "56f5ed183ccbcb9c95222b9a609fb68e0ef1eaa1b06eeef8e2c4e26964f0bc6b",
       "testcases/generators/validation.py": "1b6e5fbbe2c3f10dc316948a3478d23fd703d4d06440241472a0e2a009400c2a",
-      "testcases/generators/render.py": "ed7faa565c81f32cb637e786dd4c1df5d82acb17709bd08d6366382a1fe1c6ca",
+      "testcases/generators/render.py": "167ac9f7aeb6ce1b51b99561d7295f7b68ca40c7ba2de3416fdd1851a41679b0",
       "testcases/generators/output.py": "fba640809fdc8bbb212e7613c5ce9a35e19c8a14736202e0210c9b0b0565c2a1"
     }
   },
@@ -56,10 +56,10 @@
       "SKIP_UNIMPLEMENTED",
       "BLOCKED_PREREQUISITE"
     ],
-    "runtime_available": false,
+    "runtime_available": true,
     "pass_recorded": false,
     "source_documents_are_specifications": true,
-    "note": "No application runtime exists and no runtime test was executed. The case documents are specifications. Generation proves document integrity and traceability only; the generator never records PASS."
+    "note": "The repository includes runtime, but no runtime test was executed by the generator. The case documents are specifications. Generation proves document integrity and traceability only; the generator never records PASS."
   },
   "counts": {
     "cases": 383,

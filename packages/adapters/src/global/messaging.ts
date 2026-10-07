@@ -55,22 +55,51 @@ export type MessagingPayload =
   | { readonly mode: 'FREE_FORM'; readonly text: string }
   | { readonly mode: 'TEMPLATE'; readonly template_id: string; readonly parameters: Readonly<Record<string, string>> };
 
+/**
+ * Outbound messaging facts are deliberately absent from this request. Consent, suppression,
+ * takeover and the session window are authoritative platform state, not caller assertions.
+ */
 export interface MessagingRequest {
   readonly tenant_id: string;
+  readonly session_id: string;
   readonly provider_id: string;
   readonly recipient: string;
   readonly payload: MessagingPayload;
   readonly effect_key: string;
   readonly idempotency_key: string;
-  readonly consent: MessagingConsent | null;
-  readonly suppression: MessagingSuppression | null;
-  readonly takeover_active: boolean;
-  readonly session_hold_active: boolean;
-  readonly window_policy: (input: {
-    readonly payload: MessagingPayload;
+}
+
+/**
+ * The host binds these reads to its tenant-scoped, server-verified customer/session stores.
+ * Implementations MUST NOT derive any result from an outbound payload.
+ */
+export interface MessagingAuthority {
+  readonly consent: (input: {
     readonly tenant_id: string;
     readonly recipient: string;
-  }) => MessagingWindowDecision;
+    readonly session_id: string;
+  }) => Promise<MessagingConsent | null> | MessagingConsent | null;
+  readonly suppression: (input: {
+    readonly tenant_id: string;
+    readonly recipient: string;
+    readonly session_id: string;
+  }) => Promise<MessagingSuppression | null> | MessagingSuppression | null;
+  readonly takeover: (input: {
+    readonly tenant_id: string;
+    readonly recipient: string;
+    readonly session_id: string;
+  }) => Promise<boolean> | boolean;
+  readonly sessionHold: (input: {
+    readonly tenant_id: string;
+    readonly recipient: string;
+    readonly session_id: string;
+  }) => Promise<boolean> | boolean;
+  readonly window: (input: {
+    readonly tenant_id: string;
+    readonly recipient: string;
+    readonly session_id: string;
+    readonly payload: MessagingPayload;
+  }) => Promise<MessagingWindowDecision> | MessagingWindowDecision;
 }
 
 export interface MessagingProviderResponse {
@@ -122,9 +151,13 @@ function assertTenant(tenant_id: string): void {
 
 function assertRequest(request: MessagingRequest): void {
   assertTenant(request.tenant_id);
-  if (request.provider_id.trim().length === 0 || request.recipient.trim().length === 0
-    || request.effect_key.trim().length === 0 || request.idempotency_key.trim().length === 0) {
-    throw new MessagingRefusalError('REQUEST_INVALID', 'provider, recipient, effect_key and idempotency_key are required');
+  if (request.session_id.trim().length === 0 || request.provider_id.trim().length === 0
+    || request.recipient.trim().length === 0 || request.effect_key.trim().length === 0
+    || request.idempotency_key.trim().length === 0) {
+    throw new MessagingRefusalError(
+      'REQUEST_INVALID',
+      'session, provider, recipient, effect_key and idempotency_key are required',
+    );
   }
   if (request.payload.mode === 'FREE_FORM' && request.payload.text.trim().length === 0) {
     throw new MessagingRefusalError('REQUEST_INVALID', 'free-form text cannot be empty');
@@ -132,8 +165,12 @@ function assertRequest(request: MessagingRequest): void {
   if (request.payload.mode === 'TEMPLATE' && request.payload.template_id.trim().length === 0) {
     throw new MessagingRefusalError('REQUEST_INVALID', 'template id is required');
   }
-  if (typeof request.takeover_active !== 'boolean' || typeof request.session_hold_active !== 'boolean') {
-    throw new MessagingRefusalError('REQUEST_INVALID', 'takeover and session hold inputs are required');
+  // Reject legacy caller-supplied authority fields rather than silently accepting a forged claim.
+  const candidate = request as unknown as Record<string, unknown>;
+  for (const field of ['consent', 'suppression', 'takeover_active', 'session_hold_active', 'window_policy']) {
+    if (field in candidate) {
+      throw new MessagingRefusalError('REQUEST_INVALID', `${field} is an authoritative lookup, not a payload field`);
+    }
   }
 }
 
@@ -178,24 +215,45 @@ export class GlobalMessagingAdapter {
     private readonly deps: {
       readonly providers: MessagingProviderRegistry;
       readonly idempotency: MessagingIdempotencyStore;
+      readonly authority: MessagingAuthority;
     },
   ) {}
 
   async send(request: MessagingRequest): Promise<MessagingReceipt> {
     assertRequest(request);
-    if (request.consent === null || request.consent.granted !== true || request.consent.captured_at.length === 0) {
-      throw new MessagingRefusalError('CONSENT_REQUIRED', 'consent input is required immediately before outbound send');
-    }
-    if (request.suppression === null || request.suppression.suppressed === true || request.suppression.evaluated_at.length === 0) {
-      throw new MessagingRefusalError('SUPPRESSED', 'suppression input blocks this outbound request');
-    }
-    if (request.takeover_active) throw new MessagingRefusalError('TAKEOVER_ACTIVE', 'human takeover refuses outbound messaging');
-    if (request.session_hold_active) throw new MessagingRefusalError('SESSION_HOLD_ACTIVE', 'session hold refuses outbound messaging');
-    const window = request.window_policy({
-      payload: request.payload,
+
+    // Resolve the provider before reserving idempotency. An unbound provider must leave no dangling
+    // reservation that can make a later, valid request appear to be a replay.
+    const provider = this.deps.providers.resolve(request.provider_id);
+    const scope = {
       tenant_id: request.tenant_id,
       recipient: request.recipient,
-    });
+      session_id: request.session_id,
+    };
+    let consent: MessagingConsent | null;
+    let suppression: MessagingSuppression | null;
+    let takeover_active: boolean;
+    let session_hold_active: boolean;
+    let window: MessagingWindowDecision;
+    try {
+      [consent, suppression, takeover_active, session_hold_active, window] = await Promise.all([
+        this.deps.authority.consent(scope),
+        this.deps.authority.suppression(scope),
+        this.deps.authority.takeover(scope),
+        this.deps.authority.sessionHold(scope),
+        this.deps.authority.window({ ...scope, payload: request.payload }),
+      ]);
+    } catch {
+      throw new MessagingRefusalError('RESPONSE_INVALID', 'authoritative messaging state is unavailable');
+    }
+    if (consent === null || consent.granted !== true || consent.captured_at.length === 0) {
+      throw new MessagingRefusalError('CONSENT_REQUIRED', 'authoritative consent is required immediately before send');
+    }
+    if (suppression === null || suppression.suppressed === true || suppression.evaluated_at.length === 0) {
+      throw new MessagingRefusalError('SUPPRESSED', 'authoritative suppression state blocks this outbound request');
+    }
+    if (takeover_active) throw new MessagingRefusalError('TAKEOVER_ACTIVE', 'human takeover refuses outbound messaging');
+    if (session_hold_active) throw new MessagingRefusalError('SESSION_HOLD_ACTIVE', 'session hold refuses outbound messaging');
     if (!window.allowed) {
       throw new MessagingRefusalError('WINDOW_RESTRICTION', window.reason ?? 'template or session window policy refused');
     }
@@ -221,7 +279,6 @@ export class GlobalMessagingAdapter {
       return prior.receipt;
     }
 
-    const provider = this.deps.providers.resolve(request.provider_id);
     let response: MessagingProviderResponse;
     try {
       response = await provider.send(request);
@@ -284,9 +341,14 @@ export async function verifyMessagingWebhook(input: {
 }
 
 function actionToMessage(action: ActionDraft): MessagingRequest {
-  const payload = action.payload as Partial<MessagingRequest>;
+  const payload = action.payload as Partial<MessagingRequest> & Record<string, unknown>;
   if (payload.tenant_id !== action.tenant_id) {
     throw new MessagingRefusalError('TENANT_UNSCOPED', 'action tenant does not match authenticated tenant');
+  }
+  for (const field of ['consent', 'suppression', 'takeover_active', 'session_hold_active', 'window_policy']) {
+    if (field in payload) {
+      throw new MessagingRefusalError('REQUEST_INVALID', `${field} cannot be supplied by an action payload`);
+    }
   }
   return payload as MessagingRequest;
 }

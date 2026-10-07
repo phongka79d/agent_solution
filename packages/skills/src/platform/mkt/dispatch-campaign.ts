@@ -30,8 +30,6 @@ export interface InputMktDispatchCampaign {
   floor_source?: string;
   promotion_provenance?: string;
   promotion_source?: string;
-  /** Shared orchestrator binding; present on effect-bearing dispatches. */
-  effect_key?: string;
 }
 
 /** §4.1 field 4 `Output*` of the row. */
@@ -77,7 +75,6 @@ const spec: Omit<PlatformRowSpec, 'skill_id'> = {
       floor_source: { type: 'string' },
       promotion_provenance: { type: 'string' },
       promotion_source: { type: 'string' },
-      effect_key: { type: 'string' },
     },
     additionalProperties: false,
   },

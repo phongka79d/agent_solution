@@ -28,7 +28,6 @@ export interface InputSalesSendMessage {
   recipient_id: string;
   channel: 'LINE' | 'WHATSAPP' | 'WEB_CHAT' | 'SMS' | 'ZALO' | 'TIKTOK' | 'MESSENGER' | 'INSTAGRAM';
   message_content: OutboundMessagePayload;
-  effect_key: string;
 }
 
 /** Output of `skill.sales.send_message` (§4.2 skill 15). */
@@ -45,7 +44,7 @@ export const SALES_SEND_MESSAGE_SKILL_ID = 'skill.sales.send_message';
 const input_schema: Record<string, unknown> = {
   $schema: 'https://json-schema.org/draft/2020-12/schema',
   type: 'object',
-  required: ['tenant_id', 'recipient_id', 'channel', 'message_content', 'effect_key'],
+  required: ['tenant_id', 'recipient_id', 'channel', 'message_content'],
   properties: {
     tenant_id: { type: 'string' },
     recipient_id: { type: 'string' },
@@ -81,9 +80,7 @@ const input_schema: Record<string, unknown> = {
         },
       },
     },
-    effect_key: { type: 'string' },
   },
-  additionalProperties: false,
 };
 
 /** Output schema of §4.2 skill 15, verbatim. */

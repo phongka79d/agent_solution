@@ -93,6 +93,7 @@ export const AUDIT_PROJECTION = `
       id,
       run_id,
       tenant_id,
+      chain_seq,
       agent_id,
       customer_or_entity_id,
       trigger,
@@ -114,6 +115,12 @@ export const AUDIT_PROJECTION = `
       chain_hash`;
 
 /**
+ * The database-owned audit instant. `clock_timestamp()` is sampled after the tenant lock and
+ * truncated to the millisecond rendering covered by the chain hash; callers never supply it.
+ */
+export const SELECT_AUDIT_SERVER_TIMESTAMP = `SELECT date_trunc('milliseconds', clock_timestamp()) AS server_timestamp`;
+
+/**
  * Serializes every append of one chain scope for the rest of the transaction: the key is derived
  * in-database (`hashtext`) from the table name and the scope identity, so every process — and every
  * language — derives the same lock without sharing a hash function (implement/08 §4.2).
@@ -121,8 +128,8 @@ export const AUDIT_PROJECTION = `
 export const LOCK_CHAIN_SCOPE = 'SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))';
 
 /**
- * `created_at` is omitted so the durable column default (`CURRENT_TIMESTAMP`) stays the single
- * source of that instant; a caller that owns the instant passes it and the `COALESCE` uses it.
+ * `created_at` is omitted so the durable column default (and the audit timestamp sampled by the
+ * server) stays the single source of operational instants.
  */
 export const INSERT_EVIDENCE_RECORD = `INSERT INTO ${EVIDENCE_RECORDS} (
       evidence_id,
@@ -189,12 +196,15 @@ export const INSERT_AUDIT_RECORD = `INSERT INTO ${AUDIT_RECORDS} (
       latency_ms,
       cost,
       error,
+      chain_seq,
       "timestamp",
       prev_hash,
       chain_hash
     ) VALUES (
       $1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9::jsonb, $10, $11::jsonb, $12::jsonb, $13, $14::jsonb,
-      $15::jsonb, $16, $17::jsonb, $18::jsonb, $19::timestamptz, $20, $21
+      $15::jsonb, $16, $17::jsonb, $18::jsonb,
+      (SELECT COALESCE(MAX(chain_seq), 0) + 1 FROM ${AUDIT_RECORDS} WHERE tenant_id = $2),
+      $19::timestamptz, $20, $21
     )
     RETURNING id`;
 
@@ -215,20 +225,19 @@ export const SELECT_EVIDENCE_BY_RUN = `SELECT${EVIDENCE_PROJECTION}
   ORDER BY step_index, evidence_id`;
 
 /**
- * The tenant's durable chain tail. The writer binds `timestamp` to the audit event time, so the
- * greatest `(timestamp, id)` pair is the last append; `id` is time-ordered (`uuid_generate_v7`), so
- * a tie cannot leave the choice to the planner.
+ * The tenant's durable chain tail. `chain_seq` is assigned under the tenant advisory lock and is the
+ * sole ordering authority; caller clocks and event timestamps cannot reorder the predecessor.
  */
 export const SELECT_AUDIT_TAIL = `SELECT${AUDIT_PROJECTION}
   FROM ${AUDIT_RECORDS}
   WHERE tenant_id = $1
-  ORDER BY "timestamp" DESC, id DESC
+  ORDER BY chain_seq DESC
   LIMIT 1`;
 
 export const SELECT_AUDIT_BY_TENANT = `SELECT${AUDIT_PROJECTION}
   FROM ${AUDIT_RECORDS}
   WHERE tenant_id = $1
-  ORDER BY "timestamp", id`;
+  ORDER BY chain_seq, id`;
 
 export const SELECT_RUN_LOGS_BY_RUN = `SELECT${RUN_LOG_PROJECTION}
   FROM ${AGENT_RUN_LOGS}
@@ -237,6 +246,11 @@ export const SELECT_RUN_LOGS_BY_RUN = `SELECT${RUN_LOG_PROJECTION}
 
 export const SELECT_EVIDENCE_BY_EFFECT = `SELECT${EVIDENCE_PROJECTION} FROM ${EVIDENCE_RECORDS}
            WHERE tenant_id = $1 AND run_id = $2 AND effect_key = $3 AND step_index = $4`;
+
+export interface AuditServerTimestampRow extends QueryResultRow {
+  server_timestamp: Date;
+}
+
 /* ------------------------------------------------------------------------------------------------
  * Persistence: the append-only writers and the chain readers (implement/04 §6.1, implement/08 §4.2)
  * ---------------------------------------------------------------------------------------------- */
@@ -288,6 +302,8 @@ export interface AuditRecordRow extends QueryResultRow {
   id: string;
   run_id: string;
   tenant_id: string;
+  /** PostgreSQL `bigint` values are strings under the default `pg` type parser. */
+  chain_seq: string;
   agent_id: string;
   customer_or_entity_id: string;
   trigger: string;
@@ -368,6 +384,7 @@ export function toAuditRecord(row: AuditRecordRow): AuditRecord {
     id: row.id,
     run_id: row.run_id,
     tenant_id: row.tenant_id,
+    chain_seq: row.chain_seq,
     agent_id: row.agent_id,
     customer_or_entity_id: row.customer_or_entity_id,
     trigger: row.trigger,

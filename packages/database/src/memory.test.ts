@@ -184,6 +184,19 @@ class FakeRedisClient implements RedisInjectedClient {
     const storedKey = String(key);
     const current = this.store.get(storedKey);
 
+    if (script.includes('reserve_effect_key')) {
+      const candidate = String(rest[0] ?? '');
+      const ttlSeconds = Number(rest[1]);
+
+      if (current !== undefined) {
+        return [0, current];
+      }
+
+      this.store.set(storedKey, candidate);
+      this.expiries.set(storedKey, this.now().getTime() + ttlSeconds * 1000);
+      return [1, candidate];
+    }
+
     // The session mutex release: the caller's token must be the stored value before the delete.
     if (!script.includes('cjson')) {
       if (current === undefined || rest[0] === undefined || current !== String(rest[0])) {
@@ -271,6 +284,16 @@ describe('redis key builders', () => {
     expect(taskLeaseKey(TENANT, 'run-1')).toBe(`tenant:${TENANT}:task:run-1:lease`);
     expect(rateLimitKey(TENANT, 'orders', '1m')).toBe(`tenant:${TENANT}:ratelimit:orders:1m`);
     expect(workingMemoryKey(TENANT, SESSION)).toBe(`tenant:${TENANT}:wm:${SESSION}`);
+  });
+
+  it('escapes every caller-controlled key segment so delimiters cannot collide', () => {
+    const first = effectReservationKey('tenant:a:b', 'effect:c');
+    const second = effectReservationKey('tenant:a', 'b:effect:c');
+
+    expect(first).not.toBe(second);
+    expect(first).toContain('%3A');
+    expect(sessionMutexKey(TENANT, 'session:a')).toContain('%3A');
+    expect(rateLimitKey(TENANT, 'entity:a', 'window:b')).toContain('%3A');
   });
 
   it('refuses a blank tenant instead of falling back to a shared key', () => {
@@ -497,9 +520,18 @@ describe('effect reservation (injected client)', () => {
       status: 'PENDING',
     });
 
-    const reserveCall = client.calls.find((call) => call.command === 'set');
+    const reserveCall = client.calls.find(
+      (call) => call.command === 'eval' && call.script?.includes('reserve_effect_key'),
+    );
     expect(reserveCall?.key).toBe(effectReservationKey(TENANT, 'effect-1'));
-    expect(reserveCall?.args.slice(1)).toEqual(['EX', EFFECT_RESERVATION_TTL_SECONDS, 'NX']);
+    expect(reserveCall?.args[2]).toBe(EFFECT_RESERVATION_TTL_SECONDS);
+    expect(JSON.parse(String(reserveCall?.args[1]))).toMatchObject({
+      status: 'PENDING',
+      hash: expect.any(String),
+      createdAt: expect.any(String),
+    });
+
+    expect(client.calls.some((call) => call.command === 'get')).toBe(false);
 
     await expect(reserveEffectKey(client, TENANT, 'effect-1', payload)).resolves.toEqual({
       isNew: false,
@@ -542,11 +574,14 @@ describe('qdrant knowledge filters', () => {
       'namespace',
       'document_status',
       'file_path',
+      'customer_id',
     ]);
   });
 
   it('requires tenant, namespace and approved status for organizational knowledge', () => {
     for (const namespace of KNOWLEDGE_NAMESPACES) {
+      if (namespace === 'customer') continue;
+
       const filter = buildOrganizationalKnowledgeFilter({ tenantId: TENANT, namespace });
 
       expect(filter.must).toHaveLength(3);
@@ -554,6 +589,12 @@ describe('qdrant knowledge filters', () => {
       expect(filter.must).toContainEqual({ key: 'namespace', match: { value: namespace } });
       expect(filter.must).toContainEqual({ key: 'document_status', match: { value: 'approved' } });
     }
+  });
+
+  it('refuses customer namespace retrieval without a customer binding', () => {
+    expect(() =>
+      buildOrganizationalKnowledgeFilter({ tenantId: TENANT, namespace: 'customer' }),
+    ).toThrow('CUSTOMER_CONTEXT_REQUIRED');
   });
 
   it('binds customer knowledge to the same tenant, namespace and approval filter', () => {

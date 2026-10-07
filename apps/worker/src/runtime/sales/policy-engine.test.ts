@@ -1001,12 +1001,14 @@ describe('SalesPolicyEngine', () => {
   });
 
   describe('createSalesOrchestratorFactory', () => {
-    it('fails closed when audit HMAC secret is missing', () => {
-      expect(() =>
-        createSalesOrchestratorFactory({
-          auditSecret: '',
-        }),
-      ).toThrow('SALES_AUDIT_SECRET_REQUIRED');
+    it('records a structured blocker and returns no orchestrator when audit HMAC secret is missing', async () => {
+      const blockers: string[] = [];
+      const factory = createSalesOrchestratorFactory({
+        auditSecret: '',
+        blockers,
+      });
+      await expect(factory(tenant_id)).resolves.toBeNull();
+      expect(blockers[0]).toContain('SALES_AUDIT_SECRET_REQUIRED');
     });
 
     it('reports all unbound capabilities when ports are unconfigured', () => {
@@ -1028,7 +1030,7 @@ describe('SalesPolicyEngine', () => {
       };
 
       const orchestratorFactory = createSalesOrchestratorFactory({
-        auditSecret: 'test-secret',
+        env: { AUDIT_HMAC_SECRET: 'test-secret' },
         consent: consentPort,
       });
       expect(orchestratorFactory).toBeDefined();
@@ -1037,10 +1039,12 @@ describe('SalesPolicyEngine', () => {
     it('preserves audit signing and autonomy admission in the assembled Sales policy', async () => {
       const auditTrail: IAuditTrail = { append: vi.fn(async () => undefined) };
       const admit = vi.fn(async () => ({ workflow: 'PARKED_DRAFT' as const, reason: 'not promoted' }));
+      const assertExecutionLease = vi.fn(async () => undefined);
       const factory = createSalesOrchestratorFactory({
         auditSecret: 'sales-factory-audit-secret',
         autonomy: { admit },
         resolve_grant: async () => 'AUTH-3',
+        assertExecutionLease,
         contextAggregator: {} as IContextAggregator,
         agentRuntime: {} as IAgentRuntime,
         adapterDispatcher: {} as IAdapterDispatcher,
@@ -1055,7 +1059,10 @@ describe('SalesPolicyEngine', () => {
       });
       const orchestrator = await factory(tenant_id);
       // In-process factory construction keeps the injected policy private to the orchestrator.
-      const internals = orchestrator as unknown as { dependencies: { policyEngine: IPolicyEngine } };
+      const internals = orchestrator as unknown as {
+        dependencies: { policyEngine: IPolicyEngine; assertExecutionLease?: unknown };
+      };
+      expect(internals.dependencies.assertExecutionLease).toBe(assertExecutionLease);
       const policyEngine = internals.dependencies.policyEngine;
       const stock: ActionDraft = {
         action_id: '00000000-0000-4000-8000-000000000050',

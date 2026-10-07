@@ -15,7 +15,10 @@ const TENANT = 'tenant-a';
 
 const CONVERSATION_ID = '11111111-1111-4111-8111-111111111111';
 
-function buildTakeoverHarness() {
+function buildTakeoverHarness(options: {
+  readonly operator_id?: string;
+  readonly release_outcome?: 'EXPIRED' | 'NOT_HELD' | 'HELD_BY_ANOTHER_OPERATOR';
+} = {}) {
   const conversation: {
     conversation_id: string;
     tenant_id: string;
@@ -40,13 +43,19 @@ function buildTakeoverHarness() {
     created_at: '2026-09-23T00:00:00.000Z',
   };
   const lease = { operator_id: 'operator-a', expires_at: '2026-09-23T00:01:00.000Z' };
+  const operator_id = options.operator_id ?? 'operator-a';
+  const release_outcome = options.release_outcome ?? 'EXPIRED';
   const acquire = vi.fn(async (_input: unknown) => ({
     outcome: 'ACQUIRED' as 'ACQUIRED' | 'RENEWED' | 'HELD_BY_ANOTHER_OPERATOR',
     lease,
   }));
   const release = vi.fn(async (_input: unknown) => ({
-    outcome: 'EXPIRED' as 'EXPIRED' | 'NOT_HELD' | 'HELD_BY_ANOTHER_OPERATOR',
-    lease: null,
+    outcome: release_outcome,
+    lease: release_outcome === 'HELD_BY_ANOTHER_OPERATOR' ? lease : null,
+  }));
+  const renew = vi.fn(async (_input: { extend_seconds?: number }) => ({
+    outcome: 'RENEWED' as const,
+    lease: { operator_id: 'operator-a', expires_at: '2026-09-23T00:02:00.000Z' },
   }));
   const claim = vi.fn(async (_input: unknown): Promise<'CLAIMED' | 'NO_HANDOFF' | 'HELD_BY_ANOTHER_OPERATOR'> => 'CLAIMED');
   const complete = vi.fn(async (_input: unknown): Promise<'COMPLETED' | 'NO_HANDOFF' | 'NOT_ASSIGNED' | 'HELD_BY_ANOTHER_OPERATOR'> => 'COMPLETED');
@@ -59,12 +68,28 @@ function buildTakeoverHarness() {
     conversation.state = state;
     conversation.takeover_operator_id = operator_id;
   });
+  const clearTakeoverIfOwned = vi.fn(async (
+    _tenant_id: string,
+    _conversation_id: string,
+    operator_id: string,
+  ) => {
+    if (conversation.state !== 'paused_takeover' || conversation.takeover_operator_id !== operator_id) return false;
+    conversation.state = 'open';
+    conversation.takeover_operator_id = null;
+    return true;
+  });
   const runtime = {
     conversations: {
       get: vi.fn(async () => conversation),
       setState,
+      clearTakeoverIfOwned,
     },
-    takeover: { acquire, release },
+    takeover: {
+      acquire,
+      release,
+      renew,
+      holder: vi.fn(async () => lease),
+    },
     handoffs: { claim, complete },
     audit: { record: vi.fn(async () => undefined) },
     clock: () => new Date('2026-09-23T00:00:00.000Z'),
@@ -77,14 +102,14 @@ function buildTakeoverHarness() {
       operators: [{
         token: 'operator-token',
         tenant_id: TENANT,
-        operator_id: 'operator-a',
+        operator_id,
         permissions: ['conversation:takeover'],
       }],
       sessions: [],
       widgets: [],
     }),
   });
-  return { app, acquire, claim, complete, conversation, release, setState };
+  return { app, acquire, claim, complete, conversation, release, renew, setState, clearTakeoverIfOwned };
 }
 
 describe('conversation takeover durable handoff coordination', () => {
@@ -170,8 +195,8 @@ describe('conversation takeover durable handoff coordination', () => {
     await app.close();
   });
 
-  it('uses the manual resume state path only when no durable handoff exists', async () => {
-    const { app, complete, conversation, setState } = buildTakeoverHarness();
+  it('uses the compare-and-clear resume path only when no durable handoff exists', async () => {
+    const { app, clearTakeoverIfOwned, complete, conversation, setState } = buildTakeoverHarness();
     conversation.state = 'paused_takeover';
     conversation.takeover_operator_id = 'operator-a';
     complete.mockResolvedValue('NO_HANDOFF');
@@ -182,7 +207,27 @@ describe('conversation takeover durable handoff coordination', () => {
       payload: {},
     });
     expect(response.statusCode).toBe(200);
-    expect(setState).toHaveBeenCalledWith(TENANT, CONVERSATION_ID, 'open', null);
+    expect(clearTakeoverIfOwned).toHaveBeenCalledWith(TENANT, CONVERSATION_ID, 'operator-a');
+    expect(setState).not.toHaveBeenCalled();
+    await app.close();
+  });
+  it('treats an expired lease as released when the owning operator resumes', async () => {
+    const { app, complete, clearTakeoverIfOwned, conversation, release, setState } = buildTakeoverHarness();
+    conversation.state = 'paused_takeover';
+    conversation.takeover_operator_id = 'operator-a';
+    release.mockResolvedValue({ outcome: 'NOT_HELD', lease: null });
+    complete.mockResolvedValue('NO_HANDOFF');
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/conversations/' + CONVERSATION_ID + '/resume',
+      headers: { authorization: 'Bearer operator-token' },
+      payload: {},
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(clearTakeoverIfOwned).toHaveBeenCalledWith(TENANT, CONVERSATION_ID, 'operator-a');
+    expect(setState).not.toHaveBeenCalled();
     await app.close();
   });
 
@@ -202,4 +247,92 @@ describe('conversation takeover durable handoff coordination', () => {
     expect(setState).not.toHaveBeenCalled();
     await app.close();
   });
+
+  it('renews takeover lease with default extend_seconds=60 when omitted in request body', async () => {
+    const { app, renew } = buildTakeoverHarness();
+    const response = await app.inject({
+      method: 'POST',
+      url: '/conversations/' + CONVERSATION_ID + '/takeover/heartbeat',
+      headers: { authorization: 'Bearer operator-token' },
+      payload: {},
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      conversation_id: CONVERSATION_ID,
+      status: 'HUMAN_TAKEOVER',
+      operator_id: 'operator-a',
+      lease_expires_at: '2026-09-23T00:02:00.000Z',
+    });
+    expect(renew).toHaveBeenCalledWith({
+      tenant_id: TENANT,
+      conversation_id: CONVERSATION_ID,
+      operator_id: 'operator-a',
+      extend_seconds: 60,
+    });
+    await app.close();
+  });
+
+  it('renews takeover lease with explicit extend_seconds', async () => {
+    const { app, renew } = buildTakeoverHarness();
+    const response = await app.inject({
+      method: 'POST',
+      url: '/conversations/' + CONVERSATION_ID + '/takeover/heartbeat',
+      headers: { authorization: 'Bearer operator-token' },
+      payload: { extend_seconds: 120 },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(renew).toHaveBeenCalledWith({
+      tenant_id: TENANT,
+      conversation_id: CONVERSATION_ID,
+      operator_id: 'operator-a',
+      extend_seconds: 120,
+    });
+    await app.close();
+  });
+
+  it('rejects invalid extend_seconds out of bounds', async () => {
+    const { app } = buildTakeoverHarness();
+    const response = await app.inject({
+      method: 'POST',
+      url: '/conversations/' + CONVERSATION_ID + '/takeover/heartbeat',
+      headers: { authorization: 'Bearer operator-token' },
+      payload: { extend_seconds: 500 },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error_code).toBe('VALIDATION_FAILED');
+    await app.close();
+  });
+
+  it('rejects takeover when reason exceeds 1000 characters', async () => {
+    const { app } = buildTakeoverHarness();
+    const response = await app.inject({
+      method: 'POST',
+      url: '/conversations/' + CONVERSATION_ID + '/takeover',
+      headers: { authorization: 'Bearer operator-token' },
+      payload: {
+        reason: 'x'.repeat(1001),
+        takeover_mode: 'FULL_CONTROL',
+      },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error_code: 'VALIDATION_FAILED' });
+    await app.close();
+  });
+
+  it('rejects resume when handoff_summary exceeds 2000 characters', async () => {
+    const { app } = buildTakeoverHarness();
+    const response = await app.inject({
+      method: 'POST',
+      url: '/conversations/' + CONVERSATION_ID + '/resume',
+      headers: { authorization: 'Bearer operator-token' },
+      payload: {
+        handoff_summary: 'x'.repeat(2001),
+      },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error_code: 'VALIDATION_FAILED' });
+    await app.close();
+  });
 });
+
+

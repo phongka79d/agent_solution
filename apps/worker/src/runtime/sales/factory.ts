@@ -34,7 +34,11 @@ import type {
   IContextAggregator,
   IEffectGuard,
   IEvidenceLogger,
+  IPlanInputResolver,
   IPolicyEngine,
+  IResponseFinalizer,
+  IRunResponseStore,
+  IRunStageRecorder,
   ISessionControl,
   IStatefulWorkflowEngine,
   ICrossDomainHandoffBroker,
@@ -46,6 +50,7 @@ import {
   DurableWorkflowRepository,
   EffectReservationRepository,
   EvidenceRepository,
+  RunResponseRepository,
   withTenantContext,
   type TenantTransactionRunner,
 } from '@agentos/database';
@@ -53,9 +58,9 @@ import {
   createSkillRuntimeEngine,
   type SkillRegistry,
 } from '@agentos/skills';
-
 import {
   SalesAgentRuntime,
+  type SalesLexiconPort,
   type SalesPurchaseEvidencePort,
 } from './agent-runtime.js';
 import {
@@ -64,10 +69,22 @@ import {
   type SalesContextAggregatorRepositories,
   type SalesSessionControlPort,
 } from './context-aggregator.js';
-import { createDurableAdapters, type DurableAdapters } from '../shared/adapters.js';
+import {
+  createDurableAdapters,
+  DEFAULT_PLAN_INPUT_RESOLVER,
+  type DurableAdapters,
+} from '../shared/adapters.js';
+import {
+  createResponseFinalizer,
+  createRunResponseStore,
+} from '../shared/response.js';
 import { createSkillAdapterDispatcher } from '../shared/skill-dispatcher.js';
 import { createSalesPolicyEngine } from './policy-engine.js';
 import { createSalesSkillServices } from './skills/index.js';
+import {
+  createSalesErpPriceFloorPort,
+  SalesAdvisorExecutionState,
+} from './advisor-adapters.js';
 import type {
   ErpReadPort,
   SalesCartPort,
@@ -81,6 +98,10 @@ import type {
   SalesReplenishmentPolicyPort,
   SalesSkillServices,
 } from './skills/types.js';
+import type { WorkerConnectorEnv } from '../connectors.js';
+type SalesFactoryEnv = WorkerConnectorEnv & {
+  readonly AUDIT_HMAC_SECRET?: string;
+};
 
 export interface SalesAdaptersShape extends DurableAdapters {
   readonly unbound?: readonly string[] | undefined;
@@ -94,6 +115,12 @@ export interface SalesOrchestratorFactoryOptions {
   readonly autonomy?: AutonomyAdmissionPort | undefined;
   readonly workflowEngine?: IStatefulWorkflowEngine | undefined;
   readonly evidenceLogger?: IEvidenceLogger | undefined;
+  readonly planInputResolver?: IPlanInputResolver | undefined;
+  readonly responseFinalizer?: IResponseFinalizer | undefined;
+  readonly responseStore?: IRunResponseStore | undefined;
+  /** Durable response repository; when supplied, grounded defaults are installed. */
+  readonly runResponseRepository?: RunResponseRepository | undefined;
+  readonly runStageRecorder?: IRunStageRecorder | undefined;
   readonly auditTrail?: IAuditTrail | undefined;
   readonly sessionControl?: ISessionControl | undefined;
   readonly leaseManager?: DurableLeaseManager | undefined;
@@ -116,6 +143,11 @@ export interface SalesOrchestratorFactoryOptions {
   readonly auditRepository?: AuditRepository | undefined;
   readonly conversationRepository?: ConversationRepository | undefined;
   readonly auditSecret?: string | undefined;
+  readonly blockers?: string[] | undefined;
+  readonly assertExecutionLease?: ((tenant_id: string, run_id: string) => Promise<void>) | undefined;
+  readonly env?: SalesFactoryEnv | undefined;
+  readonly quote_signing_secret?: string | undefined;
+  readonly advisor_state?: SalesAdvisorExecutionState | undefined;
   readonly erp_read?: ErpReadPort | null | undefined;
   readonly revenue_evidence?: SalesRecommendationRevenueEvidencePort | undefined;
   readonly price_floor?: SalesPriceFloorPort | null | undefined;
@@ -126,6 +158,14 @@ export interface SalesOrchestratorFactoryOptions {
   readonly frequency_cap?: SalesFrequencyCapPort | null | undefined;
   readonly replenishment_policy?: SalesReplenishmentPolicyPort | null | undefined;
   readonly purchase_evidence?: SalesPurchaseEvidencePort | null | undefined;
+  readonly lexicon?: SalesLexiconPort | undefined;
+  /**
+   * Explicit owner-configured Care onboarding itinerary. Its absence keeps Sales from declaring a
+   * sales→care handoff; no default itinerary is fabricated.
+   */
+  readonly careOnboardingItinerary?: unknown | undefined;
+  /** Resolves the explicit itinerary value for the tenant being composed. */
+  readonly resolveCareOnboardingItinerary?: ((tenant_id: string) => unknown | Promise<unknown>) | undefined;
   readonly now?: (() => Date) | undefined;
   readonly resolve_grant?: ((tenant_id: string, agent_id: string) => Promise<AssignableAuthority | null>) | undefined;
   readonly resolve_correlation_id?: ((tenant_id: string, run_id: string) => Promise<string>) | undefined;
@@ -184,10 +224,13 @@ export function getSalesUnboundCapabilities(options: SalesOrchestratorFactoryOpt
   const unbound: string[] = [];
 
   if (!options.adapterDispatcher && !options.skillServices?.dispatcher) {
+    if (options.revenue_evidence === undefined) {
+      unbound.push('Core.RecommendationEngine revenue evidence: no owner-approved revenue model is bound');
+    }
     if (options.erp_read === null || options.erp_read === undefined) {
       unbound.push('API-001 (unbound ERP read: no ERP read connector is bound)');
     }
-    const priceFloor = options.price_floor;
+    const priceFloor = options.price_floor ?? createSalesErpPriceFloorPort(options.erp_read ?? null);
     if (!priceFloor) {
       unbound.push('API-001.PricingEngine (unbound price/floor: no pricing engine port is bound; skill.sales.check_price refuses)');
     }
@@ -241,19 +284,38 @@ export function getSalesUnboundCapabilities(options: SalesOrchestratorFactoryOpt
  * Creates a per-tenant RevenueOrchestrator factory function for Sales.
  */
 export function createSalesOrchestratorFactory(
+  options: SalesOrchestratorFactoryOptions & { readonly auditSecret: string },
+): (tenant_id: string) => Promise<RevenueOrchestrator>;
+export function createSalesOrchestratorFactory(
+  options?: SalesOrchestratorFactoryOptions,
+): (tenant_id: string) => Promise<RevenueOrchestrator | null>;
+export function createSalesOrchestratorFactory(
   options: SalesOrchestratorFactoryOptions = {},
-): (tenant_id: string) => Promise<RevenueOrchestrator> {
+): (tenant_id: string) => Promise<RevenueOrchestrator | null> {
   const workerId = options.workerId ?? `sales_worker_${randomUUID().slice(0, 8)}`;
   const now = options.now ?? (() => new Date());
+  // Offline compositions stay offline: only an explicit DurableWorkflowRepository opts
+  // into durable PostgreSQL response/stage recording. Production passes that repository;
+  // unit/E2E passes undefined or an isolated fake and receives no live-DB writer.
+  const ownsDurableWorkflow = options.workflowRepository instanceof DurableWorkflowRepository;
+  const runResponseRepository = ownsDurableWorkflow ? options.runResponseRepository ?? new RunResponseRepository() : options.runResponseRepository;
+  const responseFinalizer = options.responseFinalizer ?? (ownsDurableWorkflow
+    ? createResponseFinalizer(now, options.quote_signing_secret)
+    : undefined);
+  const responseStore = options.responseStore ?? (runResponseRepository === undefined ? undefined : createRunResponseStore(runResponseRepository));
+  const runStageRecorder = options.runStageRecorder;
 
-  const auditSecret = options.auditSecret ?? process.env.AUDIT_HMAC_SECRET;
+  const auditSecret = options.auditSecret ?? options.env?.AUDIT_HMAC_SECRET ?? process.env.AUDIT_HMAC_SECRET;
   if (!auditSecret || auditSecret.trim().length === 0) {
-    throw new Error('SALES_AUDIT_SECRET_REQUIRED: audit HMAC secret must be provided or configured in AUDIT_HMAC_SECRET environment variable.');
+    const blocker = 'SALES_AUDIT_SECRET_REQUIRED: audit HMAC secret must be provided or configured in AUDIT_HMAC_SECRET environment variable.';
+    options.blockers?.push(blocker);
+    return async (): Promise<RevenueOrchestrator | null> => null;
   }
 
   // 1. Adapters from createDurableAdapters if not supplied directly
   let workflowEngine = options.workflowEngine ?? options.adapters?.workflowEngine;
   let evidenceLogger = options.evidenceLogger ?? options.adapters?.evidenceLogger;
+  let planInputResolver = options.planInputResolver ?? options.adapters?.planInputResolver;
   let auditTrail = options.auditTrail ?? options.adapters?.auditTrail;
   let sessionControl = options.sessionControl ?? options.adapters?.sessionControl;
   let leaseManager = options.leaseManager ?? options.adapters?.leaseManager;
@@ -266,26 +328,30 @@ export function createSalesOrchestratorFactory(
       auditRepository: options.auditRepository ?? new AuditRepository(),
       conversationRepository: options.conversationRepository ?? new ConversationRepository(),
       auditSecret,
+      ...(options.planInputResolver === undefined ? {} : { planInputResolver: options.planInputResolver }),
       now,
     });
 
     workflowEngine ??= generatedAdapters.workflowEngine;
     evidenceLogger ??= generatedAdapters.evidenceLogger;
+    planInputResolver ??= generatedAdapters.planInputResolver;
     auditTrail ??= generatedAdapters.auditTrail;
     sessionControl ??= generatedAdapters.sessionControl;
     leaseManager ??= generatedAdapters.leaseManager;
   }
+
+  planInputResolver ??= DEFAULT_PLAN_INPUT_RESOLVER;
 
   // 2. EffectGuard over EffectReservationRepository
   const effectGuard: IEffectGuard = options.effectGuard ?? new EffectGuard({
     repository: options.effectReservationRepository ?? new EffectReservationRepository(),
   });
 
-  // 3. Context aggregator with session control port so takeover is real
-  const sessionControlPort: SalesSessionControlPort | undefined = sessionControl
+  const sessionControlBinding = sessionControl;
+  const sessionControlPort: SalesSessionControlPort | undefined = sessionControlBinding
     ? {
         isTakenOver: async (tenant_id: string, session_id: string) =>
-          sessionControl.isTakenOver(tenant_id, session_id),
+          sessionControlBinding.isTakenOver(tenant_id, session_id),
       }
     : undefined;
 
@@ -304,7 +370,8 @@ export function createSalesOrchestratorFactory(
     ((tid, runId) => defaultResolveCorrelationId(tid, runId, options.workflowRepository));
 
   // 4. Skills services and adapter dispatcher
-  const priceFloorPort = options.price_floor ?? null;
+  const advisorState = options.advisor_state ?? new SalesAdvisorExecutionState();
+  const priceFloorPort = options.price_floor ?? createSalesErpPriceFloorPort(options.erp_read ?? null);
   const cartPort = options.cart ?? null;
   const orderPort = options.order ?? null;
   const commPort = options.communication ?? null;
@@ -326,6 +393,7 @@ export function createSalesOrchestratorFactory(
     skillServices = createSalesSkillServices({
       erp_read: options.erp_read ?? null,
       context: skillContext,
+      advisor_state: advisorState,
       ...(options.revenue_evidence ? { revenue_evidence: options.revenue_evidence } : {}),
       price_floor: priceFloorPort,
       cart: cartPort,
@@ -334,6 +402,7 @@ export function createSalesOrchestratorFactory(
       consent: consentPort,
       frequency_cap: freqCapPort,
       replenishment_policy: replenishmentPort,
+      ...(options.quote_signing_secret === undefined ? {} : { quote_signing_secret: options.quote_signing_secret }),
       resolve_correlation_id: resolveCorrelationId,
       resolve_grant: resolveGrant,
       now,
@@ -341,7 +410,7 @@ export function createSalesOrchestratorFactory(
     registry ??= skillServices.registry;
   }
 
-  let adapterDispatcher = options.adapterDispatcher;
+  let adapterDispatcher = options.adapterDispatcher ?? skillServices?.dispatcher;
   if (!adapterDispatcher) {
     const runtimeEngine = skillServices?.engine ?? (registry ? createSkillRuntimeEngine({
       registry,
@@ -356,6 +425,9 @@ export function createSalesOrchestratorFactory(
         engine: runtimeEngine,
         resolve_correlation_id: resolveCorrelationId,
         resolve_grant: resolveGrant,
+        ...(options.erp_read && typeof options.erp_read.reconcile === 'function'
+          ? { provider_reconcile: (input) => options.erp_read!.reconcile!(input) }
+          : {}),
       });
     }
   }
@@ -375,12 +447,22 @@ export function createSalesOrchestratorFactory(
     }
   }
 
-  // 5. Agent runtime wired with registry, replenishment_policy, and purchase_evidence
+  // 5. Agent runtime wired with registry, replenishment_policy, purchase_evidence, and advisor reads
   const agentRuntime: IAgentRuntime = options.agentRuntime ?? new SalesAgentRuntime({
     ...(options.now ? { now: options.now } : {}),
     ...(registry ? { registry } : {}),
     ...(replenishmentPort ? { replenishment_policy: replenishmentPort } : {}),
     ...(purchaseEvidencePort ? { purchase_evidence: purchaseEvidencePort } : {}),
+    ...(options.lexicon ? { lexicon: options.lexicon } : {}),
+    advisor_state: advisorState,
+    advisor_price_floor_bound: priceFloorPort !== null,
+    advisor_quote_signing_bound: typeof options.quote_signing_secret === 'string' && options.quote_signing_secret.trim().length > 0,
+    ...(options.careOnboardingItinerary === undefined
+      ? {}
+      : { careOnboardingItinerary: options.careOnboardingItinerary }),
+    ...(options.resolveCareOnboardingItinerary === undefined
+      ? {}
+      : { resolveCareOnboardingItinerary: options.resolveCareOnboardingItinerary }),
   });
 
   // 6. Policy engine adapter
@@ -395,7 +477,7 @@ export function createSalesOrchestratorFactory(
     auditRepository: options.auditRepository,
   });
 
-  return async (_tenant_id: string): Promise<RevenueOrchestrator> => {
+  return async (_tenant_id: string): Promise<RevenueOrchestrator | null> => {
     if (!workflowEngine || !evidenceLogger || !auditTrail || !sessionControl || !leaseManager) {
       throw new Error('SALES_ORCHESTRATOR_UNBOUND: missing required durable workflow/evidence adapters.');
     }
@@ -410,11 +492,16 @@ export function createSalesOrchestratorFactory(
       policyEngine,
       workflowEngine,
       evidenceLogger,
+      planInputResolver,
       auditTrail,
       adapterDispatcher,
       effectGuard,
       sessionControl,
       leaseManager,
+      ...(options.assertExecutionLease === undefined ? {} : { assertExecutionLease: options.assertExecutionLease }),
+      ...(responseFinalizer === undefined ? {} : { responseFinalizer }),
+      ...(responseStore === undefined ? {} : { responseStore }),
+      ...(runStageRecorder === undefined ? {} : { runStageRecorder }),
       workerId,
       ...(options.crossDomainHandoff === undefined
         ? {}

@@ -19,10 +19,14 @@ const APPROVAL_PROJECTION = `
     payload,
     reason,
     operator_id,
-    decision,
+    CASE
+      WHEN decision = 'PENDING' AND expires_at <= CURRENT_TIMESTAMP THEN 'EXPIRED'
+      ELSE decision
+    END AS decision,
     is_paused,
     review_comment,
     decided_at,
+    expires_at,
     created_at`;
 
 /** The columns every action read publishes, in the order `toActionRecord` expects them. */
@@ -38,20 +42,57 @@ const ACTION_PROJECTION = `
     status,
     created_at`;
 
-const SELECT_APPROVAL = `SELECT${APPROVAL_PROJECTION}
+/**
+ * Read-time expiry is a durable transition, not an in-memory projection. The CTE first locks and
+ * fails the prepared action, then marks the same pending approval EXPIRED in one statement. A later
+ * SELECT in the transaction observes both writes. The main SELECT intentionally retains the
+ * deadline CASE so its same-statement snapshot publishes EXPIRED even though PostgreSQL data
+ * modifying CTEs use the statement snapshot.
+ */
+const SELECT_APPROVAL = `WITH expired AS (
+  SELECT id, action_id
+  FROM ${APPROVALS}
+  WHERE tenant_id = $1 AND id = $2 AND decision = 'PENDING' AND expires_at <= CURRENT_TIMESTAMP
+), expired_actions AS (
+  UPDATE ${ACTIONS} AS a
+  SET status = 'failed'
+  FROM expired
+  WHERE a.tenant_id = $1 AND a.id = expired.action_id AND a.status = 'pending'
+), expired_approvals AS (
+  UPDATE ${APPROVALS} AS p
+  SET decision = 'EXPIRED', is_paused = FALSE, decided_at = CURRENT_TIMESTAMP
+  FROM expired
+  WHERE p.tenant_id = $1 AND p.id = expired.id AND p.decision = 'PENDING'
+)
+SELECT${APPROVAL_PROJECTION}
   FROM ${APPROVALS}
   WHERE tenant_id = $1 AND id = $2`;
 
-/** The locking read of the human decision: the row is frozen before its digest is compared. */
 const SELECT_APPROVAL_FOR_UPDATE = `${SELECT_APPROVAL}
   FOR UPDATE`;
 
-const SELECT_APPROVAL_BY_EFFECT_KEY = `SELECT${APPROVAL_PROJECTION}
+const SELECT_APPROVAL_BY_EFFECT_KEY = `WITH expired AS (
+  SELECT id, action_id
+  FROM ${APPROVALS}
+  WHERE tenant_id = $1 AND effect_key = $2 AND decision = 'PENDING' AND expires_at <= CURRENT_TIMESTAMP
+), expired_actions AS (
+  UPDATE ${ACTIONS} AS a
+  SET status = 'failed'
+  FROM expired
+  WHERE a.tenant_id = $1 AND a.id = expired.action_id AND a.status = 'pending'
+), expired_approvals AS (
+  UPDATE ${APPROVALS} AS p
+  SET decision = 'EXPIRED', is_paused = FALSE, decided_at = CURRENT_TIMESTAMP
+  FROM expired
+  WHERE p.tenant_id = $1 AND p.id = expired.id AND p.decision = 'PENDING'
+)
+SELECT${APPROVAL_PROJECTION}
   FROM ${APPROVALS}
   WHERE tenant_id = $1 AND effect_key = $2`;
 
 const SELECT_APPROVAL_BY_EFFECT_KEY_FOR_UPDATE = `${SELECT_APPROVAL_BY_EFFECT_KEY}
   FOR UPDATE`;
+
 
 const SELECT_ACTION_BY_EFFECT_KEY = `SELECT${ACTION_PROJECTION}
   FROM ${ACTIONS}
@@ -84,13 +125,68 @@ const MAX_PENDING_LIMIT = 200;
  * canonical table rather than the `approval_queue` view so the console and the resume path read one
  * storage object.
  */
-const SELECT_PENDING_APPROVALS = `SELECT${APPROVAL_PROJECTION}
+const SELECT_PENDING_APPROVALS = `WITH expired AS (
+  SELECT id, action_id
+  FROM ${APPROVALS}
+  WHERE tenant_id = $1 AND decision = 'PENDING' AND expires_at <= CURRENT_TIMESTAMP
+), expired_actions AS (
+  UPDATE ${ACTIONS} AS a
+  SET status = 'failed'
+  FROM expired
+  WHERE a.tenant_id = $1 AND a.id = expired.action_id AND a.status = 'pending'
+), expired_approvals AS (
+  UPDATE ${APPROVALS} AS p
+  SET decision = 'EXPIRED', is_paused = FALSE, decided_at = CURRENT_TIMESTAMP
+  FROM expired
+  WHERE p.tenant_id = $1 AND p.id = expired.id AND p.decision = 'PENDING'
+)
+SELECT${APPROVAL_PROJECTION}
   FROM ${APPROVALS}
   WHERE tenant_id = $1
     AND decision = 'PENDING'
+    AND expires_at > CURRENT_TIMESTAMP
     AND ($2::timestamptz IS NULL OR (created_at, id) > ($2::timestamptz, $3::uuid))
   ORDER BY created_at ASC, id ASC
   LIMIT $4`;
+
+/**
+ * Persists the deadline transition for at most one tenant's batch. Candidate action rows are locked
+ * before the approval update, matching the decision path's action -> approval lock order, so
+ * concurrent sweepers do not claim the same prepared command. The returned binding fields are used
+ * to append the corresponding audit-chain records in the same transaction.
+ */
+const EXPIRE_OVERDUE_APPROVALS = `WITH expired AS (
+  SELECT p.id, p.run_id, p.action_id, p.effect_key
+  FROM ${ACTIONS} AS a
+  JOIN ${APPROVALS} AS p
+    ON p.tenant_id = a.tenant_id AND p.action_id = a.id
+  WHERE a.tenant_id = $1
+    AND p.decision = 'PENDING'
+    AND p.expires_at <= CURRENT_TIMESTAMP
+  ORDER BY p.expires_at ASC, p.id ASC
+  LIMIT $2::int
+  FOR UPDATE OF a SKIP LOCKED
+), failed_actions AS (
+  UPDATE ${ACTIONS} AS a
+  SET status = 'failed'
+  FROM expired
+  WHERE a.tenant_id = $1
+    AND a.id = expired.action_id
+    AND a.status = 'pending'
+), expired_approvals AS (
+  UPDATE ${APPROVALS} AS p
+  SET decision = 'EXPIRED',
+      is_paused = FALSE,
+      decided_at = CURRENT_TIMESTAMP
+  FROM expired
+  WHERE p.tenant_id = $1
+    AND p.id = expired.id
+    AND p.decision = 'PENDING'
+  RETURNING p.id, p.run_id, p.action_id, p.effect_key
+)
+SELECT id, run_id, action_id, effect_key
+FROM expired_approvals
+ORDER BY id`;
 
 /**
  * The actions of one page of approvals, and the single action of the §8.2.1 detail read, read by the
@@ -232,13 +328,27 @@ const QUEUE_APPROVAL_RESUME_EVENT = `UPDATE ${PLATFORM_DURABLE_TASKS}
  * cleared (`ck_approvals_pause_pending`), and the PENDING predicate makes a second decision match
  * no row.
  */
-const DECIDE_APPROVAL = `UPDATE ${APPROVALS}
+const DECIDE_APPROVAL = `WITH action_status AS (
+  UPDATE ${ACTIONS}
+  SET status = CASE WHEN $3 = 'APPROVED' THEN 'authorized' ELSE 'failed' END
+  WHERE tenant_id = $1
+    AND id = (
+      SELECT action_id
+      FROM ${APPROVALS}
+      WHERE tenant_id = $1
+        AND id = $2
+        AND decision = 'PENDING'
+        AND expires_at > CURRENT_TIMESTAMP
+    )
+)
+UPDATE ${APPROVALS}
   SET decision = $3,
       operator_id = $4,
       review_comment = $5,
       is_paused = FALSE,
       decided_at = CURRENT_TIMESTAMP
   WHERE tenant_id = $1 AND id = $2 AND decision = 'PENDING'
+    AND expires_at > CURRENT_TIMESTAMP
   RETURNING${APPROVAL_PROJECTION}`;
 
 /**
@@ -255,6 +365,7 @@ const MODIFY_APPROVAL = `UPDATE ${APPROVALS}
       is_paused = FALSE,
       decided_at = CURRENT_TIMESTAMP
   WHERE tenant_id = $1 AND id = $2 AND decision = 'PENDING'
+    AND expires_at > CURRENT_TIMESTAMP
   RETURNING${APPROVAL_PROJECTION}`;
 
 /**
@@ -265,7 +376,8 @@ const MODIFY_APPROVAL = `UPDATE ${APPROVALS}
 const MODIFY_ACTION = `UPDATE ${ACTIONS}
   SET action_revision = $3,
       effect_key = $4,
-      action_payload = $5::jsonb
+      action_payload = $5::jsonb,
+      status = 'authorized'
   WHERE tenant_id = $1 AND id = $2
   RETURNING${ACTION_PROJECTION}`;
 
@@ -277,6 +389,7 @@ export {
   CURSOR_SEPARATOR,
   DECIDE_APPROVAL,
   DEFAULT_PENDING_LIMIT,
+  EXPIRE_OVERDUE_APPROVALS,
   HOLD_TASK,
   INSERT_ACTION,
   INSERT_APPROVAL,

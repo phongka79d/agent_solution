@@ -56,6 +56,11 @@ export function isErpReadResource(value: string): value is ErpReadResource {
   return ERP_READ_RESOURCES.some((resource) => resource === value);
 }
 
+/** Encodes an action id as one path segment; provider action identity is not a URL fragment. */
+function actionPath(action_id: string): string {
+  return ERP_ACTION_PATH_TEMPLATE.replace('{action_id}', encodeURIComponent(action_id));
+}
+
 /** Provider failure classes, copied from the orchestrator's retry vocabulary (06 §8.1, R13). */
 export type ErpTransportFailureClass = 'TIMEOUT' | 'PROVIDER_REJECTED' | 'UNKNOWN';
 
@@ -65,6 +70,8 @@ export interface ErpTransportRequest {
   readonly path: string;
   readonly tenant_id: string;
   readonly body?: Record<string, unknown>;
+  /** Abort signal from the orchestrator's registry deadline guard. */
+  readonly signal?: AbortSignal;
 }
 
 /**
@@ -159,19 +166,23 @@ function firstStringField(
   return null;
 }
 
-/** Builds the host request, omitting `body` entirely when there is nothing to send. */
+/** Builds the host request, omitting `body` and `signal` when there is nothing to send. */
 function requestOf(
   input: {
     readonly method: 'GET' | 'POST';
     readonly path: string;
     readonly tenant_id: string;
+    readonly signal?: AbortSignal;
   },
   body: Record<string, unknown> | null,
 ): ErpTransportRequest {
-  if (body === null) {
-    return { method: input.method, path: input.path, tenant_id: input.tenant_id };
-  }
-  return { method: input.method, path: input.path, tenant_id: input.tenant_id, body };
+  return {
+    method: input.method,
+    path: input.path,
+    tenant_id: input.tenant_id,
+    ...(body === null ? {} : { body }),
+    ...(input.signal === undefined ? {} : { signal: input.signal }),
+  };
 }
 
 /**
@@ -205,6 +216,7 @@ export class Api001ErpConnector implements AdapterPort {
     readonly tenant_id: string;
     readonly resource: string;
     readonly key?: string;
+    readonly customer_id?: string;
   }): Promise<ConnectorReadResult> {
     if (input.tenant_id.length === 0) {
       throw new ErpRefusalError(
@@ -224,25 +236,41 @@ export class Api001ErpConnector implements AdapterPort {
     }
 
     const route = ERP_RESOURCE_ROUTES[resource];
-    // API-001 inventory lookup accepts a SKU list, while other resource groups retain the
-    // connector's generic key envelope. Keep the projection here at the named route boundary.
+    // Each route publishes the body its own resource expects: inventory takes a SKU list, prices
+    // takes a single `sku_id`, and customer-owned documents require their customer_id.
+    if (
+      (resource === 'orders' || resource === 'shipments' || resource === 'returns')
+      && (input.key === undefined || input.customer_id === undefined || input.customer_id.trim().length === 0)
+    ) {
+      throw new ErpRefusalError(
+        'TENANT_UNSCOPED',
+        this.adapterId,
+        `${resource} reads require a server-resolved customer_id`,
+      );
+    }
     const body = input.key === undefined
       ? null
       : resource === 'inventory'
         ? { tenant_id: input.tenant_id, sku_ids: [input.key] }
-        : { key: input.key };
+        : resource === 'prices'
+          ? { tenant_id: input.tenant_id, sku_id: input.key }
+          : resource === 'orders' || resource === 'shipments' || resource === 'returns'
+            ? { key: input.key, customer_id: input.customer_id }
+            : { key: input.key };
     const result = await this.transport.request(
       requestOf({ method: route.method, path: route.path, tenant_id: input.tenant_id }, body),
     );
 
-    if (!result.ok) {
-      const confirmed = result.failure_class === 'PROVIDER_REJECTED';
+    if (!result.ok || result.status >= 400) {
+      const failure_class = result.ok ? 'PROVIDER_REJECTED' : result.failure_class;
+      const status = result.ok ? result.status : result.status;
+      const confirmed = failure_class === 'PROVIDER_REJECTED';
       throw new ErpRefusalError(
         confirmed ? 'PROVIDER_REJECTED' : 'INDETERMINATE_OUTCOME',
         this.adapterId,
         confirmed
-          ? `provider rejected the ${resource} read with status ${String(result.status)}`
-          : `the ${resource} read outcome is unconfirmed (${result.failure_class})`,
+          ? `provider rejected the ${resource} read with status ${String(status)}`
+          : `the ${resource} read outcome is unconfirmed (${failure_class})`,
       );
     }
 
@@ -272,7 +300,7 @@ export class Api001ErpConnector implements AdapterPort {
    * `TIMEOUT` rather than success, because the orchestrator reconciles an indeterminate effect and
    * must never see a success claim it cannot back with a provider reference.
    */
-  async dispatch(draft: ActionDraft): Promise<ExecutionReceipt> {
+  async dispatch(draft: ActionDraft, options?: { readonly signal?: AbortSignal }): Promise<ExecutionReceipt> {
     const tenant_id = draft.tenant_id;
     if (tenant_id.length === 0) {
       throw new ErpRefusalError(
@@ -297,16 +325,22 @@ export class Api001ErpConnector implements AdapterPort {
       );
     }
 
-    const path = ERP_ACTION_PATH_TEMPLATE.replace('{action_id}', draft.action_id);
+    const path = actionPath(draft.action_id);
     const result = await this.transport.request(
-      requestOf({ method: 'POST', path, tenant_id }, draft.payload),
+      requestOf({
+        method: 'POST',
+        path,
+        tenant_id,
+        ...(options?.signal === undefined ? {} : { signal: options.signal }),
+      }, draft.payload),
     );
 
-    if (!result.ok) {
+    if (!result.ok || result.status >= 400) {
+      const failure_class = result.ok ? 'PROVIDER_REJECTED' : result.failure_class;
       return this.failureReceipt(
         draft,
-        result.failure_class === 'PROVIDER_REJECTED' ? 'ERROR' : 'TIMEOUT',
-        result.failure_class,
+        failure_class === 'PROVIDER_REJECTED' ? 'ERROR' : 'TIMEOUT',
+        failure_class,
         result.status,
       );
     }
@@ -344,14 +378,14 @@ export class Api001ErpConnector implements AdapterPort {
     }
 
     let targetId = input.action_id ?? input.effect_key;
-    let path = ERP_ACTION_PATH_TEMPLATE.replace('{action_id}', targetId);
+    let path = actionPath(targetId);
     let result = await this.transport.request(
       requestOf({ method: 'GET', path, tenant_id: input.tenant_id }, null),
     );
 
-    if (!result.ok && result.status === 404 && input.action_id && input.effect_key && input.action_id !== input.effect_key) {
+    if (result.status === 404 && input.action_id && input.effect_key && input.action_id !== input.effect_key) {
       targetId = input.effect_key;
-      path = ERP_ACTION_PATH_TEMPLATE.replace('{action_id}', targetId);
+      path = actionPath(targetId);
       result = await this.transport.request(
         requestOf({ method: 'GET', path, tenant_id: input.tenant_id }, null),
       );
@@ -372,7 +406,7 @@ export class Api001ErpConnector implements AdapterPort {
       };
     }
 
-    if (!result.ok && result.status === 404) {
+    if (result.status === 404) {
       return { outcome: 'FAILED' };
     }
 

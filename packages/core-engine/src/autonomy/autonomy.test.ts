@@ -118,6 +118,30 @@ describe('AutonomyService', () => {
     expect((await service.admit({ tenant_id: TENANT, skill_id: promotion().skill_id, policy_version: 'v1' })).workflow)
       .toBe('AUTO_EXECUTE');
   });
+  it('kill switch demotes paused rows and refuses resume or promotion', async () => {
+    const store = new MemoryAutonomyStore();
+    const service = new AutonomyService(store);
+    await service.promote(promotion());
+    await service.pauseTenant(TENANT);
+
+    const killed = await service.killSwitch(TENANT);
+    expect(killed).toHaveLength(1);
+    expect(killed[0]?.state).toBe('DEMOTED');
+    expect(killed[0]?.parameters).toMatchObject({ trigger: 'OPERATOR_KILL_SWITCH' });
+    expect(store.isKillSwitchSet(TENANT)).toBe(true);
+    expect(store.isTenantPaused(TENANT)).toBe(true);
+
+    await expect(service.resumeTenant(TENANT)).rejects.toThrow('NOT_ELIGIBLE: tenant kill switch is set.');
+    const promoted = await service.promote(promotion({ policy_version: 'v2' }));
+    expect(promoted.accepted).toBe(false);
+    expect(promoted.reason).toBe('NOT_ELIGIBLE: tenant kill switch is set.');
+    expect((await service.admit({
+      tenant_id: TENANT,
+      skill_id: promotion().skill_id,
+      policy_version: 'v1',
+    })).workflow).toBe('PARKED_DRAFT');
+    expect((await service.inspect(TENANT)).current.every((record) => record.state !== 'PROMOTED')).toBe(true);
+  });
 
   it('demotes on evidence drift, duplicate effects, and unknown safety triggers', async () => {
     const service = new AutonomyService(new MemoryAutonomyStore());

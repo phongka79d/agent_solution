@@ -13,8 +13,9 @@ export interface InputSalesCreateCart {
   tenant_id: string;
   session_id: string;
   customer_id?: string;
-  items: Array<{ sku_id: string; quantity: number }>;
+  items: Array<{ sku_id: string; quantity: number; proposed_price?: number }>;
   idempotency_key: string;
+  proposed_price?: number;
 }
 
 /** Output of `skill.sales.create_cart` (§4.2 skill 13). */
@@ -46,6 +47,7 @@ const input_schema: Record<string, unknown> = {
         properties: {
           sku_id: { type: 'string' },
           quantity: { type: 'integer', minimum: 1 },
+          proposed_price: { type: 'number', minimum: 0 },
         },
       },
     },
@@ -53,6 +55,7 @@ const input_schema: Record<string, unknown> = {
     offer_id: { type: 'string' },
     discount_amount: { type: 'number', minimum: 0 },
     discount_percent: { type: 'number', minimum: 0, maximum: 100 },
+    proposed_price: { type: 'number', minimum: 0 },
   },
   additionalProperties: false,
 };

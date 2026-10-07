@@ -7,6 +7,7 @@ import {
   createPlatformSkills,
   createSkillRegistry,
   createSkillRuntimeEngine,
+  SkillError,
   type PlatformSkillEnablement,
 } from '@agentos/skills';
 
@@ -30,11 +31,13 @@ export type {
   InputMktGenerateContent,
   InputMktSegmentAudience,
   MarketingAnalyticsPort,
+  MarketingAudienceConsentPort,
   MarketingBrandGuardPort,
   MarketingCommunicationPort,
   MarketingConsentPort,
   MarketingContentEnginePort,
   MarketingCustomer360Port,
+  MarketingKnowledgePort,
   MarketingReconcileFn,
   MarketingReconcileInput,
   MarketingSignalReadPort,
@@ -78,7 +81,8 @@ export const DEFAULT_MARKETING_SKILL_ENABLEMENT: PlatformSkillEnablement = Objec
  * - applies explicit skill enablement
  * - builds SkillRuntimeEngine with canonical effect key, request fingerprint, and authority evaluator
  * - builds adapter dispatcher that forwards approval_id and approval_payload_digest unchanged
- * - lists unbound connectors when ports are not configured (failing closed)
+ * - lists unbound connectors when ports are not configured (failing closed); knowledge never substitutes
+ *   for the Core.LLMContentEngine provider
  */
 export function createMarketingSkillServices(
   options: MarketingSkillOptions,
@@ -109,10 +113,28 @@ export function createMarketingSkillServices(
     resolve_correlation_id: options.resolve_correlation_id,
     resolve_grant: options.resolve_grant,
     ...(options.reconcile !== undefined ? { provider_reconcile: options.reconcile } : {}),
-    special_receipt: ({ output }) => {
-      const dispatch_id = output.dispatch_id;
-      if (typeof dispatch_id !== 'string' || dispatch_id.length === 0) {
+    special_receipt: ({ action, output }) => {
+      if (action.skill_id !== 'skill.mkt.dispatch_campaign') {
         return null;
+      }
+      const dispatch_id = output.dispatch_id;
+      if (typeof dispatch_id !== 'string' || dispatch_id.trim().length === 0) {
+        throw new SkillError(
+          'EFFECT_UNKNOWN',
+          'API-003 returned no provider dispatch identity; receipt cannot be confirmed',
+          'skill.mkt.dispatch_campaign',
+        );
+      }
+      const status = output.status;
+      if (status === 'FAILED') {
+        return {
+          execution_id: dispatch_id,
+          adapter_status: 'ERROR',
+          provider_reference: dispatch_id,
+          response_payload: output,
+          latency_ms: 0,
+          token_usage: { prompt: 0, completion: 0, total_cost_usd: 0 },
+        };
       }
       return {
         execution_id: dispatch_id,
@@ -138,7 +160,7 @@ export function createMarketingSkillServices(
   if (!options.content_engine) {
     unbound.push('Core.LLMContentEngine: no content generation engine is bound');
   }
-  if (!options.brand_guard) {
+  if (!options.brand_guard && !options.knowledge) {
     unbound.push('SecondBrain.BrandGuard: no BrandGuard compliance engine is bound');
   }
   if (!options.communication) {

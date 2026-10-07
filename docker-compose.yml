@@ -2,7 +2,8 @@
 # Copy .env.example to .env before `docker compose up`, or pass `--env-file .env.example`
 # for a placeholder local boot. Required secrets use ${VAR:?} so an empty value fails
 # closed. mock-erp is labeled local-ci-only and exits unless APP_ENV is local or ci.
-# Browser services have no database, cache, vector, or ERP credential.
+# Published ports bind to ${BIND_ADDRESS:-127.0.0.1}; set BIND_ADDRESS deliberately
+# when local access from another host is required.
 
 # Single source for the Qdrant API key. `QDRANT_API_KEY` is the only variable a
 # caller sets: the qdrant service's own key and both clients alias this one
@@ -13,7 +14,6 @@ x-qdrant-api-key: &qdrant-api-key ${QDRANT_API_KEY:?QDRANT_API_KEY is required}
 services:
   postgres:
     image: pgvector/pgvector:pg16
-    container_name: ${COMPOSE_CONTAINER_PREFIX:-agentos}-postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-agentos_dev}
@@ -24,7 +24,7 @@ services:
       APP_ROLE_PASSWORD: ${APP_ROLE_PASSWORD:?APP_ROLE_PASSWORD is required}
       MIGRATOR_ROLE_PASSWORD: ${MIGRATOR_ROLE_PASSWORD:?MIGRATOR_ROLE_PASSWORD is required}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${BIND_ADDRESS:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
@@ -39,7 +39,6 @@ services:
 
   redis:
     image: redis:7.2-alpine
-    container_name: ${COMPOSE_CONTAINER_PREFIX:-agentos}-redis
     restart: unless-stopped
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
@@ -57,7 +56,7 @@ services:
       - --appendfsync
       - everysec
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "${BIND_ADDRESS:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -70,11 +69,10 @@ services:
 
   qdrant:
     image: qdrant/qdrant:v1.9.2
-    container_name: ${COMPOSE_CONTAINER_PREFIX:-agentos}-qdrant
     restart: unless-stopped
     ports:
-      - "${QDRANT__SERVICE__HTTP_PORT:-6333}:6333"
-      - "${QDRANT__SERVICE__GRPC_PORT:-6334}:6334"
+      - "${BIND_ADDRESS:-127.0.0.1}:${QDRANT__SERVICE__HTTP_PORT:-6333}:6333"
+      - "${BIND_ADDRESS:-127.0.0.1}:${QDRANT__SERVICE__GRPC_PORT:-6334}:6334"
     environment:
       QDRANT__SERVICE__HTTP_PORT: 6333
       QDRANT__SERVICE__GRPC_PORT: 6334
@@ -96,18 +94,18 @@ services:
     build:
       context: ./services/mock-erp
       dockerfile: Dockerfile
-    container_name: ${COMPOSE_CONTAINER_PREFIX:-agentos}-mock-erp
     restart: unless-stopped
     labels:
       agentos.deploy: local-ci-only
     ports:
-      - "${MOCK_ERP_PORT:-8081}:8081"
+      - "${BIND_ADDRESS:-127.0.0.1}:${MOCK_ERP_PORT:-8081}:8081"
     environment:
       APP_ENV: ${APP_ENV:-local}
       PORT: 8081
       MOCK_SECRET_KEY: ${MOCK_SECRET_KEY:?MOCK_SECRET_KEY is required}
       SIMULATE_LATENCY_MS: ${SIMULATE_LATENCY_MS:-50}
       SIMULATE_FAILURE_RATE: ${SIMULATE_FAILURE_RATE:-0.0}
+      MOCK_ERP_DEMO_PACK: ${MOCK_ERP_DEMO_PACK:-}
     healthcheck:
       test:
         - CMD
@@ -123,7 +121,6 @@ services:
   temporal:
     profiles: ["workflows"]
     image: temporalio/auto-setup:1.23.0
-    container_name: ${COMPOSE_CONTAINER_PREFIX:-agentos}-temporal
     restart: unless-stopped
     depends_on:
       postgres:
@@ -136,14 +133,13 @@ services:
       POSTGRES_SEEDS: postgres
       DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
     ports:
-      - "7233:7233"
+      - "${BIND_ADDRESS:-127.0.0.1}:7233:7233"
     networks:
       - agentos-network
 
   temporal-ui:
     profiles: ["workflows"]
     image: temporalio/ui:2.26.2
-    container_name: ${COMPOSE_CONTAINER_PREFIX:-agentos}-temporal-ui
     restart: unless-stopped
     depends_on:
       - temporal
@@ -151,7 +147,7 @@ services:
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_CORS_ORIGINS: ${TEMPORAL_CORS_ORIGINS:-http://localhost:3000}
     ports:
-      - "8080:8080"
+      - "${BIND_ADDRESS:-127.0.0.1}:8080:8080"
     networks:
       - agentos-network
 
@@ -159,10 +155,9 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.api
-    container_name: ${COMPOSE_CONTAINER_PREFIX:-agentos}-api
     restart: unless-stopped
     ports:
-      - "${PORT:-4000}:4000"
+      - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-4000}:4000"
     environment:
       NODE_ENV: ${NODE_ENV:?NODE_ENV is required}
       APP_ENV: ${APP_ENV:?APP_ENV is required}
@@ -182,6 +177,22 @@ services:
       # check in the env validator sees one key instead of two.
       QDRANT__SERVICE__API_KEY: *qdrant-api-key
       MOCK_ERP_ENABLED: ${MOCK_ERP_ENABLED:-true}
+      ENABLED_AGENT_MODULES: ${ENABLED_AGENT_MODULES:-}
+      SALES_SIGNAL_SOURCE_CHANNELS: ${SALES_SIGNAL_SOURCE_CHANNELS:-}
+      SALES_SIGNAL_EVENT_TYPES: ${SALES_SIGNAL_EVENT_TYPES:-}
+      MARKETING_SIGNAL_SOURCE_CHANNELS: ${MARKETING_SIGNAL_SOURCE_CHANNELS:-}
+      MARKETING_SIGNAL_EVENT_TYPES: ${MARKETING_SIGNAL_EVENT_TYPES:-}
+      DEMO_PROVIDER_MODE: ${DEMO_PROVIDER_MODE:-offline}
+      DEMO_MODE: ${DEMO_MODE:-false}
+      DEMO_TENANT_ID: ${DEMO_TENANT_ID:-99999999-9999-4999-8999-999999999999}
+      # API knowledge reads use the same approved root and tenant fence as the worker.
+      KNOWLEDGE_ROOT: ${KNOWLEDGE_ROOT:-/repo/packages/second-brain/demo/novamart}
+      KNOWLEDGE_TENANT_IDS: ${KNOWLEDGE_TENANT_IDS:-}
+      DEMO_COMPANY_ADMIN_EMAIL: ${DEMO_COMPANY_ADMIN_EMAIL:-}
+      DEMO_COMPANY_ADMIN_PASSWORD: ${DEMO_COMPANY_ADMIN_PASSWORD:-}
+      DEMO_PLATFORM_ADMIN_EMAIL: ${DEMO_PLATFORM_ADMIN_EMAIL:-}
+      DEMO_PLATFORM_ADMIN_PASSWORD: ${DEMO_PLATFORM_ADMIN_PASSWORD:-}
+      DEMO_WIDGET_ORIGINS: ${DEMO_WIDGET_ORIGINS:-http://localhost:3000}
       ERP_API_BASE_URL: http://mock-erp:8081/api/v1
       # The shared secret the platform signs API-001 calls with; the mock-erp container verifies
       # the same value. Required only while MOCK_ERP_ENABLED is true.
@@ -189,11 +200,21 @@ services:
       EVENT_INGESTION_BASE_URL: http://mock-erp:8081/events/v1
       EVENT_INGESTION_HMAC_SECRET: ${EVENT_INGESTION_HMAC_SECRET:?EVENT_INGESTION_HMAC_SECRET is required}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET is required}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required}
       WEBHOOK_HMAC_SECRET: ${WEBHOOK_HMAC_SECRET:?WEBHOOK_HMAC_SECRET is required}
+      PLATFORM_SECRET: ${PLATFORM_SECRET:?PLATFORM_SECRET is required}
       AUDIT_HMAC_SECRET: ${AUDIT_HMAC_SECRET:?AUDIT_HMAC_SECRET is required}
       ENCRYPTION_KEY_AES256: ${ENCRYPTION_KEY_AES256:?ENCRYPTION_KEY_AES256 is required}
       OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY is required}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      DEFAULT_LLM_PROVIDER: ${DEFAULT_LLM_PROVIDER:-openai-compatible}
+      PRIMARY_REASONING_MODEL: ${PRIMARY_REASONING_MODEL:-gpt-4o}
+      FAST_COMPLETION_MODEL: ${FAST_COMPLETION_MODEL:-gpt-4o-mini}
+      OPENAI_STRUCTURED_OUTPUT_MODE: ${OPENAI_STRUCTURED_OUTPUT_MODE:-json_object}
+      LLM_REQUEST_TIMEOUT_MS: ${LLM_REQUEST_TIMEOUT_MS:-30000}
+      MAX_TOKENS_PER_RUN: ${MAX_TOKENS_PER_RUN:-4096}
+
     depends_on:
       postgres:
         condition: service_healthy
@@ -220,14 +241,13 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.worker
-    container_name: ${COMPOSE_CONTAINER_PREFIX:-agentos}-worker
     restart: unless-stopped
     environment:
       NODE_ENV: ${NODE_ENV:?NODE_ENV is required}
       APP_ENV: ${APP_ENV:?APP_ENV is required}
       WORKER_HEALTH_PORT: ${WORKER_HEALTH_PORT:-4001}
-      # Explicit tenant schedule scope; blank disables Care polling rather than bypassing RLS.
-      CARE_TENANT_IDS: ${CARE_TENANT_IDS:-}
+      # Explicit tenant schedule scope; blank disables worker polling rather than bypassing RLS.
+      WORKER_TENANT_IDS: ${WORKER_TENANT_IDS:-}
       SERVICE_NAME: agentos-worker
       API_BASE_URL: ${API_BASE_URL:?API_BASE_URL is required}
       WEB_BASE_URL: ${WEB_BASE_URL:?WEB_BASE_URL is required}
@@ -243,10 +263,20 @@ services:
       # check in the env validator sees one key instead of two.
       QDRANT__SERVICE__API_KEY: *qdrant-api-key
       MOCK_ERP_ENABLED: ${MOCK_ERP_ENABLED:-true}
+      ENABLED_AGENT_MODULES: ${ENABLED_AGENT_MODULES:-}
+      SALES_SIGNAL_SOURCE_CHANNELS: ${SALES_SIGNAL_SOURCE_CHANNELS:-}
+      SALES_SIGNAL_EVENT_TYPES: ${SALES_SIGNAL_EVENT_TYPES:-}
+      MARKETING_SIGNAL_SOURCE_CHANNELS: ${MARKETING_SIGNAL_SOURCE_CHANNELS:-}
+      DEMO_PROVIDER_MODE: ${DEMO_PROVIDER_MODE:-offline}
+      MARKETING_SIGNAL_EVENT_TYPES: ${MARKETING_SIGNAL_EVENT_TYPES:-}
+      # Shared approved Second Brain root and tenant fence. The path is container-absolute.
+      KNOWLEDGE_ROOT: ${KNOWLEDGE_ROOT:-/repo/packages/second-brain/demo/novamart}
+      KNOWLEDGE_TENANT_IDS: ${KNOWLEDGE_TENANT_IDS:-}
       ERP_API_BASE_URL: http://mock-erp:8081/api/v1
       # The shared secret the platform signs API-001 calls with; the mock-erp container verifies
       # the same value. Required only while MOCK_ERP_ENABLED is true.
       MOCK_SECRET_KEY: ${MOCK_SECRET_KEY:?MOCK_SECRET_KEY is required}
+      QUOTE_SIGNING_SECRET: ${QUOTE_SIGNING_SECRET:-}
       EVENT_INGESTION_BASE_URL: http://mock-erp:8081/events/v1
       EVENT_INGESTION_HMAC_SECRET: ${EVENT_INGESTION_HMAC_SECRET:?EVENT_INGESTION_HMAC_SECRET is required}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
@@ -255,6 +285,14 @@ services:
       AUDIT_HMAC_SECRET: ${AUDIT_HMAC_SECRET:?AUDIT_HMAC_SECRET is required}
       ENCRYPTION_KEY_AES256: ${ENCRYPTION_KEY_AES256:?ENCRYPTION_KEY_AES256 is required}
       OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY is required}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      DEFAULT_LLM_PROVIDER: ${DEFAULT_LLM_PROVIDER:-openai-compatible}
+      PRIMARY_REASONING_MODEL: ${PRIMARY_REASONING_MODEL:-gpt-4o}
+      FAST_COMPLETION_MODEL: ${FAST_COMPLETION_MODEL:-gpt-4o-mini}
+      OPENAI_STRUCTURED_OUTPUT_MODE: ${OPENAI_STRUCTURED_OUTPUT_MODE:-json_object}
+      LLM_REQUEST_TIMEOUT_MS: ${LLM_REQUEST_TIMEOUT_MS:-30000}
+      MAX_TOKENS_PER_RUN: ${MAX_TOKENS_PER_RUN:-4096}
+
       # Empty keeps Temporal out of the readiness gate. Set only with --profile workflows.
       TEMPORAL_ADDRESS: ${TEMPORAL_ADDRESS:-}
     depends_on:
@@ -285,16 +323,19 @@ services:
       dockerfile: docker/Dockerfile.tenant-console
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?NEXT_PUBLIC_API_URL is required}
-    container_name: ${COMPOSE_CONTAINER_PREFIX:-agentos}-tenant-console
     restart: unless-stopped
     ports:
-      - "${WEB_PORT:-3000}:3000"
+      - "${BIND_ADDRESS:-127.0.0.1}:${WEB_PORT:-3000}:3000"
     environment:
       NODE_ENV: ${NODE_ENV:?NODE_ENV is required}
       APP_ENV: ${APP_ENV:?APP_ENV is required}
       PORT: 3000
+      DEMO_MODE: ${DEMO_MODE:-false}
+      API_BASE_URL: http://api:4000
       NEXTAUTH_URL: ${NEXTAUTH_URL:?NEXTAUTH_URL is required}
-      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?NEXTAUTH_SECRET is required}
+      NEXTAUTH_SECRET: ${TENANT_NEXTAUTH_SECRET:?TENANT_NEXTAUTH_SECRET is required}
+      # Required only when DEMO_MODE=true; never reuse NEXTAUTH_SECRET for cookie signing.
+      TENANT_COOKIE_HMAC_KEY: ${TENANT_COOKIE_HMAC_KEY:-}
       # Origin only. Browser clients append /api/v1 themselves.
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?NEXT_PUBLIC_API_URL is required}
       PLATFORM_ADMIN_URL: ${PLATFORM_ADMIN_URL:?PLATFORM_ADMIN_URL is required}
@@ -319,16 +360,19 @@ services:
       dockerfile: docker/Dockerfile.platform-admin
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?NEXT_PUBLIC_API_URL is required}
-    container_name: ${COMPOSE_CONTAINER_PREFIX:-agentos}-platform-admin
     restart: unless-stopped
     ports:
-      - "${PLATFORM_ADMIN_PORT:-3001}:3001"
+      - "${BIND_ADDRESS:-127.0.0.1}:${PLATFORM_ADMIN_PORT:-3001}:3001"
     environment:
       NODE_ENV: ${NODE_ENV:?NODE_ENV is required}
       APP_ENV: ${APP_ENV:?APP_ENV is required}
       PORT: 3001
+      DEMO_MODE: ${DEMO_MODE:-false}
+      API_BASE_URL: http://api:4000
       NEXTAUTH_URL: ${PLATFORM_ADMIN_URL:?PLATFORM_ADMIN_URL is required}
-      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?NEXTAUTH_SECRET is required}
+      NEXTAUTH_SECRET: ${PLATFORM_NEXTAUTH_SECRET:?PLATFORM_NEXTAUTH_SECRET is required}
+      # Required only when DEMO_MODE=true; never reuse NEXTAUTH_SECRET for cookie signing.
+      PLATFORM_COOKIE_HMAC_KEY: ${PLATFORM_COOKIE_HMAC_KEY:-}
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?NEXT_PUBLIC_API_URL is required}
     depends_on:
       api:

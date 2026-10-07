@@ -18,8 +18,10 @@ fixtures/scenarios/, and manifest.json with counts, coverage and SHA-256 input h
 Stdlib only, offline, deterministic: no timestamps, no randomness, no network, no hidden state.
 Every generated file is written through a temporary file and an atomic replace, and only after
 all validation passed. Generation proves document integrity, reference validity and coverage
-bookkeeping only - never system behaviour. There is no application runtime in this repository,
-so every case is reported NOT_RUN and this generator never records PASS.
+bookkeeping only - never system behaviour. The repository runtime includes an API, a worker with
+Care/Sales/Marketing agents, Tenant Console, Platform Admin, and PostgreSQL migrations. These
+acceptance specifications are not runtime results: every case remains NOT_RUN unless separately
+executed, and this generator never records PASS.
 """
 
 from __future__ import annotations

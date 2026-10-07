@@ -53,6 +53,7 @@ export const UNRESOLVED_OWNER_INPUTS: readonly OwnerInputKey[] = Object.freeze([
   'PROMOTION_LIMITS',
   'NAMESPACE_IDENTIFIERS',
   'AUDIT_PROVISIONING_EVIDENCE',
+  'careOnboardingItinerary',
 ]);
 
 export interface ProvisioningServiceOptions {

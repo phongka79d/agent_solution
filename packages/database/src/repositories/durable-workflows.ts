@@ -157,6 +157,9 @@ export interface CreateDurableTaskInput {
   readonly state_payload?: unknown;
 }
 
+/** Input for the preclaimed conversation admission writer; queued turns begin at step zero. */
+export type CreateQueuedAdmissionTaskInput = Omit<CreateDurableTaskInput, 'current_step' | 'state'>;
+
 /**
  * The optimistic guard of implement/04 §4.2, passed by a caller that read the task earlier.
  *
@@ -447,6 +450,25 @@ export class DurableWorkflowRepository {
 
     return this.runInTenantTransaction(input.tenant_id, async (client) => {
       return insertDurableTask(client, input);
+    });
+  }
+
+  /**
+   * Writes the opening queued task for a reservation claimed by the API admission path.
+   *
+   * This is intentionally separate from `createTask`: ordinary task creation keeps its historical
+   * positive-step contract, while conversation admission's opening step is the durable zero.
+   */
+  async createQueuedAdmissionTask(input: CreateQueuedAdmissionTaskInput): Promise<DurableTaskRecord> {
+    assertIdentifier(input.tenant_id, 'tenant_id', 36, 'TASK_TENANT_ID_REQUIRED');
+    assertIdentifier(input.run_id, 'run_id', 64, 'TASK_RUN_ID_REQUIRED');
+    assertIdentifier(input.correlation_id, 'correlation_id', 64, 'TASK_CORRELATION_ID_REQUIRED');
+    return this.runInTenantTransaction(input.tenant_id, async (client) => {
+      return insertDurableTask(client, {
+        ...input,
+        state: 'queued',
+        current_step: 0,
+      });
     });
   }
 

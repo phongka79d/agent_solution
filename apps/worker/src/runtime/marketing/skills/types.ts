@@ -9,6 +9,7 @@ import type {
   SkillRegistry,
   SkillToolPort,
 } from '@agentos/skills';
+import type { MarketingKnowledgePort } from '../contracts.js';
 
 export type {
   AssignableAuthority,
@@ -21,6 +22,7 @@ export type {
   SkillRegistry,
   SkillToolPort,
 } from '@agentos/skills';
+export type { MarketingKnowledgePort } from '../contracts.js';
 
 /**
  * §4.1 Skill 1: skill.mkt.analyze_market_signal
@@ -51,6 +53,7 @@ export interface InputMktSegmentAudience {
   rfm_criteria: 'CHAMPIONS' | 'LOYAL' | 'POTENTIAL_LOYALIST' | 'AT_RISK' | 'HIBERNATING';
   min_days_inactive: number;
   max_segment_size?: number;
+  channel?: 'LINE' | 'WHATSAPP' | 'EMAIL' | 'SMS' | 'ZALO' | 'TIKTOK' | 'MESSENGER' | 'INSTAGRAM';
 }
 
 export interface OutputMktSegmentAudience {
@@ -65,7 +68,8 @@ export interface OutputMktSegmentAudience {
  */
 export interface InputMktCheckConsent {
   tenant_id: string;
-  customer_id: string;
+  customer_id?: string;
+  segment_id?: string;
   channel: 'LINE' | 'WHATSAPP' | 'SMS' | 'EMAIL' | 'ZALO' | 'TIKTOK' | 'MESSENGER' | 'INSTAGRAM';
 }
 
@@ -107,6 +111,8 @@ export interface OutputMktGenerateContent {
   headline: string;
   body_content: string;
   cta_text: string;
+  preheader?: string;
+  brand_audit_text?: string;
   channel_payload: ChannelSpecificPayload;
 }
 
@@ -117,8 +123,12 @@ export interface InputMktAuditBrand {
   tenant_id: string;
   draft_text: string;
   channel: string;
+  subject?: string;
+  title?: string;
+  headline?: string;
+  cta_text?: string;
+  preheader?: string;
 }
-
 export interface OutputMktAuditBrand {
   compliant: boolean;
   violations: Array<{
@@ -129,6 +139,7 @@ export interface OutputMktAuditBrand {
   }>;
   confidence_score: number;
 }
+
 
 /**
  * §4.1 Skill 6: skill.mkt.dispatch_campaign
@@ -196,6 +207,21 @@ export interface MarketingCustomer360Port {
 export interface MarketingConsentPort {
   readonly checkConsent: (
     input: InputMktCheckConsent,
+    context: ExecutionContext,
+  ) => Promise<OutputMktCheckConsent>;
+}
+
+/**
+ * Tenant-scoped aggregate consent guard used by operator campaign plans. It is distinct from
+ * `checkConsent`, which remains a single verified-customer check for conversational calls.
+ */
+export interface MarketingAudienceConsentPort {
+  readonly checkAudienceConsent: (
+    input: {
+      readonly tenant_id: string;
+      readonly segment_id: string;
+      readonly channel: InputMktCheckConsent['channel'];
+    },
     context: ExecutionContext,
   ) => Promise<OutputMktCheckConsent>;
 }
@@ -318,8 +344,11 @@ export interface MarketingSkillToolPortOptions {
   readonly consentPort?: MarketingConsentPort | null;
   readonly content_engine?: MarketingContentEnginePort | null;
   readonly brand_guard?: MarketingBrandGuardPort | null;
+  /** Tenant-scoped approved knowledge used by the default brand adapter; it never substitutes for Core.LLMContentEngine. */
+  readonly knowledge?: MarketingKnowledgePort | null;
   readonly communication?: MarketingCommunicationPort | null;
   readonly analytics?: MarketingAnalyticsPort | null;
+  readonly audience_consent?: MarketingAudienceConsentPort | null;
   readonly audience_resolver?: MarketingAudienceResolver | null;
   readonly audienceResolver?: MarketingAudienceResolver | null;
 }

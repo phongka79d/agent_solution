@@ -44,6 +44,8 @@ const RESOLUTIONS: readonly ReconciliationResolution[] = [
   'ESCALATE_MANUALLY',
 ];
 
+const MAX_REASON_LENGTH = 1000;
+
 function isStoredState(value: string): value is TaskStoredState {
   return (STORED_STATES as readonly string[]).includes(value);
 }
@@ -88,10 +90,17 @@ export function registerOperationRoutes(
         }
 
         const body: unknown = request.body;
-        const reason =
-          typeof body === 'object' && body !== null && typeof (body as Record<string, unknown>)['reason'] === 'string'
-            ? ((body as Record<string, unknown>)['reason'] as string)
-            : '';
+        let reason = '';
+        if (typeof body === 'object' && body !== null && 'reason' in (body as Record<string, unknown>)) {
+          const rawReason = (body as Record<string, unknown>)['reason'];
+          if (typeof rawReason !== 'string') {
+            fail('VALIDATION_FAILED', 'reason must be a string when supplied');
+          }
+          if (rawReason.length > MAX_REASON_LENGTH) {
+            fail('VALIDATION_FAILED', `reason exceeds the ${MAX_REASON_LENGTH} character limit`);
+          }
+          reason = rawReason.trim();
+        }
 
         const run_id = request.params.run_id;
         const classification = await runtime.runs.classifyRetry(principal.tenant_id, run_id);
@@ -135,9 +144,7 @@ export function registerOperationRoutes(
 
         const response: TaskAcceptedResponse = {
           task_id: started.run_id,
-          // A retry re-queues a run; the route does not synthesize a conversation binding it was not
-          // given, so an unbound run reports `null` rather than an empty identifier.
-          conversation_id: null,
+          conversation_id: started.conversation_id ?? null,
           status: started.lifecycle_state === 'queued' ? 'accepted' : started.lifecycle_state,
           task_version: started.task_version,
           correlation_id: started.correlation_id,
@@ -177,10 +184,18 @@ export function registerOperationRoutes(
         fail('VALIDATION_FAILED', 'state must be a stored task lifecycle value');
       }
 
+      const rawLimit = request.query.limit;
+      let parsedLimit: number | undefined;
+      if (rawLimit !== undefined) {
+        if (!/^\d+$/.test(rawLimit) || rawLimit === '0') {
+          fail('VALIDATION_FAILED', 'limit must be a positive integer');
+        }
+        parsedLimit = Number.parseInt(rawLimit, 10);
+      }
       const page = await runtime.runs.list({
         tenant_id: principal.tenant_id,
         ...(request.query.cursor === undefined ? {} : { cursor: request.query.cursor }),
-        ...(request.query.limit === undefined ? {} : { limit: Number(request.query.limit) }),
+        ...(parsedLimit === undefined ? {} : { limit: parsedLimit }),
         ...(request.query.agent_id === undefined ? {} : { agent_id: request.query.agent_id }),
         ...(state === undefined ? {} : { state }),
         ...(request.query.from === undefined ? {} : { from: request.query.from }),
@@ -238,6 +253,9 @@ export function registerOperationRoutes(
         }
         if (typeof reason !== 'string' || reason.trim().length === 0) {
           fail('VALIDATION_FAILED', 'reason is mandatory for a reconciliation resolution');
+        }
+        if (reason.length > MAX_REASON_LENGTH) {
+          fail('VALIDATION_FAILED', `reason exceeds the ${MAX_REASON_LENGTH} character limit`);
         }
 
         const receipt = candidate['receipt'];

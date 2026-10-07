@@ -443,6 +443,31 @@ describe('DurableWorkflowRepository.createTask', () => {
     expect(client.statements).toEqual([]);
   });
 
+
+  it('writes preclaimed queued admissions at durable step zero without changing createTask validation', async () => {
+    const { repository, client, boundTenants } = harnessFor({
+      insert: { rows: [taskRow({ current_step: 0 })] },
+    });
+
+    const record = await repository.createQueuedAdmissionTask({
+      tenant_id: TENANT,
+      run_id: RUN_ID,
+      correlation_id: CORRELATION_ID,
+      state_payload: { signal: { signal_id: 'request-1' } },
+    });
+
+    expect(boundTenants).toEqual([TENANT]);
+    expect(bindingsOf(client, 'insert')).toEqual([
+      TENANT,
+      RUN_ID,
+      CORRELATION_ID,
+      0,
+      'queued',
+      3,
+      JSON.stringify({ signal: { signal_id: 'request-1' } }),
+    ]);
+    expect(record.current_step).toBe(0);
+  });
   it('refuses a second task for the same run instead of merging it', async () => {
     const { repository } = harnessFor({
       insert: {
@@ -829,10 +854,28 @@ describe('DurableWorkflowRepository.transitionTask', () => {
     expect(record.task_version).toBe(3);
   });
 
-  it('moves the state without touching state_payload when the transition carries none', async () => {
+  it('clears a worker lease when a task reaches a terminal state', async () => {
     const { repository, client } = harnessFor({
-      lock: { rows: [taskRow({ state: 'running', task_version: 2 })] },
-      state: { rows: [taskRow({ state: 'completed', task_version: 3 })] },
+      lock: {
+        rows: [
+          taskRow({
+            state: 'running',
+            task_version: 2,
+            lease_owner: 'worker-1',
+            lease_expires_at: LEASE_EXPIRES_AT,
+          }),
+        ],
+      },
+      state: {
+        rows: [
+          taskRow({
+            state: 'completed',
+            task_version: 3,
+            lease_owner: null,
+            lease_expires_at: null,
+          }),
+        ],
+      },
     });
 
     await expect(
@@ -840,6 +883,12 @@ describe('DurableWorkflowRepository.transitionTask', () => {
     ).resolves.toMatchObject({ state: 'completed', task_version: 3 });
 
     expect(client.statements.map((statement) => statement.kind)).toEqual(['lock', 'state']);
+    expect(statementOf(client, 'state').sql).toContain(
+      "lease_owner = CASE WHEN $3::agentos.task_lifecycle_state IN ('completed', 'stopped', 'failed') THEN NULL ELSE lease_owner END",
+    );
+    expect(statementOf(client, 'state').sql).toContain(
+      "lease_expires_at = CASE WHEN $3::agentos.task_lifecycle_state IN ('completed', 'stopped', 'failed') THEN NULL ELSE lease_expires_at END",
+    );
     expect(bindingsOf(client, 'state')).toEqual([TENANT, RUN_ID, 'completed', 2]);
   });
 
@@ -994,9 +1043,19 @@ describe('DurableWorkflowRepository.recordFailure', () => {
     expect(outcome).toEqual({ requeued: true, state: 'queued', retry_count: 1, task_version: 4 });
   });
 
-  it('terminates a RETRYABLE failure whose budget is spent', async () => {
+  it('terminates a RETRYABLE failure whose budget is spent and releases its lease', async () => {
     const { repository, client } = harnessFor({
-      lock: { rows: [taskRow({ state: 'running', retry_count: 3, max_retries: 3 })] },
+      lock: {
+        rows: [
+          taskRow({
+            state: 'running',
+            retry_count: 3,
+            max_retries: 3,
+            lease_owner: 'worker-1',
+            lease_expires_at: LEASE_EXPIRES_AT,
+          }),
+        ],
+      },
       fail: {
         rows: [
           taskRow({
@@ -1004,6 +1063,8 @@ describe('DurableWorkflowRepository.recordFailure', () => {
             task_version: 5,
             retry_count: 3,
             last_error_class: 'RETRYABLE',
+            lease_owner: null,
+            lease_expires_at: null,
           }),
         ],
       },
@@ -1012,6 +1073,8 @@ describe('DurableWorkflowRepository.recordFailure', () => {
     const outcome = await repository.recordFailure(failureInput());
 
     expect(client.statements.map((statement) => statement.kind)).toEqual(['lock', 'fail']);
+    expect(statementOf(client, 'fail').sql).toContain('lease_owner = NULL');
+    expect(statementOf(client, 'fail').sql).toContain('lease_expires_at = NULL');
     expect(outcome).toEqual({ requeued: false, state: 'failed', retry_count: 3, task_version: 5 });
   });
 

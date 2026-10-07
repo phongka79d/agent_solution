@@ -20,7 +20,6 @@ import { correlationIdOf, fail, mapError, replyFailure } from '../../gateway/htt
 import type { CredentialStore } from '../../gateway/principal.js';
 import { authenticate, requireOperator, requirePrincipal } from '../../gateway/principal.js';
 import type { GatewayRuntime } from '../../gateway/ports.js';
-
 /** The one operation this module serves. */
 const TIMELINE_OPERATION = 'GET /api/v1/customers/{customer_id}/timeline';
 
@@ -202,6 +201,7 @@ async function handleTimeline(
   reply.code(200).send(page);
 }
 
+
 /**
  * Registers the R15 timeline read on the `/api/v1` instance.
  *
@@ -212,7 +212,8 @@ export function registerAnalyticsRoutes(
   app: FastifyInstance,
   deps: { readonly runtime: GatewayRuntime; readonly credentials: CredentialStore },
 ): void {
-  app.get('/customers/:customer_id/timeline', { preHandler: authenticate(deps) }, (request, reply) =>
+  const preHandler = authenticate(deps);
+  app.get('/customers/:customer_id/timeline', { preHandler }, (request, reply) =>
     handleTimeline(request, reply, deps),
   );
 }

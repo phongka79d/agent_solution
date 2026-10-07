@@ -1,8 +1,9 @@
-import type {
-  ErpTransport,
-  ErpTransportFailureClass,
-  ErpTransportRequest,
-  HmacSha256Hex,
+import {
+  signMockRequest,
+  type ErpTransport,
+  type ErpTransportFailureClass,
+  type ErpTransportRequest,
+  type HmacSha256Hex,
 } from '@agentos/adapters';
 
 /**
@@ -103,7 +104,7 @@ export function createErpHttpTransport(options: ErpHttpTransportOptions): ErpTra
       const headers: Record<string, string> = {
         accept: 'application/json',
         [tenant_header]: input.tenant_id,
-        [signature_header]: options.hmac(options.hmac_secret, body),
+        [signature_header]: signMockRequest(options.hmac_secret, input.method, input.path, body, options.hmac),
         ...extra_headers,
       };
       if (input.method === 'POST') {
@@ -112,15 +113,19 @@ export function createErpHttpTransport(options: ErpHttpTransportOptions): ErpTra
 
       // A host-side deadline. It is passed to the transport rather than enforced by a timer here, so
       // a hung provider surfaces as an aborted call whose outcome is indeterminate — never as a
-      // success and never as a refusal.
+      // success and never as a refusal. The orchestrator's signal is composed with this local
+      // deadline so a step timeout cancels the same underlying fetch.
       const deadline = AbortSignal.timeout(timeout_ms);
+      const signal = input.signal === undefined
+        ? deadline
+        : AbortSignal.any([deadline, input.signal]);
 
       try {
         const response = await fetchImpl(target, {
           method: input.method,
           headers,
           ...(input.method === 'POST' ? { body } : {}),
-          signal: deadline,
+          signal,
         });
 
         if (response.status >= 200 && response.status < 300) {
@@ -129,8 +134,11 @@ export function createErpHttpTransport(options: ErpHttpTransportOptions): ErpTra
 
         return failure(classifyStatus(response.status), response.status);
       } catch {
-        // An aborted deadline proves nothing about the provider; a network error before a response
-        // proves just as little. Both are indeterminate, and neither is reported as a refusal.
+        // An aborted host deadline proves nothing about the provider. A caller cancellation also
+        // proves nothing, but must remain UNKNOWN rather than being mislabeled as a provider timeout.
+        if (input.signal?.aborted) {
+          return failure('UNKNOWN', null);
+        }
         return failure(deadline.aborted ? 'TIMEOUT' : 'UNKNOWN', null);
       }
     },

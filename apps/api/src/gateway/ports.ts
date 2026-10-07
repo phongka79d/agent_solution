@@ -13,10 +13,16 @@
 import type { IEffectGuard } from '@agentos/core-engine/contracts';
 
 import type {
+  AppendProviderCallInput,
   CareHandoffClaimOutcome,
   CareHandoffCompletionOutcome,
   ClaimCareHandoffInput,
   CompleteCareHandoffInput,
+  CompanyCrmCampaignRow,
+  CompanyCrmConversationSummaryRow,
+  CompanyCrmCustomerProfileRow,
+  CompanyCrmCustomerRow,
+  CompanyProjectionSources,
 } from '@agentos/database';
 
 import type {
@@ -32,6 +38,7 @@ import type {
   ReconciliationResolution,
   RetryableFailureClass,
   RunProjection,
+  RunSourceChannel,
   TaskSourceRef,
   TaskStoredState,
   TelemetryFrame,
@@ -68,6 +75,8 @@ export interface ConversationMessageInput {
   readonly content: string;
   readonly content_type?: string;
   readonly metadata?: Record<string, unknown>;
+  /** Bounded caller request key; a replay returns the original message instead of a second one. */
+  readonly request_id?: string;
 }
 
 export interface ConversationPort {
@@ -83,6 +92,10 @@ export interface ConversationPort {
     active_agent?: string;
   }): Promise<ConversationRecord>;
   get(tenant_id: string, conversation_id: string): Promise<ConversationRecord | null>;
+  list(tenant_id: string, limit?: number): Promise<readonly ConversationRecord[]>;
+  listMessages(input: { tenant_id: string; conversation_id: string; limit?: number }): Promise<
+    readonly { message_id: string; sender_type: ConversationMessageInput['sender_type']; sender_id: string; content: string; created_at: string }[]
+  >;
   /** Moves `conversations.state`; the wire value is never stored (`06` §8.3 C-3). */
   setState(
     tenant_id: string,
@@ -90,7 +103,17 @@ export interface ConversationPort {
     state: ConversationState,
     takeover_operator_id: string | null,
   ): Promise<void>;
-  appendMessage(input: ConversationMessageInput): Promise<void>;
+  /**
+   * Returns a conversation to agent control only when its persisted takeover marker still belongs
+   * to the operator whose lease was observed as expired. This conditional transition prevents stale
+   * expiry cleanup from clearing a newer operator's takeover.
+   */
+  clearTakeoverIfOwned(
+    tenant_id: string,
+    conversation_id: string,
+    operator_id: string,
+  ): Promise<boolean>;
+  appendMessage(input: ConversationMessageInput): Promise<string>;
   /** Server-issued session token bound to the conversation credential (`06` §8.0 tenant binding). */
   issueSessionToken(input: {
     tenant_id: string;
@@ -151,10 +174,19 @@ export interface StartedRun {
   readonly task_version: number;
   readonly correlation_id: string;
   readonly lifecycle_state: TaskStoredState;
+  /** Immutable conversation owner when the run is bound to a customer conversation. */
+  readonly conversation_id?: string;
   /** Which delivery owns the reservation; absent only for legacy injected test ports. */
   readonly admission?: RunAdmission;
   /** Persisted receipt when the reservation was already settled as a replay. */
   readonly receipt?: Record<string, unknown>;
+}
+
+/** A reservation claimed before provider classification; the run binding persists it exactly once. */
+export interface AdmissionReservation {
+  readonly run_id: string;
+  readonly effect_key: string;
+  readonly request_fingerprint: string;
 }
 
 export interface RunPort {
@@ -165,8 +197,12 @@ export interface RunPort {
   start(input: {
     tenant_id: string;
     correlation_id: string;
-    request_id: string;
-    source_channel: ChannelId;
+    readonly request_id: string;
+    /** Reservation claimed before intent classification; the run binding must not reserve again. */
+    readonly admission_reservation?: AdmissionReservation;
+    /** Internal gateway admission class; never sourced from a client field. */
+    admission_skill_id?: 'campaign.draft';
+    source_channel: RunSourceChannel;
     event_type: string;
     session_id: string;
     channel_type: string;
@@ -180,6 +216,9 @@ export interface RunPort {
     task_version: number;
     lifecycle_state: TaskStoredState;
     correlation_id: string;
+    /** Immutable admission owner; absent for non-conversation runs. */
+    conversation_id?: string;
+    session_id?: string;
     answer?: string;
     sources?: readonly TaskSourceRef[];
     actions?: readonly { operation: string; status: string; provider_reference: string }[];
@@ -370,6 +409,11 @@ export interface WebhookVerificationPort {
   }): Promise<{ readonly ok: true } | { readonly ok: false; readonly error_code: GatewayErrorCode_ }>;
 }
 
+/** Redacted provider-call telemetry; prompts, completions, credentials, and URLs never cross this port. */
+export interface ProviderCallPort {
+  appendProviderCall(input: AppendProviderCallInput): Promise<unknown>;
+}
+
 /** One audit row per gateway operation (`06` §8.0); reads audit too and write no evidence row. */
 export interface GatewayAuditPort {
   record(input: {
@@ -383,6 +427,91 @@ export interface GatewayAuditPort {
     detail?: Record<string, unknown>;
   }): Promise<void>;
 }
+
+/** Read-only tenant governance settings used by approval policy routes. */
+export interface GovernancePort {
+  get(tenant_id: string): Promise<{
+    readonly require_distinct_approver: boolean;
+  }>;
+}
+/** Cross-tenant platform directory; implementations call only the privileged SQL projections. */
+export interface PlatformDirectoryPort {
+  listTenants(): Promise<readonly {
+    readonly tenant_id: string;
+    readonly display_name: string;
+    readonly status: string;
+    readonly created_at: string;
+    readonly enabled_modules: readonly string[] | null;
+  }[]>;
+  getTenant(tenant_id: string): Promise<{
+    readonly tenant_id: string;
+    readonly display_name: string;
+    readonly status: string;
+    readonly created_at: string;
+    readonly enabled_modules: readonly string[] | null;
+  } | null>;
+  readiness(tenant_id: string): Promise<{
+    readonly tenant_id: string;
+    readonly capability_count: number | null;
+    readonly capability_statuses: Readonly<Record<string, string>> | null;
+    readonly connector_count: number | null;
+    readonly connector_statuses: Readonly<Record<string, string>> | null;
+    readonly owner_input_count: number | null;
+    readonly owner_input_statuses: Readonly<Record<string, string>> | null;
+    readonly workspace_status: string | null;
+    readonly residency_status: string | null;
+  } | null>;
+  usage(from: string, to: string): Promise<readonly {
+    readonly tenant_id: string;
+    readonly runs_count: number | null;
+    readonly token_cost_records_count: number | null;
+    readonly estimated_cost_total: string | null;
+    readonly input_tokens_total: number | null;
+    readonly output_tokens_total: number | null;
+    readonly cached_tokens_total: number | null;
+  }[]>;
+}
+
+/** Provider metadata intentionally contains no credentials, URLs, or model secrets. */
+export interface PlatformProvidersPort {
+  list(): Promise<readonly {
+    readonly provider: string;
+    readonly configured: boolean;
+    readonly mode: string;
+  }[]>;
+}
+/** Tenant-scoped read-only sources for the company console projections. */
+export interface CompanyProjectionPort {
+  getSources(tenant_id: string): Promise<CompanyProjectionSources>;
+}
+export type CompanyProjectionsPort = CompanyProjectionPort;
+/** Tenant-scoped Customer 360, campaign, and operator conversation projections. */
+export interface CompanyCrmPort {
+  listCustomers(input: {
+    readonly tenant_id: string;
+    readonly query?: string;
+    readonly limit?: number;
+    readonly cursor?: string;
+  }): Promise<{
+    readonly items: readonly CompanyCrmCustomerRow[];
+    readonly next_cursor: string | null;
+  }>;
+  getCustomerProfile(tenant_id: string, customer_id: string): Promise<CompanyCrmCustomerProfileRow | null>;
+  listCampaigns(input: {
+    readonly tenant_id: string;
+    readonly limit?: number;
+    readonly cursor?: string;
+  }): Promise<{
+    readonly items: readonly CompanyCrmCampaignRow[];
+    readonly next_cursor: string | null;
+  }>;
+  getCampaign(tenant_id: string, run_id: string): Promise<CompanyCrmCampaignRow | null>;
+  getConversationSummary(
+    tenant_id: string,
+    conversation_id: string,
+  ): Promise<CompanyCrmConversationSummaryRow | null>;
+}
+
 
 /** The single exit path from a route to the durable reservation protocol (`04` §4.4). */
 export interface ReceiptPort {
@@ -412,7 +541,11 @@ export interface GatewayRuntime {
   readonly kpi: KpiPort;
   readonly identity: IdentityPort;
   readonly webhooks: WebhookVerificationPort;
+  readonly companyCrm?: CompanyCrmPort;
+  readonly companyProjections?: CompanyProjectionPort;
+  readonly governance?: GovernancePort;
   readonly audit: GatewayAuditPort;
+  readonly providerCalls?: ProviderCallPort;
   readonly receipts: ReceiptPort;
   /**
    * The durable reservation protocol (`04` §4.4, BR-005/BR-006). Route-level idempotency for R02,

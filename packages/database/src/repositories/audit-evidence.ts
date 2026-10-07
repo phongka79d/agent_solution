@@ -58,7 +58,6 @@ import { canonicalizeJson, sha256CanonicalJson } from './canonical-json.js';
 import { assertIdentifier, assertPositiveInteger, isPlainObject } from './durable-workflows.js';
 import type { TenantTransactionRunner } from './effect-reservations.js';
 import {
-  AUDIT_TIMESTAMP_UTC_ISO_MS,
   GENESIS_HASH,
   assertSha256Digest,
   auditChainHash,
@@ -78,6 +77,7 @@ import {
   INSERT_EVIDENCE_RECORD,
   LOCK_CHAIN_SCOPE,
   SELECT_AUDIT_BY_TENANT,
+  SELECT_AUDIT_SERVER_TIMESTAMP,
   SELECT_AUDIT_TAIL,
   SELECT_EVIDENCE_BY_EFFECT,
   SELECT_EVIDENCE_BY_RUN,
@@ -94,6 +94,7 @@ import {
 import type {
   AgentRunLogRow,
   AuditRecordRow,
+  AuditServerTimestampRow,
   EvidenceRecordRow,
   AuthorityLevel,
   ExecutionStatus,
@@ -211,6 +212,8 @@ export interface AgentRunLogRecord {
 /** One stored `agentos.audit_records` row, the chained compliance record (§08 §4.1). */
 export interface AuditRecord extends AuditRecordInput {
   readonly id: string;
+  /** PostgreSQL publishes the tenant-local BIGINT sequence as a decimal string. */
+  readonly chain_seq: string;
   /** Audit event time as the hashed byte contract renders it: UTC ISO-8601 with milliseconds. */
   readonly timestamp: string;
   /** Predecessor's `chain_hash`; {@link GENESIS_HASH} for the tenant's first record. */
@@ -220,12 +223,12 @@ export interface AuditRecord extends AuditRecordInput {
 }
 
 /**
- * Input of {@link AuditRepository.append}: the 18 mapped fields of one audit event plus its event
- * time.
+ * Input of {@link AuditRepository.append}: the 18 mapped fields of one audit event.
  *
- * The operational `step_index` / `started_at` / `completed_at` members are optional so a full
- * `AgentRunLogRecord` binds to this method verbatim (that is the `IAuditTrail` port's signature);
- * they are not part of the hashed projection.
+ * The optional operational members let a full `AgentRunLogRecord` bind to this method verbatim
+ * (that is the `IAuditTrail` port's signature); they are not part of the hashed projection.
+ * `timestamp` is accepted for source compatibility but deliberately ignored: the database clock
+ * owns the stored event time and the chain ordering is {@link AuditRecord.chain_seq}.
  */
 export interface AuditRecordInput {
   readonly run_id: string;
@@ -246,7 +249,7 @@ export interface AuditRecordInput {
   readonly latency_ms: number;
   readonly cost: unknown;
   readonly error: unknown | null;
-  /** Audit event time; defaults to `completed_at` when the operational record is passed verbatim. */
+  /** Legacy caller event-time hint; ignored in favor of the server clock. */
   readonly timestamp?: string;
   readonly step_index?: number;
   readonly started_at?: string;
@@ -601,27 +604,15 @@ export class AuditRepository {
    * Appends one event to the tenant's audit chain (implement/08 §4.2).
    *
    * The append is serialized per tenant by `pg_advisory_xact_lock`, and the predecessor is the
-   * tenant's durable tail read under that lock — never a value the caller supplies — so two
-   * concurrent writers cannot both extend the same link. The event time is hashed in the rendering
-   * the column stores, which is why a caller that owns the instant passes it as UTC ISO-8601 with
-   * milliseconds.
+   * tenant's durable tail read under that lock — never a value the caller supplies. The database
+   * assigns `chain_seq` in the INSERT and supplies the UTC-millisecond event timestamp via
+   * `clock_timestamp()`, so skewed caller clocks cannot fork or reorder the chain.
    *
-   * @param record The 18-field event; `timestamp` defaults to `completed_at`, then to now.
-   * @throws Error `AUDIT_INPUT_INVALID` when a field cannot be stored as its column requires, or
-   *   when the event time is not the rendering the chain hash covers.
+   * @param record The 18-field event; any legacy `timestamp` hint is ignored.
+   * @throws Error `AUDIT_APPEND_UNCONFIRMED` when the insert does not publish a row.
    */
   async append(record: AuditRecordInput): Promise<void> {
     const prepared = prepareLedgerRecord(record, 'AUDIT_INPUT_INVALID');
-    const timestamp = record.timestamp ?? record.completed_at ?? new Date().toISOString();
-
-    if (!AUDIT_TIMESTAMP_UTC_ISO_MS.test(timestamp)) {
-      throw new Error(
-        'AUDIT_INPUT_INVALID: timestamp must be UTC ISO-8601 with milliseconds ' +
-          `(YYYY-MM-DDTHH:MM:SS.sssZ), the rendering the chain hash covers, so a caller that owns ` +
-          `the event time must pass it in that form; received ${String(timestamp)} (implement/08 §4.2).`,
-      );
-    }
-
     const payload = buildAuditPayload(record);
 
     await this.runInTenantTransaction(prepared.tenant_id, async (client): Promise<void> => {
@@ -630,6 +621,20 @@ export class AuditRepository {
       const tail = await client.query<AuditRecordRow>(SELECT_AUDIT_TAIL, [prepared.tenant_id]);
       const tailRow = tail.rows[0];
       const prev_hash = tailRow === undefined ? GENESIS_HASH : tailRow.chain_hash;
+
+      const serverTime = await client.query<AuditServerTimestampRow>(
+        SELECT_AUDIT_SERVER_TIMESTAMP,
+      );
+      const serverTimeRow = serverTime.rows[0];
+
+      if (serverTimeRow === undefined || !(serverTimeRow.server_timestamp instanceof Date)) {
+        throw new Error(
+          `AUDIT_SERVER_TIME_UNCONFIRMED: the database did not publish a server timestamp for run ` +
+            `${prepared.run_id}; refusing to hash an event against a caller clock (NFR-002).`,
+        );
+      }
+
+      const timestamp = serverTimeRow.server_timestamp.toISOString();
       const chain_hash = auditChainHash({ prev_hash, payload, timestamp });
 
       const appended = await client.query(INSERT_AUDIT_RECORD, [
@@ -666,7 +671,7 @@ export class AuditRepository {
   }
 
   /**
-   * Reads the tenant's audit chain in event order (`timestamp`, then `id`).
+   * Reads the tenant's audit chain in database sequence order (`chain_seq`, then `id`).
    *
    * The read is scoped to one tenant by the transaction binding and by the predicate, so the chain a
    * caller verifies is never spliced with another tenant's records (NFR-006).

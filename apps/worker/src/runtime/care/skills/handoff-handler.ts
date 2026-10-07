@@ -4,11 +4,36 @@ import type { SkillToolInvocation } from '@agentos/skills';
 
 import { CareSkillToolError } from './errors.js';
 
+function handoffErrorCode(error: unknown): { readonly code: string; readonly detail: string } | null {
+  const message = error instanceof Error ? error.message : '';
+  const codeAndDetail = /^([A-Z][A-Z0-9_]+):\s*(.*)$/s.exec(message);
+  if (!codeAndDetail || codeAndDetail[1] === undefined) return null;
+  return { code: codeAndDetail[1], detail: codeAndDetail[2] || codeAndDetail[1] };
+}
+
+function asHandoffRefusal(error: unknown): CareSkillToolError | null {
+  const parsed = handoffErrorCode(error);
+  if (
+    parsed !== null
+    && parsed.code !== 'HANDOFF_QUEUE_TIMEOUT'
+    && (parsed.code.startsWith('HANDOFF_') || parsed.code === 'IDEMPOTENCY_CONFLICT')
+  ) {
+    return new CareSkillToolError(parsed.code, parsed.detail);
+  }
+  return null;
+}
+
 /** Executes the durable care handoff binding while preserving enqueue/reconcile semantics. */
 export async function handleHandoff<TOutput>(
   invocation: SkillToolInvocation<unknown>,
   handoffRepository: Pick<CareHandoffRepository, 'enqueue' | 'reconcile'>,
 ): Promise<TOutput> {
+  if (typeof invocation.input !== 'object' || invocation.input === null) {
+    throw new CareSkillToolError(
+      'VALIDATION_FAILED',
+      'tool invocation input must be an object',
+    );
+  }
   const input = invocation.input as {
     readonly tenant_id: string;
     readonly session_id: string;
@@ -44,37 +69,46 @@ export async function handleHandoff<TOutput>(
         request_fingerprint: enqueueInput.request_fingerprint,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : '';
-      const codeAndDetail = /^([A-Z][A-Z0-9_]+):\s*(.*)$/s.exec(message);
-      if (
-        codeAndDetail
-        && codeAndDetail[1] !== undefined
-        && codeAndDetail[1] !== 'HANDOFF_QUEUE_TIMEOUT'
-        && (codeAndDetail[1].startsWith('HANDOFF_') || codeAndDetail[1] === 'IDEMPOTENCY_CONFLICT')
-      ) {
-        throw new CareSkillToolError(codeAndDetail[1], codeAndDetail[2] || codeAndDetail[1]);
-      }
-      throw new CareSkillToolError(
-        'QUEUE_DOWN',
-        'the handoff outcome could not be reconciled; no enqueue retry was attempted',
-      );
+      const refusal = asHandoffRefusal(error);
+      if (refusal !== null) throw refusal;
+      // A reconciliation timeout is not proof that the queue item is absent. The enqueue retry
+      // below is safe because the repository arbitrates by (tenant_id, effect_key).
+      return null;
     }
   };
-  const recoverHandoff = async (): Promise<TOutput> => {
-    const reconciled = await reconcileHandoff();
-    if (reconciled.state === 'COMMITTED') return reconciled.output as TOutput;
-    throw new CareSkillToolError(
-      'QUEUE_DOWN',
-      'no committed handoff receipt was found; no enqueue retry was attempted',
-    );
-  };
-  const signal = invocation.context.signal;
-  if (signal?.aborted) return recoverHandoff();
-
-  const operation = handoffRepository.enqueue(enqueueInput).then(
+  const enqueueOperation = () => handoffRepository.enqueue(enqueueInput).then(
     (result) => ({ kind: 'completed' as const, output: result.output }),
     (error: unknown) => ({ kind: 'failed' as const, error }),
   );
+  const recoverHandoff = async (retryEnqueue: boolean): Promise<TOutput> => {
+    const reconciled = await reconcileHandoff();
+    if (reconciled?.state === 'COMMITTED') return reconciled.output as TOutput;
+    if (!retryEnqueue) {
+      throw new CareSkillToolError(
+        'QUEUE_DOWN',
+        'no committed handoff receipt was found; no enqueue was started',
+      );
+    }
+
+    // The first transaction may have timed out after its commit or rolled back before the error
+    // reached the worker. Re-entering the same transaction is therefore the durable retry: a
+    // committed item replays and a rolled-back item is created exactly once.
+    const retryOutcome = await enqueueOperation();
+    if (retryOutcome.kind === 'completed') return retryOutcome.output as TOutput;
+    const refusal = asHandoffRefusal(retryOutcome.error);
+    if (refusal !== null) throw refusal;
+
+    const committed = await reconcileHandoff();
+    if (committed?.state === 'COMMITTED') return committed.output as TOutput;
+    throw new CareSkillToolError(
+      'QUEUE_DOWN',
+      'the handoff queue did not commit after a bounded idempotent retry',
+    );
+  };
+  const signal = invocation.context.signal;
+  if (signal?.aborted) return recoverHandoff(false);
+
+  const operation = enqueueOperation();
   let outcome: Awaited<typeof operation> | { readonly kind: 'aborted' };
   if (!signal) {
     outcome = await operation;
@@ -91,18 +125,15 @@ export async function handleHandoff<TOutput>(
       signal.removeEventListener('abort', onAbort);
     }
   }
-  if (outcome.kind === 'aborted') return recoverHandoff();
-  if (outcome.kind === 'completed') return outcome.output as TOutput;
 
-  const message = outcome.error instanceof Error ? outcome.error.message : '';
-  const codeAndDetail = /^([A-Z][A-Z0-9_]+):\s*(.*)$/s.exec(message);
-  if (
-    codeAndDetail
-    && codeAndDetail[1] !== undefined
-    && codeAndDetail[1] !== 'HANDOFF_QUEUE_TIMEOUT'
-    && (codeAndDetail[1].startsWith('HANDOFF_') || codeAndDetail[1] === 'IDEMPOTENCY_CONFLICT')
-  ) {
-    throw new CareSkillToolError(codeAndDetail[1]!, codeAndDetail[2] || codeAndDetail[1]!);
+  if (outcome.kind === 'aborted') {
+    // Do not reconcile while the transaction is still in flight: that race was the source of
+    // RESERVED-without-handoff outcomes. The repository owns its own bounded transaction, so wait
+    // for its commit/rollback and then apply the same idempotent recovery path.
+    outcome = await operation;
   }
-  return recoverHandoff();
+  if (outcome.kind === 'completed') return outcome.output as TOutput;
+  const refusal = asHandoffRefusal(outcome.error);
+  if (refusal !== null) throw refusal;
+  return recoverHandoff(true);
 }

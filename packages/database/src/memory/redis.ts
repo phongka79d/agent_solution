@@ -54,6 +54,28 @@ interface StoredEffectReservation {
 }
 
 /**
+ * Atomically reserves an effect key and returns either the candidate value (new reservation) or
+ * the value already stored by the winner. The retry handles an expiry observed between the first
+ * `SET NX` and the read without ever exposing a check-then-set window to another caller.
+ */
+const RESERVE_EFFECT_SCRIPT = `
+  -- reserve_effect_key
+  local reserved = redis.call("set", KEYS[1], ARGV[1], "EX", ARGV[2], "NX")
+  if reserved then
+    return {1, ARGV[1]}
+  end
+  local existing = redis.call("get", KEYS[1])
+  if existing then
+    return {0, existing}
+  end
+  local retried = redis.call("set", KEYS[1], ARGV[1], "EX", ARGV[2], "NX")
+  if retried then
+    return {1, ARGV[1]}
+  end
+  return {0, redis.call("get", KEYS[1])}
+`;
+
+/**
  * Refuses a key scope without a tenant, so no caller can build a global key that
  * every tenant would share.
  */
@@ -84,6 +106,14 @@ function assertKeySegment(segment: string, name: string): string {
 }
 
 /**
+ * Escapes a key segment before interpolation. Redis keys are opaque strings, so delimiters must
+ * not remain in caller-controlled segments or distinct identities can collide.
+ */
+function encodedKeySegment(segment: string, name: string): string {
+  return encodeURIComponent(assertKeySegment(segment, name));
+}
+
+/**
  * Builds the session mutex key that serialises concurrent agent replies to one
  * customer session.
  *
@@ -95,7 +125,7 @@ function assertKeySegment(segment: string, name: string): string {
 export function sessionMutexKey(tenantId: string, sessionId: string): string {
   assertTenantKeyScope(tenantId);
 
-  return `tenant:${tenantId}:session:${assertKeySegment(sessionId, 'session id')}:mutex`;
+  return `tenant:${encodeURIComponent(tenantId)}:session:${encodedKeySegment(sessionId, 'session id')}:mutex`;
 }
 
 /**
@@ -109,7 +139,7 @@ export function sessionMutexKey(tenantId: string, sessionId: string): string {
 export function sessionTakeoverLockKey(tenantId: string, sessionId: string): string {
   assertTenantKeyScope(tenantId);
 
-  return `tenant:${tenantId}:session:${assertKeySegment(sessionId, 'session id')}:takeover_lock`;
+  return `tenant:${encodeURIComponent(tenantId)}:session:${encodedKeySegment(sessionId, 'session id')}:takeover_lock`;
 }
 
 /**
@@ -124,7 +154,7 @@ export function sessionTakeoverLockKey(tenantId: string, sessionId: string): str
 export function effectReservationKey(tenantId: string, effectKey: string): string {
   assertTenantKeyScope(tenantId);
 
-  return `tenant:${tenantId}:effect:${assertKeySegment(effectKey, 'effect key')}`;
+  return `tenant:${encodeURIComponent(tenantId)}:effect:${encodedKeySegment(effectKey, 'effect key')}`;
 }
 
 /**
@@ -138,7 +168,7 @@ export function effectReservationKey(tenantId: string, effectKey: string): strin
 export function taskLeaseKey(tenantId: string, runId: string): string {
   assertTenantKeyScope(tenantId);
 
-  return `tenant:${tenantId}:task:${assertKeySegment(runId, 'run id')}:lease`;
+  return `tenant:${encodeURIComponent(tenantId)}:task:${encodedKeySegment(runId, 'run id')}:lease`;
 }
 
 /**
@@ -156,10 +186,10 @@ export function taskLeaseKey(tenantId: string, runId: string): string {
 export function rateLimitKey(tenantId: string, entity: string, window: string): string {
   assertTenantKeyScope(tenantId);
 
-  const entitySegment = assertKeySegment(entity, 'rate-limit entity');
-  const windowSegment = assertKeySegment(window, 'rate-limit window');
+  const entitySegment = encodedKeySegment(entity, 'rate-limit entity');
+  const windowSegment = encodedKeySegment(window, 'rate-limit window');
 
-  return `tenant:${tenantId}:ratelimit:${entitySegment}:${windowSegment}`;
+  return `tenant:${encodeURIComponent(tenantId)}:ratelimit:${entitySegment}:${windowSegment}`;
 }
 
 /**
@@ -177,7 +207,7 @@ export function rateLimitKey(tenantId: string, entity: string, window: string): 
 export function workingMemoryKey(tenantId: string, sessionId: string): string {
   assertTenantKeyScope(tenantId);
 
-  return `tenant:${tenantId}:wm:${assertKeySegment(sessionId, 'session id')}`;
+  return `tenant:${encodeURIComponent(tenantId)}:wm:${encodedKeySegment(sessionId, 'session id')}`;
 }
 
 /**
@@ -610,23 +640,29 @@ export async function reserveEffectKey(
     createdAt: new Date().toISOString(),
   });
 
-  const reserved = await client.set(
+  const result = await client.eval(
+    RESERVE_EFFECT_SCRIPT,
+    1,
     key,
     initialValue,
-    'EX',
     EFFECT_RESERVATION_TTL_SECONDS,
-    'NX',
   );
 
-  if (reserved === 'OK') {
+  if (!Array.isArray(result) || result.length < 2 || (result[0] !== 0 && result[0] !== 1)) {
+    throw new Error(
+      `IDEMPOTENCY_UNSTABLE: Redis returned an unrecognizable reservation result for effect key '${effectKey}'; refusing to guess whether the effect may be dispatched.`,
+    );
+  }
+
+  if (result[0] === 1) {
     return { isNew: true, status: 'PENDING' };
   }
 
-  const existingRaw = await client.get(key);
-
+  const existingRaw = typeof result[1] === 'string' ? result[1] : null;
   if (existingRaw === null) {
-    // The reservation expired between SET and GET: the caller may retry safely.
-    return { isNew: true, status: 'PENDING' };
+    throw new Error(
+      `IDEMPOTENCY_UNSTABLE: Redis lost the existing reservation for effect key '${effectKey}' while arbitrating it; refusing to guess whether the effect may be dispatched.`,
+    );
   }
 
   const existing = JSON.parse(existingRaw) as StoredEffectReservation;

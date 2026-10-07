@@ -5,7 +5,8 @@
  */
 'use client';
 
-import React from 'react';
+import { useEffect, useRef } from 'react';
+import { AdvancedDetails } from '@agentos/ui-foundation/react';
 import type { EvidenceClassification } from '@agentos/ui-foundation';
 import type { EvidenceCard } from './types';
 
@@ -38,42 +39,42 @@ const TIER_META: Record<
   FACT: {
     label: 'Verified Facts',
     description: 'System of Record ground truth (ERP, POS, WMS, Payment Gateway).',
-    dot: 'bg-emerald-400',
-    text: 'text-emerald-300',
-    border: 'border-emerald-800/80',
-    badge: 'bg-emerald-950/80 text-emerald-300 border-emerald-700',
+    dot: 'tenant-evidence-dot--success',
+    text: 'text-success',
+    border: 'border-success-border',
+    badge: 'tenant-evidence-badge--success',
   },
   SIGNAL: {
     label: 'Observed Signals',
     description: 'Direct telemetry and raw behavioral events before interpretation.',
-    dot: 'bg-sky-400',
-    text: 'text-sky-300',
-    border: 'border-sky-800/80',
-    badge: 'bg-sky-950/80 text-sky-300 border-sky-700',
+    dot: 'tenant-evidence-dot--info',
+    text: 'text-info',
+    border: 'border-info-border',
+    badge: 'tenant-evidence-badge--info',
   },
   HYPOTHESIS: {
-    label: 'AI Hypotheses & Inferences',
+    label: 'Dự đoán',
     description: 'AI model predictions; strictly segregated and NEVER persisted as ground truth.',
-    dot: 'bg-amber-400',
-    text: 'text-amber-300',
-    border: 'border-amber-700/80',
-    badge: 'bg-amber-950/90 text-amber-300 border-amber-600 animate-pulse',
+    dot: 'tenant-evidence-dot--warning',
+    text: 'text-warning',
+    border: 'border-warning-border',
+    badge: 'tenant-evidence-badge--warning',
   },
   DECISION: {
     label: 'Recorded Decisions',
     description: 'Audited human or governance decisions (e.g. AUTH-4 approval sign-off).',
-    dot: 'bg-violet-400',
-    text: 'text-violet-300',
-    border: 'border-violet-800/80',
-    badge: 'bg-violet-950/80 text-violet-300 border-violet-700',
+    dot: 'tenant-evidence-dot--ai',
+    text: 'text-ai-text',
+    border: 'border-ai-border',
+    badge: 'tenant-evidence-badge--ai',
   },
   ACTION: {
     label: 'Executed Actions',
     description: 'External effects dispatched to providers or downstream channels.',
-    dot: 'bg-teal-400',
-    text: 'text-teal-300',
-    border: 'border-teal-800/80',
-    badge: 'bg-teal-950/80 text-teal-300 border-teal-700',
+    dot: 'tenant-evidence-dot--success',
+    text: 'text-success',
+    border: 'border-success-border',
+    badge: 'tenant-evidence-badge--success',
   },
 };
 
@@ -83,30 +84,39 @@ export function EvidenceCardDrawer({
   onClose,
   focusedClassification,
 }: EvidenceCardDrawerProps) {
-  if (!isOpen) return null;
+  const dialogRef = useRef<HTMLDivElement | null>(null);
 
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    dialogRef.current?.focus();
+    function handleKeyDown(event: KeyboardEvent): void {
+      if (event.key === 'Escape') onClose();
+    }
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
+  if (!isOpen) return null;
   return (
     <div
-      className="fixed inset-y-0 right-0 w-full max-w-2xl bg-slate-900 border-l border-slate-800 shadow-2xl z-50 p-6 overflow-y-auto flex flex-col"
+      ref={dialogRef}
+      tabIndex={-1}
+      className="tenant-evidence-drawer"
       role="dialog"
       aria-modal="true"
       aria-labelledby="evidence-drawer-title"
     >
-      {/* Header */}
-      <div className="flex justify-between items-start pb-4 border-b border-slate-800 mb-6">
+      <div className="tenant-evidence-drawer__header">
         <div>
-          <h2 id="evidence-drawer-title" className="text-lg font-bold text-slate-100">
+          <h2 id="evidence-drawer-title" className="text-headline-md font-semibold text-ink">
             Evidence Cards — Five-Tier Separation
           </h2>
-          <p className="text-xs text-slate-400 mt-1">
+          <p className="mt-1 text-sm text-muted">
             Ground truth, observations, AI inference, recorded decisions, and executed effects are
             strictly segregated per FR-C360-003.
           </p>
         </div>
-        <button
-          onClick={onClose}
-          className="text-slate-400 hover:text-slate-200 text-xs px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-750 transition-colors"
-        >
+        <button type="button" onClick={onClose} className="ui-button ui-button--ghost ui-button--sm">
           Close
         </button>
       </div>
@@ -122,34 +132,26 @@ export function EvidenceCardDrawer({
           return (
             <div
               key={tier}
-              className={`p-4 rounded-xl border ${
-                tier === 'HYPOTHESIS'
-                  ? 'bg-amber-950/20 border-amber-800/60'
-                  : 'bg-slate-950/40 border-slate-800/80'
-              } ${isFocused ? 'ring-2 ring-sky-500' : ''}`}
+              className={`tenant-evidence-tier ${tier === 'HYPOTHESIS' ? 'tenant-evidence-tier--hypothesis' : ''} ${isFocused ? 'tenant-evidence-tier--focused' : ''}`}
             >
-              {/* Tier Header */}
-              <div className="flex items-center justify-between gap-2 mb-2 pb-2 border-b border-slate-800/60">
+              <div className="tenant-evidence-tier__header">
                 <div className="flex items-center gap-2">
-                  <span className={`w-2.5 h-2.5 rounded-full ${meta.dot}`}></span>
-                  <h3 className={`text-xs font-bold ${meta.text} uppercase tracking-wider`}>
+                  <span className={`tenant-evidence-dot ${meta.dot}`} aria-hidden="true" />
+                  <h3 className={`text-xs font-semibold uppercase tracking-wider ${meta.text}`}>
                     {meta.label} ({cards.length})
                   </h3>
                 </div>
-                <span className={`px-2 py-0.5 text-[10px] font-mono rounded border ${meta.badge}`}>
-                  {tier}
-                </span>
+                <span className={`tenant-evidence-badge ${meta.badge}`}>{meta.label}</span>
               </div>
 
-              <p className="text-[11px] text-slate-400 mb-3">{meta.description}</p>
+              <p className="mb-3 text-sm text-muted">{meta.description}</p>
 
-              {/* Special Warning Banner for HYPOTHESIS to visibly separate from FACT */}
-              {tier === 'HYPOTHESIS' && (
-                <div className="p-2.5 mb-3 bg-amber-950/50 border border-amber-700/60 rounded-lg text-amber-200 text-[11px] font-mono">
+              {tier === 'HYPOTHESIS' ? (
+                <div className="tenant-notice tenant-notice--warning mb-3 font-mono text-xs">
                   <strong>ATTENTION:</strong> The items below are AI model inferences. They must
                   never be cited as factual ground truth or written back to the customer profile.
                 </div>
-              )}
+              ) : null}
 
               {/* Cards in this Tier */}
               <div className="space-y-3">
@@ -159,50 +161,45 @@ export function EvidenceCardDrawer({
                   return (
                     <div
                       key={card.evidenceId}
-                      className={`p-3.5 bg-slate-900 rounded-lg border ${meta.border} space-y-2`}
+                      className={`tenant-evidence-card ${meta.border}`}
                     >
-                      <div className="flex justify-between items-start text-xs font-mono gap-2 flex-wrap">
-                        <span className="text-slate-200 font-semibold">{card.eventType}</span>
-                        <span className="text-[11px] text-slate-400">
-                          ID: <strong className="text-slate-300">{card.evidenceId}</strong>
-                        </span>
+                      <div className="flex flex-wrap items-start justify-between gap-2 text-xs font-mono">
+                        <span className="font-semibold text-ink">{card.eventType}</span>
+                        <AdvancedDetails summary="Chi tiết kỹ thuật">
+                          <span className="text-xs text-muted">evidence_id: {card.evidenceId}</span>
+                        </AdvancedDetails>
                       </div>
 
-                      <div className="flex justify-between items-center text-[11px] font-mono text-slate-400 pt-1 border-t border-slate-800/60">
+                      <div className="tenant-evidence-card__meta">
                         <span>
-                          Source: <strong className="text-slate-300">{card.sourceOfTruth}</strong>
+                          Source: <strong className="text-ink">{card.sourceOfTruth}</strong>
                         </span>
                         {card.classification === 'HYPOTHESIS' ? (
-                          <span className="text-amber-400 font-bold">
+                          <span className="font-semibold text-warning">
                             Model Confidence: {confidencePercent}%
                           </span>
                         ) : (
-                          <span className="text-emerald-400">Recorded Confidence: 100%</span>
+                          <span className="text-success">Recorded Confidence: 100%</span>
                         )}
                       </div>
 
                       {card.rawRecordRef && (
-                        <div className="text-[10px] font-mono text-slate-400 bg-slate-950 p-2 rounded border border-slate-850 flex justify-between gap-2 flex-wrap">
-                          <span>
-                            System: <strong>{card.rawRecordRef.system || 'Unknown'}</strong>
-                          </span>
-                          <span>
-                            External Ref: <strong>{card.rawRecordRef.externalId || '—'}</strong>
-                          </span>
-                          {card.rawRecordRef.verifiedAt && (
-                            <span>
-                              Verified:{' '}
-                              <strong>{new Date(card.rawRecordRef.verifiedAt).toLocaleString()}</strong>
-                            </span>
-                          )}
-                        </div>
+                        <AdvancedDetails summary="Nguồn dữ liệu">
+                          <div className="tenant-evidence-card__technical">
+                            <span>system: <strong>{card.rawRecordRef.system || '—'}</strong></span>
+                            <span>external_id: <strong>{card.rawRecordRef.externalId || '—'}</strong></span>
+                            {card.rawRecordRef.verifiedAt ? <span>verified_at: <strong>{new Date(card.rawRecordRef.verifiedAt).toLocaleString()}</strong></span> : null}
+                          </div>
+                        </AdvancedDetails>
                       )}
 
-                      {card.payload && Object.keys(card.payload).length > 0 && (
-                        <pre className="text-[10px] font-mono text-slate-300 bg-slate-950 p-2.5 rounded border border-slate-850 overflow-x-auto whitespace-pre-wrap max-h-48">
-                          {JSON.stringify(card.payload, null, 2)}
-                        </pre>
-                      )}
+                      {card.payload && Object.keys(card.payload).length > 0 ? (
+                        <AdvancedDetails summary="Dữ liệu kỹ thuật">
+                          <pre className="tenant-evidence-card__technical overflow-x-auto whitespace-pre-wrap">
+                            {JSON.stringify(card.payload, null, 2)}
+                          </pre>
+                        </AdvancedDetails>
+                      ) : null}
                     </div>
                   );
                 })}

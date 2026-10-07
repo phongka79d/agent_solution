@@ -38,6 +38,8 @@ const CONVERSATION_MESSAGES = 'agentos.conversation_messages';
 /** The owning document of every refusal this module raises. */
 const CODE_OWNER = 'implement/03 §1 DOMAIN 3 Entity 11-11.1, implement/06 §8.1 R01-R02';
 
+/** PostgreSQL's unique-violation SQLSTATE, as `pg` surfaces it on a failed insert. */
+const UNIQUE_VIOLATION = '23505';
 /** The stored conversation lifecycle (`conversations.state`, implement/03 §1 Entity 11). */
 export type ConversationState = 'open' | 'paused_takeover' | 'closed';
 
@@ -118,6 +120,11 @@ export interface AppendConversationMessageInput {
   readonly content: string;
   readonly content_type?: string;
   readonly metadata?: Record<string, unknown>;
+  /**
+   * Bounded caller-supplied request key for a human reply. A replay with the same key and the same
+   * content returns the original message id; the same key with different content is refused.
+   */
+  readonly request_id?: string;
 }
 
 /** Input of `listMessages()`; the page defaults to 50 rows and never exceeds 200. */
@@ -188,6 +195,13 @@ const SELECT_CONVERSATION = `SELECT${CONVERSATION_PROJECTION}
   FROM ${CONVERSATIONS}
   WHERE tenant_id = $1 AND id = $2`;
 
+/** Bounded tenant-scoped operator inbox, newest activity first. */
+const SELECT_TENANT_CONVERSATIONS = `SELECT${CONVERSATION_PROJECTION}
+  FROM ${CONVERSATIONS}
+  WHERE tenant_id = $1
+  ORDER BY last_message_at DESC, id DESC
+  LIMIT $2`;
+
 /**
  * Every conversation of one thread inside the caller's tenant scope.
  *
@@ -211,6 +225,19 @@ const UPDATE_CONVERSATION_STATE = `UPDATE ${CONVERSATIONS}
   SET state = $3,
       takeover_operator_id = $4
   WHERE tenant_id = $1 AND id = $2
+  RETURNING id`;
+/**
+ * Clears only the stale marker owned by the operator whose lease was observed as absent. The
+ * owner predicate makes expiry cleanup safe against a different operator acquiring the lease and
+ * updating the durable marker before this transaction runs.
+ */
+const CLEAR_TAKEOVER_IF_OWNED = `UPDATE ${CONVERSATIONS}
+  SET state = 'open',
+      takeover_operator_id = NULL
+  WHERE tenant_id = $1
+    AND id = $2
+    AND state = 'paused_takeover'
+    AND takeover_operator_id = $3
   RETURNING id`;
 
 /**
@@ -268,6 +295,31 @@ interface ConversationMessagePageRow extends QueryResultRow {
  */
 interface InsertedMessageRow extends QueryResultRow {
   id: string;
+}
+
+/**
+ * The message a replayed request key already produced. `content` is read back so a key reused for
+ * different content is refused instead of answered with the earlier message.
+ */
+const SELECT_MESSAGE_BY_REQUEST = `SELECT
+    id,
+    content
+  FROM ${CONVERSATION_MESSAGES}
+  WHERE tenant_id = $1
+    AND conversation_id = $2
+    AND sender_type = $3
+    AND request_id = $4`;
+
+interface ExistingRequestedMessageRow extends QueryResultRow {
+  id: string;
+  content: string;
+}
+
+/** PostgreSQL's unique-violation code, as `pg` reports it on the thrown error. */
+function isUniqueViolation(error: unknown): boolean {
+  return typeof error === 'object'
+    && error !== null
+    && (error as { readonly code?: unknown }).code === UNIQUE_VIOLATION;
 }
 
 /**
@@ -589,6 +641,38 @@ export class ConversationRepository {
       return result.rowCount === 1;
     });
   }
+  /**
+   * Clears an expired takeover marker only when the durable row still names the former operator.
+   * This compare-and-clear is the boundary that prevents a newer operator's takeover from being
+   * cleared by a request that observed the old Redis lease after it lapsed.
+   */
+  async clearTakeoverIfOwned(
+    tenant_id: string,
+    conversation_id: string,
+    operator_id: string,
+  ): Promise<boolean> {
+    assertIdentifier(tenant_id, 'tenant_id', 36, 'CONVERSATION_TENANT_ID_REQUIRED');
+    const id = readConversationId(conversation_id, 'CONVERSATION_ID_REQUIRED');
+    assertIdentifier(operator_id, 'operator_id', 128, 'CONVERSATION_OPERATOR_INVALID');
+
+    return this.runInTenantTransaction(tenant_id, async (client) => {
+      const result = await client.query(CLEAR_TAKEOVER_IF_OWNED, [tenant_id, id, operator_id]);
+      return result.rowCount === 1;
+    });
+  }
+
+
+  /** Lists the tenant's most recent conversations without exposing another tenant's rows. */
+  async list(tenant_id: string, limit = 50): Promise<readonly ConversationRecord[]> {
+    assertIdentifier(tenant_id, 'tenant_id', 36, 'CONVERSATION_TENANT_ID_REQUIRED');
+    if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+      throw new Error('CONVERSATION_LIMIT_INVALID: limit must be an integer in 1..200');
+    }
+    return this.runInTenantTransaction(tenant_id, async (client) => {
+      const result = await client.query<ConversationRow>(SELECT_TENANT_CONVERSATIONS, [tenant_id, limit]);
+      return result.rows.map(toConversationRecord);
+    });
+  }
 
   /**
    * Appends one turn to a conversation and advances the conversation's `last_message_at`
@@ -616,6 +700,9 @@ export class ConversationRepository {
     if (input.content_type !== undefined) {
       assertIdentifier(input.content_type, 'content_type', 32, 'CONVERSATION_CONTENT_TYPE_INVALID');
     }
+    if (input.request_id !== undefined) {
+      assertIdentifier(input.request_id, 'request_id', 128, 'CONVERSATION_REQUEST_ID_INVALID');
+    }
 
     return this.runInTenantTransaction(input.tenant_id, async (client) => {
       const advanced = await client.query(TOUCH_CONVERSATION_LAST_MESSAGE, [
@@ -639,8 +726,38 @@ export class ConversationRepository {
         ['content', input.content],
         ['content_type', input.content_type],
         ['metadata', input.metadata],
+        ['request_id', input.request_id],
       ]);
-      const result = await client.query<InsertedMessageRow>(text, values);
+
+      let result: { readonly rows: InsertedMessageRow[]; readonly rowCount: number | null };
+      const savepoint = 'append_conversation_message';
+      if (input.request_id !== undefined) {
+        // A unique violation aborts the surrounding transaction, so the replay probe runs from a
+        // savepoint: the first attempt may fail, the rollback keeps the turn open, and the read
+        // below still sees the message the earlier request produced.
+        await client.query(`SAVEPOINT ${savepoint}`);
+      }
+      try {
+        result = await client.query<InsertedMessageRow>(text, values);
+        if (input.request_id !== undefined) await client.query(`RELEASE SAVEPOINT ${savepoint}`);
+      } catch (error) {
+        if (input.request_id === undefined || !isUniqueViolation(error)) throw error;
+        await client.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+        const existing = await client.query<ExistingRequestedMessageRow>(SELECT_MESSAGE_BY_REQUEST, [
+          input.tenant_id,
+          conversation_id,
+          input.sender_type,
+          input.request_id,
+        ]);
+        const row = existing.rows[0];
+        if (row === undefined) throw error;
+        if (row.content !== input.content) {
+          throw new Error(
+            'IDEMPOTENCY_CONFLICT: this request key already produced a different message on this conversation.',
+          );
+        }
+        return row.id;
+      }
 
       return requireRow(result.rows, CONVERSATION_MESSAGES).id;
     });

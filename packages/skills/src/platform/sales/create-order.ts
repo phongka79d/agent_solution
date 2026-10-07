@@ -15,7 +15,6 @@ export interface InputSalesCreateOrder {
   customer_id: string;
   shipping_address: Record<string, unknown>;
   payment_method: 'CREDIT_CARD' | 'CVS_COD' | 'LINE_PAY' | 'JKOPAY' | 'STRIPE' | 'PAYPAL';
-  effect_key: string;
 }
 
 /** Output of `skill.sales.create_order` (§4.2 skill 14). */
@@ -42,7 +41,6 @@ const input_schema: Record<string, unknown> = {
     'customer_id',
     'shipping_address',
     'payment_method',
-    'effect_key',
   ],
   properties: {
     tenant_id: { type: 'string' },
@@ -53,7 +51,6 @@ const input_schema: Record<string, unknown> = {
       type: 'string',
       enum: ['CREDIT_CARD', 'CVS_COD', 'LINE_PAY', 'JKOPAY', 'STRIPE', 'PAYPAL'],
     },
-    effect_key: { type: 'string' },
   },
   additionalProperties: false,
 };

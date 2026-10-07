@@ -255,7 +255,7 @@ export class PolicyEnforcementPoint {
     }
 
     const agent_id = context.agent_id.trim();
-    const agent = agent_id.length === 0 ? undefined : this.registry.getAgent(agent_id);
+    const agent = agent_id.length === 0 ? undefined : this.registry.getAgent(agent_id, context.tenant_id);
 
     if (agent === undefined) {
       return this.settle(
@@ -520,6 +520,7 @@ export class PolicyEnforcementPoint {
       const priced = await checkPrice({
         tenant_id,
         skill_id: skill.skill_id,
+        mutating: skill.mutating,
         payload: proposal.payload,
         authoritativeSource: this.authoritativeSource,
         priceFloor: this.priceFloor,
@@ -609,8 +610,8 @@ export class PolicyEnforcementPoint {
   }
 
   /**
-   * Applies the durability half of one outcome: the single pending approval row of a route, then the
-   * audit intent, both fail-closed.
+   * Applies the durability half of one outcome: the audit intent precedes any pending approval row,
+   * and both are fail-closed.
    *
    * @param base - Per-evaluation facts.
    * @param authority - Resolved authority facts.
@@ -622,31 +623,63 @@ export class PolicyEnforcementPoint {
     authority: AuthorityFacts,
     outcome: EvaluationOutcome,
   ): Promise<PolicyDecision> {
-    let effective = outcome;
-    let approvalTicketId: string | null = base.claimed_approval_id;
     if (outcome.kind === 'ROUTE') {
+      // The route intent is durable before an approval row exists. The ticket id is necessarily
+      // absent here: the approval store is the authority that creates or reads it.
+      const intent = this.buildDecision(base, authority, outcome, null, 'NOT_APPLICABLE');
+      const intentAuditStatus = await this.appendAudit(intent);
+
+      if (intentAuditStatus === 'FAILED') {
+        const denied = this.buildDecision(
+          base,
+          authority,
+          deny(
+            'BR-010',
+            'AUDIT_UNAVAILABLE',
+            'AUDIT_UNAVAILABLE: the decision intent could not be persisted, so the approval route '
+              + 'and any permit it implies are withheld — audit failure blocks dispatch, it is never '
+              + 'a logging warning (BR-010, NFR-002).',
+          ),
+          null,
+          'FAILED',
+        );
+        return this.applyAutonomy(denied);
+      }
+
       const queued = await this.createPendingApproval(base, outcome);
 
       if (queued.kind === 'DENY') {
-        effective = queued;
-      } else {
-        approvalTicketId = queued.approval_id;
+        // The route intent was recorded, but no pending row exists. Record the compensating refusal
+        // so the append-only chain cannot imply that a human decision is still claimable.
+        const compensation = this.buildDecision(base, authority, queued, null, 'NOT_APPLICABLE');
+        const compensationAuditStatus = await this.appendAudit(compensation);
+        const denied = this.buildDecision(
+          base,
+          authority,
+          queued,
+          null,
+          compensationAuditStatus,
+        );
+        return this.applyAutonomy(denied);
       }
+
+      return this.applyAutonomy(
+        this.buildDecision(base, authority, outcome, queued.approval_id, intentAuditStatus),
+      );
     }
 
-    const provisional = this.buildDecision(base, authority, effective, approvalTicketId, 'NOT_APPLICABLE');
+    const provisional = this.buildDecision(base, authority, outcome, base.claimed_approval_id, 'NOT_APPLICABLE');
     const auditStatus = await this.appendAudit(provisional);
 
-    if (effective.kind !== 'DENY' && auditStatus === 'FAILED') {
+    if (outcome.kind !== 'DENY' && auditStatus === 'FAILED') {
       const denied = this.buildDecision(
         base,
         authority,
         deny(
           'BR-010',
           'AUDIT_UNAVAILABLE',
-          'AUDIT_UNAVAILABLE: the decision intent could not be persisted, so the permit and any '
-            + 'queue row it implies are withheld — audit failure blocks dispatch, it is never a '
-            + 'logging warning (BR-010, NFR-002).',
+          'AUDIT_UNAVAILABLE: the decision intent could not be persisted, so the permit is withheld '
+            + '— audit failure blocks dispatch, it is never a logging warning (BR-010, NFR-002).',
         ),
         null,
         'FAILED',

@@ -1,8 +1,8 @@
 // Worker process entry (`node apps/worker/dist/index.js`).
 //
-// The connector and health listener start independently. Durable Care polling starts only when
-// a tenant scope and an authentic orchestrator factory are both bound; an unbound graph is logged
-// and never consumes queued tasks. Both handles close on SIGINT/SIGTERM.
+// The health listener and bounded readiness gate start first; connectors and durable Care polling
+// are constructed only after readiness succeeds. A tenant scope and authentic orchestrator factory
+// are also required before polling; an unbound graph is logged and never consumes queued tasks.
 //
 // The boot module is JavaScript and is therefore imported at runtime: tsc has `rootDir: src` and
 // never emits `src/server.mjs`, so the specifier is resolved from import.meta.url against the two
@@ -15,18 +15,24 @@ import type { Server } from 'node:http';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { ApprovalRepository } from '@agentos/database';
+
 import { startWorker, type WorkerHandle } from './worker.js';
+import { createApprovalExpirySweeper } from './approval-expiry-sweeper.js';
+import { nodeHmacSha256Hex } from './runtime/hmac.js';
 
 /** `./server.mjs` beside the TypeScript source, `../src/server.mjs` from the compiled `dist`. */
 const HEALTH_MODULE_CANDIDATES: readonly string[] = ['./server.mjs', '../src/server.mjs'];
 
 interface HealthStartResult {
   readonly ok: boolean;
+  readonly ready?: boolean | null;
+  readonly failures?: readonly { readonly dependency: string; readonly reason: string }[];
   readonly server?: Server;
 }
 
 interface HealthModule {
-  start(env: NodeJS.ProcessEnv, opts: { exitOnUnready: boolean }): Promise<HealthStartResult>;
+  start(env: NodeJS.ProcessEnv, opts: { exitOnUnready: boolean; exitOnInvalid: boolean }): Promise<HealthStartResult>;
 }
 
 function resolveHealthModulePath(): string {
@@ -50,39 +56,63 @@ function closeHealthServer(server: Server | undefined): Promise<void> {
   });
 }
 
-const worker: WorkerHandle = startWorker();
-
-process.stdout.write(`worker started [${worker.dependencies.join(', ')}]\n`);
-process.stdout.write(`worker connectors reachable: ${worker.connectors.bound.join(', ') || '(none)'}\n`);
-for (const capability of worker.connectors.unbound) {
-  process.stdout.write(`worker: capability not bound in this build: ${capability}\n`);
-}
-for (const blocker of worker.blockers ?? []) {
-  process.stdout.write(`worker: capability not bound in this build: ${blocker}\n`);
-}
-
 // Runtime-selected specifier, so a static import cannot express it: tsc must not emit or copy
 // `src/server.mjs`, and the file is not at the same relative path in `dist/index.js`.
 const healthModule = (await import(pathToFileURL(resolveHealthModulePath()).href)) as HealthModule;
-const health = await healthModule.start(process.env, { exitOnUnready: true });
+const health = await healthModule.start(process.env, { exitOnUnready: false, exitOnInvalid: false });
 
-let shuttingDown = false;
-
-async function shutdown(): Promise<void> {
-  if (shuttingDown) return;
-  shuttingDown = true;
-
+if (!health.ok || health.ready !== true) {
+  const dependencies = [...new Set((health.failures ?? []).map((failure) => failure.dependency))];
+  process.stdout.write(
+    `worker: blocker: WORKER_READINESS_FAILED: polling disabled${
+      dependencies.length > 0 ? ` (${dependencies.join(', ')})` : ''
+    }\n`,
+  );
   await closeHealthServer(health.server);
-  await worker.close();
-  process.exit(0);
+  process.exitCode = 1;
+} else {
+  const tenantIds: readonly string[] = typeof process.env.WORKER_TENANT_IDS === 'string'
+    ? Object.freeze([...new Set(process.env.WORKER_TENANT_IDS.split(',').map((id) => id.trim()).filter(Boolean))])
+    : Object.freeze([]);
+
+  // Readiness must complete before connectors, durable bindings, and the background poller are
+  // constructed. A failed gate never creates a worker or consumes queued tasks.
+  const worker: WorkerHandle = startWorker(process.env, {
+    hmac: nodeHmacSha256Hex,
+    readiness: true,
+    tenantIds,
+  });
+  const approvalExpirySweeper = createApprovalExpirySweeper({
+    env: process.env,
+    tenantIds,
+    repository: new ApprovalRepository(),
+  });
+
+  process.stdout.write(`worker started [${worker.dependencies.join(', ')}]\n`);
+  process.stdout.write(`worker connectors reachable: ${worker.connectors.bound.join(', ') || '(none)'}\n`);
+  for (const capability of worker.connectors.unbound) {
+    process.stdout.write(`worker: capability not bound in this build: ${capability}\n`);
+  }
+  for (const blocker of worker.blockers ?? []) {
+    process.stdout.write(`worker: capability not bound in this build: ${blocker}\n`);
+  }
+
+  let shuttingDown = false;
+
+  async function shutdown(): Promise<void> {
+    if (shuttingDown) return;
+    shuttingDown = true;
+
+    await approvalExpirySweeper.stop();
+    const drainResult = await worker.close();
+    await closeHealthServer(health.server);
+    process.exit(drainResult.timedOut ? 1 : 0);
+  }
+
+  process.once('SIGINT', () => {
+    void shutdown();
+  });
+  process.once('SIGTERM', () => {
+    void shutdown();
+  });
 }
-
-process.once('SIGINT', () => {
-  void shutdown();
-});
-process.once('SIGTERM', () => {
-  void shutdown();
-});
-
-// The boot module exits on its own; this keeps a non-exiting return from reporting success.
-if (!health.ok) process.exitCode = 1;

@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { type Customer360Fact } from '@agentos/core-engine/contracts';
 import { type CustomerEventTimeline } from '@agentos/database';
 import { type ErpReadPort } from '../../connectors.js';
+import { SalesAdvisorExecutionState } from '../advisor-adapters.js';
 import { type AssignableAuthority } from '@agentos/core-engine/contracts';
 import { createSalesSkillServices, GATE_SALES_SKILLS, computeQuoteToken, type SalesCartPort, type SalesCommunicationPort, type SalesConsentPort, type SalesCustomer360Fact, type SalesFrequencyCapConfig, type SalesFrequencyCapPort, type SalesOrderPort, type SalesPaymentPolicyPort, type SalesPriceFloorApproved, type SalesPriceFloorDecision, type SalesPriceFloorPort, type SalesPriceFloorRefused, type SalesQuotePort, type SalesRecommendationRevenueEvidencePort, type SalesReplenishmentPolicyPort } from './index.js';
 
@@ -255,6 +256,7 @@ function createServices(overrides: {
   resolve_grant?: ((tenant_id: string, agent_id: string) => Promise<AssignableAuthority | null>) | undefined;
   quote_signing_secret?: string | undefined;
   now?: (() => Date) | undefined;
+  advisor_state?: SalesAdvisorExecutionState | undefined;
 } = {}) {
   const quote_signing_secret = overrides.quote_signing_secret !== undefined
     ? overrides.quote_signing_secret
@@ -278,6 +280,7 @@ function createServices(overrides: {
     ...(overrides.payment_policy === undefined ? {} : { payment_policy: overrides.payment_policy }),
     ...(overrides.is_takeover_active === undefined ? {} : { is_takeover_active: overrides.is_takeover_active }),
     ...(overrides.takeover_active === undefined ? {} : { takeover_active: overrides.takeover_active }),
+    ...(overrides.advisor_state === undefined ? {} : { advisor_state: overrides.advisor_state }),
     ...(quote_signing_secret === undefined ? {} : { quote_signing_secret }),
     resolve_correlation_id: vi.fn(async () => CORRELATION_ID),
     resolve_grant: overrides.resolve_grant ?? vi.fn(async () => 'AUTH-1'),
@@ -299,6 +302,7 @@ function createFullyBoundServices(overrides: {
   cartOverrides?: { subtotal?: number; currency?: string; quote_token?: string; quote_expires_at?: string } | undefined;
   quote_signing_secret?: string | undefined;
   now?: (() => Date) | undefined;
+  advisor_state?: SalesAdvisorExecutionState | undefined;
 } = {}) {
   const revenue_evidence: SalesRecommendationRevenueEvidencePort = {
     read: vi.fn(async () => ({
@@ -325,6 +329,7 @@ function createFullyBoundServices(overrides: {
     takeover_active: overrides.takeoverActive !== undefined ? overrides.takeoverActive : false,
     ...(overrides.customer !== undefined ? { customer: overrides.customer } : {}),
     ...(overrides.timeline !== undefined ? { timeline: overrides.timeline } : {}),
+    ...(overrides.advisor_state !== undefined ? { advisor_state: overrides.advisor_state } : {}),
     resolve_grant: vi.fn(async () => 'AUTH-3'),
     quote_signing_secret: overrides.quote_signing_secret ?? TEST_QUOTE_SECRET,
   });
@@ -372,6 +377,97 @@ describe('SalesSkillServices - read, recommendation and customer skills', () => 
       available_quantity: 3,
       in_stock: true,
       checked_at: SNAPSHOT_AT,
+    });
+  });
+  it('searches with bounded deduplicated inventory reads and keeps failed stock unknown', async () => {
+    const inventoryKeys: string[] = [];
+    const erp_read: ErpReadPort = {
+      read: vi.fn(async ({ resource, tenant_id, key }) => {
+        if (resource === 'products') {
+          return {
+            resource,
+            tenant_id,
+            observed_at: SNAPSHOT_AT,
+            value: {
+              tenant_id,
+              snapshot_at: SNAPSHOT_AT,
+              items: [
+                {
+                  tenant_id,
+                  product_id: 'product-unknown',
+                  sku: 'SKU-UNKNOWN',
+                  name: 'Union Select accessory',
+                  currency: 'TWD',
+                  original_list_price: 100,
+                  is_active: true,
+                },
+                {
+                  tenant_id,
+                  product_id: 'product-known',
+                  sku: 'SKU-KNOWN',
+                  name: 'Union Select known accessory',
+                  currency: 'TWD',
+                  original_list_price: 120,
+                  is_active: true,
+                },
+              ],
+            },
+          };
+        }
+        inventoryKeys.push(key ?? '');
+        if (key === 'SKU-UNKNOWN') throw new Error('inventory unavailable');
+        return {
+          resource,
+          tenant_id,
+          observed_at: SNAPSHOT_AT,
+          value: {
+            tenant_id,
+            snapshot_at: SNAPSHOT_AT,
+            items: [{ tenant_id, sku_id: key, total_available_to_promise: 2 }],
+          },
+        };
+      }),
+    };
+    const services = createServices({ erp_read });
+    const search = await services.tool_port.invoke({
+      skill_id: 'skill.sales.search_product',
+      tool_binding: 'API-001.CatalogConnector',
+      input: { tenant_id: TENANT_ID, query: 'union select', limit: 20 },
+      context: {
+        run_id: 'run-search-batch',
+        tenant_id: TENANT_ID,
+        caller_agent: 'SAL-02' as const,
+        correlation_id: CORRELATION_ID,
+        granted_authority: 'AUTH-1' as const,
+        effect_key: 'effect-search-batch',
+      },
+    });
+
+    expect(search).toMatchObject({
+      products: [
+        { sku: 'SKU-KNOWN', in_stock: true },
+        { sku: 'SKU-UNKNOWN', in_stock: null },
+      ],
+      total_found: 2,
+    });
+    expect(inventoryKeys.sort()).toEqual(['SKU-KNOWN', 'SKU-UNKNOWN']);
+  });
+  it('accepts ordinary catalog text that resembles non-instructional marker syntax', async () => {
+    const services = createServices();
+    await expect(services.tool_port.invoke({
+      skill_id: 'skill.sales.search_product',
+      tool_binding: 'API-001.CatalogConnector',
+      input: { tenant_id: TENANT_ID, query: 'system: accessory' },
+      context: {
+        run_id: 'run-search-marker-false-positive',
+        tenant_id: TENANT_ID,
+        caller_agent: 'SAL-02' as const,
+        correlation_id: CORRELATION_ID,
+        granted_authority: 'AUTH-1' as const,
+        effect_key: 'effect-search-marker-false-positive',
+      },
+    })).resolves.toMatchObject({
+      total_found: 0,
     });
   });
 
@@ -434,7 +530,43 @@ describe('SalesSkillServices - read, recommendation and customer skills', () => 
     });
   });
 
-  it('dispatches recommendation through the Sales engine and validates the canonical seven-field output', async () => {
+  it('binds ERP provider reconciliation for Sales mutations and preserves UNKNOWN without proof', async () => {
+    const providerReceipt = {
+      execution_id: 'API-001:action-sales-reconciled',
+      adapter_status: 'SUCCESS' as const,
+      provider_reference: 'MOCK-ERP:tenant-sales:action-sales-reconciled',
+      response_payload: { reconciled: true },
+      latency_ms: 0,
+      token_usage: { prompt: 0, completion: 0, total_cost_usd: 0 },
+    };
+    let providerProofAvailable = true;
+    const reconcile = vi.fn(async () => providerProofAvailable
+      ? { outcome: 'SUCCEEDED' as const, receipt: providerReceipt }
+      : { outcome: 'INDETERMINATE' as const });
+    const services = createServices({
+      erp_read: { ...createErpRead(), reconcile },
+    });
+    const input = {
+      tenant_id: TENANT_ID,
+      effect_key: 'effect-sales-cart-unknown',
+      action_id: 'action-sales-reconciled',
+      adapter_target: 'API-002.CommerceCartAPI',
+      skill_id: 'skill.sales.create_cart',
+    };
+
+    await expect(services.dispatcher.reconcile?.(input)).resolves.toEqual({
+      outcome: 'SUCCEEDED',
+      receipt: providerReceipt,
+    });
+    expect(reconcile).toHaveBeenCalledWith(input);
+
+    providerProofAvailable = false;
+    await expect(services.dispatcher.reconcile?.(input)).resolves.toEqual({
+      outcome: 'INDETERMINATE',
+    });
+  });
+
+  it('dispatches recommendation through the Sales engine and validates the canonical recommendation output', async () => {
     const revenue_evidence: SalesRecommendationRevenueEvidencePort = {
       read: vi.fn(async () => ({
         conversion_probability: 0.7,
@@ -444,7 +576,7 @@ describe('SalesSkillServices - read, recommendation and customer skills', () => 
         provenance_reference: 'finance:approved-model:1',
       })),
     };
-    const services = createServices({ revenue_evidence });
+    const services = createServices({ revenue_evidence, price_floor: createPriceFloorPort() });
     const request_id = 'request-recommendation-1';
     const skill_id = 'skill.sales.recommend_product';
     const action: ActionDraft = {
@@ -493,6 +625,7 @@ describe('SalesSkillServices - read, recommendation and customer skills', () => 
         suppression_cleared: true,
       },
       confidence: 0.8,
+      ranking_method: 'authoritative_catalog_order',
       expected_outcome: {
         conversion_probability: 0.7,
         expected_revenue: 70,
@@ -627,7 +760,7 @@ describe('SalesSkillServices - read, recommendation and customer skills', () => 
         provenance_reference: 'finance:approved-model:1',
       })),
     };
-    const services = createServices({ revenue_evidence });
+    const services = createServices({ revenue_evidence, price_floor: createPriceFloorPort() });
     const output = await services.tool_port.invoke({
       skill_id: 'skill.sales.recommend_product',
       tool_binding: 'Core.RecommendationEngine',
@@ -990,5 +1123,149 @@ describe('SalesSkillServices - read, recommendation and customer skills', () => 
       rfm_segment: 'LOYAL',
       last_order_date: '2026-09-24T15:30:00.000Z',
     });
+  });
+
+  it('binds an advisor recommendation to the SKU this run actually searched and verified', async () => {
+    const advisor_state = new SalesAdvisorExecutionState();
+    advisor_state.setRequirements(TENANT_ID, CORRELATION_ID, {
+      category: 'accessories',
+      budget: { amount: 100, currency: 'TWD' },
+      use_case: 'accessories',
+    });
+    const erp_read: ErpReadPort = {
+      read: vi.fn(async ({ resource, tenant_id, key }) => ({
+        resource,
+        tenant_id,
+        observed_at: SNAPSHOT_AT,
+        value: resource === 'products'
+          ? {
+              tenant_id,
+              snapshot_at: SNAPSHOT_AT,
+              items: [
+                {
+                  tenant_id,
+                  product_id: 'product-alpha',
+                  sku: 'AAA-1',
+                  name: 'Alpha Misc',
+                  currency: 'TWD',
+                  original_list_price: 100,
+                  is_active: true,
+                  categories: ['misc'],
+                },
+                {
+                  tenant_id,
+                  product_id: 'product-1',
+                  sku: 'SKU-1',
+                  name: 'Accessory',
+                  currency: 'TWD',
+                  original_list_price: 100,
+                  is_active: true,
+                  categories: ['accessories'],
+                },
+              ],
+            }
+          : {
+              tenant_id,
+              snapshot_at: SNAPSHOT_AT,
+              items: [{ tenant_id, sku_id: key, total_available_to_promise: 3 }],
+            },
+      })),
+    };
+    const services = createFullyBoundServices({ erp_read, advisor_state });
+
+    const search = await services.tool_port.invoke({
+      skill_id: 'skill.sales.search_product',
+      tool_binding: 'API-001.CatalogConnector',
+      input: { tenant_id: TENANT_ID, query: 'accessory', category_id: 'accessories', limit: 20 },
+      context: {
+        run_id: 'run-advisor-1',
+        tenant_id: TENANT_ID,
+        caller_agent: 'SAL-02' as const,
+        correlation_id: CORRELATION_ID,
+        granted_authority: 'AUTH-1' as const,
+        effect_key: 'effect-advisor-search',
+      },
+    });
+    const searchPayload = search as unknown as Record<string, unknown>;
+    expect(searchPayload['products']).toEqual([
+      expect.objectContaining({ sku: 'SKU-1', in_stock: true }),
+    ]);
+    expect(advisor_state.candidateSkuFor(TENANT_ID, CORRELATION_ID)).toBe('SKU-1');
+
+    const recommendation = await services.tool_port.invoke({
+      skill_id: 'skill.sales.recommend_product',
+      tool_binding: 'Core.RecommendationEngine',
+      input: { tenant_id: TENANT_ID, customer_id: CUSTOMER_ID, current_cart_skus: [] },
+      context: {
+        run_id: 'run-advisor-1',
+        tenant_id: TENANT_ID,
+        caller_agent: 'SAL-02' as const,
+        correlation_id: CORRELATION_ID,
+        granted_authority: 'AUTH-1' as const,
+        effect_key: 'effect-advisor-recommend',
+      },
+    });
+
+    // The alphabetically first catalog row is `AAA-1`; the recommendation must not leave the
+    // evidence trail this run actually verified, so it stays on `SKU-1`.
+    const recommendationPayload = recommendation as unknown as Record<string, unknown>;
+    expect(recommendationPayload['product']).toMatchObject({ sku: 'SKU-1', price: 100 });
+  });
+
+  it('search_product and check_stock reject invalid inputs safely without throwing TypeError (B-71)', async () => {
+    const services = createServices();
+    const context = {
+      run_id: 'run-test-b71',
+      tenant_id: TENANT_ID,
+      caller_agent: 'SAL-02' as const,
+      correlation_id: CORRELATION_ID,
+      granted_authority: 'AUTH-1' as const,
+      effect_key: 'effect-test-b71',
+    };
+
+    await expect(
+      services.tool_port.invoke({
+        skill_id: 'skill.sales.search_product',
+        tool_binding: 'API-001.CatalogConnector',
+        input: { tenant_id: TENANT_ID, query: undefined as any },
+        context,
+      }),
+    ).rejects.toMatchObject({ code: 'MALFORMED_QUERY' });
+
+    await expect(
+      services.tool_port.invoke({
+        skill_id: 'skill.sales.search_product',
+        tool_binding: 'API-001.CatalogConnector',
+        input: { tenant_id: TENANT_ID, query: '   ' },
+        context,
+      }),
+    ).rejects.toMatchObject({ code: 'MALFORMED_QUERY' });
+
+    await expect(
+      services.tool_port.invoke({
+        skill_id: 'skill.sales.check_stock',
+        tool_binding: 'API-001.InventoryConnector',
+        input: { tenant_id: TENANT_ID, sku_id: undefined as any },
+        context,
+      }),
+    ).rejects.toMatchObject({ code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE' });
+
+    await expect(
+      services.tool_port.invoke({
+        skill_id: 'skill.sales.check_stock',
+        tool_binding: 'API-001.InventoryConnector',
+        input: { tenant_id: TENANT_ID, sku_id: '   ' },
+        context,
+      }),
+    ).rejects.toMatchObject({ code: 'AUTHORITATIVE_SOURCE_UNAVAILABLE' });
+
+    await expect(
+      services.tool_port.invoke({
+        skill_id: 'skill.sales.check_stock',
+        tool_binding: 'API-001.InventoryConnector',
+        input: null as any,
+        context,
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
   });
 });

@@ -64,6 +64,7 @@ const MOVED_TASK_VERSION = 9;
 const CREATED_AT = new Date('2026-01-01T00:00:00.000Z');
 const UPDATED_AT = new Date('2026-01-01T00:05:00.000Z');
 const DECIDED_AT = new Date('2026-01-01T00:10:00.000Z');
+const EXPIRES_AT = new Date('2026-01-04T00:00:00.000Z');
 /** The 64-zero digest the evidence chain starts from (implement/04 §6.1). */
 const GENESIS_HASH = '0'.repeat(64);
 
@@ -96,6 +97,7 @@ interface ApprovalRow extends QueryResultRow {
   is_paused: boolean;
   review_comment: string | null;
   decided_at: Date | null;
+  expires_at: Date;
   created_at: Date;
 }
 
@@ -137,9 +139,39 @@ type StatementKind =
   | 'decide_approval'
   | 'modify_action'
   | 'modify_approval'
-  | 'queue_resume_event';
+  | 'queue_resume_event'
+  | 'expire_overdue_approvals'
+  | 'audit_lock'
+  | 'audit_tail'
+  | 'audit_time'
+  | 'audit_insert';
 
 function classify(sql: string): StatementKind {
+  // The per-row read/lock CTEs also update expired approvals. Only the batch sweeper has the
+  // action/approval candidate join and action-row lock; keep it distinct from those repository reads.
+  if (
+    sql.startsWith('WITH expired AS') &&
+    sql.includes('JOIN agentos.approvals AS p') &&
+    sql.includes('FOR UPDATE OF a SKIP LOCKED')
+  ) {
+    return 'expire_overdue_approvals';
+  }
+
+  if (sql.startsWith('SELECT pg_advisory_xact_lock')) {
+    return 'audit_lock';
+  }
+
+  if (sql.startsWith('SELECT') && sql.includes('FROM agentos.audit_records')) {
+    return 'audit_tail';
+  }
+
+  if (sql.includes("date_trunc('milliseconds', clock_timestamp())")) {
+    return 'audit_time';
+  }
+
+  if (sql.startsWith('INSERT INTO agentos.audit_records')) {
+    return 'audit_insert';
+  }
   if (sql.startsWith('INSERT INTO agentos.actions')) {
     return 'insert_action';
   }
@@ -181,6 +213,18 @@ function classify(sql: string): StatementKind {
 
   if (sql.includes('SET decision = $3')) {
     return 'decide_approval';
+  }
+
+  if (sql.includes('FROM agentos.approvals')) {
+    if (sql.includes('ORDER BY created_at ASC')) {
+      return 'list_pending';
+    }
+
+    if (sql.includes('effect_key = $2')) {
+      return 'lock_approval_by_effect_key';
+    }
+
+    return sql.includes('FOR UPDATE') ? 'lock_approval' : 'read_approval';
   }
 
   if (sql.startsWith('SELECT') && sql.includes('FROM agentos.platform_durable_tasks')) {
@@ -358,6 +402,12 @@ const MODIFIED_DRAFT = draft({
   payload: AUTHORIZED_PAYLOAD,
 });
 
+const PERSISTED_MODIFIED_DRAFT = {
+  ...MODIFIED_DRAFT,
+  approval_id: APPROVAL_ID,
+  approval_payload_digest: sha256CanonicalJson(AUTHORIZED_PAYLOAD),
+};
+
 /** One approval row carrying the canonical PENDING binding; a case overrides what it is about. */
 function approvalRow(overrides: Partial<ApprovalRow> = {}): ApprovalRow {
   const row: ApprovalRow = {
@@ -375,6 +425,7 @@ function approvalRow(overrides: Partial<ApprovalRow> = {}): ApprovalRow {
     is_paused: false,
     review_comment: null,
     decided_at: null,
+    expires_at: EXPIRES_AT,
     created_at: CREATED_AT,
   };
 
@@ -1062,10 +1113,28 @@ describe('ApprovalRepository.claimApprovalAndResume', () => {
       COMMENT,
     ]);
     expect(bindingsOf(client, 'resume_task')).toEqual([TENANT, RUN_ID, PARKED_TASK_VERSION]);
+    const decisionSql = client.statements.find(
+      (statement) => statement.kind === 'decide_approval',
+    )?.sql;
+    expect(decisionSql).toContain("status = CASE WHEN $3 = 'APPROVED' THEN 'authorized' ELSE 'failed' END");
+    expect(decisionSql).toContain('expires_at > CURRENT_TIMESTAMP');
+  });
+  it('refuses a decision after approval expiry without writing a resume transition', async () => {
+    const { repository, client } = harnessFor(
+      decisionAnswers({
+        lock_approval: { rows: [decidedApprovalRow('EXPIRED')] },
+      }),
+    );
+
+    await expect(repository.claimApprovalAndResume(claimInput())).rejects.toThrow(
+      'APPROVAL_EXPIRED',
+    );
+    expect(statementsOf(client)).toEqual(['lock_task', 'lock_action', 'lock_approval']);
   });
 
+
   it('authorizes a MODIFIED revision in place and stores it in the parked checkpoint', async () => {
-    const revised_checkpoint = { ...CHECKPOINT, pending_action: MODIFIED_DRAFT };
+    const revised_checkpoint = { ...CHECKPOINT, pending_action: PERSISTED_MODIFIED_DRAFT };
     const { repository, client, boundTenants } = harnessFor(
       decisionAnswers({
         modify_action: {
@@ -1181,7 +1250,7 @@ describe('ApprovalRepository.claimApprovalAndResume', () => {
 
       expect(result.approval.decision).toBe(decision);
       expect(result.action.effect_key).toBe(EFFECT_KEY);
-      expect(result.action.status).toBe('pending');
+      expect(result.action.status).toBe('failed');
       expect(result.task.state).toBe('stopped');
       expect(result.task.paused_for_approval_id).toBeNull();
     }
@@ -1651,6 +1720,66 @@ describe('ApprovalRepository.claimApprovalAndResume', () => {
   });
 });
 
+describe('ApprovalRepository.expireOverdueApprovals', () => {
+  it('expires a bounded tenant batch, fails pending actions, and appends one audit link per approval', async () => {
+    const expiredRows = [
+      {
+        id: APPROVAL_ID,
+        run_id: RUN_ID,
+        action_id: ACTION_ID,
+        effect_key: EFFECT_KEY,
+      },
+      {
+        id: OTHER_APPROVAL_ID,
+        run_id: OTHER_RUN_ID,
+        action_id: OTHER_ACTION_ID,
+        effect_key: OTHER_EFFECT_KEY,
+      },
+    ];
+    const { repository, client, boundTenants } = harnessFor({
+      expire_overdue_approvals: { rows: expiredRows },
+      audit_lock: { rows: [] },
+      audit_tail: { rows: [] },
+      audit_time: { rows: [{ server_timestamp: DECIDED_AT }] },
+      audit_insert: { rowCount: 1 },
+    });
+
+    await expect(repository.expireOverdueApprovals(TENANT, 2)).resolves.toEqual([
+      APPROVAL_ID,
+      OTHER_APPROVAL_ID,
+    ]);
+    expect(boundTenants).toEqual([TENANT]);
+    expect(bindingsOf(client, 'expire_overdue_approvals')).toEqual([TENANT, 2]);
+    const expirySql = client.statements.find(
+      (statement) => statement.kind === 'expire_overdue_approvals',
+    )?.sql;
+    expect(expirySql).toContain("SET status = 'failed'");
+    expect(expirySql).toContain('FOR UPDATE OF a SKIP LOCKED');
+    expect(expirySql).toContain("SET decision = 'EXPIRED'");
+    expect(statementsOf(client)).toEqual([
+      'expire_overdue_approvals',
+      'audit_lock',
+      'audit_tail',
+      'audit_time',
+      'audit_insert',
+      'audit_lock',
+      'audit_tail',
+      'audit_time',
+      'audit_insert',
+    ]);
+  });
+
+  it('rejects an invalid batch limit before opening a tenant transaction', async () => {
+    const { repository, client, boundTenants } = harnessFor({});
+
+    await expect(repository.expireOverdueApprovals(TENANT, 501)).rejects.toThrow(
+      'APPROVAL_EXPIRY_LIMIT_INVALID',
+    );
+    expect(boundTenants).toEqual([]);
+    expect(client.statements).toEqual([]);
+  });
+});
+
 describe('ApprovalRepository.listPending', () => {
   it('publishes the queue oldest-first with the action of each item and its reviewed digest', async () => {
     const { repository, client, boundTenants } = harnessFor({
@@ -1681,6 +1810,7 @@ describe('ApprovalRepository.listPending', () => {
       is_paused: false,
       review_comment: null,
       decided_at: null,
+      expires_at: EXPIRES_AT.toISOString(),
       created_at: CREATED_AT.toISOString(),
     });
     expect(first?.action).toEqual({
@@ -1767,7 +1897,7 @@ describe('ApprovalRepository.listPending', () => {
     // never filtered out of the console it was parked for, and the projected `is_paused` column is
     // what renders it as PAUSED (`06` §8.1.3 R14).
     expect(statement?.sql).toContain("decision = 'PENDING'");
-    expect(statement?.sql).not.toContain('is_paused =');
+    expect(statement?.sql).toContain('expires_at > CURRENT_TIMESTAMP');
   });
 
   it('binds every statement to the calling tenant and answers another tenant with an empty queue', async () => {

@@ -52,7 +52,6 @@ export async function executeBounded<TOutput>(
     attempt += 1;
 
     const controller = new AbortController();
-    const deadline = setTimeout(() => controller.abort(), options.timeout_ms);
     const external = options.signal;
     const forwardAbort = (): void => controller.abort();
 
@@ -62,15 +61,31 @@ export async function executeBounded<TOutput>(
       external?.addEventListener('abort', forwardAbort);
     }
 
-    try {
-      const output = await options.runAttempt(controller.signal);
-      clearTimeout(deadline);
-      external?.removeEventListener('abort', forwardAbort);
-      return { output, attempts: attempt };
-    } catch (error) {
-      clearTimeout(deadline);
-      external?.removeEventListener('abort', forwardAbort);
+    let deadline!: NodeJS.Timeout;
 
+    try {
+      // The adapter promise is deliberately raced rather than merely signalled: an adapter that
+      // ignores AbortSignal must not keep this invocation alive past the row's hard deadline.
+      const deadlinePromise = new Promise<never>((_resolve, reject) => {
+        deadline = setTimeout(() => {
+          controller.abort();
+          reject(
+            new SkillError(
+              'TIMEOUT',
+              `the attempt exceeded its ${options.timeout_ms}ms deadline`,
+              options.skill_id,
+            ),
+          );
+        }, options.timeout_ms);
+      });
+      try {
+        const output = await Promise.race([options.runAttempt(controller.signal), deadlinePromise]);
+        return { output, attempts: attempt };
+      } finally {
+        clearTimeout(deadline);
+        external?.removeEventListener('abort', forwardAbort);
+      }
+    } catch (error) {
       const aborted = controller.signal.aborted;
       const errorCode = errorCodeOf(error, aborted);
       const cancelled = options.signal?.aborted === true;

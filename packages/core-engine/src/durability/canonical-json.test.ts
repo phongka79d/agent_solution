@@ -21,6 +21,12 @@ import {
   sha256CanonicalJson,
   sha256Hex,
 } from './canonical-json.js';
+import {
+  canonicalizeJson as databaseCanonicalizeJson,
+  sha256CanonicalJson as databaseSha256CanonicalJson,
+} from '@agentos/database/canonical-json';
+import { computeEffectKey, computeRequestFingerprint } from '../effects/effect-key.js';
+import { MemoryEffectGuard } from '../effects/memory-effect-guard.js';
 
 /** A class instance: a real object that is not a plain one. */
 class Money {
@@ -97,6 +103,26 @@ describe('canonicalizeJson', () => {
 
     expect(canonicalizeJson(reread)).toBe(canonical);
     expect(sha256CanonicalJson(reread)).toBe(sha256CanonicalJson(value));
+  });
+  it('keeps database, effect-key and port digest call sites byte-identical', () => {
+    const identity = {
+      tenant_id: 'tenant-1',
+      skill_id: 'skill-1',
+      step_index: 2,
+      action_revision: 0,
+      request_id: 'request-1',
+    };
+    const payload = { identity, message: 'same payload' };
+    const expectedCanonical = canonicalizeJson(payload);
+    const expectedDigest = sha256CanonicalJson(payload);
+    const guard = new MemoryEffectGuard();
+
+    expect(databaseCanonicalizeJson(payload)).toBe(expectedCanonical);
+    expect(databaseSha256CanonicalJson(payload)).toBe(expectedDigest);
+    expect(computeRequestFingerprint(payload)).toBe(expectedDigest);
+    expect(guard.computeRequestFingerprint(payload)).toBe(expectedDigest);
+    expect(computeEffectKey(identity)).toBe(sha256CanonicalJson(identity));
+    expect(guard.computeEffectKey(identity)).toBe(sha256CanonicalJson(identity));
   });
 });
 

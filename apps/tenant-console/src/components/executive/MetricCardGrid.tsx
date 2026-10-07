@@ -7,7 +7,6 @@
 
 'use client';
 
-import React from 'react';
 import {
   BASELINE_INDICATOR_DEFINITIONS,
   type BaselineIndicatorDefinition,
@@ -50,11 +49,11 @@ export function MetricCardGrid({
         {Array.from({ length: 10 }).map((_, i) => (
           <div
             key={i}
-            className="p-4 rounded-lg bg-slate-900 border border-slate-800 animate-pulse h-32 flex flex-col justify-between"
+            className="flex h-32 flex-col justify-between rounded-lg border border-line bg-surface p-4 animate-pulse"
           >
-            <div className="h-3 bg-slate-800 rounded w-1/3 mb-2" />
-            <div className="h-8 bg-slate-800 rounded w-2/3" />
-            <div className="h-2 bg-slate-800 rounded w-1/2" />
+            <div className="mb-2 h-3 w-1/3 rounded bg-surface-low" />
+            <div className="h-8 w-2/3 rounded bg-surface-low" />
+            <div className="h-2 w-1/2 rounded bg-surface-low" />
           </div>
         ))}
       </div>
@@ -125,7 +124,7 @@ export function MetricCardGrid({
 
       {extraMetrics.length > 0 && (
         <div className="pt-2">
-          <h4 className="text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wider">
+          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted">
             Additional Telemetry Metrics ({extraMetrics.length})
           </h4>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

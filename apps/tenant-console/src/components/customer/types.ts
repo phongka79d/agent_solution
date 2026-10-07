@@ -65,10 +65,17 @@ export interface TimelineGap {
   readonly reason: string;
 }
 
+export interface CustomerMoney {
+  readonly amount: number;
+  readonly currency: string;
+}
+
 export interface CustomerProfile {
   readonly customerId: string;
   readonly name?: string | undefined;
   readonly tier?: 'GUEST' | 'IDENTIFIED' | 'VERIFIED' | string | undefined;
+  readonly ltv?: CustomerMoney | undefined;
+  readonly aov?: CustomerMoney | undefined;
   readonly ltvTwd?: number | undefined;
   readonly aovTwd?: number | undefined;
   readonly churnRiskScore?: number | undefined;

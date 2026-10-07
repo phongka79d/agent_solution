@@ -103,6 +103,21 @@ function workerDatabaseAutonomyStore(repository: P5AutonomyRepository): Autonomy
         effective_at: new Date().toISOString(),
       });
     },
+    async isKillSwitchSet(tenant_id) {
+      const controls = await repository.getControls(tenant_id);
+      return controls?.kill_switch ?? false;
+    },
+    async setKillSwitch(tenant_id, on) {
+      const current = await repository.getControls(tenant_id);
+      await repository.commitControls({
+        tenant_id,
+        paused: current?.paused ?? false,
+        kill_switch: on,
+        actor: current?.actor ?? null,
+        reason: current?.reason ?? null,
+        effective_at: new Date().toISOString(),
+      });
+    },
   };
 }
 

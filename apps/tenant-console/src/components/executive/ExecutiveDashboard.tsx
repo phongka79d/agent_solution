@@ -7,7 +7,7 @@
 
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { ApiError } from '@agentos/ui-foundation';
 import type { SharedUiState } from '@agentos/ui-foundation';
 import { tenantConsoleClient } from '../../lib/tenant-console-client';
@@ -17,15 +17,15 @@ import { AnomalyAlertsFeed } from './AnomalyAlertsFeed';
 import type { KpiMetricItem, AnomalyAlert, SourceStatus } from './types';
 
 const STATE_BADGE_STYLES: Record<SharedUiState, string> = {
-  idle: 'bg-slate-800 text-slate-300 border-slate-700',
-  loading: 'bg-sky-950 text-sky-300 border-sky-800',
-  empty: 'bg-slate-800 text-slate-400 border-slate-700',
-  partial: 'bg-amber-950 text-amber-300 border-amber-800',
-  stale: 'bg-amber-950 text-amber-400 border-amber-800',
-  permission_denied: 'bg-rose-950 text-rose-300 border-rose-800',
-  dependency_unavailable: 'bg-orange-950 text-orange-300 border-orange-800',
-  version_conflict: 'bg-purple-950 text-purple-300 border-purple-800',
-  fail_closed: 'bg-red-950 text-red-200 border-red-700',
+  idle: 'bg-neutral-bg text-muted border-neutral-border',
+  loading: 'bg-info-bg text-info border-info-border',
+  empty: 'bg-neutral-bg text-muted border-neutral-border',
+  partial: 'bg-warning-bg text-warning border-warning-border',
+  stale: 'bg-warning-bg text-warning border-warning-border',
+  permission_denied: 'bg-danger-bg text-danger border-danger-border',
+  dependency_unavailable: 'bg-warning-bg text-warning border-warning-border',
+  version_conflict: 'bg-ai-bg text-ai-text border-ai-border',
+  fail_closed: 'bg-danger-bg text-danger border-danger-border',
 };
 
 export function ExecutiveDashboard({
@@ -38,7 +38,7 @@ export function ExecutiveDashboard({
   const [windowVal, setWindowVal] = useState<string>(initialWindow);
   const [timezone] = useState<string>(initialTimezone);
   const [metrics, setMetrics] = useState<readonly KpiMetricItem[]>([]);
-  const [alerts] = useState<readonly AnomalyAlert[]>([]);
+  const [alerts, setAlerts] = useState<readonly AnomalyAlert[]>([]);
   const [uiState, setUiState] = useState<SharedUiState>('loading');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [observedAt, setObservedAt] = useState<string | null>(null);
@@ -48,10 +48,13 @@ export function ExecutiveDashboard({
     setErrorMessage(null);
 
     try {
-      const response = await tenantConsoleClient.getKpiSnapshot({
-        window: windowVal,
-        timezone,
-      });
+      const [response, attentionResult] = await Promise.all([
+        tenantConsoleClient.getKpiSnapshot({
+          window: windowVal,
+          timezone,
+        }),
+        tenantConsoleClient.getCompanyAttention().catch(() => ({ items: [] })),
+      ]);
 
       const rawMetrics: unknown = response.metrics;
       let items: KpiMetricItem[] = [];
@@ -115,6 +118,18 @@ export function ExecutiveDashboard({
       setMetrics(items);
       setObservedAt(response.observed_at || null);
 
+      if (attentionResult && Array.isArray(attentionResult.items)) {
+        const mappedAlerts: AnomalyAlert[] = attentionResult.items.map((item, idx) => ({
+          id: `${item.type}-${item.source_ref}-${idx}`,
+          message: item.title_key,
+          severity: item.severity === 'danger' ? 'CRITICAL' : item.severity === 'warning' ? 'WARN' : 'INFO',
+          timestamp: new Date().toISOString(),
+          source: item.domain,
+          evidence_reference: item.source_ref,
+        }));
+        setAlerts(mappedAlerts);
+      }
+
       if (items.length === 0) {
         setUiState('empty');
       } else if (items.some((i) => i.source_status === 'STALE')) {
@@ -128,6 +143,7 @@ export function ExecutiveDashboard({
       }
     } catch (err: unknown) {
       setMetrics([]);
+      setAlerts([]);
       setObservedAt(null);
       if (err instanceof ApiError) {
         if (err.status === 401 || err.status === 403) {
@@ -156,10 +172,10 @@ export function ExecutiveDashboard({
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-slate-800">
+      <div className="flex flex-col gap-4 border-b border-line pb-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="flex items-center gap-3">
-            <h2 className="text-lg font-bold tracking-tight text-slate-100">
+            <h2 className="text-lg font-bold tracking-tight text-ink">
               SCR-001: Executive Telemetry &amp; Indicators
             </h2>
             <span
@@ -168,21 +184,21 @@ export function ExecutiveDashboard({
               {uiState}
             </span>
           </div>
-          <p className="text-xs text-slate-400 mt-1 font-mono">
+          <p className="mt-1 text-xs font-mono text-muted">
             R17 /api/v1/telemetry/kpi-snapshot &bull; Window: {windowVal} &bull; Timezone: {timezone}
           </p>
         </div>
 
         <div className="flex items-center gap-3">
           {observedAt && (
-            <span className="text-[11px] font-mono text-slate-500">
+            <span className="text-[11px] font-mono text-muted">
               Observed: {new Date(observedAt).toLocaleTimeString()}
             </span>
           )}
           <select
             value={windowVal}
             onChange={(e) => setWindowVal(e.target.value)}
-            className="px-2 py-1 text-xs font-mono rounded bg-slate-900 border border-slate-800 text-slate-300 focus:outline-none focus:border-sky-500"
+            className="ui-select rounded text-xs font-mono"
           >
             <option value="24h">Window: 24h</option>
             <option value="7d">Window: 7d</option>
@@ -192,7 +208,7 @@ export function ExecutiveDashboard({
             type="button"
             onClick={() => void fetchKpiSnapshot()}
             disabled={uiState === 'loading'}
-            className="px-3 py-1 text-xs font-medium rounded bg-slate-900 text-slate-200 border border-slate-700 hover:bg-slate-800 disabled:opacity-50"
+            className="ui-button ui-button--secondary rounded px-3 py-1 text-xs disabled:opacity-50"
           >
             {uiState === 'loading' ? 'Loading...' : 'Refresh'}
           </button>
@@ -203,7 +219,7 @@ export function ExecutiveDashboard({
         <div
           role="alert"
           aria-live="assertive"
-          className="p-4 rounded-lg bg-rose-950/40 border border-rose-800 text-rose-300 text-xs font-mono"
+          className="rounded-lg border border-danger-border bg-danger-bg p-4 text-xs font-mono text-danger"
         >
           <div className="font-bold mb-1">State: {uiState.toUpperCase()}</div>
           <div>{errorMessage}</div>

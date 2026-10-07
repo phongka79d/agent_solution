@@ -199,6 +199,26 @@ describe('skill runtime dispatch', () => {
     await expectRefusalAsync(harness.engine.dispatch(fabricated), 'EFFECT_KEY_NOT_DETERMINISTIC');
     expect(harness.invocations).toEqual([]);
   });
+  it('refuses effect identity and cross-tenant assertions inside the skill input', async () => {
+    const harness = createHarness();
+
+    await expectRefusalAsync(
+      harness.engine.dispatch(
+        dispatchRequest({
+          input: { tenant_id: 'tenant-1', sku_id: 'SKU-1', effect_key: 'caller-key' },
+        }),
+      ),
+      'EFFECT_KEY_IN_INPUT',
+    );
+    await expectRefusalAsync(
+      harness.engine.dispatch(
+        dispatchRequest({ input: { tenant_id: 'tenant-2', sku_id: 'SKU-1' } }),
+      ),
+      'CROSS_TENANT_ASSERTION',
+    );
+    expect(harness.invocations).toEqual([]);
+  });
+
 
   it('derives the effect identity from the immutable request, never from the run', async () => {
     const harness = createHarness();
@@ -247,6 +267,28 @@ describe('skill runtime dispatch', () => {
       'OUTPUT_SCHEMA_VALIDATION_ERROR',
     );
   });
+  it('reports EFFECT_UNKNOWN when an effect-bearing response fails its output schema', async () => {
+    const harness = createHarness({
+      respond: async () => ({ sku_id: 42 }),
+      row: {
+        effect_class: 'EFFECT',
+        retry_policy: {
+          max_retries: 0,
+          initial_interval_ms: 0,
+          backoff_multiplier: 1,
+          retry_on_timeout: false,
+          non_retryable_errors: [],
+        },
+      },
+    });
+
+    await expectRefusalAsync(
+      harness.engine.dispatch(dispatchRequest()),
+      'EFFECT_UNKNOWN',
+    );
+    expect(harness.invocations).toHaveLength(1);
+  });
+
 
   it('returns the verdict, effect class, attempt count and injected-clock latency', async () => {
     // The clock is scripted: its first read starts the measured span and every later read ends it,

@@ -4,6 +4,10 @@ export * from './cross-domain-handoff.js';
 export {
   IContextAggregator,
   IAgentRuntime,
+  IPlanInputResolver,
+  IResponseFinalizer,
+  IRunResponseStore,
+  IRunStageRecorder,
   IPolicyEngine,
   IAdapterDispatcher,
   IIdentityResolver,

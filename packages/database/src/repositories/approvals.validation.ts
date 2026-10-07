@@ -56,6 +56,7 @@ interface ApprovalRow extends QueryResultRow {
   is_paused: boolean;
   review_comment: string | null;
   decided_at: Date | null;
+  expires_at: Date;
   created_at: Date;
 }
 
@@ -97,6 +98,7 @@ function toApprovalRecord(row: ApprovalRow): ApprovalRecord {
     is_paused: row.is_paused,
     review_comment: row.review_comment,
     decided_at: row.decided_at === null ? null : row.decided_at.toISOString(),
+    expires_at: row.expires_at.toISOString(),
     created_at: row.created_at.toISOString(),
   };
 }

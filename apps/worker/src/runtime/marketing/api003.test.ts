@@ -293,6 +293,19 @@ describe('Marketing API-003 Outbound Connector Binding', () => {
       expect(receipt.adapter_status).toBe('SUCCESS');
       expect(transport.dispatch).toHaveBeenCalledTimes(1);
     });
+    it('forwards the dispatcher abort signal through the registered connector', async () => {
+      const transport = createMockTransport();
+      const binding = createMarketingApi003Binding(createValidConfig(transport));
+      const controller = new AbortController();
+
+      await binding.registry.resolve(API003_CONNECTOR_ID).dispatch(
+        createActionDraft(),
+        { signal: controller.signal },
+      );
+
+      const dispatchInput: Api003OutboundDispatchInput = vi.mocked(transport.dispatch).mock.calls[0]![0];
+      expect(dispatchInput.signal).toBe(controller.signal);
+    });
   });
 
   describe('3. Tenant mismatch refusal', () => {

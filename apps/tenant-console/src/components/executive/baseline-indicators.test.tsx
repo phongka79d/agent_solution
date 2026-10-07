@@ -8,7 +8,6 @@
  * 3. All ten indicators are consistently rendered in the grid even with partial or empty snapshots.
  */
 
-import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import {

@@ -4,8 +4,9 @@
  */
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { ApiError } from '@agentos/ui-foundation';
+import { can, type AuthSession } from '@agentos/ui-foundation/auth';
 import { tenantConsoleClient } from '../../lib/tenant-console-client';
 import type {
   ApprovalItem,
@@ -16,57 +17,87 @@ import type {
 import { ApprovalQueueList } from './ApprovalQueueList';
 import { ApprovalPayloadDiffModal } from './ApprovalPayloadDiffModal';
 
-interface ApprovalCenterProps {
-  readonly initialOperatorId?: string | undefined;
-  readonly operatorId?: string | undefined;
-  readonly onSelectCustomer?: ((customerId: string) => void) | undefined;
+
+function newIdempotencyKey(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `approval-decision-${crypto.randomUUID()}`;
+  }
+  return `approval-decision-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-export function ApprovalCenter({
-  initialOperatorId,
-  operatorId: propOperatorId,
-  onSelectCustomer,
-}: ApprovalCenterProps) {
+function decisionKey(id: string, decision: ApprovalDecision): string {
+  return `${id}:${decision}`;
+}
+
+interface ApprovalCenterProps {
+  readonly onSelectCustomer?: ((customerId: string) => void) | undefined;
+  readonly initialApprovalId?: string | undefined;
+}
+
+export function ApprovalCenter({ onSelectCustomer, initialApprovalId }: ApprovalCenterProps) {
   const [items, setItems] = useState<Record<string, ApprovalItem>>({});
+
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
-  const [operatorId, setOperatorId] = useState<string>(() => {
-    return (
-      propOperatorId?.trim() ||
-      initialOperatorId?.trim() ||
-      (typeof window !== 'undefined'
-        ? new URLSearchParams(window.location.search).get('operator_id')?.trim() ||
-          new URLSearchParams(window.location.search).get('operatorId')?.trim() ||
-          ''
-        : '')
-    );
-  });
+  const [session, setSession] = useState<AuthSession | null>(null);
+  const [operatorId, setOperatorId] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [queueError, setQueueError] = useState<string | null>(null);
+  const [requireDistinctApprover, setRequireDistinctApprover] = useState(false);
+  const decisionKeysRef = useRef(new Map<string, string>());
 
   useEffect(() => {
-    const fromContext =
-      propOperatorId?.trim() ||
-      initialOperatorId?.trim() ||
-      (typeof window !== 'undefined'
-        ? new URLSearchParams(window.location.search).get('operator_id')?.trim() ||
-          new URLSearchParams(window.location.search).get('operatorId')?.trim() ||
-          ''
-        : '');
-    if (fromContext && fromContext !== operatorId) {
-      setOperatorId(fromContext);
-    }
-  }, [propOperatorId, initialOperatorId, operatorId]);
+    let active = true;
+    void tenantConsoleClient.getAuthSession()
+      .then((currentSession) => {
+        if (!active) return;
+        setSession(currentSession);
+        void tenantConsoleClient.getCompanyGovernance()
+          .then((governance) => {
+            if (active) setRequireDistinctApprover(governance.require_distinct_approver === true);
+          })
+          .catch(() => {
+            if (active) setRequireDistinctApprover(false);
+          });
+        if (!can(currentSession, 'approval:read')) {
+          setQueueError('permission_denied: the current session cannot read approvals.');
+          setOperatorId('');
+          return;
+        }
+        if (!currentSession.identity.user_id.trim()) {
+          setQueueError('permission_denied: authenticated identity is unavailable.');
+          setOperatorId('');
+          return;
+        }
+        setOperatorId(currentSession.identity.user_id);
+      })
+      .catch(() => {
+        if (!active) return;
+        setSession(null);
+        setQueueError('permission_denied: sign in with an authorized session.');
+        setOperatorId('');
+      });
+    return () => { active = false; };
+  }, []);
   // Normalizes an approval object from R14 list or supplemental detail read
   const normalizeApprovalItem = useCallback((raw: Record<string, unknown>): ApprovalItem => {
     const id = String(raw.approval_id || raw.id || '');
     const runId = String(raw.run_id || raw.runId || '');
     const actionId = raw.action_id ? String(raw.action_id) : undefined;
     const tenantId = raw.tenant_id ? String(raw.tenant_id) : undefined;
-    const agentId = String(raw.agent_id || raw.agentId || 'AGENT-UNKNOWN');
+    const agentId = String(raw.agent_id || raw.agentId || raw.requesting_agent_id || 'AGENT-UNKNOWN');
+    const requestingAgentName = typeof raw.requesting_agent_name === 'string'
+      ? raw.requesting_agent_name
+      : typeof raw.agent_name === 'string' ? raw.agent_name : undefined;
+    const domain = typeof raw.domain === 'string' ? raw.domain : undefined;
     const effectKey = raw.effect_key ? String(raw.effect_key) : undefined;
-    const title = String(raw.title || `Review: ${agentId} Action`);
-    const reason = String(raw.reason || raw.risk_reason || raw.riskReason || 'AUTH-4 operation requires human sign-off');
-    const rawPayload = (raw.payload && typeof raw.payload === 'object' ? raw.payload : {}) as Record<string, unknown>;
+    const authority = typeof raw.authority === 'string'
+      ? raw.authority
+      : typeof raw.required_authority === 'string' ? raw.required_authority : undefined;
+    const title = String(raw.title || raw.what || `Review: ${agentId} Action`);
+    const reason = String(raw.reason || raw.why || raw.risk_reason || raw.riskReason || 'Human review is required before this action.');
+    const rawPayload = (raw.payload && typeof raw.payload === 'object' && !Array.isArray(raw.payload) ? raw.payload : {}) as Record<string, unknown>;
+    const context = raw.context ?? raw.context_data;
+    const evidence = Array.isArray(raw.evidence) ? raw.evidence : Array.isArray(raw.evidence_ids) ? raw.evidence_ids : undefined;
     const payloadSha256 = String(raw.payload_sha256 || raw.payloadSha256 || '');
     const isPaused = Boolean(raw.is_paused ?? raw.isPaused ?? false);
 
@@ -104,9 +135,14 @@ export function ApprovalCenter({
       actionId,
       tenantId,
       agentId,
+      ...(requestingAgentName === undefined ? {} : { requestingAgentName }),
+      ...(domain === undefined ? {} : { domain }),
       effectKey,
+      ...(authority === undefined ? {} : { authority }),
       title,
       reason,
+      ...(context === undefined ? {} : { context }),
+      ...(evidence === undefined ? {} : { evidence }),
       payload: rawPayload,
       payloadSha256,
       status,
@@ -132,7 +168,6 @@ export function ApprovalCenter({
     try {
       const data = await tenantConsoleClient.getApprovals(
         { status: 'PENDING' },
-        { operatorId: operatorId.trim() },
       );
       const rawData: unknown = data;
       const rawList: Record<string, unknown>[] = [];
@@ -193,6 +228,10 @@ export function ApprovalCenter({
     },
     [normalizeApprovalItem]
   );
+  useEffect(() => {
+    if (!initialApprovalId || selectedItemId === initialApprovalId) return;
+    void handleSelectItem(initialApprovalId);
+  }, [handleSelectItem, initialApprovalId, selectedItemId]);
 
   // Submit decision to POST /api/v1/approvals/{id}/decision
   const handleSubmitDecision = useCallback(
@@ -203,23 +242,27 @@ export function ApprovalCenter({
       expectedPayloadSha256: string,
       modifiedPayload?: Record<string, unknown>
     ): Promise<ApprovalDecisionResponse> => {
-      if (!operatorId || !operatorId.trim()) {
-        throw new Error('permission_denied: Cannot submit decision without verified operator identity.');
+      if (!operatorId || !operatorId.trim() || !can(session, 'approval:decide')) {
+        throw new Error('permission_denied: this session cannot submit approval decisions.');
+      }
+      if (!expectedPayloadSha256.trim()) {
+        throw new Error('The reviewed payload digest is unavailable. Review the approval detail before deciding.');
       }
 
       const requestBody = {
         decision,
-        operator_id: operatorId,
         reason,
         expected_payload_sha256: expectedPayloadSha256,
         ...(decision === 'MODIFY' && modifiedPayload ? { modified_payload: modifiedPayload } : {}),
       };
+      const key = decisionKey(id, decision);
+      const idempotencyKey = decisionKeysRef.current.get(key) ?? newIdempotencyKey();
+      decisionKeysRef.current.set(key, idempotencyKey);
 
-      // The shared transport preserves the API's 202 receipt and ApiError status/code on 403/409.
       const responseReceipt = await tenantConsoleClient.submitApprovalDecision(
         id,
         requestBody,
-        { operatorId: operatorId.trim() },
+        { headers: { 'Idempotency-Key': idempotencyKey, 'x-idempotency-key': idempotencyKey } },
       );
 
       // Update local item status based on server receipt.
@@ -245,7 +288,7 @@ export function ApprovalCenter({
 
       return responseReceipt;
     },
-    [operatorId]
+[operatorId, session]
   );
 
   const itemList = Object.values(items);
@@ -259,16 +302,14 @@ export function ApprovalCenter({
       <div
         data-testid="approval-center-unavailable"
         role="alert"
-        className="p-8 rounded-2xl border border-rose-800 bg-rose-950/40 text-center max-w-2xl mx-auto my-12"
+        className="ui-state ui-state--error mx-auto my-12 max-w-2xl text-center"
       >
-        <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-rose-900/60 text-rose-300 mb-4 border border-rose-700 font-mono text-sm font-bold">
-          403
-        </div>
-        <h2 className="text-base font-semibold text-rose-200 mb-2">
-          permission_denied: Operator Identifier Required
+        <div className="tenant-code-badge mx-auto mb-4" aria-hidden="true">403</div>
+        <h2 className="text-base font-semibold text-ink mb-2">
+          Không thể xác thực người phê duyệt
         </h2>
-        <p className="text-xs text-rose-300 font-mono max-w-lg mx-auto leading-relaxed">
-          Access refused: Governance approval review requires an authenticated operator session from context input. No verified operator_id was provided.
+        <p className="mx-auto max-w-lg text-sm leading-relaxed text-muted">
+          Phiên đăng nhập không cung cấp danh tính người phê duyệt đã xác thực.
         </p>
       </div>
     );
@@ -276,53 +317,47 @@ export function ApprovalCenter({
 
   return (
     <div className="space-y-6">
-      {/* Header & Controls */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-slate-900/60 border border-slate-800 p-5 rounded-2xl">
-        <div>
-          <h1 className="text-xl font-bold text-slate-100">SCR-003: Approval Center</h1>
-          <p className="text-xs text-slate-400 mt-0.5">
-            Mandatory human-in-the-loop checkpoint for high-risk AUTH-4 operations.
-          </p>
-        </div>
+      <div className="ui-section-card p-5">
+        <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
+          <div>
+            <h2 className="text-headline-lg font-semibold text-ink">SCR-003: Approval Center</h2>
+            <p className="mt-1 text-sm text-muted">
+              Mandatory human-in-the-loop checkpoint for high-risk AUTH-4 operations.
+            </p>
+          </div>
 
-        <div className="flex items-center gap-3 flex-wrap">
-          <div className="flex items-center gap-2">
-            <span className="px-2.5 py-1 bg-amber-950/70 border border-amber-700/80 rounded-full text-xs font-mono text-amber-300">
-              Awaiting Sign-off: <strong>{awaitingHumanCount}</strong>
-            </span>
-            <span className="px-2.5 py-1 bg-sky-950/70 border border-sky-700/80 rounded-full text-xs font-mono text-sky-300">
-              Paused: <strong>{pausedCount}</strong>
-            </span>
-            {queuedCount > 0 && (
-              <span className="px-2.5 py-1 bg-purple-950/70 border border-purple-700/80 rounded-full text-xs font-mono text-purple-300">
-                Queued: <strong>{queuedCount}</strong>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="tenant-summary-badge tenant-summary-badge--warning">
+                Awaiting Sign-off: <strong>{awaitingHumanCount}</strong>
               </span>
-            )}
-          </div>
+              <span className="tenant-summary-badge tenant-summary-badge--info">
+                Paused: <strong>{pausedCount}</strong>
+              </span>
+              {queuedCount > 0 ? (
+                <span className="tenant-summary-badge tenant-summary-badge--ai">
+                  Queued: <strong>{queuedCount}</strong>
+                </span>
+              ) : null}
+            </div>
 
-          <div className="flex items-center gap-1.5 text-xs font-mono bg-slate-950 px-2.5 py-1 rounded-lg border border-slate-800">
-            <span className="text-slate-400">Operator:</span>
-            <input
-              type="text"
-              value={operatorId}
-              onChange={(e) => setOperatorId(e.target.value)}
-              className="bg-transparent border-none text-slate-200 outline-none w-28 font-mono text-xs"
-              title="Operator ID sent to decision endpoint"
-            />
-          </div>
+            <div className="tenant-operator" aria-label="Verified operator identity">
+              <span>Operator:</span>
+              <strong title="Resolved from the authenticated session">{operatorId}</strong>
+            </div>
 
-          <button
-            type="button"
-            onClick={fetchQueue}
-            disabled={isLoading}
-            className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition-colors disabled:opacity-50"
-          >
-            {isLoading ? 'Refreshing…' : 'Refresh Queue'}
-          </button>
+            <button type="button" onClick={fetchQueue} disabled={isLoading} className="ui-button ui-button--secondary ui-button--sm">
+              {isLoading ? 'Refreshing…' : 'Refresh Queue'}
+            </button>
+          </div>
         </div>
+        {requireDistinctApprover ? (
+          <div role="note" className="tenant-notice tenant-notice--warning mt-4">
+            Người phê duyệt phải khác người soạn
+          </div>
+        ) : null}
       </div>
 
-      {/* Main List */}
       <div className="max-w-5xl">
         <ApprovalQueueList
           items={itemList}
@@ -334,14 +369,14 @@ export function ApprovalCenter({
         />
       </div>
 
-      {/* Modal / Diff Inspector */}
       <ApprovalPayloadDiffModal
         item={selectedItem}
-        operatorId={operatorId}
+        requireDistinctApprover={requireDistinctApprover}
         onClose={() => setSelectedItemId(null)}
         onSubmitDecision={handleSubmitDecision}
         onViewCustomer={onSelectCustomer}
       />
     </div>
   );
+
 }

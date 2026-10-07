@@ -27,7 +27,8 @@ export type OwnerInputKey =
   | 'RESIDENCY'
   | 'PROMOTION_LIMITS'
   | 'NAMESPACE_IDENTIFIERS'
-  | 'AUDIT_PROVISIONING_EVIDENCE';
+  | 'AUDIT_PROVISIONING_EVIDENCE'
+  | 'careOnboardingItinerary';
 
 export interface OwnerInputState {
   readonly key: OwnerInputKey;

@@ -44,7 +44,7 @@ describe('P5 Tenant Workspace & Controlled Autonomy Contracts', () => {
 
     await client.getCurrentTenant();
 
-    expect(spy.getLastUrl()).toBe('http://localhost:4000/api/v1/admin/tenants/current');
+    expect(spy.getLastUrl()).toBe('/api/v1/admin/tenants/current');
     expect(spy.getLastInit()?.method).toBe('GET');
   });
 
@@ -54,7 +54,7 @@ describe('P5 Tenant Workspace & Controlled Autonomy Contracts', () => {
 
     await client.getAutonomy();
 
-    expect(spy.getLastUrl()).toBe('http://localhost:4000/api/v1/admin/autonomy');
+    expect(spy.getLastUrl()).toBe('/api/v1/admin/autonomy');
     expect(spy.getLastInit()?.method).toBe('GET');
   });
 
@@ -64,7 +64,7 @@ describe('P5 Tenant Workspace & Controlled Autonomy Contracts', () => {
 
     await client.pauseAutonomy();
 
-    expect(spy.getLastUrl()).toBe('http://localhost:4000/api/v1/admin/autonomy/pause');
+    expect(spy.getLastUrl()).toBe('/api/v1/admin/autonomy/pause');
     expect(spy.getLastInit()?.method).toBe('POST');
     expect(spy.getBodyJson()).toBeUndefined();
   });
@@ -75,7 +75,7 @@ describe('P5 Tenant Workspace & Controlled Autonomy Contracts', () => {
 
     await client.resumeAutonomy();
 
-    expect(spy.getLastUrl()).toBe('http://localhost:4000/api/v1/admin/autonomy/resume');
+    expect(spy.getLastUrl()).toBe('/api/v1/admin/autonomy/resume');
     expect(spy.getLastInit()?.method).toBe('POST');
     expect(spy.getBodyJson()).toBeUndefined();
   });
@@ -86,12 +86,41 @@ describe('P5 Tenant Workspace & Controlled Autonomy Contracts', () => {
 
     await client.demoteAutonomy({ skill_id: 'skill.sales.check_stock', reason: 'operator safety review' });
 
-    expect(spy.getLastUrl()).toBe('http://localhost:4000/api/v1/admin/autonomy/demote');
+    expect(spy.getLastUrl()).toBe('/api/v1/admin/autonomy/demote');
     expect(spy.getLastInit()?.method).toBe('POST');
     expect(spy.getBodyJson()).toEqual({
       skill_id: 'skill.sales.check_stock',
       reason: 'operator safety review',
     });
+  });
+});
+
+describe('platform-admin BFF browser transport', () => {
+  it('uses same-origin paths, credentials, and the readable CSRF cookie without a bearer token', async () => {
+    const previousDocument = Reflect.get(globalThis, 'document');
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { cookie: 'agentos_platform_csrf=csrf-value' },
+    });
+    try {
+      const spy = createFetchSpy(createMockJsonResponse({ accepted: true }));
+      const client = new AdminOperationsClient({ fetch: spy.mockFetch });
+      await client.pauseAutonomy();
+
+      const init = spy.getLastInit();
+      const headers = new Headers(init?.headers);
+      expect(spy.getLastUrl()).toBe('/api/v1/admin/autonomy/pause');
+      expect(init?.credentials).toBe('same-origin');
+      expect(headers.get('x-csrf-token')).toBe('csrf-value');
+      expect(headers.has('authorization')).toBe(false);
+      expect(headers.has('x-tenant-id')).toBe(false);
+    } finally {
+      if (previousDocument === undefined) {
+        Reflect.deleteProperty(globalThis, 'document');
+      } else {
+        Object.defineProperty(globalThis, 'document', { configurable: true, value: previousDocument });
+      }
+    }
   });
 });
 
@@ -111,7 +140,7 @@ describe('R16 Runs and R13 Retry Contracts', () => {
     });
 
     expect(spy.getLastUrl()).toBe(
-      'http://localhost:4000/api/v1/runs?limit=10&agent_id=agent-cart-recovery&state=failed'
+      '/api/v1/runs?limit=10&agent_id=agent-cart-recovery&state=failed'
     );
     expect(spy.getLastInit()?.method).toBe('GET');
     expect(result.items[0]?.run_id).toBe('run-1');
@@ -135,7 +164,7 @@ describe('R16 Runs and R13 Retry Contracts', () => {
 
     const result = await client.retryRun('run-fail-789', retryBody);
 
-    expect(spy.getLastUrl()).toBe('http://localhost:4000/api/v1/operations/runs/run-fail-789/retry');
+    expect(spy.getLastUrl()).toBe('/api/v1/operations/runs/run-fail-789/retry');
     expect(spy.getLastInit()?.method).toBe('POST');
     expect(spy.getBodyJson()).toEqual(retryBody);
     expect(result.status).toBe('accepted');

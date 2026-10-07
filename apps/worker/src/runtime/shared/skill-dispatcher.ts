@@ -59,7 +59,7 @@ export interface SkillAdapterDispatcherOptions {
  */
 export function createSkillAdapterDispatcher(options: SkillAdapterDispatcherOptions): IAdapterDispatcher {
   return {
-    async dispatch(action: ActionDraft, dispatchOptions?: { timeout_ms?: number }): Promise<ExecutionReceipt> {
+    async dispatch(action: ActionDraft, dispatchOptions?: { timeout_ms?: number; signal?: AbortSignal }): Promise<ExecutionReceipt> {
       const correlation_id = await options.resolve_correlation_id(action.tenant_id, action.run_id);
       const granted_authority = await options.resolve_grant(action.tenant_id, action.agent_id);
 
@@ -73,6 +73,36 @@ export function createSkillAdapterDispatcher(options: SkillAdapterDispatcherOpti
         );
       }
 
+      // The envelope's server-derived key is authoritative. Accept a caller echo only when it
+      // agrees, then strip it before the runtime schema guard rejects envelope fields in input.
+      let skillInput = action.payload;
+      if (
+        typeof action.payload === 'object'
+        && action.payload !== null
+        && !Array.isArray(action.payload)
+        && Object.hasOwn(action.payload, 'effect_key')
+      ) {
+        const inputRecord = action.payload as Record<string, unknown>;
+        if (inputRecord.effect_key !== action.effect_key) {
+          throw new SkillError(
+            'EFFECT_KEY_NOT_DETERMINISTIC',
+            'caller-supplied effect_key does not match the server-derived dispatch key',
+            action.skill_id,
+          );
+        }
+        const { effect_key: ignoredEffectKey, ...serverInput } = inputRecord;
+        void ignoredEffectKey;
+        skillInput = serverInput;
+      }
+
+      const timeoutSignal = dispatchOptions?.timeout_ms === undefined
+        ? undefined
+        : AbortSignal.timeout(dispatchOptions.timeout_ms);
+      const signal = dispatchOptions?.signal === undefined
+        ? timeoutSignal
+        : timeoutSignal === undefined
+          ? dispatchOptions.signal
+          : AbortSignal.any([dispatchOptions.signal, timeoutSignal]);
       const request: SkillDispatchRequest = {
         broker: ORCHESTRATOR_BROKER,
         skill_id: action.skill_id,
@@ -87,8 +117,8 @@ export function createSkillAdapterDispatcher(options: SkillAdapterDispatcherOpti
         effect_key: action.effect_key,
         ...(action.approval_id ? { approval_id: action.approval_id } : {}),
         ...(action.approval_payload_digest ? { approval_payload_digest: action.approval_payload_digest } : {}),
-        ...(dispatchOptions?.timeout_ms ? { signal: AbortSignal.timeout(dispatchOptions.timeout_ms) } : {}),
-        input: action.payload,
+        ...(signal === undefined ? {} : { signal }),
+        input: skillInput,
       };
 
       // Dispatches through the SkillRuntimeEngine. A SkillError refusal surfaces as the canonical failure,

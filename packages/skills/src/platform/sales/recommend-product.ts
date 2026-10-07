@@ -31,7 +31,9 @@ export interface InputSalesRecommendProduct {
   recommendation_type?: 'CROSS_SELL' | 'UPSELL' | 'SUBSTITUTE' | 'BUNDLE' | 'REPLENISHMENT';
 }
 
-/** Output of `skill.sales.recommend_product` (§4.2 skill 12), the FR-SAL-003 seven fields. */
+export type RecommendationRankingMethod = 'keyword_overlap' | 'authoritative_catalog_order';
+
+/** Output of `skill.sales.recommend_product` (§4.2 skill 12), the recommendation contract fields. */
 export interface OutputSalesRecommendProduct {
   customer: string;
   product: { sku: string; name: string; price: number };
@@ -39,6 +41,7 @@ export interface OutputSalesRecommendProduct {
   evidence: RecommendationEvidence;
   eligibility: RecommendationEligibility;
   confidence: number;
+  ranking_method: RecommendationRankingMethod;
   expected_outcome: {
     conversion_probability: number;
     expected_revenue: number;
@@ -78,6 +81,7 @@ const output_schema: Record<string, unknown> = {
     'evidence',
     'eligibility',
     'confidence',
+    'ranking_method',
     'expected_outcome',
   ],
   properties: {
@@ -113,6 +117,10 @@ const output_schema: Record<string, unknown> = {
       },
     },
     confidence: { type: 'number', minimum: 0.0, maximum: 1.0 },
+    ranking_method: {
+      type: 'string',
+      enum: ['keyword_overlap', 'authoritative_catalog_order'],
+    },
     expected_outcome: {
       type: 'object',
       required: ['conversion_probability', 'expected_revenue', 'currency'],

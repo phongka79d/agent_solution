@@ -1,4 +1,22 @@
-import { HttpClient, type RequestOptions } from '@agentos/ui-foundation';
+import { safeNext } from '@agentos/ui-foundation/auth';
+import { HttpClient, type HttpClientConfig, type QueryParams, type RequestOptions } from '@agentos/ui-foundation';
+
+const PLATFORM_CSRF_COOKIE = 'agentos_platform_csrf';
+const MUTATION_METHODS: Record<string, true> = { POST: true, PUT: true, PATCH: true, DELETE: true };
+
+function csrfTokenFromCookie(): string | null {
+  if (typeof document === 'undefined') return null;
+  for (const pair of document.cookie.split(';')) {
+    const separator = pair.indexOf('=');
+    if (separator < 0 || pair.slice(0, separator).trim() !== PLATFORM_CSRF_COOKIE) continue;
+    try {
+      return decodeURIComponent(pair.slice(separator + 1).trim()) || null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
 import type {
   AutonomyDemoteRequest,
   AutonomyInspectionResponse,
@@ -20,6 +38,39 @@ export const TENANT_ADMIN_PATHS = Object.freeze({
 
 /** Browser-safe transport for platform-admin P5 and operations routes only. */
 export class AdminOperationsClient extends HttpClient {
+  constructor(config: HttpClientConfig = {}) {
+    // Platform-admin browser traffic must stay same-origin; the BFF owns the API bearer.
+    super({ ...config, baseUrl: '' });
+  }
+
+  override async requestRaw(
+    endpoint: string,
+    init: RequestInit = {},
+    query?: QueryParams,
+    options: RequestOptions = {},
+  ): Promise<Response> {
+    const method = String(init.method ?? 'GET').toUpperCase();
+    const headers = new Headers(init.headers);
+    for (const [name, value] of Object.entries(options.headers ?? {})) headers.set(name, value);
+    headers.delete('authorization');
+    headers.delete('x-tenant-id');
+    headers.delete('x-operator-id');
+    if (MUTATION_METHODS[method]) {
+      const csrfToken = csrfTokenFromCookie();
+      if (csrfToken) headers.set('x-csrf-token', csrfToken);
+    }
+    const response = await super.requestRaw(
+      endpoint,
+      { ...init, credentials: init.credentials ?? 'same-origin' },
+      query,
+      { ...options, headers: Object.fromEntries(headers.entries()) },
+    );
+    if (response.status === 401 && typeof window !== 'undefined' && window.location.pathname !== '/sign-in') {
+      const next = safeNext(`${window.location.pathname}${window.location.search}`);
+      window.location.assign(`/sign-in?reason=expired&next=${encodeURIComponent(next)}`);
+    }
+    return response;
+  }
   async getRuns(
     params?: GetRunsParams,
     options?: RequestOptions,

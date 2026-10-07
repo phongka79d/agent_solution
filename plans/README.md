@@ -2,7 +2,7 @@
 
 Đọc [bản tổng quan dễ hiểu](plan-easy-read-flow.md) trước, khoảng 5 phút. Muốn bắt đầu triển khai, mở [phạm vi bản đầu và điều kiện nghiệm thu](delivery/mvp-and-roadmap.md).
 
-Cập nhật: 10/09/2026. Trạng thái: **đề xuất thiết kế, chưa triển khai và chưa được kiểm chứng bằng thử nghiệm thực tế**. Việc nguồn PDF ghi “đã phê duyệt ý niệm” không có nghĩa bộ kế hoạch hợp nhất hoặc các tính năng đã được nghiệm thu.
+Cập nhật: 10/09/2026. Trạng thái: **bộ kế hoạch và đặc tả vẫn là tài liệu định hướng; runtime hiện tại gồm API, worker chạy các agent Care/Sales/Marketing, hai console Tenant Console và Platform Admin, cùng các migration PostgreSQL**. Các phần trong kế hoạch có thể vẫn cần kiểm chứng bằng thử nghiệm thực tế; việc nguồn PDF ghi “đã phê duyệt ý niệm” không có nghĩa bộ kế hoạch hợp nhất hoặc mọi tính năng đã được nghiệm thu.
 
 ## 1. Định hướng thống nhất
 

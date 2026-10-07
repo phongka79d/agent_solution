@@ -147,7 +147,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/consents.json`](../fixtures/offline/consents.json)
 - [`fixtures/offline/events.json`](../fixtures/offline/events.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/E2E-OFF-001.json`](../fixtures/scenarios/E2E-OFF-001.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/E2E-OFF-001.json`](../fixtures/scenarios/E2E-OFF-001.json).
 
 <a id="case-e2e-off-care"></a>
 
@@ -272,7 +272,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 - [`fixtures/offline/events.json`](../fixtures/offline/events.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/E2E-OFF-CARE.json`](../fixtures/scenarios/E2E-OFF-CARE.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/E2E-OFF-CARE.json`](../fixtures/scenarios/E2E-OFF-CARE.json).
 
 <a id="case-e2e-off-cart"></a>
 
@@ -408,7 +408,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/events.json`](../fixtures/offline/events.json)
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/E2E-OFF-CART.json`](../fixtures/scenarios/E2E-OFF-CART.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/E2E-OFF-CART.json`](../fixtures/scenarios/E2E-OFF-CART.json).
 
 <a id="case-e2e-off-connfail"></a>
 
@@ -529,7 +529,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/E2E-OFF-CONNFAIL.json`](../fixtures/scenarios/E2E-OFF-CONNFAIL.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/E2E-OFF-CONNFAIL.json`](../fixtures/scenarios/E2E-OFF-CONNFAIL.json).
 
 <a id="case-e2e-off-esc"></a>
 
@@ -650,7 +650,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/business.json`](../fixtures/offline/business.json)
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/E2E-OFF-ESC.json`](../fixtures/scenarios/E2E-OFF-ESC.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/E2E-OFF-ESC.json`](../fixtures/scenarios/E2E-OFF-ESC.json).
 
 <a id="case-e2e-off-idem"></a>
 
@@ -762,7 +762,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/business.json`](../fixtures/offline/business.json)
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/E2E-OFF-IDEM.json`](../fixtures/scenarios/E2E-OFF-IDEM.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/E2E-OFF-IDEM.json`](../fixtures/scenarios/E2E-OFF-IDEM.json).
 
 <a id="case-e2e-off-inject"></a>
 
@@ -883,7 +883,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 - [`fixtures/offline/knowledge.json`](../fixtures/offline/knowledge.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/E2E-OFF-INJECT.json`](../fixtures/scenarios/E2E-OFF-INJECT.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/E2E-OFF-INJECT.json`](../fixtures/scenarios/E2E-OFF-INJECT.json).
 
 <a id="case-e2e-off-isolation"></a>
 
@@ -1014,7 +1014,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 - [`fixtures/offline/events.json`](../fixtures/offline/events.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/E2E-OFF-ISOLATION.json`](../fixtures/scenarios/E2E-OFF-ISOLATION.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/E2E-OFF-ISOLATION.json`](../fixtures/scenarios/E2E-OFF-ISOLATION.json).
 
 <a id="case-e2e-off-mkt"></a>
 
@@ -1142,7 +1142,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/events.json`](../fixtures/offline/events.json)
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/E2E-OFF-MKT.json`](../fixtures/scenarios/E2E-OFF-MKT.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/E2E-OFF-MKT.json`](../fixtures/scenarios/E2E-OFF-MKT.json).
 
 <a id="case-e2e-off-p4-xdomain"></a>
 
@@ -1271,7 +1271,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 - [`fixtures/offline/events.json`](../fixtures/offline/events.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/E2E-OFF-P4-XDOMAIN.json`](../fixtures/scenarios/E2E-OFF-P4-XDOMAIN.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/E2E-OFF-P4-XDOMAIN.json`](../fixtures/scenarios/E2E-OFF-P4-XDOMAIN.json).
 
 <a id="case-e2e-off-p5-autonomy"></a>
 
@@ -1405,7 +1405,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 - [`fixtures/offline/consents.json`](../fixtures/offline/consents.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/E2E-OFF-P5-AUTONOMY.json`](../fixtures/scenarios/E2E-OFF-P5-AUTONOMY.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/E2E-OFF-P5-AUTONOMY.json`](../fixtures/scenarios/E2E-OFF-P5-AUTONOMY.json).
 
 <a id="case-e2e-off-price"></a>
 
@@ -1517,7 +1517,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/catalog.json`](../fixtures/offline/catalog.json)
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/E2E-OFF-PRICE.json`](../fixtures/scenarios/E2E-OFF-PRICE.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/E2E-OFF-PRICE.json`](../fixtures/scenarios/E2E-OFF-PRICE.json).
 
 <a id="case-e2e-off-trace"></a>
 
@@ -1638,4 +1638,4 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 - [`fixtures/offline/events.json`](../fixtures/offline/events.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/E2E-OFF-TRACE.json`](../fixtures/scenarios/E2E-OFF-TRACE.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/E2E-OFF-TRACE.json`](../fixtures/scenarios/E2E-OFF-TRACE.json).

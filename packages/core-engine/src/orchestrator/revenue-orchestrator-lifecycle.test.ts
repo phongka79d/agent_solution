@@ -146,6 +146,7 @@ interface HarnessOptions {
   readonly workflowEngine?: IStatefulWorkflowEngine;
   /** Lease manager override, so a case can assert the attempt's release. */
   readonly leaseManager?: DurableLeaseManager;
+  readonly assertExecutionLease?: (tenant_id: string, run_id: string) => Promise<void>;
   readonly reconcile?: (input: {
     readonly tenant_id: string;
     readonly effect_key: string;
@@ -224,6 +225,7 @@ function harness(options: HarnessOptions = {}) {
       returnToAgent: async () => undefined,
     },
     leaseManager: options.leaseManager ?? new MemoryLeaseManager(),
+    ...(options.assertExecutionLease === undefined ? {} : { assertExecutionLease: options.assertExecutionLease }),
     workerId: 'worker-test',
   });
   return { orchestrator, effectGuard, workflow, memoryWorkflow, evidenceLogger, hydrate, deriveHypothesis, resolveRouting, formulatePlan, dispatch, reconcile };
@@ -297,6 +299,47 @@ describe('RevenueOrchestrator', () => {
     expect(dispatch).toHaveBeenCalledTimes(1);
     expect(result.evidence?.previous_evidence_hash).toBe(GENESIS_HASH);
   });
+  it('does not leak the previous run journal into a sequential run', async () => {
+    const { orchestrator } = harness();
+
+    await orchestrator.processSignal(signal());
+    const firstRunStages = [...orchestrator.visitedStages];
+
+    await orchestrator.processSignal(signal());
+
+    expect([...orchestrator.visitedStages]).toEqual(firstRunStages);
+    expect(orchestrator.visitedStages.filter((stage) => stage === 'LEARNING')).toHaveLength(1);
+  });
+  it('does not retain a queued-run lease gate across sequential runs', async () => {
+    const assertExecutionLease = vi.fn(async () => undefined);
+    const queuedWorkflow = {
+      getTask: vi.fn(async () => ({
+        task_version: 1,
+        state: 'running' as const,
+        correlation_id: 'corr-1',
+        state_payload: { signal: signal() },
+        lease_owner: 'worker-test',
+        lease_expires_at: new Date(Date.now() + 30_000).toISOString(),
+      })),
+      createTask: vi.fn(async () => undefined),
+      updateTaskProgress: vi.fn(async () => undefined),
+      transitionTask: vi.fn(async () => undefined),
+      recordFailure: vi.fn(async () => ({ requeued: true })),
+    } as unknown as IStatefulWorkflowEngine;
+    const { orchestrator } = harness({
+      workflowEngine: queuedWorkflow,
+      assertExecutionLease,
+    });
+
+    await orchestrator.processQueuedSignal('run-queued', signal(), { worker_id: 'worker-test' });
+    expect(assertExecutionLease).toHaveBeenCalled();
+
+    assertExecutionLease.mockClear();
+    await orchestrator.processSignal(signal({ signal_id: 'signal-next' }));
+    expect(assertExecutionLease).toHaveBeenCalledTimes(1);
+  });
+
+
 
   it('rejects an illegal stage skip and does not execute an AUTH-5 step', async () => {
     expect(() => assertValidTransition(null, 'PLAN')).toThrow(OrchestratorError);

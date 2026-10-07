@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 
 import { describe, expect, it } from 'vitest';
 
-import { verifyChannelSignature, type ChannelId } from './api-003-channels.js';
+import { extractInboundMessage, verifyChannelSignature, type ChannelId } from './api-003-channels.js';
 
 /** The host primitive; the same algorithm a provider computes with, injected as the package requires. */
 const hmac = (secret: string, message: string): string =>
@@ -17,6 +17,7 @@ function verify(input: {
   readonly secret?: string | null;
   readonly app_id?: string;
   readonly body?: string;
+  readonly now_ms?: number;
   readonly headers: Readonly<Record<string, string | undefined>>;
 }): ReturnType<typeof verifyChannelSignature> {
   return verifyChannelSignature({
@@ -26,6 +27,7 @@ function verify(input: {
     raw_body: input.body ?? BODY,
     headers: input.headers,
     hmac,
+    ...(input.now_ms === undefined ? {} : { now_ms: input.now_ms }),
   });
 }
 
@@ -83,16 +85,28 @@ describe('verifyChannelSignature', () => {
     const app_id = 'APP-123';
     const timestamp = '1758500000000';
     const headers = { 'x-zalo-signature': hmac(SECRET, `${app_id}${BODY}`), 'x-zevent-timestamp': timestamp };
+    // Timestamp-bound schemes fail closed without an injected clock.
+    expect(verify({ channel: 'ZALO', app_id, headers })).toEqual({ ok: false, reason: 'SIGNATURE_INVALID' });
 
-    expect(verify({ channel: 'ZALO', app_id, headers })).toEqual({ ok: true });
+    expect(verify({ channel: 'ZALO', app_id, now_ms: 1758500000000, headers })).toEqual({ ok: true });
 
     // A signature over the body alone, or over another app id's material, is not this delivery's.
-    expect(verify({ channel: 'ZALO', app_id, headers: { 'x-zalo-signature': hmac(SECRET, BODY) } })).toEqual({
+    expect(verify({
+      channel: 'ZALO',
+      app_id,
+      now_ms: 1758500000000,
+      headers: { 'x-zalo-signature': hmac(SECRET, BODY), 'x-zevent-timestamp': timestamp },
+    })).toEqual({
       ok: false,
       reason: 'SIGNATURE_INVALID',
     });
     expect(
-      verify({ channel: 'ZALO', app_id: 'APP-OTHER', headers: { 'x-zalo-signature': hmac(SECRET, `${app_id}${BODY}`) } }),
+      verify({
+        channel: 'ZALO',
+        app_id: 'APP-OTHER',
+        now_ms: 1758500000000,
+        headers: { 'x-zalo-signature': hmac(SECRET, `${app_id}${BODY}`), 'x-zevent-timestamp': timestamp },
+      }),
     ).toEqual({ ok: false, reason: 'SIGNATURE_INVALID' });
 
     // Without the app id there is no material to compute, so the delivery is refused rather than
@@ -107,6 +121,7 @@ describe('verifyChannelSignature', () => {
       verify({
         channel: 'ZALO',
         app_id,
+        now_ms: 1758500000000,
         headers: { 'x-zalo-signature': bound, 'x-zevent-timestamp': '1758500000000' },
       }),
     ).toEqual({ ok: true });
@@ -114,6 +129,7 @@ describe('verifyChannelSignature', () => {
       verify({
         channel: 'ZALO',
         app_id,
+        now_ms: 1758500000001,
         headers: { 'x-zalo-signature': bound, 'x-zevent-timestamp': '1758500000001' },
       }),
     ).toEqual({ ok: true });
@@ -143,5 +159,46 @@ describe('verifyChannelSignature', () => {
     });
     // The host primitive and the package's own comparison agree byte for byte.
     expect(timingSafeEqual(Buffer.from(digest, 'utf8'), Buffer.from(digest, 'utf8'))).toBe(true);
+  });
+
+  it('uses Messenger mid for deduplication rather than sender identity', () => {
+    const first = extractInboundMessage({
+      channel: 'MESSENGER',
+      body: {
+        object: 'page',
+        entry: [{
+          id: 'PAGE-1',
+          messaging: [{
+            sender: { id: 'SENDER-1' },
+            message: { mid: 'MID-1', text: 'hello' },
+          }],
+        }],
+      },
+    });
+    const second = extractInboundMessage({
+      channel: 'MESSENGER',
+      body: {
+        object: 'page',
+        entry: [{
+          id: 'PAGE-1',
+          messaging: [{
+            sender: { id: 'SENDER-1' },
+            message: { mid: 'MID-2', text: 'hello' },
+          }],
+        }],
+      },
+    });
+
+    expect(first.provider_message_id).toBe('MID-1');
+    expect(second.provider_message_id).toBe('MID-2');
+    expect(extractInboundMessage({
+      channel: 'MESSENGER',
+      body: {
+        entry: [{
+          id: 'PAGE-1',
+          messaging: [{ sender: { id: 'SENDER-1' }, message: { text: 'hello' } }],
+        }],
+      },
+    }).provider_message_id).toBeNull();
   });
 });

@@ -1,42 +1,76 @@
-import type { SharedUiState, SourceStatus } from './types/common.js';
+import type {
+  ProductCapabilityStatus,
+  SharedUiState,
+  SourceStatus,
+  UiRequestState,
+} from './types/common.js';
 
-export type { SharedUiState, SourceStatus };
+export type {
+  ProductCapabilityStatus,
+  SharedUiState,
+  SourceStatus,
+  UiRequestState,
+};
 
 export function getSharedUiStateBadgeClass(state: SharedUiState): string {
-  switch (state) {
-    case 'idle': return 'bg-slate-800 text-slate-400 border-slate-700';
-    case 'loading': return 'bg-sky-950/60 text-sky-400 border-sky-800/80 animate-pulse';
-    case 'empty': return 'bg-slate-900 text-slate-400 border-slate-800';
-    case 'partial': return 'bg-amber-950/60 text-amber-400 border-amber-800/80';
-    case 'stale': return 'bg-amber-950/80 text-amber-300 border-amber-700';
-    case 'permission_denied': return 'bg-rose-950/80 text-rose-300 border-rose-800';
-    case 'dependency_unavailable': return 'bg-zinc-800 text-zinc-300 border-zinc-700';
-    case 'version_conflict': return 'bg-purple-950/80 text-purple-300 border-purple-800';
-    case 'fail_closed': return 'bg-red-950/90 text-red-400 border-red-800';
-    default: return 'bg-slate-900 text-slate-400 border-slate-800';
-  }
+  return `ui-status ui-status--${state.replaceAll('_', '-')}`;
 }
 
 export function getSourceStatusBadgeClass(status: SourceStatus): string {
-  switch (status) {
-    case 'LIVE': return 'bg-emerald-950/60 text-emerald-400 border-emerald-800';
-    case 'STALE': return 'bg-amber-950/60 text-amber-400 border-amber-800';
-    case 'NO_DATA': return 'bg-slate-900 text-slate-400 border-slate-800';
-    case 'NOT_INSTRUMENTED': return 'bg-zinc-900 text-zinc-400 border-zinc-800';
-    case 'UNAVAILABLE': return 'bg-rose-950/60 text-rose-400 border-rose-800';
-    case 'FAIL_CLOSED': return 'bg-red-950/90 text-red-400 border-red-800';
-    default: return 'bg-slate-900 text-slate-400 border-slate-800';
-  }
+  return `ui-status ui-status--${status.toLowerCase().replaceAll('_', '-')}`;
+}
+
+export function getCapabilityStatusBadgeClass(status: ProductCapabilityStatus): string {
+  return `ui-status ui-status--${status.toLowerCase().replaceAll('_', '-')}`;
 }
 
 export const SHARED_UI_STATE_LABELS: Record<SharedUiState, string> = {
   idle: 'Idle',
-  loading: 'Loading...',
-  empty: 'No Records',
-  partial: 'Partial Data',
-  stale: 'Stale Snapshot',
-  permission_denied: 'Permission Denied',
-  dependency_unavailable: 'Dependency Unavailable',
-  version_conflict: 'Version Conflict',
-  fail_closed: 'Fail Closed',
+  loading: 'Loading',
+  empty: 'No records',
+  partial: 'Partial data',
+  stale: 'Stale snapshot',
+  permission_denied: 'Permission denied',
+  dependency_unavailable: 'Dependency unavailable',
+  version_conflict: 'Version conflict',
+  fail_closed: 'Fail closed',
 };
+
+export const SOURCE_STATUS_LABELS: Record<SourceStatus, string> = {
+  LIVE: 'Live',
+  STALE: 'Stale',
+  NO_DATA: 'No data',
+  NOT_INSTRUMENTED: 'Not instrumented',
+  UNAVAILABLE: 'Unavailable',
+  FAIL_CLOSED: 'Fail closed',
+};
+
+export const CAPABILITY_STATUS_LABELS: Record<ProductCapabilityStatus, string> = {
+  INTEGRATED: 'Integrated',
+  PARTIAL: 'Partial',
+  NOT_INTEGRATED: 'Not integrated',
+  NOT_CONFIGURED: 'Not configured',
+  BLOCKED: 'Blocked',
+  DEMO_ONLY: 'Demo only',
+};
+
+export const UI_REQUEST_STATE_LABELS: Record<UiRequestState, string> = {
+  loading: 'Loading',
+  empty: 'No records',
+  permission_denied: 'Permission denied',
+  dependency_unavailable: 'Dependency unavailable',
+  version_conflict: 'Version conflict',
+  fail_closed: 'Fail closed',
+};
+
+export function statusLabel(
+  status: SourceStatus | ProductCapabilityStatus | UiRequestState,
+): string {
+  if (status in SOURCE_STATUS_LABELS) {
+    return SOURCE_STATUS_LABELS[status as SourceStatus];
+  }
+  if (status in CAPABILITY_STATUS_LABELS) {
+    return CAPABILITY_STATUS_LABELS[status as ProductCapabilityStatus];
+  }
+  return UI_REQUEST_STATE_LABELS[status as UiRequestState];
+}

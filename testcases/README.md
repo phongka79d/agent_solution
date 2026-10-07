@@ -6,7 +6,7 @@
 
 ## Honest status
 
-- **There is no application runtime in this repository.** Nothing has been executed and the default recorded status is `NOT_RUN`.
+- **The repository includes an API, a worker with Care/Sales/Marketing agents, two consoles, and PostgreSQL migrations.** Nothing has been executed by this generator; the default recorded status for these acceptance specifications is `NOT_RUN`.
 - This generator never records `PASS`. A successful generation run proves document integrity, reference validity and coverage bookkeeping - never system behaviour.
 - Status vocabulary: `NOT_RUN`, `PASS`, `FAIL`, `SKIP_ASM_001`, `SKIP_UNIMPLEMENTED`, `BLOCKED_PREREQUISITE`.
 - `SKIP_ASM_001` when the approved connector lock is absent, `SKIP_UNIMPLEMENTED` when the runtime is missing, `BLOCKED_PREREQUISITE` when a sandbox feature or policy lock is unavailable. A missing prerequisite is never `PASS`.
@@ -76,7 +76,7 @@ python testcases/_generate.py            # validate, then write docs, fixtures a
 python testcases/_generate.py --check    # validate and compare with disk; writes nothing
 ```
 
-Python 3 standard library only, no network, no runtime: these case documents are specifications, and no runtime test was executed to produce them. Generation validates first and writes only after every check passes, each file through a temporary file plus an atomic replace, and it never rewrites `_generate.py`, `sources/*.py`, `sources/requirements.json` or `sources/baseline-ids.json`. Output is deterministic: regenerating without source changes leaves the tree byte-identical, and no timestamp or run state is embedded anywhere. `manifest.json` pins the SHA-256 of every input (SRS, inventory, baseline, source modules), and `--check` re-reads the generated files and the manifest and exits non-zero on validation errors, missing or stale output, and unexpected leftover generated files (for example an obsolete catalogue document). Errors are reported per case with the owning source module and position.
+Python 3 standard library only, no network: these case documents are specifications, and no runtime test was executed by the generator to produce them. Generation validates first and writes only after every check passes, each file through a temporary file plus an atomic replace, and it never rewrites `_generate.py`, `sources/*.py`, `sources/requirements.json` or `sources/baseline-ids.json`. Output is deterministic: regenerating without source changes leaves the tree byte-identical, and no timestamp or run state is embedded anywhere. `manifest.json` pins the SHA-256 of every input (SRS, inventory, baseline, source modules), and `--check` re-reads the generated files and the manifest and exits non-zero on validation errors, missing or stale output, and unexpected leftover generated files (for example an obsolete catalogue document). Errors are reported per case with the owning source module and position.
 
 ## Validation performed before any write
 

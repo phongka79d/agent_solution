@@ -85,17 +85,18 @@ function reservationInput(
   overrides: Partial<EffectReservationInput> = {},
 ): EffectReservationInput {
   const identity = {
-    tenant_id: TENANT,
-    skill_id: SKILL,
-    step_index: 0,
-    action_revision: 1,
-    request_id: 'signal-p5-01',
+    tenant_id: overrides.tenant_id ?? TENANT,
+    skill_id: overrides.skill_id ?? SKILL,
+    step_index: overrides.step_index ?? 0,
+    action_revision: overrides.action_revision ?? 1,
+    request_id: overrides.request_id ?? 'signal-p5-01',
   } as const;
   return {
     ...identity,
-    run_id: 'run-p5-01',
-    effect_key: guard.computeEffectKey(identity),
-    request_fingerprint: guard.computeRequestFingerprint({ sku: 'SKU-001', action: 'stock-read' }),
+    run_id: overrides.run_id ?? 'run-p5-01',
+    effect_key: overrides.effect_key ?? guard.computeEffectKey(identity),
+    request_fingerprint: overrides.request_fingerprint
+      ?? guard.computeRequestFingerprint({ sku: 'SKU-001', action: 'stock-read' }),
     ...overrides,
   };
 }

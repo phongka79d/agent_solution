@@ -44,6 +44,7 @@ import { randomUUID } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, before, beforeEach, describe, it } from 'node:test';
+import { ensureIntegrationTenant } from './tenant-fixtures.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -310,6 +311,7 @@ before(async () => {
   process.env.SALES_SIGNAL_EVENT_TYPES = 'cart.abandoned,message.received';
 
   const db = await loadBuild('../../packages/database/dist/index.js', 'the database package');
+  await ensureIntegrationTenant(db, tenant_id, 'sales');
   const apiComposition = await loadBuild('../../apps/api/dist/runtime/composition.js', 'the gateway composition');
   const apiPrincipal = await loadBuild('../../apps/api/dist/gateway/principal.js', 'the gateway credential store');
   const apiServer = await loadBuild('../../apps/api/dist/server.js', 'the gateway server');
@@ -448,13 +450,15 @@ before(async () => {
     await client.query(
       `INSERT INTO agentos.agents (tenant_id, code, name, domain, assigned_authority, is_active)
        VALUES ($1, $2, 'AI Sales Advisor Agent', 'sales', 'AUTH-3', TRUE)
-       ON CONFLICT (tenant_id, code) DO NOTHING`,
+       ON CONFLICT (tenant_id, code) DO UPDATE
+         SET assigned_authority = EXCLUDED.assigned_authority, is_active = EXCLUDED.is_active`,
       [tenant_id, SALES_ADVISOR_AGENT],
     );
     await client.query(
       `INSERT INTO agentos.agents (tenant_id, code, name, domain, assigned_authority, is_active)
        VALUES ($1, $2, 'Sales Lead Qualification Agent', 'sales', 'AUTH-0', TRUE)
-       ON CONFLICT (tenant_id, code) DO NOTHING`,
+       ON CONFLICT (tenant_id, code) DO UPDATE
+         SET assigned_authority = EXCLUDED.assigned_authority, is_active = EXCLUDED.is_active`,
       [tenant_id, SALES_LEAD_AGENT],
     );
   });

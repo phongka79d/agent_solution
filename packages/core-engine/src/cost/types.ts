@@ -104,6 +104,8 @@ export interface BudgetConfig {
 
 export interface BudgetUsage extends CostUsage {
   readonly run_id: string;
+  /** Tenant scope for an independent tenant budget; omitted keeps legacy process scope. */
+  readonly tenant_id?: string;
 }
 
 export type BudgetDecisionStatus = 'ALLOWED' | 'PARKED' | 'FAILED';
@@ -120,4 +122,6 @@ export interface BudgetDecision {
   readonly token_budget: number | null;
   readonly per_run_token_budget: number | null;
   readonly run_id: string;
+  readonly tenant_id?: string;
 }
+

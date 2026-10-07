@@ -43,6 +43,83 @@ export function isPlainJsonObject(value: unknown): value is Record<string, unkno
   return prototype === Object.prototype || prototype === null;
 }
 
+/**
+ * Validates the closed receipt-binding language before the first step can dispatch. Bindings must
+ * point to an earlier step that is explicitly listed in `depends_on_steps`; destination fields are
+ * top-level action inputs and response paths are bounded dotted fields or array indexes.
+ */
+export function validatePlanInputBindings(plan: ExecutionPlan): void {
+  if (!Array.isArray(plan.steps)) {
+    throw new OrchestratorError('INPUT_BINDING_PLAN_INVALID', 'A plan with receipt bindings must contain a step array.');
+  }
+  if (!plan.steps.some((step) => step.input_bindings !== undefined)) {
+    return;
+  }
+  const positions = new Map<number, number>();
+  for (const [position, step] of plan.steps.entries()) {
+    if (!Number.isInteger(step.step_index) || step.step_index < 1 || positions.has(step.step_index)) {
+      throw new OrchestratorError('INPUT_BINDING_STEP_INVALID', 'Receipt bindings require unique positive step indexes.');
+    }
+    positions.set(step.step_index, position);
+  }
+
+  const protectedDestinations: Readonly<Record<string, true>> = {
+    tenant_id: true, run_id: true, request_id: true, action_id: true, agent_id: true, skill_id: true,
+    adapter_target: true, step_index: true, mutating: true, price_bearing: true,
+    required_authority: true, action_revision: true, effect_key: true,
+  };
+  const destinationPattern = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+  const pathPattern = /^[A-Za-z][A-Za-z0-9_]*(?:\.(?:[A-Za-z][A-Za-z0-9_]*|0|[1-9][0-9]?)){0,7}$/;
+
+  for (const step of plan.steps) {
+    if (step.input_bindings === undefined) continue;
+    if (!isPlainJsonObject(step.input_bindings)) {
+      throw new OrchestratorError('INPUT_BINDING_INVALID', `Step ${step.step_index} input_bindings must be an object.`);
+    }
+    const dependencies = step.depends_on_steps;
+    for (const [destination, rawBinding] of Object.entries(step.input_bindings)) {
+      if (
+        !destinationPattern.test(destination)
+        || protectedDestinations[destination] === true
+        || !isPlainJsonObject(rawBinding)
+      ) {
+        throw new OrchestratorError(
+          'INPUT_BINDING_INVALID',
+          `Step ${step.step_index} has an invalid receipt binding destination.`,
+        );
+      }
+      const bindingKeys = Object.keys(rawBinding).sort();
+      if (bindingKeys.length !== 2 || bindingKeys[0] !== 'response_path' || bindingKeys[1] !== 'source_step_index') {
+        throw new OrchestratorError(
+          'INPUT_BINDING_INVALID',
+          `Step ${step.step_index}.${destination} contains unsupported binding fields.`,
+        );
+      }
+      const sourceStepIndex = rawBinding['source_step_index'];
+      const responsePath = rawBinding['response_path'];
+      const sourcePosition = typeof sourceStepIndex === 'number' ? positions.get(sourceStepIndex) : undefined;
+      const targetPosition = positions.get(step.step_index);
+      if (
+        !Number.isInteger(sourceStepIndex)
+        || sourceStepIndex < 1
+        || sourcePosition === undefined
+        || targetPosition === undefined
+        || sourcePosition >= targetPosition
+        || sourceStepIndex >= step.step_index
+        || !Array.isArray(dependencies)
+        || !dependencies.includes(sourceStepIndex)
+        || typeof responsePath !== 'string'
+        || !pathPattern.test(responsePath)
+      ) {
+        throw new OrchestratorError(
+          'INPUT_BINDING_INVALID',
+          `Step ${step.step_index}.${destination} must reference an earlier declared dependency and a bounded response path.`,
+        );
+      }
+    }
+  }
+}
+
 export function readCompleteResumeCheckpoint(
   value: unknown,
   run_id: string,

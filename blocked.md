@@ -37,6 +37,22 @@ COGS figure, a discount cap, a contribution-margin target or a quote TTL.
 | `PILOT-02` (E2E-OFF-CART) offline acceptance | Executable and passing (20 tests) |
 | DB-backed Sales execution smoke | Passing against an isolated PostgreSQL with the in-process API-001 mock |
 
+## Current migration inventory
+
+The repository currently ships 22 SQL migration files numbered `0000` through `0022`, with no
+`0008`. Migration `0008` was intentionally skipped and never shipped; the gap is not an
+unapplied migration.
+
+## Demo and smoke
+
+Use the root smoke commands:
+
+- `pnpm docker:smoke` — build, boot, health-check, and tear down the application images.
+- `pnpm demo:smoke` — run the local offline demo smoke against the configured services.
+
+The demo runbook and account/configuration details are in
+[`docs/demo/README.md`](docs/demo/README.md).
+
 ## Guarded outcomes, not missing handoffs
 
 - **`skill.sales.check_price`** reads the price from the System-of-Record boundary and returns a
@@ -214,7 +230,7 @@ The worker consumes the event under the same task-version and lease fence. Opera
 - Provider indeterminate or unavailable: fails closed without consuming or deleting the resume event, leaving the task parked in `waiting` until decisive proof is available.
 
 **Gate P1 Status:** Gate P1 remains **OPEN**. While local Care execution, handoff, policy, approval, takeover, reconciliation, and offline PILOT-04 pass, Gate P1 requires:
-- Live PostgreSQL/RLS verification (migrations 0000..0004 without auth/connection failures, tenant-isolation enforcement in a live database),
+- Live PostgreSQL/RLS verification (the shipped migration set `0000`–`0022`, excluding intentionally skipped/never-shipped `0008`, without auth/connection failures, tenant-isolation enforcement in a live database),
 - Database-backed Care integration pilots (live DB-backed PILOT-03 / PILOT-04 execution),
 - Docker container verification (daemon/compose startup without container naming/network conflicts),
 - Approved knowledge corpus (`/customer-care/faq.md` and RAG citations approved by knowledge owner),
@@ -261,7 +277,7 @@ P1B-branch run and cover both the Care and Sales paths.
 ## Environment-gated results (P2 Sales completion branch)
 
 - Isolated PostgreSQL bootstrap succeeded on the `agentos-p2-sales-db` Compose project (own project, container prefix and host port) with `agentos_app` as NOBYPASSRLS. No other session's containers were stopped, removed or renamed.
-- Migration rehearsal passed from clean state: 5 migration files applied and verified.
+- Migration rehearsal passed from clean state for the recorded branch scope; the current repository inventory is 22 shipped migration files, `0000`–`0022` excluding intentionally skipped/never-shipped `0008`.
 - Live RLS policy suite passed: 6 tests. RLS rehearsal isolation suite passed: 17 tests, including cross-tenant/cross-customer negative cases.
 - DB-backed integration smoke passed 12 tests against that database with the in-process API-001 mock: the 7 Care cases and the 5 Sales cases (admission of exactly one durable run for `module = sales`, idempotency conflict on changed bytes, worker claim resolving the Sales binding through the real orchestrator with an authoritative ERP read and persisted evidence, gateway readback, and fail-closed refusals for unbound capabilities).
 - Isolated Docker smoke passed on Compose project `agentos-p2sales-smoke` with a unique prefix and host ports: API, worker and Command Center images built, loaded, inspected, started, reported healthy, and the project torn down (exit 0). The smoke verifies boot/health only; behaviour is covered by the DB-backed smoke. The worker logs a missing-schema warning there because that stack is intentionally not migrated.

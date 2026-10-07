@@ -19,6 +19,7 @@ export interface StorefrontStreamRequestBody {
   readonly message: string;
   readonly idempotency_key: string;
   readonly session_id?: string;
+  readonly attachments?: readonly string[];
 }
 
 export interface StorefrontEventRequestBody {
@@ -108,15 +109,17 @@ export function parseStreamChunk(chunk: string): ParsedStreamChunk {
         continue;
       }
 
-      const r = parseReceipt(payload);
-      if (r !== null) {
-        receipt = r;
-        continue;
+      if (receipt === null) {
+        const r = parseReceipt(payload);
+        if (r !== null) {
+          receipt = r;
+          continue;
+        }
       }
 
-      const statusMatch = payload.match(/^\[(?:status|pending):\s*(.+)\]$/);
+      const statusMatch = payload.match(/^\[(?:(?:status|pending):\s*(.+)|(awaiting_human))\]$/);
       if (statusMatch) {
-        statusMarker = statusMatch[1]?.trim() ?? null;
+        statusMarker = (statusMatch[1] ?? statusMatch[2])?.trim() ?? null;
         continue;
       }
 
@@ -159,15 +162,17 @@ export function parseStreamChunk(chunk: string): ParsedStreamChunk {
     const trimmed = line.trim();
     if (!trimmed) continue;
 
-    const r = parseReceipt(trimmed);
-    if (r !== null) {
-      receipt = r;
-      continue;
+    if (receipt === null) {
+      const r = parseReceipt(trimmed);
+      if (r !== null) {
+        receipt = r;
+        continue;
+      }
     }
 
-    const statusMatch = trimmed.match(/^\[(?:status|pending):\s*(.+)\]$/);
+    const statusMatch = trimmed.match(/^\[(?:(?:status|pending):\s*(.+)|(awaiting_human))\]$/);
     if (statusMatch) {
-      statusMarker = statusMatch[1]?.trim() ?? null;
+      statusMarker = (statusMatch[1] ?? statusMatch[2])?.trim() ?? null;
       continue;
     }
 
@@ -190,11 +195,13 @@ export function buildStorefrontStreamRequestBody(
   message: string,
   idempotencyKey: string,
   sessionId?: string | null,
+  attachments?: readonly string[] | null,
 ): StorefrontStreamRequestBody {
   return {
     message,
     idempotency_key: idempotencyKey,
     ...(sessionId ? { session_id: sessionId } : {}),
+    ...(attachments && attachments.length > 0 ? { attachments } : {}),
   };
 }
 

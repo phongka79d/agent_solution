@@ -41,11 +41,13 @@ const DEFAULT_ERP_TIMEOUT_MS = 5_000;
 
 export interface WorkerConnectorEnv {
   readonly APP_ENV?: string;
-  readonly CARE_TENANT_IDS?: string;
-  readonly CARE_KNOWLEDGE_ROOT?: string;
+  readonly WORKER_TENANT_IDS?: string;
+  readonly KNOWLEDGE_TENANT_IDS?: string;
+  readonly KNOWLEDGE_ROOT?: string;
   readonly MOCK_ERP_ENABLED?: string;
   readonly ERP_API_BASE_URL?: string;
   readonly MOCK_SECRET_KEY?: string;
+  readonly QUOTE_SIGNING_SECRET?: string;
   readonly ERP_TIMEOUT_MS?: string;
 }
 
@@ -55,6 +57,7 @@ export interface ErpReadPort {
     readonly tenant_id: string;
     readonly resource: string;
     readonly key?: string;
+    readonly customer_id?: string;
   }): Promise<ConnectorReadResult>;
   reconcile?(input: {
     readonly tenant_id: string;
@@ -163,7 +166,7 @@ export function createWorkerConnectors(
         provider: 'mock-erp (local/ci only)',
         read_resources: [],
       },
-      dispatch: (draft) => connector.dispatch(draft),
+      dispatch: (draft, options) => connector.dispatch(draft, options),
       read: (input) => connector.read(input),
       reconcile: (input) => connector.reconcile(input),
     });

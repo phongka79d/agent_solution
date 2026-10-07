@@ -1,6 +1,7 @@
-import type { PoolClient } from 'pg';
+import type { PoolClient, QueryResultRow } from 'pg';
 
 import { withTenantContext } from '../rls.js';
+import { AuditRepository } from './audit-evidence.js';
 import {
   assertCompleteCheckpoint,
   assertGuard,
@@ -19,6 +20,7 @@ import {
   CURSOR_SEPARATOR,
   DECIDE_APPROVAL,
   DEFAULT_PENDING_LIMIT,
+  EXPIRE_OVERDUE_APPROVALS,
   HOLD_TASK,
   INSERT_ACTION,
   INSERT_APPROVAL,
@@ -104,9 +106,8 @@ import type {
 export type ApprovalDecision = 'APPROVED' | 'MODIFIED' | 'REJECTED' | 'PAUSE' | 'CANCELLED';
 
 /**
- * Every value `approvals.decision` accepts. `EXPIRED` is representable because the column's CHECK
- * declares it, but no code path here writes it: approval expiry is `[OWNER-DECISION-REQUIRED]` and
- * no automated sweep or TTL exists (§4.2), so an undecided row stays PENDING until a human decides.
+ * Every value `approvals.decision` accepts. `EXPIRED` is persisted by the deadline transition when a
+ * pending decision crosses its bounded review window.
  */
 export type ApprovalStatus = 'PENDING' | ApprovalDecision | 'EXPIRED';
 
@@ -155,6 +156,8 @@ export interface ApprovalRecord {
   readonly is_paused: boolean;
   readonly review_comment: string | null;
   readonly decided_at: string | null;
+  /** Deadline after which a pending human decision is durably expired. */
+  readonly expires_at: string;
   readonly created_at: string;
 }
 
@@ -184,6 +187,7 @@ export interface ApprovalDetailRecord {
   readonly approval: ApprovalRecord;
   readonly action: ActionRecord;
 }
+
 
 /**
  * Input of `listPending()`: the tenant whose queue is read, the page size (default 50,
@@ -298,6 +302,13 @@ export interface ClaimApprovalAndResumeResult {
  * task first and writes `actions`/`approvals` only after it, and restates `task_version` as the
  * compare-and-increment base of the pause, the hold, the resume and the stop.
  */
+interface ExpiredApprovalRow extends QueryResultRow {
+  readonly id: string;
+  readonly run_id: string;
+  readonly action_id: string;
+  readonly effect_key: string;
+}
+
 export class ApprovalRepository {
   private readonly runInTenantTransaction: TenantTransactionRunner;
 
@@ -318,8 +329,8 @@ export class ApprovalRepository {
    * from the stored `payload` exactly as `claimApprovalAndResume()` derives it, so the digest the
    * operator reviews is the digest the decision compares.
    *
-   * Nothing is locked and nothing is written - not even for the item's `PENDING` state - so this
-   * read of the console never blocks the resume path and never moves a row.
+   * An expired pending deadline is persisted by the read statement: the prepared action is failed and
+   * the approval is marked EXPIRED atomically, rather than synthesizing an in-memory status.
    *
    * @param tenant_id Tenant whose approval is read; also enforced by row-level security.
    * @param approval_id The `approvals.id` of the queue item.
@@ -342,8 +353,9 @@ export class ApprovalRepository {
 
       const approval = toApprovalRecord(row);
       const actions = await this.readActionsByIds(client, tenant_id, [approval.action_id]);
+      const action = requireAction(actions, approval.action_id);
 
-      return { approval, action: requireAction(actions, approval.action_id) };
+      return { approval, action };
     });
   }
 
@@ -352,9 +364,10 @@ export class ApprovalRepository {
    *
    * The page is the `approval_queue` projection of implement/03 §1 DOMAIN 5 read from the canonical
    * `approvals` row, so the console and the resume path can never disagree about what is waiting: the
-   * predicate is `decision = 'PENDING'` alone, which keeps a paused-but-undecided item in the queue
-   * exactly once (`is_paused` set, `status` still `PENDING`) and drops a row the moment a human
-   * decides it. Ordering and paging are by `(created_at, id)`, the durable ordering key of the queue;
+   * predicate is `decision = 'PENDING'` with `expires_at > CURRENT_TIMESTAMP`, and the read persists
+   * expired rows as EXPIRED while failing their prepared actions. A parked-but-undecided item remains
+   * in the queue exactly once (`is_paused` set, status still `PENDING`) until its deadline. Ordering
+   * and paging are by `(created_at, id)`, the durable ordering key of the queue;
    * the cursor resumes strictly after the last row of the previous page, and the page is read with
    * one row more than requested so `next_cursor` is `null` exactly at the end of the queue.
    *
@@ -410,14 +423,82 @@ export class ApprovalRepository {
       return {
         items: rows.map((row) => {
           const approval = toApprovalRecord(row);
-
-          return { approval, action: requireAction(actions, approval.action_id) };
+          const action = requireAction(actions, approval.action_id);
+          return { approval, action };
         }),
         next_cursor:
           result.rows.length > limit
             ? `${last.created_at.toISOString()}${CURSOR_SEPARATOR}${last.id}`
             : null,
       };
+    });
+  }
+
+  /**
+   * Persists expired pending approvals for one tenant in bounded batches.
+   *
+   * The approval and its prepared action are changed first, then one append-only audit-chain event
+   * is written for each returned binding. The audit repository is intentionally bound to this
+   * transaction's client, so an unconfirmed audit append rolls back the expiry transition instead
+   * of leaving a state change without its compliance record.
+   *
+   * @param tenant_id Tenant whose pending approvals are swept.
+   * @param limit Maximum number of approvals to expire, between 1 and 500.
+   * @returns Approval ids transitioned to EXPIRED in this transaction.
+   */
+  async expireOverdueApprovals(tenant_id: string, limit: number): Promise<readonly string[]> {
+    assertIdentifier(tenant_id, 'tenant_id', 36, 'APPROVAL_TENANT_ID_REQUIRED');
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
+      throw new Error(
+        'APPROVAL_EXPIRY_LIMIT_INVALID: limit must be a positive integer no greater than 500.',
+      );
+    }
+
+    return this.runInTenantTransaction(tenant_id, async (client) => {
+      const result = await client.query<ExpiredApprovalRow>(EXPIRE_OVERDUE_APPROVALS, [
+        tenant_id,
+        limit,
+      ]);
+      const audit = new AuditRepository(async (_tenantId, work) => work(client));
+
+      for (const expired of result.rows) {
+        await audit.append({
+          tenant_id,
+          run_id: expired.run_id,
+          agent_id: 'HUMAN_HANDOFF',
+          customer_or_entity_id: expired.run_id,
+          trigger: 'approval_expiry_sweeper',
+          context: {
+            approval_id: expired.id,
+            action_id: expired.action_id,
+            effect_key: expired.effect_key,
+          },
+          skill: 'approvals.expiry',
+          tool: 'approval-expiry-sweeper',
+          decision: {
+            outcome: 'EXPIRED',
+            approval_id: expired.id,
+          },
+          authority: 'AUTH-0',
+          approval: {
+            id: expired.id,
+            decision: 'EXPIRED',
+          },
+          action: {
+            id: expired.action_id,
+            effect_key: expired.effect_key,
+            status: 'failed',
+          },
+          execution_status: 'failed',
+          evidence: {},
+          outcome: null,
+          latency_ms: 0,
+          cost: {},
+          error: { code: 'APPROVAL_EXPIRED' },
+        });
+      }
+
+      return result.rows.map((row) => row.id);
     });
   }
 
@@ -817,6 +898,11 @@ export class ApprovalRepository {
             prepared.run_id + ', action ' + action.id + ' and effect_key ' + prepared.effect_key + '.',
         );
       }
+      if (approval.decision === 'EXPIRED') {
+        throw new Error(
+          'APPROVAL_EXPIRED: this approval crossed its review deadline and cannot receive a decision.',
+        );
+      }
       if (approval.decision !== 'PENDING') {
         throw new Error(
           'APPROVAL_NOT_CLAIMABLE: approval ' + approval.id + ' is already ' + approval.decision + '.',
@@ -989,7 +1075,11 @@ export class ApprovalRepository {
             'one-time authorization releases exactly the binding it recorded (implement/04 §4.2).',
         );
       }
-
+      if (approval.decision === 'EXPIRED') {
+        throw new Error(
+          `APPROVAL_EXPIRED: approval ${approval.id} crossed its review deadline and cannot be claimed.`,
+        );
+      }
       if (approval.decision !== 'PENDING') {
         throw new Error(
           `APPROVAL_NOT_CLAIMABLE: approval ${approval.id} is ${approval.decision} since ` +
@@ -1113,7 +1203,15 @@ export class ApprovalRepository {
       prepared.run_id,
     );
 
-    return { claimed: true, approval: decided, action, task: moved };
+    return {
+      claimed: true,
+      approval: decided,
+      action: {
+        ...action,
+        status: decision === 'APPROVED' ? 'authorized' : 'failed',
+      },
+      task: moved,
+    };
   }
 
   /**
@@ -1218,6 +1316,7 @@ export class ApprovalRepository {
 
     const revision = action.action_revision + 1;
     const payload = serializeJsonb(authorized.payload, 'APPROVAL_PAYLOAD_UNSERIALIZABLE');
+    const authorizedPayloadDigest = sha256CanonicalJson(authorized.payload);
     let revised_action: ActionRow | undefined;
     let decided: ApprovalRecord;
 
@@ -1266,10 +1365,15 @@ export class ApprovalRepository {
 
     const checkpointWithoutEvent = { ...checkpoint };
     delete checkpointWithoutEvent['resume_event'];
+    const checkpointAction = {
+      ...authorized,
+      approval_id: prepared.approval_id,
+      approval_payload_digest: authorizedPayloadDigest,
+    };
     const checkpointPayload = serializeJsonb(
       {
         ...checkpointWithoutEvent,
-        pending_action: authorized,
+        pending_action: checkpointAction,
       },
       'APPROVAL_CHECKPOINT_UNSERIALIZABLE',
     );
@@ -1283,6 +1387,11 @@ export class ApprovalRepository {
       prepared.run_id,
     );
 
-    return { claimed: true, approval: decided, action: toActionRecord(revised_action), task: moved };
+    return {
+      claimed: true,
+      approval: decided,
+      action: { ...toActionRecord(revised_action), status: 'authorized' },
+      task: moved,
+    };
   }
 }

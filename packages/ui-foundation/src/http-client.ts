@@ -1,12 +1,41 @@
 import type { ApiErrorEnvelope } from './types/common.js';
-declare const process: { env?: { NEXT_PUBLIC_API_URL?: string } };
+declare const process: { env?: { NEXT_PUBLIC_API_URL?: string; NODE_ENV?: string; CI?: string } };
 
 export const DEFAULT_API_ORIGIN = 'http://localhost:4000';
+export const DEFAULT_TIMEOUT_MS = 15_000;
 
 /** Next inlines only this public build-time value; no server secret enters the browser. */
 export function apiOrigin(): string {
-  const configured = typeof process !== 'undefined' ? process.env?.NEXT_PUBLIC_API_URL : undefined;
-  return configured !== undefined && configured.length > 0 ? configured : DEFAULT_API_ORIGIN;
+  const environment = typeof process !== 'undefined' ? process.env : undefined;
+  const configured = environment?.NEXT_PUBLIC_API_URL;
+  if (configured !== undefined && configured.trim().length > 0) return configured;
+  if (environment?.NODE_ENV === 'development' || environment?.NODE_ENV === 'test' || environment?.CI === 'true') {
+    return DEFAULT_API_ORIGIN;
+  }
+  throw new Error('API_ORIGIN_NOT_CONFIGURED: NEXT_PUBLIC_API_URL is required outside local development and CI.');
+}
+
+function timeoutMs(value: number | undefined): number {
+  if (value === undefined) return DEFAULT_TIMEOUT_MS;
+  if (!Number.isFinite(value) || value <= 0) throw new Error('HTTP_TIMEOUT_INVALID: timeoutMs must be a positive number.');
+  return Math.trunc(value);
+}
+function composeTimeoutSignal(callerSignal: AbortSignal | null | undefined, duration: number): {
+  readonly signal: AbortSignal;
+  readonly cleanup: () => void;
+} {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), duration);
+  const abortFromCaller = () => controller.abort(callerSignal?.reason);
+  if (callerSignal?.aborted) abortFromCaller();
+  else callerSignal?.addEventListener('abort', abortFromCaller, { once: true });
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timer);
+      callerSignal?.removeEventListener('abort', abortFromCaller);
+    },
+  };
 }
 
 export type QueryParams = Record<string, string | number | boolean | null | undefined | readonly (string | number | boolean)[]>;
@@ -81,6 +110,7 @@ export interface HttpClientConfig {
   readonly operatorId?: string | undefined;
   readonly fetch?: typeof fetch | undefined;
   readonly defaultHeaders?: Record<string, string> | undefined;
+  readonly timeoutMs?: number | undefined;
 }
 
 export interface RequestOptions {
@@ -88,6 +118,7 @@ export interface RequestOptions {
   readonly operatorId?: string | undefined;
   readonly headers?: Record<string, string> | undefined;
   readonly signal?: AbortSignal | undefined;
+  readonly timeoutMs?: number | undefined;
 }
 
 /** Shared wire transport; domain endpoints and DTOs live in their owning application. */
@@ -121,10 +152,19 @@ export class HttpClient {
     const operatorId = options.operatorId || this.config.operatorId;
     if (operatorId) headers['x-operator-id'] = operatorId;
     const requestInit: RequestInit = { ...init, headers };
-    if (options.signal !== undefined) requestInit.signal = options.signal;
+    const callerSignal: AbortSignal | undefined = options.signal ?? (init.signal ?? undefined);
+    const deadline = composeTimeoutSignal(callerSignal, timeoutMs(options.timeoutMs ?? this.config.timeoutMs));
+    requestInit.signal = deadline.signal;
     const fetchFn = this.config.fetch ?? (typeof fetch !== 'undefined' ? fetch.bind(globalThis) : undefined);
-    if (!fetchFn) throw new Error('No fetch implementation available in current environment.');
-    return fetchFn(this.url(endpoint, query), requestInit);
+    if (!fetchFn) {
+      deadline.cleanup();
+      throw new Error('No fetch implementation available in current environment.');
+    }
+    try {
+      return await fetchFn(this.url(endpoint, query), requestInit);
+    } finally {
+      deadline.cleanup();
+    }
   }
 
   async request<T>(

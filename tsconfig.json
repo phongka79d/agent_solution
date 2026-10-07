@@ -9,6 +9,7 @@
     { "path": "packages/skills" },
     { "path": "packages/storefront-widget" },
     { "path": "packages/ui-foundation" },
+    { "path": "packages/api-contract" },
     { "path": "apps/api" },
     { "path": "apps/worker" },
     { "path": "apps/tenant-console" },

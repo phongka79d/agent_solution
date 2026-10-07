@@ -25,8 +25,8 @@ interface MockErpModule {
   ): Server & { address(): { port: number } | null };
 }
 
-const MOCK_ERP_MODULE = new URL('../../../../services/mock-erp/src/server.mjs', import.meta.url).href;
-const mockErp = (await import(MOCK_ERP_MODULE)) as MockErpModule;
+// @ts-expect-error mock-erp is untyped JS outside rootDir
+const mockErp = (await import('../../../../services/mock-erp/src/server.mjs')) as MockErpModule;
 
 const SECRET = 'worker-mock-erp-secret-value-1234';
 const TENANT = '00000000-0000-4000-8000-000000000001';
@@ -180,7 +180,7 @@ describe('createWorkerConnectors', () => {
     const { server, base_url } = await startMockErp();
     try {
       const connectors = createWorkerConnectors(
-        { ...LOCAL_ENV, ERP_API_BASE_URL: base_url, CARE_KNOWLEDGE_ROOT: '/custom/root' },
+        { ...LOCAL_ENV, ERP_API_BASE_URL: base_url, KNOWLEDGE_ROOT: '/custom/root' },
         { hmac: nodeHmacSha256Hex, authority: { authorize: () => true } },
       );
 
@@ -189,12 +189,27 @@ describe('createWorkerConnectors', () => {
         tenant_id: '11111111-1111-1111-1111-111111111111',
         resource: 'orders',
         key: 'ORD-A-1',
+        customer_id: 'aaaaaaaa-0000-4000-8000-00000000000a',
       });
 
       expect(result.resource).toBe('orders');
       expect(result.observed_at).toBeDefined();
       expect(result.value.order_id).toBe('ORD-A-1');
       expect(result.value.customer_id).toBe('aaaaaaaa-0000-4000-8000-00000000000a');
+      const shipment = await connectors.erp_read!.read({
+        tenant_id: '11111111-1111-1111-1111-111111111111',
+        resource: 'shipments',
+        key: 'ORD-A-1',
+        customer_id: 'aaaaaaaa-0000-4000-8000-00000000000a',
+      });
+      expect(shipment.resource).toBe('shipments');
+      expect(shipment.value.tracking_number).toBe('TRK-123456');
+      await expect(connectors.erp_read!.read({
+        tenant_id: '11111111-1111-1111-1111-111111111111',
+        resource: 'returns',
+        key: 'ORD-A-1',
+        customer_id: 'aaaaaaaa-0000-4000-8000-00000000000a',
+      })).rejects.toMatchObject({ refusal_code: 'PROVIDER_REJECTED' });
       expect(result.value.logical_customer_ref).toBe('cust-a');
     } finally {
       server.close();

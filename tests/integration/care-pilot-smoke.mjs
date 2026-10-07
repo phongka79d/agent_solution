@@ -37,6 +37,7 @@ import { readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, before, beforeEach, describe, it } from 'node:test';
+import { ensureIntegrationTenant } from './tenant-fixtures.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -301,6 +302,7 @@ before(async () => {
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
     'CARE_TENANT_IDS_INVALID: set CARE_TENANT_IDS to the pilot tenant UUID',
   );
+  await ensureIntegrationTenant(db, tenant_id, 'care');
 
   // The provider this smoke reaches is the repository's own simulator, started in this process so
   // the signature, the tenant header and the failure classification are exercised for real.
@@ -426,7 +428,8 @@ before(async () => {
     await client.query(
       `INSERT INTO agentos.agents (tenant_id, code, name, domain, assigned_authority, is_active)
        VALUES ($1, $2, 'Customer Care Agent', 'support', 'AUTH-1', TRUE)
-       ON CONFLICT (tenant_id, code) DO NOTHING`,
+       ON CONFLICT (tenant_id, code) DO UPDATE
+         SET assigned_authority = EXCLUDED.assigned_authority, is_active = EXCLUDED.is_active`,
       [tenant_id, CARE_AGENT],
     );
   });

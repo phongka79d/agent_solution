@@ -77,7 +77,9 @@ const spec: Omit<PlatformRowSpec, 'skill_id'> = {
     retry_on_timeout: false,
     non_retryable_errors: ['QUEUE_DOWN'],
   },
-  timeout_ms: 1000,
+  // HandoffBus owns a bounded 1000ms transaction and one same-key recovery retry. The row deadline
+  // must leave room for that durable recovery before the orchestrator's outer dispatch deadline.
+  timeout_ms: 4000,
   audit_spec: {
     log_level: 'INFO',
     mask_pii_fields: ['customer_id'],
@@ -113,7 +115,8 @@ const spec: Omit<PlatformRowSpec, 'skill_id'> = {
       test_id: 'TC-SKILL-04',
       category: 'TIMEOUT',
       scenario:
-        'The handoff queue is down and does not answer within the row timeout of 1000ms across the ≤2 retry budget.',
+        'The handoff queue is down and does not answer within the bounded transaction deadline or its '
+        + 'same-key recovery retry.',
       expected_outcome:
         'Queue down → `QUEUE_DOWN`; handoff and mutex release commit together or not at all',
       required: true,

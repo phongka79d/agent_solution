@@ -15,7 +15,6 @@ export interface InputCareInitiateReturn {
   sku_id: string;
   return_reason: string;
   evidence_images: string[];
-  effect_key: string;
 }
 
 /** Output of `skill.care.initiate_return` (§4.3 skill 20). */
@@ -33,14 +32,13 @@ export const CARE_INITIATE_RETURN_SKILL_ID = 'skill.care.initiate_return';
 const input_schema: Record<string, unknown> = {
   $schema: 'https://json-schema.org/draft/2020-12/schema',
   type: 'object',
-  required: ['tenant_id', 'order_id', 'sku_id', 'return_reason', 'evidence_images', 'effect_key'],
+  required: ['tenant_id', 'order_id', 'sku_id', 'return_reason', 'evidence_images'],
   properties: {
     tenant_id: { type: 'string' },
     order_id: { type: 'string' },
     sku_id: { type: 'string' },
     return_reason: { type: 'string' },
     evidence_images: { type: 'array', items: { type: 'string' } },
-    effect_key: { type: 'string' },
   },
   additionalProperties: false,
 };

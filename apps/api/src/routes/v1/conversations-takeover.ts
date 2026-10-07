@@ -16,6 +16,9 @@ type ConversationPreHandler = (request: FastifyRequest, reply: FastifyReply) => 
 type RequiredString = (body: unknown, field: string, max_length?: number) => string;
 type Refuse = (reply: FastifyReply, request: FastifyRequest, runtime: GatewayRuntime, error: unknown) => FastifyReply;
 
+const MAX_REASON_LENGTH = 1000;
+const MAX_HANDOFF_SUMMARY_LENGTH = 2000;
+
 interface ConversationTakeoverRouteHelpers {
   readonly requiredString: RequiredString;
   readonly refuse: Refuse;
@@ -53,7 +56,7 @@ export function registerConversationTakeoverRoutes(
         const conversation_id = request.params.conversation_id;
 
         const body = request.body as Record<string, unknown> | undefined;
-        const reason = requiredString(body, 'reason');
+        const reason = requiredString(body, 'reason', MAX_REASON_LENGTH);
         const takeover_mode = requiredString(body, 'takeover_mode');
 
         // The enum is `FULL_CONTROL`/`CO_PILOT`; `HUMAN_ACTIVE` is display wording and any other
@@ -151,7 +154,8 @@ export function registerConversationTakeoverRoutes(
         const conversation_id = request.params.conversation_id;
 
         const body = request.body as Record<string, unknown> | undefined;
-        const extend_seconds = body?.['extend_seconds'];
+        const raw_extend = body?.['extend_seconds'];
+        const extend_seconds = raw_extend === undefined ? 60 : raw_extend;
         if (typeof extend_seconds !== 'number' || !Number.isInteger(extend_seconds) || extend_seconds < 1 || extend_seconds > 300) {
           fail('VALIDATION_FAILED', 'extend_seconds must be an integer between 1 and 300');
         }
@@ -217,7 +221,16 @@ export function registerConversationTakeoverRoutes(
         const conversation_id = request.params.conversation_id;
 
         const body = request.body as Record<string, unknown> | undefined;
-        const handoff_summary = typeof body?.['handoff_summary'] === 'string' ? body['handoff_summary'] : null;
+        let handoff_summary: string | null = null;
+        if (body?.['handoff_summary'] !== undefined && body?.['handoff_summary'] !== null) {
+          if (typeof body['handoff_summary'] !== 'string') {
+            fail('VALIDATION_FAILED', 'handoff_summary must be a string');
+          }
+          if (body['handoff_summary'].length > MAX_HANDOFF_SUMMARY_LENGTH) {
+            fail('VALIDATION_FAILED', `handoff_summary exceeds the ${MAX_HANDOFF_SUMMARY_LENGTH} character limit`);
+          }
+          handoff_summary = body['handoff_summary'];
+        }
 
         const conversation = await runtime.conversations.get(principal.tenant_id, conversation_id);
         if (conversation === null) {
@@ -230,19 +243,25 @@ export function registerConversationTakeoverRoutes(
           operator_id,
         });
 
+        // A persisted paused marker is owned by this operator only when the durable row says so;
+        // all expiry cleanup below is compare-and-clear against that owner.
+        const persistedTakeoverBelongedToOperator =
+          conversation.state === 'paused_takeover'
+          && conversation.takeover_operator_id === operator_id;
+        const staleLeaseBelongedToOperator =
+          released.outcome === 'NOT_HELD' && persistedTakeoverBelongedToOperator;
         // A release is owner-checked and idempotent: a repeat by the operator who already handed the
         // conversation back is answered from the same terminal state, never as a double release.
         if (released.outcome === 'HELD_BY_ANOTHER_OPERATOR') {
           fail('TAKEOVER_LEASE_HELD', 'another operator holds the takeover lease for this conversation');
         }
 
-        if (released.outcome === 'NOT_HELD' && conversation.state !== 'open') {
+        if (released.outcome === 'NOT_HELD' && conversation.state !== 'open' && !staleLeaseBelongedToOperator) {
           fail(
             'TAKEOVER_LEASE_EXPIRED',
             'this operator holds no live takeover lease, and the conversation is not already back under agent control',
           );
         }
-
         const handoffCompletion = await runtime.handoffs.complete({
           tenant_id: principal.tenant_id,
           conversation_id,
@@ -256,7 +275,21 @@ export function registerConversationTakeoverRoutes(
           fail('TAKEOVER_LEASE_LOST', 'this human handoff is not assigned to the authenticated operator');
         }
         if (handoffCompletion === 'NO_HANDOFF') {
-          await runtime.conversations.setState(principal.tenant_id, conversation_id, 'open', null);
+          if (persistedTakeoverBelongedToOperator) {
+            const cleared = await runtime.conversations.clearTakeoverIfOwned(
+              principal.tenant_id,
+              conversation_id,
+              operator_id,
+            );
+            if (!cleared) {
+              const liveLease = await runtime.takeover.holder(principal.tenant_id, conversation_id);
+              if (liveLease !== null && liveLease.operator_id !== operator_id) {
+                fail('TAKEOVER_LEASE_HELD', 'another operator now holds the takeover lease for this conversation');
+              }
+            }
+          } else {
+            await runtime.conversations.setState(principal.tenant_id, conversation_id, 'open', null);
+          }
         }
 
         await runtime.audit.record({

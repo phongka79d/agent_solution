@@ -9,6 +9,10 @@ export interface ProductItem {
   readonly name?: string;
   readonly title?: string;
   readonly description?: string;
+  readonly category?: string;
+  readonly use_case?: string;
+  readonly key_attribute?: string;
+  readonly attributes?: Readonly<Record<string, unknown>>;
   readonly original_list_price?: number;
   readonly list_price?: number;
   readonly price?: number;
@@ -19,7 +23,7 @@ export interface ProductItem {
   readonly tenant_id?: string;
   readonly categories?: readonly string[];
   readonly tags?: readonly string[];
-  readonly category_path?: string;
+  readonly category_path?: string | readonly string[];
 }
 
 export interface InventoryItem {
@@ -83,7 +87,9 @@ export function productListPrice(product: ProductItem): number | undefined {
 
 export function categoryMatches(product: ProductItem, category_id: string | undefined): boolean {
   if (category_id === undefined) return true;
-  if (product.category_path?.split('/').includes(category_id)) return true;
+  if (product.category === category_id) return true;
+  if (Array.isArray(product.category_path)) return product.category_path.includes(category_id);
+  if (typeof product.category_path === 'string' && product.category_path.split('/').includes(category_id)) return true;
   return product.categories?.includes(category_id) ?? false;
 }
 
@@ -151,6 +157,43 @@ export async function readCatalogFromSor(options: SalesSkillToolPortOptions, ten
     items: envelope.items,
   };
 }
+
+export interface InventoryBatchRead {
+  readonly found: ReadonlyMap<string, InventoryRead>;
+  readonly missing: ReadonlySet<string>;
+}
+
+/**
+ * Reads inventory for a bounded set of SKUs concurrently. Missing rows and per-SKU source
+ * failures are scoped to that SKU; callers represent either case as unknown stock.
+ */
+export async function readInventoryFromSorBatch(
+  options: SalesSkillToolPortOptions,
+  tenant_id: string,
+  sku_ids: readonly string[],
+): Promise<InventoryBatchRead> {
+  const uniqueSkus = [...new Set(sku_ids)];
+  const found = new Map<string, InventoryRead>();
+  const missing = new Set<string>();
+  const pending = [...uniqueSkus];
+  const worker = async (): Promise<void> => {
+    while (pending.length > 0) {
+      const sku_id = pending.shift();
+      if (sku_id === undefined) return;
+      try {
+        found.set(sku_id, await readInventoryFromSor(options, tenant_id, sku_id));
+      } catch {
+        // A failed or missing authoritative row is unknown stock for this SKU only. Never infer
+        // availability from the catalog or from another SKU's result.
+        missing.add(sku_id);
+      }
+    }
+  };
+  const workerCount = Math.min(8, Math.max(1, uniqueSkus.length));
+  await Promise.allSettled(Array.from({ length: workerCount }, () => worker()));
+  return { found, missing };
+}
+
 
 export async function readInventoryFromSor(
   options: SalesSkillToolPortOptions,

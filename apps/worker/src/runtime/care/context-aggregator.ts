@@ -118,9 +118,9 @@ export class CareContextAggregator implements IContextAggregator {
     this.verificationReferenceFor = Object.freeze(this.verificationReferenceFor.bind(this));
   }
 
-  /** id of the verified customer_identities row resolved during hydrateContext, keyed by correlation_id; null when the session is unverified. */
-  verificationReferenceFor(correlation_id: string): string | null {
-    return this.verificationReferences.get(correlation_id) ?? null;
+  /** id of the verified customer_identities row resolved during hydrateContext, keyed by tenant and correlation_id. */
+  verificationReferenceFor(tenant_id: string, correlation_id: string): string | null {
+    return this.verificationReferences.get(`${tenant_id}\u0000${correlation_id}`) ?? null;
   }
 
   async hydrateContext(
@@ -164,7 +164,7 @@ export class CareContextAggregator implements IContextAggregator {
       }
     }
 
-    this.verificationReferences.set(correlation_id, verifiedIdentityId);
+    this.verificationReferences.set(`${tenant_id}\u0000${correlation_id}`, verifiedIdentityId);
 
     let turn_count = 1;
     let takeover_active = false;
@@ -184,7 +184,9 @@ export class CareContextAggregator implements IContextAggregator {
           takeover_active = conversation.state === 'paused_takeover';
         }
       } catch {
-        // Without a verified persisted binding, no conversation history or handoff identity is exposed.
+        // A failed takeover lookup must fail closed to human ownership. Do not expose unverified
+        // conversation history or handoff identity, but prevent an AI response.
+        takeover_active = true;
       }
     }
 

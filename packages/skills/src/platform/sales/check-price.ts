@@ -14,6 +14,7 @@ export interface InputSalesCheckPrice {
   sku_id: string;
   customer_id: string;
   requested_discount_percent?: number;
+  proposed_price?: number;
 }
 
 /** Output of `skill.sales.check_price` (§4.2 skill 10). */
@@ -41,6 +42,7 @@ const input_schema: Record<string, unknown> = {
     sku_id: { type: 'string' },
     customer_id: { type: 'string' },
     requested_discount_percent: { type: 'number', minimum: 0, maximum: 100 },
+    proposed_price: { type: 'number', minimum: 0 },
   },
   additionalProperties: false,
 };

@@ -6,6 +6,27 @@
  */
 
 import type { PolicyRegistrySkill } from '@agentos/core-engine';
+import { createPlatformSkills, type PlatformSkillDependencies, type SkillToolInvocation } from '@agentos/skills';
+
+const CARE_SCHEMA_DEPENDENCIES: PlatformSkillDependencies = {
+  tools: {
+    invoke<TInput, TOutput>(_invocation: SkillToolInvocation<TInput>): Promise<TOutput> {
+      return Promise.reject(new Error('schema-only skill construction must not invoke tools')) as Promise<TOutput>;
+    },
+  },
+  clock: () => new Date(0),
+};
+
+function fieldsFromInputSchema(skill_id: string): Readonly<Record<string, true>> {
+  const row = createPlatformSkills(CARE_SCHEMA_DEPENDENCIES).find((candidate) => candidate.skill_id === skill_id);
+  const properties = row?.input_schema.properties;
+  if (!properties || typeof properties !== 'object' || Array.isArray(properties)) {
+    throw new Error(`CARE_SCHEMA_INVALID: ${skill_id} has no object input properties`);
+  }
+  return Object.freeze(
+    Object.fromEntries(Object.keys(properties).map((field) => [field, true] as const)),
+  ) as Readonly<Record<string, true>>;
+}
 
 /** Allowed fields in action payloads per Care skill, using static Record lookup */
 export const CARE_ALLOWED_PAYLOAD_FIELDS: Readonly<Record<string, Readonly<Record<string, true>>>> = Object.freeze({
@@ -36,15 +57,7 @@ export const CARE_ALLOWED_PAYLOAD_FIELDS: Readonly<Record<string, Readonly<Recor
     tenant_id: true,
     effect_key: true,
   }),
-  'skill.care.manage_case': Object.freeze({
-    action: true,
-    case_id: true,
-    customer_id: true,
-    priority: true,
-    notes: true,
-    tenant_id: true,
-    effect_key: true,
-  }),
+  'skill.care.manage_case': fieldsFromInputSchema('skill.care.manage_case'),
   'skill.care.initiate_return': Object.freeze({
     order_identifier: true,
     order_id: true,

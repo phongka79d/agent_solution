@@ -154,8 +154,7 @@ def case_block(case: dict, inv: Inventory, up: str) -> str:
     parts.append(
         "**Status.** `"
         + DEFAULT_STATUS
-        + "` - descriptive acceptance specification for a future system under test; no application "
-        "runtime exists in this repository, so nothing here has been executed. Machine-readable copy: "
+        + "` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: "
         f"[`{up}{SCENARIO_DIR}/{cid}.json`]({up}{SCENARIO_DIR}/{cid}.json)."
     )
     parts.append("")
@@ -208,8 +207,8 @@ def render_readme(inv: Inventory, cases: list, fixtures: dict, baseline_info: di
             "",
             "## Honest status",
             "",
-            f"- **There is no application runtime in this repository.** Nothing has been executed and the "
-            f"default recorded status is `{DEFAULT_STATUS}`.",
+            f"- **The repository includes an API, a worker with Care/Sales/Marketing agents, two consoles, and PostgreSQL migrations.** Nothing has been executed by this generator; the "
+            f"default recorded status for these acceptance specifications is `{DEFAULT_STATUS}`.",
             "- This generator never records `PASS`. A successful generation run proves document integrity, "
             "reference validity and coverage bookkeeping - never system behaviour.",
             "- Status vocabulary: " + ", ".join(f"`{item}`" for item in STATUS_VOCAB) + ".",
@@ -291,8 +290,8 @@ def render_readme(inv: Inventory, cases: list, fixtures: dict, baseline_info: di
             "python testcases/_generate.py --check    # validate and compare with disk; writes nothing",
             "```",
             "",
-            "Python 3 standard library only, no network, no runtime: these case documents are "
-            "specifications, and no runtime test was executed to produce them. Generation validates first and "
+            "Python 3 standard library only, no network: these case documents are specifications, and no runtime test "
+            "was executed by the generator to produce them. Generation validates first and "
             "writes only after every check passes, each file through a temporary file plus an atomic replace, "
             "and it never rewrites `_generate.py`, `sources/*.py`, `sources/requirements.json` or "
             "`sources/baseline-ids.json`. Output is deterministic: regenerating without source changes leaves "
@@ -356,8 +355,8 @@ def render_traceability(cases: list, inv: Inventory, baseline_info: dict, pairs:
         "",
         f"{len(cases)} cases, every ID taken verbatim from the source modules (mixed case and dots preserved; "
         "no ID normalisation anywhere). One row per case; the reverse direction is in "
-        "[`COVERAGE.md`](COVERAGE.md). Nothing in this file is evidence of execution: there is no application "
-        f"runtime in this repository and every case stays `{DEFAULT_STATUS}`.",
+        "[`COVERAGE.md`](COVERAGE.md). Nothing in this file is evidence of execution: the repository "
+        f"runtime is not exercised by generation and every case stays `{DEFAULT_STATUS}`.",
         "",
         "## Baseline preservation",
         "",
@@ -602,8 +601,8 @@ def render_platform_facets(inv: Inventory, cases: list, coverage: dict, title: s
             "- Coverage means traceability: an exact-token set membership between a facet token and the "
             "cases that declare it, never substring matching.",
             "- A token being covered means the checklist surface is *specified somewhere*; it is not a claim "
-            "that the behaviour has been observed, and this suite records no `PASS` for a system that has "
-            "no runtime in this repository.",
+            "that the behaviour has been observed, and this suite records no `PASS` for behaviour the generator "
+            "has not executed.",
             f"- The full reverse map for every requirement and facet family is in [`../COVERAGE.md`](../COVERAGE.md); "
             f"per-case detail is in the case documents under `unit/`, `integration/`, `e2e/` and `governance/`.",
             "",
@@ -678,12 +677,12 @@ def render_manifest(
                     [
                         ("default", DEFAULT_STATUS),
                         ("vocabulary", STATUS_VOCAB),
-                        ("runtime_available", False),
+                        ("runtime_available", True),
                         ("pass_recorded", False),
                         ("source_documents_are_specifications", True),
                         (
                             "note",
-                            "No application runtime exists and no runtime test was executed. The case "
+                            "The repository includes runtime, but no runtime test was executed by the generator. The case "
                             "documents are specifications. Generation proves document integrity and "
                             "traceability only; the generator never records PASS.",
                         ),
@@ -941,7 +940,7 @@ def scenario_record(case: dict) -> OrderedDict:
             (
                 "note",
                 "Generated acceptance specification. Plain specification, not an executable test; "
-                "no application runtime exists, so the status is NOT_RUN.",
+                "the repository runtime is not executed while generating it, so the status is NOT_RUN.",
             ),
         ]
     )

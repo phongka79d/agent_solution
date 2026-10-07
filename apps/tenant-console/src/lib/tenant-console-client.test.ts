@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ApiErrorEnvelope } from '@agentos/ui-foundation';
-import { TenantConsoleClient } from './tenant-console-client';
+import { AuthRequestError, TenantConsoleClient } from './tenant-console-client';
 import type {
   ApprovalDecisionRequest, ApprovalDecisionResponse, ApprovalDetailResponse,
   ConversationResumeRequest, ConversationTakeoverHeartbeatRequest, ConversationTakeoverRequest,
@@ -41,6 +41,60 @@ function createFetchSpy(mockResponse: Response) {
     getBodyJson: <T = unknown>() => (capturedInit?.body ? (JSON.parse(capturedInit.body as string) as T) : undefined),
   };
 }
+describe('Browser authentication contracts', () => {
+  const authSession = {
+    identity: { user_id: 'user-1', email: 'admin@example.test', display_name: 'Company Admin' },
+    membership: { tenant_id: 'tenant-1', tenant_name: 'Tenant', role: 'member', scope: 'company' as const },
+    permissions: ['campaign:draft', 'approval:read', 'approval:decide'] as const,
+    expires_at: '2030-01-01T00:00:00.000Z',
+  };
+  it('bootstraps CSRF then signs in with email and password', async () => {
+
+    const calls: Array<{ readonly url: string; readonly init: RequestInit | undefined }> = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      calls.push({ url: typeof input === 'string' ? input : input.toString(), init });
+      return createMockJsonResponse(authSession);
+    };
+    const client = new TenantConsoleClient({ fetch: fetchImpl });
+
+    await client.signIn('admin@example.test', 'secret');
+
+    expect(calls.map((call) => call.url)).toEqual(['/api/auth/session', '/api/auth/sign-in']);
+    expect(calls[1]?.init?.method).toBe('POST');
+    expect(JSON.parse(calls[1]?.init?.body as string)).toEqual({ email: 'admin@example.test', password: 'secret' });
+  });
+
+  it('reads AuthSession from GET /api/auth/session', async () => {
+    const spy = createFetchSpy(createMockJsonResponse(authSession));
+    const client = new TenantConsoleClient({ fetch: spy.mockFetch });
+
+    await expect(client.getAuthSession()).resolves.toEqual(authSession);
+    expect(spy.getLastUrl()).toBe('/api/auth/session');
+    expect(spy.getLastInit()?.method).toBe('GET');
+  });
+
+  it('signs out through the JSON auth endpoint', async () => {
+    const calls: string[] = [];
+    const fetchImpl: typeof fetch = async (input) => {
+      calls.push(typeof input === 'string' ? input : input.toString());
+      return createMockJsonResponse({ ok: true });
+    };
+    const client = new TenantConsoleClient({ fetch: fetchImpl });
+
+    await client.signOut();
+
+    expect(calls).toEqual(['/api/auth/session', '/api/auth/sign-out']);
+  });
+
+  it('preserves authentication status for rate-limit handling', async () => {
+    const client = new TenantConsoleClient({
+      fetch: async () => createMockJsonResponse({ error: 'TOO_MANY_ATTEMPTS' }, 429),
+    });
+
+    await expect(client.signIn('admin@example.test', 'secret')).rejects.toBeInstanceOf(AuthRequestError);
+    await expect(client.signIn('admin@example.test', 'secret')).rejects.toMatchObject({ status: 429 });
+  });
+});
 
 describe('R14 Approval Contracts', () => {
   it('calls GET /api/v1/approvals with default status=PENDING', async () => {
@@ -279,7 +333,6 @@ describe('SCR-005 Conversation Console Contracts', () => {
     const client = new TenantConsoleClient({ baseUrl: 'http://localhost:4000', fetch: spy.mockFetch });
 
     const req: ConversationTakeoverRequest = {
-      operator_id: 'operator-1',
       reason: 'Customer requested human supervisor',
       takeover_mode: 'FULL_CONTROL',
     };
@@ -288,7 +341,7 @@ describe('SCR-005 Conversation Console Contracts', () => {
 
     expect(spy.getLastUrl()).toBe('http://localhost:4000/api/v1/conversations/conv-101/takeover');
     expect(spy.getLastInit()?.method).toBe('POST');
-    expect(spy.getBodyJson()).toEqual(req);
+    expect(spy.getBodyJson()).toEqual({ reason: req.reason, takeover_mode: req.takeover_mode });
     expect(result.lease_expires_at).toBe('2026-09-23T12:01:00Z');
   });
 
@@ -304,7 +357,6 @@ describe('SCR-005 Conversation Console Contracts', () => {
     const client = new TenantConsoleClient({ baseUrl: 'http://localhost:4000', fetch: spy.mockFetch });
 
     const heartbeatReq: ConversationTakeoverHeartbeatRequest = {
-      operator_id: 'operator-1',
       extend_seconds: 60,
     };
 
@@ -312,7 +364,7 @@ describe('SCR-005 Conversation Console Contracts', () => {
 
     expect(spy.getLastUrl()).toBe('http://localhost:4000/api/v1/conversations/conv-101/takeover/heartbeat');
     expect(spy.getLastInit()?.method).toBe('POST');
-    expect(spy.getBodyJson()).toEqual(heartbeatReq);
+    expect(spy.getBodyJson()).toEqual({ extend_seconds: heartbeatReq.extend_seconds });
     expect(result.lease_expires_at).toBe('2026-09-23T12:02:00Z');
   });
 
@@ -327,7 +379,6 @@ describe('SCR-005 Conversation Console Contracts', () => {
     const client = new TenantConsoleClient({ baseUrl: 'http://localhost:4000', fetch: spy.mockFetch });
 
     const resumeReq: ConversationResumeRequest = {
-      operator_id: 'operator-1',
       handoff_summary: 'Issue resolved; returning to autonomous routing',
     };
 
@@ -335,11 +386,11 @@ describe('SCR-005 Conversation Console Contracts', () => {
 
     expect(spy.getLastUrl()).toBe('http://localhost:4000/api/v1/conversations/conv-101/resume');
     expect(spy.getLastInit()?.method).toBe('POST');
-    expect(spy.getBodyJson()).toEqual(resumeReq);
+    expect(spy.getBodyJson()).toEqual({ handoff_summary: resumeReq.handoff_summary });
     expect(result.status).toBe('ACTIVE');
   });
 
-  it('calls POST /api/v1/conversations/{id}/messages with idempotency key', async () => {
+  it('calls POST /api/v1/conversations/{id}/operator-messages with idempotency key', async () => {
     const spy = createFetchSpy(
       createMockJsonResponse(
         {
@@ -361,9 +412,115 @@ describe('SCR-005 Conversation Console Contracts', () => {
 
     const result = await client.postConversationMessage('conv-101', messageReq);
 
-    expect(spy.getLastUrl()).toBe('http://localhost:4000/api/v1/conversations/conv-101/messages');
+    expect(spy.getLastUrl()).toBe('http://localhost:4000/api/v1/conversations/conv-101/operator-messages');
     expect(spy.getLastInit()?.method).toBe('POST');
     expect(spy.getBodyJson()).toEqual(messageReq);
     expect(result.status).toBe('accepted');
   });
+
+  it('calls postOperatorMessage and proxies to /operator-messages', async () => {
+    const spy = createFetchSpy(
+      createMockJsonResponse(
+        {
+          task_id: 'msg-task-556',
+          conversation_id: 'conv-102',
+          status: 'accepted',
+          task_version: 1,
+          correlation_id: 'corr-message-2',
+        },
+        202
+      )
+    );
+    const client = new TenantConsoleClient({ baseUrl: 'http://localhost:4000', fetch: spy.mockFetch });
+    const messageReq: PostMessageRequest = {
+      message: 'Operator message content',
+    };
+    const result = await client.postOperatorMessage('conv-102', messageReq);
+    expect(spy.getLastUrl()).toBe('http://localhost:4000/api/v1/conversations/conv-102/operator-messages');
+    expect(result.task_id).toBe('msg-task-556');
+  });
 });
+
+describe('Campaign & Run Contracts', () => {
+  it('calls GET /api/v1/campaigns with optional limit and cursor', async () => {
+    const mockData = {
+      items: [{ campaign_id: 'camp-1', name: 'Winback 90d', run_id: 'run-1' }],
+      next_cursor: 'cur-2',
+    };
+    const spy = createFetchSpy(createMockJsonResponse(mockData));
+    const client = new TenantConsoleClient({ baseUrl: 'http://localhost:4000', fetch: spy.mockFetch });
+
+    const result = await client.getCampaigns({ limit: 10, cursor: 'cur-1' });
+
+    expect(spy.getLastUrl()).toBe('http://localhost:4000/api/v1/campaigns?limit=10&cursor=cur-1');
+    expect(spy.getLastInit()?.method).toBe('GET');
+    expect(result).toEqual(mockData);
+  });
+
+  it('calls GET /api/v1/campaigns/:run_id to fetch single campaign', async () => {
+    const mockCampaign = { run_id: 'run-101', name: 'Summer Promo', campaign_status: 'draft' };
+    const spy = createFetchSpy(createMockJsonResponse(mockCampaign));
+    const client = new TenantConsoleClient({ baseUrl: 'http://localhost:4000', fetch: spy.mockFetch });
+
+    const result = await client.getCampaign('run-101');
+
+    expect(spy.getLastUrl()).toBe('http://localhost:4000/api/v1/campaigns/run-101');
+    expect(spy.getLastInit()?.method).toBe('GET');
+    expect(result).toEqual(mockCampaign);
+  });
+
+  it('calls POST /api/v1/campaigns/drafts to submit draft campaign', async () => {
+    const mockReceipt = {
+      task_id: 'run-camp-draft-1',
+      conversation_id: null,
+      status: 'accepted',
+      task_version: 1,
+      correlation_id: 'corr-camp-draft-1',
+    };
+    const spy = createFetchSpy(createMockJsonResponse(mockReceipt, 202));
+    const client = new TenantConsoleClient({ baseUrl: 'http://localhost:4000', fetch: spy.mockFetch });
+
+    const draftInput = {
+      idempotency_key: 'draft-uuid-001',
+      segment_id: 'inactive_90d',
+      objective: 'winback',
+      instruction: 'Special promo email',
+      content_constraints: { channel: 'EMAIL_HTML', locale: 'vi-VN' },
+    };
+
+    const result = await client.createCampaignDraft(draftInput);
+
+    expect(spy.getLastUrl()).toBe('http://localhost:4000/api/v1/campaigns/drafts');
+    expect(spy.getLastInit()?.method).toBe('POST');
+    expect(spy.getBodyJson()).toEqual(draftInput);
+    expect(result).toEqual(mockReceipt);
+  });
+
+  it('calls GET /api/v1/runs/:run_id/trace to inspect run telemetry', async () => {
+    const mockTrace = { run_id: 'run-202', stages: ['PLAN', 'EXECUTE'], status: 'completed' };
+    const spy = createFetchSpy(createMockJsonResponse(mockTrace));
+    const client = new TenantConsoleClient({ baseUrl: 'http://localhost:4000', fetch: spy.mockFetch });
+
+    const result = await client.getRunTrace('run-202');
+
+    expect(spy.getLastUrl()).toBe('http://localhost:4000/api/v1/runs/run-202/trace');
+    expect(spy.getLastInit()?.method).toBe('GET');
+    expect(result).toEqual(mockTrace);
+  });
+
+  it('calls GET /api/v1/demo/catalog to fetch product catalog', async () => {
+    const mockCatalog = {
+      items: [{ sku_id: 'SKU-001', name: 'Product 1', list_price: 100 }],
+      snapshot_at: '2026-09-23T12:00:00Z',
+    };
+    const spy = createFetchSpy(createMockJsonResponse(mockCatalog));
+    const client = new TenantConsoleClient({ baseUrl: 'http://localhost:4000', fetch: spy.mockFetch });
+
+    const result = await client.getDemoCatalog();
+
+    expect(spy.getLastUrl()).toBe('http://localhost:4000/api/v1/demo/catalog');
+    expect(spy.getLastInit()?.method).toBe('GET');
+    expect(result).toEqual(mockCatalog);
+  });
+});
+

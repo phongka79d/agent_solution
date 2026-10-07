@@ -56,25 +56,34 @@ function isProvisioningCode(error: unknown, code: string): boolean {
   return error.code === code;
 }
 
+function isProvisioningIdempotencyConflict(error: unknown): boolean {
+  if (isProvisioningCode(error, 'IDEMPOTENCY_CONFLICT')) return true;
+  if (!isProvisioningCode(error, '23505')) return false;
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'constraint' in error &&
+    error.constraint === 'tenants_idempotency_key_key'
+  );
+}
+
 /** Registers tenant-shell provisioning behind the authenticated operator boundary. */
 export function registerProvisioningRoutes(
   app: FastifyInstance,
   deps: ProvisioningRouteDependencies,
 ): void {
-  const authenticateRequest = authenticate(deps);
-  const preHandler = async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
-    if (isPlainRecord(request.body) && 'tenant_id' in request.body) {
-      const body = { ...request.body };
-      delete body['tenant_id'];
-      request.body = body;
-    }
-    await authenticateRequest(request, reply);
-  };
+  const preHandler = authenticate(deps);
 
-  app.post('/provisioning/tenants', { preHandler }, async (request, reply) => {
+  const createTenantShell = async (request: FastifyRequest, reply: FastifyReply) => {
     const runtime = deps.runtime;
     try {
-      requireOperator(request);
+      const principal = requireOperator(request, 'platform:admin');
+      if (principal.scope !== 'platform') {
+        fail(
+          'INSUFFICIENT_AUTHORITY',
+          'tenant provisioning requires a platform-scoped operator',
+        );
+      }
       const body: unknown = request.body;
       if (body !== undefined && body !== null && !isPlainRecord(body)) {
         fail('VALIDATION_FAILED', 'the request body must be a JSON object when supplied');
@@ -101,9 +110,18 @@ export function registerProvisioningRoutes(
       const input: ProvisioningCreateInput = { display_name, idempotency_key };
 
       const shell = await deps.provisioning.createShell(input);
+      await runtime.audit.record({
+        tenant_id: shell.tenant_id,
+        correlation_id: correlationIdOf(request, runtime),
+        operation: 'provisioning.tenants.create',
+        principal_kind: principal.kind,
+        ...(principal.operator_id === undefined ? {} : { operator_id: principal.operator_id }),
+        outcome: 'ACCEPTED',
+        detail: { tenant_id: shell.tenant_id },
+      });
       return reply.code(201).send(shell);
     } catch (error) {
-      if (isProvisioningCode(error, 'IDEMPOTENCY_CONFLICT') || isProvisioningCode(error, '23505')) {
+      if (isProvisioningIdempotencyConflict(error)) {
         try {
           fail('IDEMPOTENCY_CONFLICT', 'the idempotency key was reused with a different request fingerprint');
         } catch (failure) {
@@ -112,17 +130,28 @@ export function registerProvisioningRoutes(
       }
       return replyFailure(reply, error, correlationIdOf(request, runtime));
     }
-  });
+  };
+
+  app.post('/provisioning/tenants', { preHandler }, createTenantShell);
 
   const autonomyAdmin = deps.autonomyAdmin;
   if (autonomyAdmin !== undefined) {
   app.get('/admin/tenants/current', { preHandler }, async (request, reply) => {
     const runtime = deps.runtime;
     try {
-      const principal = requireOperator(request);
+      const principal = requireOperator(request, 'platform:admin');
       const shell = await deps.provisioning.getShell(principal.tenant_id);
       if (shell === null) fail('NOT_FOUND', 'the authenticated tenant has not been provisioned');
       const autonomy = await autonomyAdmin.inspect({ tenant_id: principal.tenant_id });
+      await runtime.audit.record({
+        tenant_id: principal.tenant_id,
+        correlation_id: correlationIdOf(request, runtime),
+        operation: 'provisioning.tenants.current',
+        principal_kind: principal.kind,
+        ...(principal.operator_id === undefined ? {} : { operator_id: principal.operator_id }),
+        outcome: 'ACCEPTED',
+        detail: { tenant_id: principal.tenant_id },
+      });
 
       return reply.code(200).send({
         tenant_id: principal.tenant_id,

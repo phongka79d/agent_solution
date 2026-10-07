@@ -81,7 +81,7 @@ def _gate_case(row: dict) -> dict:
         _GATE_PRE + [
             gate + " entry conditions are recorded as: " + row["entry"] + ".",
             "The evidence registry for " + gate + " lists " + ", ".join(evidence_list) + " with the kinds " + kinds + ", and the "
-            "repository contains no application runtime.",
+            "case evidence includes no application-runtime artifact.",
         ],
         {"gate": gate, "name": row["name"], "owner": row["owner"], "entry_conditions": row["entry"],
          "exit_criterion": row["exit"], "required_evidence": list(evidence_list),
@@ -97,8 +97,8 @@ def _gate_case(row: dict) -> dict:
           "The status is NOT_RUN naming the missing runtime artifacts, with no approver, no signature and no PASS anywhere in the record."),
          ("Attempt to close " + gate + " with evidence belonging to another gate",
           "The artifact is rejected as belonging to another gate, which keeps its own status.")],
-        [gate + " is never reported PASS: with no runtime the admissible outcomes are NOT_RUN for a missing runtime and "
-         "BLOCKED_PREREQUISITE for a missing lock, and each required artifact is listed with its own kind and status.",
+        [gate + " is never reported PASS: when the required runtime artifact is absent, the admissible outcomes are NOT_RUN for the "
+         "missing evidence and BLOCKED_PREREQUISITE for a missing lock, and each required artifact is listed with its own kind and status.",
          "A mock or substituted-boundary artifact is never accepted as gate evidence; mock coverage is reported as specification coverage only.",
          "The exit criterion '" + row["exit"] + "' is evaluated only against artifacts of kind runtime, and design or absent artifacts are "
          "listed as gaps against the owning role " + row["owner"] + ".",
@@ -112,7 +112,7 @@ def _gate_case(row: dict) -> dict:
         ["Delete " + NS + " gate-report rows after exporting the registry snapshot; the registry fixture and the design documents are left unchanged."],
         _GATE_AUTO,
         prereq=[gate + " requires real runtime evidence (" + ", ".join(evidence_list) + ") from live adapters, real data and upstream "
-                "receipts; no such runtime exists in this repository, so the gate is NOT_RUN and any PASS claim is BLOCKED_PREREQUISITE."],
+                "receipts; no such runtime evidence is present in this case, so the gate is NOT_RUN and any PASS claim is BLOCKED_PREREQUISITE."],
         refs=[IMPL09, SRS],
     )
 
@@ -153,7 +153,7 @@ _add(
          "Specification-coverage report kept separate from the gate record."],
         ["Delete " + NS + " artifact and rejection rows after export."],
         _GATE_AUTO,
-        prereq=["No live adapter, provider or upstream system is reachable in this repository, so every artifact here is mock or absent and "
+        prereq=["No live adapter, provider or upstream system is reachable in this case, so every artifact here is mock or absent and "
                 "no gate can be evidenced; any claim to the contrary is BLOCKED_PREREQUISITE."],
         refs=[IMPL09, IMPL08, SRS],
     ),
@@ -170,14 +170,14 @@ _add(
          "expected_status_per_gate": {"P0": "NOT_RUN", "P1": "NOT_RUN", "P2": "NOT_RUN",
                                       "P3": "NOT_RUN", "P4": "NOT_RUN", "P5": "NOT_RUN"},
          "silent_skip_allowed": False, "pass_allowed": False},
-        [("Evaluate all six gates against the registry with no runtime present",
+        [("Evaluate all six gates with runtime artifacts absent from the registry",
           "Every gate produces a status row; each is NOT_RUN and names the runtime artifacts it lacks."),
          ("Check that no gate is missing from the report",
           "Six rows exist, one per gate; a gate that cannot be evaluated is still reported rather than omitted."),
          ("Attempt to mark an unevaluated gate as passed by omission",
           "The attempt is refused and the report explicitly states that absent evidence is not a pass; the roadmap figure counts zero passed gates."),
          ("Attempt to run the gates against the mock environment to produce a status",
-          "The mock environment produces specification coverage only; the gate statuses stay NOT_RUN because no runtime artifact exists.")],
+          "The mock environment produces specification coverage only; the gate statuses stay NOT_RUN because no required runtime artifact exists.")],
         ["All six gates appear in the run report with the status NOT_RUN and the list of missing runtime artifacts.",
          "No gate is silently skipped, and no unevaluated gate is counted as passed in any summary or roadmap figure.",
          "Mock-environment results are recorded as specification coverage and do not change a gate status.",
@@ -190,7 +190,7 @@ _add(
          "Specification-coverage report kept separate from the gate record."],
         ["Delete " + NS + " gate-report rows after export."],
         _GATE_AUTO,
-        prereq=["The repository contains no application runtime, so all six gates are NOT_RUN; a PASS for any gate here would be a reporting "
+        prereq=["The evidence registry marks runtime artifacts absent, so all six gates are NOT_RUN; a PASS for any gate here would be a reporting "
                 "defect and is BLOCKED_PREREQUISITE."],
         refs=[IMPL09, SRS],
     ),
@@ -234,7 +234,7 @@ def _dod_case(pillar: dict) -> dict:
         _DOD_PRE + [
             "Pillar " + str(pid) + " (" + pillar["name"] + ") is expected to be justified by the artifact '" + pillar["evidence"]
             + "', which the evidence registry holds in the form '" + evidence_kind + "'.",
-            "The repository has no application runtime, so a runtime pillar cannot be closed and a blueprint pillar can only reach DESIGN_ONLY.",
+            "the evidence registry has no application-runtime artifact, so a runtime pillar cannot be closed and a blueprint pillar can only reach DESIGN_ONLY.",
         ],
         {"pillar": pid, "name": pillar["name"], "dod_item": pillar["dod_item"], "kind": pillar["kind"],
          "required_evidence": pillar["evidence"], "evidence_state": evidence_kind,
@@ -260,7 +260,7 @@ def _dod_case(pillar: dict) -> dict:
          "DoD summary excerpt listing this pillar once with its status and the owning role."],
         ["Delete " + NS + " DoD report rows after export; the registry fixture and the design documents are unchanged."],
         _GATE_AUTO,
-        prereq=["The repository has no application runtime, so pillar " + str(pid) + " cannot be evidenced here; its status is " + status
+        prereq=["The required runtime artifact is absent from the evidence registry, so pillar " + str(pid) + " cannot be evidenced here; its status is " + status
                 + " and any completion claim is BLOCKED_PREREQUISITE."],
         refs=[IMPL09, SRS],
     )
@@ -302,7 +302,7 @@ _add(
          "Completion evaluation naming the unmet runtime pillars and the blocked capability."],
         ["Delete " + NS + " DoD report rows after export."],
         _GATE_AUTO,
-        prereq=["No runtime exists in this repository, so the four runtime pillars cannot be satisfied and no capability can be declared done; "
+        prereq=["The required runtime artifacts are absent from the evidence registry, so the four runtime pillars cannot be satisfied and no capability can be declared done; "
                 "completion is BLOCKED_PREREQUISITE."],
         refs=[IMPL09, SRS],
     ),

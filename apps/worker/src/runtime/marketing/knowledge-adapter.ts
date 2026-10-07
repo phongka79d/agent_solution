@@ -4,6 +4,11 @@ import { isAbsolute, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { listApprovedKnowledge } from '@agentos/core-engine';
 import {
+  createTenantKnowledgeRootResolver,
+  TenantKnowledgeRootError,
+  type TenantKnowledgeRootResolver,
+} from '../knowledge-root.js';
+import {
   type MarketingKnowledgeDocument,
   type MarketingKnowledgePort,
   MarketingRuntimeError,
@@ -83,6 +88,14 @@ export function screenMarketingUntrustedContent(text: string): string {
 
 export interface MarketingKnowledgePortOptions {
   readonly root_dir?: string;
+  /** Explicit server-owned tenant scope for a configured root. */
+  readonly tenant_ids?: readonly string[];
+  /** Single server-verified tenant binding for a configured root. */
+  readonly tenant_id?: string;
+  /**
+   * Direct filesystem seams used by focused tests. They may supply a fake root
+   * without a production tenant allowlist; real filesystem access remains bound.
+   */
   readonly listApproved?: (
     rootDir: string,
   ) => Promise<readonly { path: string; status: string }[]>;
@@ -104,9 +117,27 @@ export function createMarketingKnowledgePort(
   const defaultRootDir = fileURLToPath(
     new URL('../../../../../packages/second-brain', import.meta.url),
   );
-  const rootDir = options.root_dir ?? defaultRootDir;
+  const hasConfiguredRoot = options.root_dir !== undefined;
+  const rootDir = hasConfiguredRoot ? options.root_dir! : defaultRootDir;
   const listApproved = options.listApproved ?? listApprovedKnowledge;
   const readFile = options.readFile ?? fsReadFile;
+  const usesInjectedFilesystem = options.listApproved !== undefined || options.readFile !== undefined;
+  let rootResolver: TenantKnowledgeRootResolver;
+  try {
+    rootResolver = createTenantKnowledgeRootResolver({
+      root_dir: rootDir,
+      ...(options.tenant_ids === undefined ? {} : { tenant_ids: options.tenant_ids }),
+      ...(options.tenant_id === undefined ? {} : { tenant_id: options.tenant_id }),
+      // The package root and explicit fake filesystem seams retain compatibility
+      // with offline tests; configured real roots require an explicit tenant scope.
+      allow_unbound: !hasConfiguredRoot || usesInjectedFilesystem,
+    });
+  } catch (error) {
+    if (error instanceof TenantKnowledgeRootError) {
+      throw new MarketingRuntimeError(error.code, error.message);
+    }
+    throw error;
+  }
 
   return {
     async readApproved(
@@ -120,6 +151,16 @@ export function createMarketingKnowledgePort(
           'Tenant ID must be a non-empty string',
         );
       }
+      let scopedRootDir: string;
+      try {
+        scopedRootDir = rootResolver.resolve(tenant_id);
+      } catch (error) {
+        if (error instanceof TenantKnowledgeRootError) {
+          throw new MarketingRuntimeError(error.code, error.message);
+        }
+        throw error;
+      }
+
 
       // 2. Validate path
       if (!path || typeof path !== 'string' || path.trim().length === 0) {
@@ -158,11 +199,11 @@ export function createMarketingKnowledgePort(
       // 4. Verify document is approved in Second Brain corpus via listApproved
       let approvedDocs: readonly { path: string; status: string }[];
       try {
-        approvedDocs = await listApproved(rootDir);
+        approvedDocs = await listApproved(scopedRootDir);
       } catch (error) {
         throw new MarketingRuntimeError(
           'CORPUS_UNAVAILABLE',
-          `Failed to list approved knowledge documents from root '${rootDir}': ${error instanceof Error ? error.message : String(error)}`,
+          `Failed to list approved knowledge documents from configured root: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
 
@@ -178,7 +219,7 @@ export function createMarketingKnowledgePort(
       }
 
       // 5. Read physical file content
-      const fullPath = join(rootDir, normalizedPath);
+      const fullPath = join(scopedRootDir, normalizedPath);
       let source: string;
       try {
         source = await readFile(fullPath, 'utf8');

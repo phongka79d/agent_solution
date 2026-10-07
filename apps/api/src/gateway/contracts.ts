@@ -47,7 +47,11 @@ export type RuleErrorCode =
   | 'SKILL_DISABLED';
 
 /** Approval-claim refusals of `06` §8.1.1 / `04` §4.2. */
-export type ApprovalErrorCode = 'APPROVAL_STALE_PAYLOAD' | 'APPROVAL_NOT_CLAIMABLE';
+export type ApprovalErrorCode =
+  | 'APPROVAL_STALE_PAYLOAD'
+  | 'APPROVAL_NOT_CLAIMABLE'
+  | 'APPROVAL_EXPIRED'
+  | 'APPROVER_MUST_DIFFER';
 
 /** Gateway-owned refusals that are not business rules. */
 export type GatewayErrorCode =
@@ -68,6 +72,7 @@ export type GatewayErrorCode =
   | 'RUN_LEASE_HELD'
   /** Client event payload attempted to provide a server-owned evidence field (06 §8.1.1/§8.1.2). */
   | 'CUSTOMER_EVENT_RESERVED_PAYLOAD_FIELD'
+  | 'TOO_MANY_ATTEMPTS'
   | 'INTERNAL_ERROR';
 
 export type GatewayErrorCode_ = BaselineErrorCode | RuleErrorCode | ApprovalErrorCode | GatewayErrorCode;
@@ -100,6 +105,7 @@ export const FAILURE_STATUS: Readonly<Partial<Record<GatewayErrorCode_, number>>
   SIGNATURE_INVALID: 401,
   TENANT_BINDING_MISMATCH: 403,
   CUSTOMER_UNVERIFIED: 403,
+  APPROVER_MUST_DIFFER: 403,
   INSUFFICIENT_AUTHORITY: 403,
   INVALID_CLEARANCE: 403,
   PROHIBITED_ACTION: 403,
@@ -116,6 +122,7 @@ export const FAILURE_STATUS: Readonly<Partial<Record<GatewayErrorCode_, number>>
   IDEMPOTENCY_CONFLICT: 409,
   APPROVAL_STALE_PAYLOAD: 409,
   APPROVAL_NOT_CLAIMABLE: 409,
+  APPROVAL_EXPIRED: 409,
   CONVERSATION_LOCKED: 409,
   TAKEOVER_LEASE_HELD: 409,
   TAKEOVER_LEASE_LOST: 409,
@@ -125,6 +132,7 @@ export const FAILURE_STATUS: Readonly<Partial<Record<GatewayErrorCode_, number>>
   RUN_LEASE_HELD: 409,
   CUSTOMER_EVENT_RESERVED_PAYLOAD_FIELD: 422,
   APPROVAL_REQUIRED: 409,
+  REQUIRE_HUMAN_APPROVAL: 409,
   TASK_NOT_FOUND: 404,
   NOT_FOUND: 404,
   CONVERSATION_NOT_FOUND: 404,
@@ -132,6 +140,7 @@ export const FAILURE_STATUS: Readonly<Partial<Record<GatewayErrorCode_, number>>
   SKILL_NOT_FOUND: 404,
   SKILL_DISABLED: 422,
   RATE_LIMITED: 429,
+  TOO_MANY_ATTEMPTS: 429,
   PROVIDER_TIMEOUT: 503,
   PROVIDER_REJECTED: 502,
   INTERNAL_ERROR: 500,
@@ -153,12 +162,14 @@ export type PrincipalKind = 'OPERATOR' | 'CHANNEL_SESSION' | 'WIDGET_SESSION' | 
 export type OperatorPermission =
   | 'approval:decide'
   | 'approval:read'
+  | 'campaign:draft'
   | 'conversation:takeover'
   | 'run:read'
   | 'run:retry'
   | 'run:reconcile'
   | 'customer:read'
-  | 'telemetry:read';
+  | 'telemetry:read'
+  | 'platform:admin';
 
 export interface GatewayPrincipal {
   readonly kind: PrincipalKind;
@@ -166,6 +177,10 @@ export interface GatewayPrincipal {
   readonly tenant_id: string;
   /** Present for `OPERATOR`; the authenticated decision principal, never payload-only authority. */
   readonly operator_id?: string;
+  /** Present for an operator: the audience scope bound to the account. */
+  readonly scope?: 'company' | 'platform';
+  /** Present for a channel session: the channel the signed credential was issued for. */
+  readonly channel?: ChannelId;
   /** Present for a session-bound caller: the conversation/session the credential is bound to. */
   readonly conversation_id?: string;
   readonly session_id?: string;
@@ -188,6 +203,7 @@ export type TaskWireStatus =
   | 'running'
   | 'waiting'
   | 'awaiting_human'
+  | 'in_flight'
   | 'completed'
   | 'stopped'
   | 'failed';
@@ -214,6 +230,13 @@ export type ChannelId =
   | 'SMS'
   | 'LINE'
   | 'WHATSAPP';
+
+/**
+ * The source channel a run is admitted under. It is a customer channel (see {@link ChannelId}) or
+ * the operator-command channel the Marketing domain contract binds as
+ * `MARKETING_SIGNAL_SOURCE_CHANNELS`, which no provider or browser turn can present.
+ */
+export type RunSourceChannel = ChannelId | 'MARKETING_CAMPAIGN';
 
 /** The six SRS API-003 baseline channels; all other members are `[OPTIONAL-EXTENSION][ASM-001]`. */
 export const BASELINE_CHANNELS: readonly ChannelId[] = Object.freeze([
@@ -354,7 +377,8 @@ export interface ApprovalDecisionResponse {
 
 /** The only supported baseline filter (`06` §8.1.3 R14). */
 export type ApprovalQueueFilter = 'PENDING';
-
+/** Detail reads may report an approval that crossed its deadline. */
+export type ApprovalQueueStatus = ApprovalQueueFilter | 'EXPIRED';
 export interface ApprovalQueueItem {
   readonly approval_id: string;
   readonly run_id: string;
@@ -362,7 +386,7 @@ export interface ApprovalQueueItem {
   readonly effect_key: string;
   readonly payload: Record<string, unknown>;
   readonly reason: string;
-  readonly status: ApprovalQueueFilter;
+  readonly status: ApprovalQueueStatus;
   readonly is_paused: boolean;
   readonly decided_by: string | null;
   readonly decided_at: string | null;
@@ -375,7 +399,7 @@ export interface ApprovalQueueItem {
 /** `06` §8.2.1: the same item plus the reviewer-visible fields SCR-003 renders. */
 export interface ApprovalDetailResponse extends ApprovalQueueItem {
   readonly tenant_id: string;
-  readonly expires_at: string | null;
+  readonly expires_at: string;
 }
 
 // ============================================================================

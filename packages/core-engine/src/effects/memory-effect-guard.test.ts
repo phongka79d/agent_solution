@@ -45,16 +45,18 @@ function testClock(startIso = '2026-01-01T00:00:00.000Z'): {
 }
 
 function reservationInput(guard: MemoryEffectGuard, overrides: Partial<ReserveInput> = {}): ReserveInput {
+  const identity = {
+    tenant_id: overrides.tenant_id ?? IDENTITY.tenant_id,
+    skill_id: overrides.skill_id ?? IDENTITY.skill_id,
+    step_index: overrides.step_index ?? IDENTITY.step_index,
+    action_revision: overrides.action_revision ?? IDENTITY.action_revision,
+    request_id: overrides.request_id ?? IDENTITY.request_id,
+  };
   return {
-    tenant_id: TENANT,
-    run_id: 'run-1',
-    request_id: IDENTITY.request_id,
-    effect_key: guard.computeEffectKey(IDENTITY),
-    request_fingerprint: guard.computeRequestFingerprint(PAYLOAD),
-    skill_id: IDENTITY.skill_id,
-    step_index: IDENTITY.step_index,
-    action_revision: IDENTITY.action_revision,
-    ...overrides,
+    ...identity,
+    run_id: overrides.run_id ?? 'run-1',
+    effect_key: overrides.effect_key ?? guard.computeEffectKey(identity),
+    request_fingerprint: overrides.request_fingerprint ?? guard.computeRequestFingerprint(PAYLOAD),
   };
 }
 
@@ -249,14 +251,13 @@ describe('MemoryEffectGuard', () => {
     expect(guard.peek(TENANT, effect_key)).toBeNull();
   });
 
-  it('keeps tenants isolated under the same effect key', async () => {
+  it('keeps tenants isolated under tenant-bound effect keys', async () => {
     const guard = new MemoryEffectGuard();
     const input = reservationInput(guard);
+    const otherInput = reservationInput(guard, { tenant_id: OTHER_TENANT, run_id: 'run-other' });
     await guard.reserve(input);
 
-    expect(await guard.reserve(reservationInput(guard, { tenant_id: OTHER_TENANT, run_id: 'run-other' }))).toEqual(
-      { kind: 'RESERVED' },
-    );
+    expect(await guard.reserve(otherInput)).toEqual({ kind: 'RESERVED' });
 
     await guard.resolve({
       tenant_id: TENANT,
@@ -267,7 +268,7 @@ describe('MemoryEffectGuard', () => {
     expect(
       await guard.reserve(reservationInput(guard, { tenant_id: OTHER_TENANT, run_id: 'run-other-2' })),
     ).toEqual({ kind: 'IN_FLIGHT' });
-    expect(rowOf(guard, input.effect_key, OTHER_TENANT).status).toBe('RESERVED');
+    expect(rowOf(guard, otherInput.effect_key, OTHER_TENANT).status).toBe('RESERVED');
   });
 
   it('defaults to the provisional 72 h reservation window', async () => {

@@ -29,7 +29,6 @@
     "@agentos/database": "workspace:*",
     "@agentos/second-brain": "workspace:*",
     "ioredis": "^5.4.1",
-    "zod": "^3.23.8",
     "@opentelemetry/api": "^1.8.0"
   },
   "devDependencies": {

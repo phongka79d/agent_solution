@@ -26,6 +26,8 @@ import type {
 } from '../../gateway/ports.js';
 import { systemClock } from './run-port.js';
 
+const CONVERSATION_SESSION_TTL_SECONDS = 60 * 60;
+
 /** Encodes the canonical effect key and request fingerprint of one reservable effect. */
 export function createEffectGuard(repository: EffectReservationRepository): IEffectGuard {
   return {
@@ -149,31 +151,49 @@ export function createConversationPort(
       };
     },
 
+    list: async (tenant_id, limit) => {
+      const rows = await repository.list(tenant_id, limit);
+      return rows.map((row) => ({
+        ...row, channel: row.channel as ChannelId, bound: true,
+      }));
+    },
+
+    listMessages: (input) => repository.listMessages(input),
+
     setState: async (tenant_id, conversation_id, state, takeover_operator_id) => {
       await repository.setState(tenant_id, conversation_id, state, takeover_operator_id);
     },
+    clearTakeoverIfOwned: (tenant_id, conversation_id, operator_id) =>
+      repository.clearTakeoverIfOwned(tenant_id, conversation_id, operator_id),
 
-    appendMessage: async (input) => {
-      await repository.appendMessage({
-        tenant_id: input.tenant_id,
-        conversation_id: input.conversation_id,
-        sender_type: input.sender_type,
-        sender_id: input.sender_id,
-        content: input.content,
-        ...(input.content_type === undefined ? {} : { content_type: input.content_type }),
-        ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
-      });
-    },
+    appendMessage: (input) => repository.appendMessage({
+      tenant_id: input.tenant_id,
+      conversation_id: input.conversation_id,
+      sender_type: input.sender_type,
+      sender_id: input.sender_id,
+      content: input.content,
+      ...(input.content_type === undefined ? {} : { content_type: input.content_type }),
+      ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
+      ...(input.request_id === undefined ? {} : { request_id: input.request_id }),
+    }),
 
     issueSessionToken: async (input) => {
-      // The token is the binding itself, signed. It carries no authority of its own: the gateway
-      // still resolves the principal and re-checks the conversation on every request, and the
-      // signature is what makes the binding unforgeable rather than merely opaque.
-      const binding = `${input.tenant_id}.${input.conversation_id}.${input.channel}`;
+      const row = await repository.get(input.tenant_id, input.conversation_id);
+      if (row === null) {
+        throw new Error('CONVERSATION_NOT_FOUND: cannot issue a token for an unknown conversation');
+      }
+      const binding = JSON.stringify({
+        tenant_id: input.tenant_id,
+        conversation_id: input.conversation_id,
+        session_id: row.external_thread_id,
+        exp: Math.floor(Date.now() / 1000) + CONVERSATION_SESSION_TTL_SECONDS,
+        channel: input.channel,
+      });
+      const encodedBinding = Buffer.from(binding, 'utf8').toString('base64url');
       const signature = createHmac('sha256', options.session_secret)
         .update(binding, 'utf8')
         .digest('base64url');
-      return `${Buffer.from(binding, 'utf8').toString('base64url')}.${signature}`;
+      return `${encodedBinding}.${signature}`;
     },
   };
 }

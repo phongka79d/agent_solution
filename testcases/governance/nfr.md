@@ -154,7 +154,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-001.json`](../fixtures/scenarios/GOV-NFR-001.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-001.json`](../fixtures/scenarios/GOV-NFR-001.json).
 
 <a id="case-gov-nfr-001-bypass"></a>
 
@@ -280,7 +280,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-001-BYPASS.json`](../fixtures/scenarios/GOV-NFR-001-BYPASS.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-001-BYPASS.json`](../fixtures/scenarios/GOV-NFR-001-BYPASS.json).
 
 <a id="case-gov-nfr-002"></a>
 
@@ -387,7 +387,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/offline/consents.json`](../fixtures/offline/consents.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-002.json`](../fixtures/scenarios/GOV-NFR-002.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-002.json`](../fixtures/scenarios/GOV-NFR-002.json).
 
 <a id="case-gov-nfr-002-audit-outage"></a>
 
@@ -495,7 +495,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-002-AUDIT-OUTAGE.json`](../fixtures/scenarios/GOV-NFR-002-AUDIT-OUTAGE.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-002-AUDIT-OUTAGE.json`](../fixtures/scenarios/GOV-NFR-002-AUDIT-OUTAGE.json).
 
 <a id="case-gov-nfr-002-chain"></a>
 
@@ -612,7 +612,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-002-CHAIN.json`](../fixtures/scenarios/GOV-NFR-002-CHAIN.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-002-CHAIN.json`](../fixtures/scenarios/GOV-NFR-002-CHAIN.json).
 
 <a id="case-gov-nfr-002-denied-audited"></a>
 
@@ -717,7 +717,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-002-DENIED-AUDITED.json`](../fixtures/scenarios/GOV-NFR-002-DENIED-AUDITED.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-002-DENIED-AUDITED.json`](../fixtures/scenarios/GOV-NFR-002-DENIED-AUDITED.json).
 
 <a id="case-gov-nfr-003"></a>
 
@@ -838,7 +838,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/offline/consents.json`](../fixtures/offline/consents.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-003.json`](../fixtures/scenarios/GOV-NFR-003.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-003.json`](../fixtures/scenarios/GOV-NFR-003.json).
 
 <a id="case-gov-nfr-003-store-outage"></a>
 
@@ -950,7 +950,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-003-STORE-OUTAGE.json`](../fixtures/scenarios/GOV-NFR-003-STORE-OUTAGE.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-003-STORE-OUTAGE.json`](../fixtures/scenarios/GOV-NFR-003-STORE-OUTAGE.json).
 
 <a id="case-gov-nfr-004"></a>
 
@@ -1055,7 +1055,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/offline/catalog.json`](../fixtures/offline/catalog.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-004.json`](../fixtures/scenarios/GOV-NFR-004.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-004.json`](../fixtures/scenarios/GOV-NFR-004.json).
 
 <a id="case-gov-nfr-004-timeout"></a>
 
@@ -1153,7 +1153,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-004-TIMEOUT.json`](../fixtures/scenarios/GOV-NFR-004-TIMEOUT.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-004-TIMEOUT.json`](../fixtures/scenarios/GOV-NFR-004-TIMEOUT.json).
 
 <a id="case-gov-nfr-005"></a>
 
@@ -1256,7 +1256,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 - [`fixtures/offline/orders.json`](../fixtures/offline/orders.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-005.json`](../fixtures/scenarios/GOV-NFR-005.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-005.json`](../fixtures/scenarios/GOV-NFR-005.json).
 
 <a id="case-gov-nfr-005-routing"></a>
 
@@ -1365,7 +1365,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 - [`fixtures/offline/catalog.json`](../fixtures/offline/catalog.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-005-ROUTING.json`](../fixtures/scenarios/GOV-NFR-005-ROUTING.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-005-ROUTING.json`](../fixtures/scenarios/GOV-NFR-005-ROUTING.json).
 
 <a id="case-gov-nfr-006"></a>
 
@@ -1482,7 +1482,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/customers.json`](../fixtures/offline/customers.json)
 - [`fixtures/offline/tenants.json`](../fixtures/offline/tenants.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-006.json`](../fixtures/scenarios/GOV-NFR-006.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-006.json`](../fixtures/scenarios/GOV-NFR-006.json).
 
 <a id="case-gov-nfr-007"></a>
 
@@ -1581,7 +1581,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-007.json`](../fixtures/scenarios/GOV-NFR-007.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-007.json`](../fixtures/scenarios/GOV-NFR-007.json).
 
 <a id="case-gov-nfr-007-takeover"></a>
 
@@ -1680,7 +1680,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-007-TAKEOVER.json`](../fixtures/scenarios/GOV-NFR-007-TAKEOVER.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-007-TAKEOVER.json`](../fixtures/scenarios/GOV-NFR-007-TAKEOVER.json).
 
 <a id="case-gov-nfr-008"></a>
 
@@ -1807,7 +1807,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 - [`fixtures/offline/catalog.json`](../fixtures/offline/catalog.json)
 - [`fixtures/offline/consents.json`](../fixtures/offline/consents.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-008.json`](../fixtures/scenarios/GOV-NFR-008.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-008.json`](../fixtures/scenarios/GOV-NFR-008.json).
 
 <a id="case-gov-nfr-008-unknown"></a>
 
@@ -1916,7 +1916,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-008-UNKNOWN.json`](../fixtures/scenarios/GOV-NFR-008-UNKNOWN.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-008-UNKNOWN.json`](../fixtures/scenarios/GOV-NFR-008-UNKNOWN.json).
 
 <a id="case-gov-nfr-009"></a>
 
@@ -2017,7 +2017,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-009.json`](../fixtures/scenarios/GOV-NFR-009.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-009.json`](../fixtures/scenarios/GOV-NFR-009.json).
 
 <a id="case-gov-nfr-009-benchmark"></a>
 
@@ -2124,7 +2124,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-009-BENCHMARK.json`](../fixtures/scenarios/GOV-NFR-009-BENCHMARK.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-009-BENCHMARK.json`](../fixtures/scenarios/GOV-NFR-009-BENCHMARK.json).
 
 <a id="case-gov-nfr-010"></a>
 
@@ -2229,7 +2229,7 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-010.json`](../fixtures/scenarios/GOV-NFR-010.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-010.json`](../fixtures/scenarios/GOV-NFR-010.json).
 
 <a id="case-gov-nfr-010-budget"></a>
 
@@ -2330,4 +2330,4 @@ Generated from `sources/business.py`, `sources/governance.py`, `sources/platform
 
 - [`fixtures/offline/governance.json`](../fixtures/offline/governance.json)
 
-**Status.** `NOT_RUN` - descriptive acceptance specification for a future system under test; no application runtime exists in this repository, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-010-BUDGET.json`](../fixtures/scenarios/GOV-NFR-010-BUDGET.json).
+**Status.** `NOT_RUN` - descriptive acceptance specification; the repository runtime is not exercised by this generated document, so nothing here has been executed. Machine-readable copy: [`../fixtures/scenarios/GOV-NFR-010-BUDGET.json`](../fixtures/scenarios/GOV-NFR-010-BUDGET.json).

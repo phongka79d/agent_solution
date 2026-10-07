@@ -1,0 +1,32 @@
+{
+  "name": "@agentos/api-contract",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "files": ["dist", "openapi.json", "src/schema.d.ts"],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./schema": {
+      "types": "./dist/schema.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.build.json && node scripts/copy-schema.mjs",
+    "typecheck": "tsc --noEmit",
+    "lint": "node ../../scripts/eslint.mjs",
+    "generate": "openapi-typescript openapi.json -o src/schema.d.ts"
+  },
+  "devDependencies": {
+    "@agentos/eslint-config": "workspace:*",
+    "@agentos/typescript-config": "workspace:*",
+    "@types/node": "^20.12.12",
+    "openapi-typescript": "^7.8.0",
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0"
+  }
+}

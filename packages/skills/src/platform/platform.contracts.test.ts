@@ -56,6 +56,49 @@ const CANONICAL_SKILL_IDS: readonly string[] = Object.freeze([
 
 const EFFECT_BEARING: readonly SkillEffectClass[] = Object.freeze(['EFFECT', 'APPROVAL']);
 
+function sampleForSchema(schema: Record<string, unknown>): unknown {
+  if ('const' in schema) {
+    return schema.const;
+  }
+  if (Array.isArray(schema.enum) && schema.enum.length > 0) {
+    return schema.enum[0];
+  }
+
+  const type = Array.isArray(schema.type) ? schema.type.find((entry) => entry !== 'null') : schema.type;
+  if (type === 'object') {
+    const branch = Array.isArray(schema.oneOf) && schema.oneOf.length > 0
+      ? (schema.oneOf[0] as Record<string, unknown>)
+      : {};
+    const properties = {
+      ...((schema.properties as Record<string, unknown> | undefined) ?? {}),
+      ...((branch.properties as Record<string, unknown> | undefined) ?? {}),
+    };
+    const required = [
+      ...((Array.isArray(schema.required) ? schema.required : []) as string[]),
+      ...((Array.isArray(branch.required) ? branch.required : []) as string[]),
+    ];
+    return Object.fromEntries(
+      [...new Set(required)].map((key) => [
+        key,
+        sampleForSchema((properties[key] as Record<string, unknown> | undefined) ?? { type: 'string' }),
+      ]),
+    );
+  }
+  if (type === 'array') {
+    return [sampleForSchema((schema.items as Record<string, unknown> | undefined) ?? { type: 'string' })];
+  }
+  if (type === 'integer' || type === 'number') {
+    return 1;
+  }
+  if (type === 'boolean') {
+    return true;
+  }
+  if (schema.format === 'date-time') {
+    return '2026-01-01T00:00:00.000Z';
+  }
+  return 'fixture';
+}
+
 describe('platform skill registry', () => {
   const rows = createPlatformSkills(DEPS);
 
@@ -77,6 +120,13 @@ describe('platform skill registry', () => {
       expect(Number.isSafeInteger(row.retry_policy.max_retries), row.skill_id).toBe(true);
     }
   });
+  it('keeps each declared input schema aligned with its runtime normalizer', () => {
+    for (const row of rows) {
+      const sample = sampleForSchema(row.input_schema);
+      expect(() => row.validateInput(sample), row.skill_id).not.toThrow();
+    }
+  });
+
 
   it('gives every row the five §5 baseline cases plus at least one skill-specific case', () => {
     for (const row of rows) {

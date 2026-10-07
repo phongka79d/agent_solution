@@ -1,19 +1,46 @@
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-
 import { listApprovedKnowledge } from '@agentos/core-engine';
 import type { SkillToolInvocation } from '@agentos/skills';
 
 import { CareSkillToolError } from './errors.js';
 import { parseFaqMarkdown, scoreFaqMatch } from './faq-parser.js';
 
+function firstNonEmptyString(input: Record<string, unknown>, keys: readonly string[]): string | undefined {
+  for (const key of keys) {
+    const value = input[key];
+    if (typeof value === 'string' && value.trim().length > 0) return value.trim();
+  }
+  return undefined;
+}
+
+function readFaqQuery(input: Record<string, unknown>): string {
+  // A classifier may populate query_text with only its label (for example, "FAQ"). Prefer the
+  // server-extracted question/customer message so retrieval is grounded in what the customer asked.
+  const extractedValues = [
+    'extracted_query',
+    'question',
+    'customer_message',
+    'customerMessage',
+    'message',
+    'content',
+  ]
+    .map((key) => input[key])
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .map((value) => value.trim());
+  const queryText = firstNonEmptyString(input, ['query_text']);
+  const candidates = queryText === undefined ? extractedValues : [...extractedValues, queryText];
+  return candidates.find((value) => !/^(faq|faq[_-]search)$/i.test(value)) ?? candidates[0] ?? '';
+}
+
 /** Handles the approved SecondBrain FAQ lookup without changing the tool-port contract. */
 export async function handleFaqEngine<TOutput>(
   invocation: SkillToolInvocation<unknown>,
   knowledgeRoot: string,
 ): Promise<TOutput> {
-  const input = invocation.input as { tenant_id?: string; query_text?: string; top_k?: number } | undefined;
-  const query_text = (input?.query_text ?? '').toLowerCase().trim();
+  const input = (invocation.input ?? {}) as Record<string, unknown>;
+  const query_text = readFaqQuery(input).toLowerCase().trim();
 
   // 1. Approve-filtered corpus check
   let approvedDocs: readonly { path: string; status: string }[];
@@ -43,6 +70,7 @@ export async function handleFaqEngine<TOutput>(
   }
 
   const corpus = parseFaqMarkdown(rawContent, approvedFaq.path);
+  const source_version = createHash('sha256').update(rawContent).digest('hex');
   if (corpus.entries.length === 0) {
     throw new CareSkillToolError('CORPUS_UNAVAILABLE', 'Approved FAQ file contains no parseable entries');
   }
@@ -69,15 +97,18 @@ export async function handleFaqEngine<TOutput>(
     return {
       answers: [],
       match_confidence: 0,
+      source_version,
     } as TOutput;
   }
 
-  const topK = Math.max(1, input?.top_k ?? 5);
+  const rawTopK = input['top_k'];
+  const topK = typeof rawTopK === 'number' && Number.isInteger(rawTopK) && rawTopK > 0 ? rawTopK : 5;
   const topMatches = matching.slice(0, topK);
   const highestConfidence = Number(topMatches[0]!.score.toFixed(2));
 
   return {
     answers: topMatches.map((m) => m.faq),
     match_confidence: highestConfidence,
+    source_version,
   } as TOutput;
 }

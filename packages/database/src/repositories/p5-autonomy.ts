@@ -99,6 +99,7 @@ export interface CommitTenantAutonomyControlInput {
 export interface TokenCostRecord {
   readonly tenant_id: string;
   readonly record_id: string;
+  readonly idempotency_key: string;
   readonly run_id: string;
   readonly correlation_id: string;
   readonly model: string | null;
@@ -116,6 +117,8 @@ export interface TokenCostRecord {
 export interface AppendTokenCostRecordInput {
   readonly tenant_id: string;
   readonly record_id: string;
+  /** Stable producer key used to make retries a no-op; record_id is the compatibility fallback. */
+  readonly idempotency_key?: string;
   readonly run_id: string;
   readonly correlation_id: string;
   readonly model: string | null;
@@ -175,6 +178,7 @@ interface TenantAutonomyControlRow extends QueryResultRow {
 interface TokenCostRow extends QueryResultRow {
   tenant_id: string;
   record_id: string;
+  idempotency_key: string;
   run_id: string;
   correlation_id: string;
   model: string | null;
@@ -202,7 +206,7 @@ const CONTROL_COLUMNS = `
   tenant_id, paused, kill_switch, actor, reason, effective_at`;
 
 const COST_COLUMNS = `
-  tenant_id, record_id, run_id, correlation_id, model, provider, input_tokens,
+  tenant_id, record_id, idempotency_key, run_id, correlation_id, model, provider, input_tokens,
   output_tokens, cached_tokens, estimated_cost_amount, currency, cost_status,
   provenance, recorded_at`;
 
@@ -286,11 +290,16 @@ const UPSERT_CONTROL = `INSERT INTO ${AUTONOMY_CONTROLS} (
   RETURNING ${CONTROL_COLUMNS}`;
 
 const INSERT_COST = `INSERT INTO ${TOKEN_COST_RECORDS} (
-    tenant_id, record_id, run_id, correlation_id, model, provider, input_tokens,
+    tenant_id, record_id, idempotency_key, run_id, correlation_id, model, provider, input_tokens,
     output_tokens, cached_tokens, estimated_cost_amount, currency, cost_status,
     provenance, recorded_at
-  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::timestamptz)
+  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15::timestamptz)
+  ON CONFLICT (tenant_id, idempotency_key) DO NOTHING
   RETURNING ${COST_COLUMNS}`;
+
+const SELECT_COST_BY_IDEMPOTENCY = `SELECT ${COST_COLUMNS}
+  FROM ${TOKEN_COST_RECORDS}
+  WHERE tenant_id = $1 AND idempotency_key = $2`;
 
 const SELECT_COSTS = `SELECT ${COST_COLUMNS}
   FROM ${TOKEN_COST_RECORDS}
@@ -301,6 +310,9 @@ const SELECT_COSTS_BY_RUN = `SELECT ${COST_COLUMNS}
   FROM ${TOKEN_COST_RECORDS}
   WHERE tenant_id = $1 AND run_id = $2
   ORDER BY recorded_at ASC, record_id ASC`;
+const SELECT_COST_USAGE_TOTAL = `SELECT COALESCE(SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)), 0)::BIGINT AS total_tokens
+  FROM ${TOKEN_COST_RECORDS}
+  WHERE tenant_id = $1`;
 
 function iso(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
@@ -530,6 +542,12 @@ export class P5AutonomyRepository {
   async appendTokenCost(input: AppendTokenCostRecordInput): Promise<TokenCostRecord> {
     requireText(input.tenant_id, 'tenant_id', 'P5_COST_TENANT_REQUIRED', 36);
     requireText(input.record_id, 'record_id', 'P5_COST_RECORD_REQUIRED', 36);
+    const idempotency_key = requireText(
+      input.idempotency_key ?? input.record_id,
+      'idempotency_key',
+      'P5_COST_IDEMPOTENCY_REQUIRED',
+      128,
+    );
     requireText(input.run_id, 'run_id', 'P5_COST_RUN_REQUIRED', 128);
     requireText(input.correlation_id, 'correlation_id', 'P5_COST_CORRELATION_REQUIRED', 128);
     requireInstant(input.recorded_at, 'recorded_at', 'P5_COST_RECORDED_AT_REQUIRED');
@@ -537,6 +555,7 @@ export class P5AutonomyRepository {
       const result = await client.query<TokenCostRow>(INSERT_COST, [
         input.tenant_id,
         input.record_id,
+        idempotency_key,
         input.run_id,
         input.correlation_id,
         input.model,
@@ -551,8 +570,17 @@ export class P5AutonomyRepository {
         input.recorded_at,
       ]);
       const row = result.rows[0];
-      if (row === undefined) throw new Error('P5_COST_EMPTY: cost write returned no row.');
-      return toCost(row);
+      if (row !== undefined) return toCost(row);
+
+      const existing = await client.query<TokenCostRow>(SELECT_COST_BY_IDEMPOTENCY, [
+        input.tenant_id,
+        idempotency_key,
+      ]);
+      const existingRow = existing.rows[0];
+      if (existingRow === undefined) {
+        throw new Error('P5_COST_UNSTABLE: idempotency conflict returned no visible cost row.');
+      }
+      return toCost(existingRow);
     });
   }
 
@@ -564,6 +592,18 @@ export class P5AutonomyRepository {
         ? await client.query<TokenCostRow>(SELECT_COSTS, [tenant_id])
         : await client.query<TokenCostRow>(SELECT_COSTS_BY_RUN, [tenant_id, run_id]);
       return result.rows.map(toCost);
+    });
+  }
+  async totalTokenUsage(tenant_id: string): Promise<number> {
+    requireText(tenant_id, 'tenant_id', 'P5_COST_TENANT_REQUIRED', 36);
+    return this.runInTenantTransaction(tenant_id, async (client) => {
+      const result = await client.query<{ total_tokens: number | string }>(SELECT_COST_USAGE_TOTAL, [tenant_id]);
+      const total = result.rows[0]?.total_tokens;
+      const parsed = typeof total === 'number' ? total : Number(total);
+      if (!Number.isSafeInteger(parsed) || parsed < 0) {
+        throw new Error('P5_COST_USAGE_INVALID: aggregate token usage is not a safe non-negative integer.');
+      }
+      return parsed;
     });
   }
 

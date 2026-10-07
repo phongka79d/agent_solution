@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import { type Customer360Fact, type HydratedContext, type SignalEnvelope } from '@agentos/core-engine/contracts';
 import { SalesAgentRuntime, type SkillRegistryPort, type SkillRegistryRowMetadata } from './agent-runtime.js';
-
+import { SalesAdvisorExecutionState } from './advisor-adapters.js';
 
 describe('SalesAgentRuntime', () => {
   const tenant_id = '00000000-0000-4000-8000-000000000001';
@@ -167,7 +167,16 @@ describe('SalesAgentRuntime', () => {
       expect(plan.steps).toHaveLength(1);
       expect(plan.steps[0]?.agent_id).toBe('SAL-02');
       expect(plan.steps[0]?.skill_id).toBe('skill.sales.recommend_product');
-      expect(plan.handoff_intent).toEqual({
+      expect(plan.handoff_intent).toBeUndefined();
+
+      const boundRuntime = new SalesAgentRuntime({
+        registry: createRegistryPort(),
+        careOnboardingItinerary: { steps: ['owner-configured-welcome'] },
+      });
+      const boundHypothesis = await boundRuntime.deriveHypothesis(signal, verifiedContext);
+      const boundRouting = await boundRuntime.resolveRouting(signal, verifiedContext, boundHypothesis);
+      const boundPlan = await boundRuntime.formulatePlan(boundRouting, verifiedContext, boundHypothesis);
+      expect(boundPlan.handoff_intent).toEqual({
         source_domain: 'sales',
         target_domain: 'care',
         target_agent: 'CS-01',
@@ -718,6 +727,123 @@ describe('SalesAgentRuntime', () => {
 
       const plan = await runtime.formulatePlan(routing, verifiedContext, hypothesis);
       expect(plan.steps).toHaveLength(0);
+    });
+  });
+
+  describe('API-stamped advisor proposals', () => {
+    it('plans generic-currency read and quote steps while keeping proposed SKU unverified', async () => {
+      const advisor_state = new SalesAdvisorExecutionState();
+      const runtime = new SalesAgentRuntime({
+        registry: createRegistryPort({
+          'skill.sales.check_price': {
+            ...canonicalSalesRegistry['skill.sales.check_price']!,
+            enabled: true,
+          },
+        }),
+        advisor_state,
+        advisor_price_floor_bound: true,
+        advisor_quote_signing_bound: true,
+      });
+      const signal: SignalEnvelope = {
+        signal_id: 'sig-advisor-usd',
+        tenant_id,
+        correlation_id: 'corr-sales-advisor-usd',
+        source_channel: 'WEB_CHAT',
+        event_type: 'message.received',
+        timestamp: '2026-09-01T00:00:00Z',
+        subject: { session_id: 'sess-advisor-usd', channel_type: 'web' },
+        payload: {
+          message: 'Find a portable travel device',
+          sales_proposal_source: 'API_GATEWAY',
+          sales_intent: 'advisor',
+          sales_requirements: {
+            category: 'electronics',
+            budget: { amount: 900, currency: 'USD' },
+            use_case: 'travel',
+            product_eligibility: { sku: 'SKU-PROPOSED-ONLY', category: 'portable' },
+          },
+        },
+      };
+
+      const hypothesis = await runtime.deriveHypothesis(signal, verifiedContext);
+      expect(hypothesis.intent).toBe('advisor');
+      const routing = await runtime.resolveRouting(signal, verifiedContext, hypothesis);
+      expect(routing.requires_clarification).toBe(false);
+
+      const plan = await runtime.formulatePlan(routing, verifiedContext, hypothesis);
+      expect(plan.steps.map((step) => step.skill_id)).toEqual([
+        'skill.sales.search_product',
+        'skill.sales.check_stock',
+        'skill.sales.check_price',
+        'skill.sales.recommend_product',
+      ]);
+      expect(plan.steps[0]?.input_parameters).toMatchObject({
+        tenant_id,
+        query: 'SKU-PROPOSED-ONLY',
+        category_id: 'portable',
+      });
+      expect(plan.steps[1]?.input_parameters).toMatchObject({ tenant_id, sku_id: '' });
+      expect(plan.steps[2]?.input_parameters).toMatchObject({ tenant_id, sku_id: '' });
+      expect(plan.steps[1]?.input_bindings).toEqual({
+        sku_id: { source_step_index: 1, response_path: 'products.0.sku' },
+      });
+      expect(plan.steps[2]?.input_bindings).toEqual({
+        sku_id: { source_step_index: 2, response_path: 'sku_id' },
+      });
+    });
+
+    it('clarifies with the missing fields instead of inventing advisor requirements', async () => {
+      const runtime = new SalesAgentRuntime({ registry: createRegistryPort() });
+      const signal: SignalEnvelope = {
+        signal_id: 'sig-advisor-missing-use-case',
+        tenant_id,
+        correlation_id: 'corr-sales-advisor-missing',
+        source_channel: 'WEB_CHAT',
+        event_type: 'message.received',
+        timestamp: '2026-09-01T00:00:00Z',
+        subject: { session_id: 'sess-advisor-missing', channel_type: 'web' },
+        payload: {
+          sales_proposal_source: 'API_GATEWAY',
+          sales_intent: 'advisor',
+          sales_requirements: {
+            category: 'electronics',
+            budget: { amount: 900, currency: 'EUR' },
+          },
+        },
+      };
+
+      const hypothesis = await runtime.deriveHypothesis(signal, verifiedContext);
+      const routing = await runtime.resolveRouting(signal, verifiedContext, hypothesis);
+      expect(routing.requires_clarification).toBe(true);
+      expect(routing.clarification_prompt).toContain('use case');
+      const plan = await runtime.formulatePlan(routing, verifiedContext, hypothesis);
+      expect(plan.steps).toHaveLength(0);
+    });
+
+    it('rejects legacy budget_vnd instead of silently assuming a currency', async () => {
+      const runtime = new SalesAgentRuntime({ registry: createRegistryPort() });
+      const signal: SignalEnvelope = {
+        signal_id: 'sig-advisor-legacy-budget',
+        tenant_id,
+        correlation_id: 'corr-sales-advisor-legacy',
+        source_channel: 'WEB_CHAT',
+        event_type: 'message.received',
+        timestamp: '2026-09-01T00:00:00Z',
+        subject: { session_id: 'sess-advisor-legacy', channel_type: 'web' },
+        payload: {
+          sales_proposal_source: 'API_GATEWAY',
+          sales_intent: 'advisor',
+          sales_requirements: {
+            category: 'electronics',
+            budget_vnd: 900,
+            use_case: 'travel',
+          },
+        },
+      };
+
+      await expect(runtime.deriveHypothesis(signal, verifiedContext)).rejects.toMatchObject({
+        code: 'SALES_STRUCTURED_INTENT_INVALID',
+      });
     });
   });
 });

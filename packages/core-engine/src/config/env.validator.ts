@@ -27,6 +27,9 @@ export type NodeEnv = 'development' | 'test' | 'production';
 export type LogLevel = 'error' | 'warn' | 'info' | 'debug';
 export type StorageProvider = 's3' | 'r2' | 'local';
 export type PaypalMode = 'sandbox' | 'live';
+export type LlmProvider = 'openai-compatible';
+export type OpenAIStructuredOutputMode = 'json_object' | 'json_schema';
+
 
 /** A single validation failure. `path` is the variable name; `message` names it and never prints its value. */
 export interface EnvironmentIssue {
@@ -71,9 +74,14 @@ export interface Environment {
   QDRANT_API_KEY: string;
   EMBEDDING_DIMENSIONS: number;
 
+  DEFAULT_LLM_PROVIDER: LlmProvider;
+  OPENAI_BASE_URL: string;
   OPENAI_API_KEY: string;
   PRIMARY_REASONING_MODEL: string;
   FAST_COMPLETION_MODEL: string;
+  OPENAI_STRUCTURED_OUTPUT_MODE: OpenAIStructuredOutputMode;
+  LLM_REQUEST_TIMEOUT_MS: number;
+  MAX_TOKENS_PER_RUN: number;
 
   ERP_API_BASE_URL: string;
   ERP_TIMEOUT_MS: number;

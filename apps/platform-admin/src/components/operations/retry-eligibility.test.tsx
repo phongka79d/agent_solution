@@ -9,7 +9,6 @@
  * 4. RunTable renders the Retry button as disabled with explanatory tooltip when a run has UNKNOWN error.
  */
 
-import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { AgentRunProjection } from './types';

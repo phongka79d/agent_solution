@@ -1,10 +1,12 @@
 /**
- * @file The circuit breaker that guards one provider dependency (implement/05 §2, §6.5, NFR-004).
+ * @file The circuit breaker that guards one tenant/skill execution stream (implement/05 §2, §6.5,
+ * NFR-004).
  *
- * One breaker per `guarded_dependency` key, not one per skill: two rows that reach the same provider
- * share a guard, so an outage opens it for every row that depends on it. The breaker decides
- * admission only — the engine refuses with `CIRCUIT_BREAKER_OPEN` before any adapter call — and it
- * never dispatches, retries, reserves an effect or reconciles one.
+ * Breaker state is scoped by the runtime to `(tenant_id, skill_id)`: one tenant's provider outage
+ * never suppresses another tenant, and one skill's failures never suppress a sibling skill that
+ * happens to use the same connector. The breaker decides admission only — the engine refuses with
+ * `CIRCUIT_BREAKER_OPEN` before any adapter call — and it never dispatches, retries, reserves an
+ * effect or reconciles one.
  *
  * The clock is injected: `Date.now` is the default, and a caller that supplies one (the runtime
  * engine does, and a test can) makes the failure threshold and the reset window observable without
@@ -42,11 +44,13 @@ export const DEFAULT_RESET_TIMEOUT_MS = 30_000;
 export class CircuitBreaker {
   private state: CircuitState = 'CLOSED';
   private failureCount: number = 0;
+  /** A single admitted HALF_OPEN call owns this probe until it records a result. */
+  private halfOpenProbeInFlight = false;
   /** Stamp of the last state change, read from the injected clock and never from the ambient one. */
   private lastStateChangedAt: number;
 
   /**
-   * Builds a breaker for one dependency.
+   * Builds a breaker for one tenant/skill stream.
    *
    * @param failureThreshold Consecutive failures that open this breaker; defaults to `5`
    *   (`[PROVISIONAL][ASM-002]`, §1.3).
@@ -65,22 +69,27 @@ export class CircuitBreaker {
   /**
    * Decides whether one call to the guarded dependency may proceed.
    *
-   * While `CLOSED` or `HALF_OPEN` the call is admitted. While `OPEN` it is refused until the window
-   * has fully elapsed: the flip happens when `now() - lastStateChangedAt` is strictly greater than
-   * `resetTimeoutMs`, at which point the breaker flips to `HALF_OPEN`, stamps the clock and admits
-   * exactly one probe. A refused call therefore never mutates the state.
-   *
-   * @returns `true` when the caller may attempt the guarded call, `false` while the breaker is open.
+   * A breaker flips from OPEN to HALF_OPEN once the reset window has elapsed and admits exactly one
+   * probe. Further calls are refused until that probe records success or failure; a successful probe
+   * closes the breaker and a failed probe re-opens it.
    */
   public canExecute(): boolean {
     if (this.state === 'OPEN') {
       const at = this.now();
-      if (at - this.lastStateChangedAt > this.resetTimeoutMs) {
+      if (at - this.lastStateChangedAt >= this.resetTimeoutMs) {
         this.state = 'HALF_OPEN';
         this.lastStateChangedAt = at;
+        this.halfOpenProbeInFlight = true;
         return true;
       }
       return false;
+    }
+    if (this.state === 'HALF_OPEN') {
+      if (this.halfOpenProbeInFlight) {
+        return false;
+      }
+      this.halfOpenProbeInFlight = true;
+      return true;
     }
     return true;
   }
@@ -93,6 +102,7 @@ export class CircuitBreaker {
   public recordSuccess(): void {
     this.failureCount = 0;
     this.state = 'CLOSED';
+    this.halfOpenProbeInFlight = false;
   }
 
   /**
@@ -105,6 +115,7 @@ export class CircuitBreaker {
    */
   public recordFailure(): void {
     this.failureCount += 1;
+    this.halfOpenProbeInFlight = false;
     if (this.failureCount >= this.failureThreshold || this.state === 'HALF_OPEN') {
       this.state = 'OPEN';
       this.lastStateChangedAt = this.now();

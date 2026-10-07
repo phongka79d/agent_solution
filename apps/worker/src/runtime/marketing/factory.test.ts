@@ -71,10 +71,14 @@ interface OrchestratorInternals {
     readonly contextAggregator: IContextAggregator;
     readonly agentRuntime: IAgentRuntime;
     readonly policyEngine: IPolicyEngine;
+    readonly assertExecutionLease?: unknown;
   };
 }
 
-const makeFactory = (crossDomainHandoff = false) => createMarketingOrchestratorFactory({
+const makeFactory = (
+  crossDomainHandoff = false,
+  audiencePolicy?: { getApprovedAudienceLimit: (tenant_id: string) => Promise<number | undefined> },
+) => createMarketingOrchestratorFactory({
   auditSecret: AUDIT_SECRET,
   audit: null,
   workflowRepository: {} as DurableWorkflowRepository,
@@ -88,6 +92,7 @@ const makeFactory = (crossDomainHandoff = false) => createMarketingOrchestratorF
   adapterDispatcher: {} as IAdapterDispatcher,
   effectGuard: {} as IEffectGuard,
   policyEngine: {} as IPolicyEngine,
+  ...(audiencePolicy === undefined ? {} : { audiencePolicy }),
   ...(crossDomainHandoff
     ? { crossDomainHandoff: { admit: vi.fn() } }
     : {}),
@@ -97,12 +102,15 @@ const internals = (orchestrator: unknown): OrchestratorInternals => orchestrator
 
 describe('Marketing policy factory composition', () => {
   it('retains the audit secret and autonomy port without promoting AUTH-4 campaign dispatch', async () => {
+
     const auditTrail: IAuditTrail = { append: vi.fn(async () => undefined) };
     const admit = vi.fn(async () => ({ workflow: 'PARKED_DRAFT' as const, reason: 'not promoted' }));
+    const assertExecutionLease = vi.fn(async () => undefined);
     const factory = createMarketingOrchestratorFactory({
       auditSecret: AUDIT_SECRET,
       autonomy: { admit },
       resolve_grant: async () => 'AUTH-3',
+      assertExecutionLease,
       adapters: {
         workflowEngine: {} as IStatefulWorkflowEngine,
         evidenceLogger: {} as IEvidenceLogger,
@@ -113,7 +121,9 @@ describe('Marketing policy factory composition', () => {
       adapterDispatcher: {} as IAdapterDispatcher,
       effectGuard: {} as IEffectGuard,
     });
-    const policyEngine = internals(await factory(TENANT)).dependencies.policyEngine;
+    const orchestrator = await factory(TENANT);
+    expect(internals(orchestrator).dependencies.assertExecutionLease).toBe(assertExecutionLease);
+    const policyEngine = internals(orchestrator).dependencies.policyEngine;
     const context: HydratedContext = {
       tenant_id: TENANT,
       correlation_id: 'correlation-marketing-test',
@@ -165,6 +175,20 @@ describe('Marketing policy factory composition', () => {
       skill_id: 'skill.mkt.segment_audience',
     }));
   });
+  it('records a structured blocker when the audit secret is unavailable', async () => {
+    const blockers: string[] = [];
+    const factory = createMarketingOrchestratorFactory({
+      auditSecret: '',
+      env: { AUDIT_HMAC_SECRET: '' },
+      blockers,
+    });
+
+    await expect(factory(TENANT)).resolves.toBeNull();
+    expect(blockers).toEqual([
+      expect.stringContaining('MARKETING_AUDIT_SECRET_REQUIRED'),
+    ]);
+  });
+
 });
 
 describe('default Marketing context aggregation', () => {
@@ -251,5 +275,218 @@ describe('default Marketing context aggregation', () => {
       target_agent: 'SAL-02',
       reason: 'Marketing leg completed for a verified customer; Sales consultation is the next leg',
     });
+  });
+
+  it('plans an operator campaign as segment → content → brand → AUTH-4 dispatch with no per-customer step', async () => {
+    const orchestrator = await makeFactory()(TENANT);
+    const { contextAggregator, agentRuntime } = internals(orchestrator).dependencies;
+    // The subject the gateway stamps for an operator command: the operator session, under the
+    // Marketing contract's own channel — never the browser WEB_CHAT turn the file defaults to.
+    const campaignSubject = {
+      session_id: 'demo-tenant-operator',
+      channel_type: 'MARKETING_CAMPAIGN',
+      channel_identifier: 'demo-tenant-operator',
+    };
+    const context = await contextAggregator.hydrateContext(TENANT, campaignSubject, 'correlation-campaign-plan');
+
+    // The shape the gateway stamps for an operator campaign draft: the normalized envelope under
+    // `input`, `module: 'marketing'`, and the Marketing contract's own source channel.
+    const campaign: SignalEnvelope = {
+      signal_id: 'signal-campaign-plan',
+      tenant_id: TENANT,
+      correlation_id: 'correlation-campaign-plan',
+      source_channel: 'MARKETING_CAMPAIGN',
+      event_type: 'campaign.requested',
+      subject: campaignSubject,
+      timestamp: '2026-01-01T00:00:00.000Z',
+      payload: {
+        module: 'marketing',
+        skill_id: 'skill.mkt.generate_content',
+        input: {
+          objective: 'winback',
+          segment_id: 'inactive_90d',
+          instruction: 'Reactivate the 90-day inactive segment.',
+          content_constraints: { channel: 'EMAIL_HTML', locale: 'vi-VN' },
+        },
+      },
+    };
+
+    const hypothesis = await agentRuntime.deriveHypothesis(campaign, context);
+    const routing = await agentRuntime.resolveRouting(campaign, context, hypothesis);
+    const plan = await agentRuntime.formulatePlan(routing, context, hypothesis);
+
+    // Contiguous steps, and the approval gate is on the dispatch step itself: the plan parks in
+    // SCR-003 as AUTH-4 before any provider call.
+    expect(plan.steps.map((step) => step.step_index)).toEqual([1, 2, 3, 4]);
+    const content = plan.steps[1]!;
+    expect(content.input_parameters).toMatchObject({
+      campaign_theme: 'Reactivate the 90-day inactive segment.',
+      channel: 'EMAIL_HTML',
+      locale: 'vi-VN',
+    });
+    expect(content.timeout_ms).toBe(18000);
+    const audit = plan.steps[2]!;
+    expect(audit.input_bindings).toEqual({
+      draft_text: { source_step_index: 2, response_path: 'brand_audit_text' },
+    });
+    const dispatch = plan.steps[3]!;
+    expect(dispatch.skill_id).toBe('skill.mkt.dispatch_campaign');
+    expect(dispatch.required_authority).toBe('AUTH-4');
+    expect(dispatch.mutating).toBe(true);
+    expect(dispatch.depends_on_steps).toEqual([1, 2, 3]);
+    expect(dispatch.input_bindings).toEqual({
+      segment_id: { source_step_index: 1, response_path: 'segment_id' },
+      approved_content_id: { source_step_index: 2, response_path: 'draft_id' },
+    });
+
+    // No pre-approval per-customer consent step: a segment identifier is not a customer identity,
+    // and no step may assert one. Consent is re-read per recipient by the dispatch tool itself.
+    expect(plan.steps.some((step) => step.skill_id === 'skill.mkt.check_consent')).toBe(false);
+    for (const step of plan.steps) {
+      expect(Object.keys(step.input_bindings ?? {})).not.toContain('customer_id');
+      expect(Object.keys(step.input_parameters)).not.toContain('customer_id');
+    }
+  });
+  it('refuses an operator audience request above the owner-approved policy cap', async () => {
+    const policy = {
+      getApprovedAudienceLimit: vi.fn(async () => 25),
+    };
+    const orchestrator = await makeFactory(false, policy)(TENANT);
+    const { contextAggregator, agentRuntime } = internals(orchestrator).dependencies;
+    const campaignSubject = {
+      session_id: 'demo-tenant-operator-cap',
+      channel_type: 'MARKETING_CAMPAIGN',
+      channel_identifier: 'demo-tenant-operator-cap',
+    };
+    const context = await contextAggregator.hydrateContext(TENANT, campaignSubject, 'correlation-campaign-cap');
+    const campaign: SignalEnvelope = {
+      signal_id: 'signal-campaign-cap',
+      tenant_id: TENANT,
+      correlation_id: 'correlation-campaign-cap',
+      source_channel: 'MARKETING_CAMPAIGN',
+      event_type: 'campaign.requested',
+      subject: campaignSubject,
+      timestamp: '2026-01-01T00:00:00.000Z',
+      payload: {
+        module: 'marketing',
+        input: {
+          objective: 'reactivation',
+          segment_id: 'inactive_90d',
+          max_segment_size: 26,
+          content_constraints: { channel: 'EMAIL_HTML', locale: 'en-US' },
+        },
+      },
+    };
+    const hypothesis = await agentRuntime.deriveHypothesis(campaign, context);
+    const routing = await agentRuntime.resolveRouting(campaign, context, hypothesis);
+
+    await expect(agentRuntime.formulatePlan(routing, context, hypothesis)).rejects.toMatchObject({
+      code: 'AUDIENCE_LIMIT_EXCEEDED',
+    });
+    expect(policy.getApprovedAudienceLimit).toHaveBeenCalledWith(TENANT);
+  });
+  it('keeps retained signals tenant-scoped when signal ids collide', async () => {
+    const factory = makeFactory();
+    const first = await factory(TENANT);
+    const second = await factory(OTHER_TENANT);
+    expect(first).not.toBeNull();
+    expect(second).not.toBeNull();
+
+    const firstInternals = internals(first);
+    const secondInternals = internals(second);
+    const firstContext = await firstInternals.dependencies.contextAggregator.hydrateContext(
+      TENANT,
+      subject,
+      'correlation-signal-tenant-a',
+    );
+    const secondContext = await secondInternals.dependencies.contextAggregator.hydrateContext(
+      OTHER_TENANT,
+      {
+        session_id: subject.session_id,
+        channel_type: subject.channel_type,
+      },
+      'correlation-signal-tenant-b',
+    );
+    const firstSignal = { ...signal(), signal_id: 'same-signal-id', tenant_id: TENANT };
+    const secondSignal = {
+      ...signal(),
+      signal_id: 'same-signal-id',
+      tenant_id: OTHER_TENANT,
+      correlation_id: 'correlation-signal-tenant-b',
+    };
+
+    const firstHypothesis = await firstInternals.dependencies.agentRuntime.deriveHypothesis(firstSignal, firstContext);
+    const secondHypothesis = await secondInternals.dependencies.agentRuntime.deriveHypothesis(secondSignal, secondContext);
+    const routing = {
+      target_agent: 'MKT-01' as const,
+      requires_clarification: false,
+      rationalization: 'test',
+    };
+    const firstPlan = await firstInternals.dependencies.agentRuntime.formulatePlan(
+      routing,
+      firstContext,
+      firstHypothesis,
+    );
+    const secondPlan = await secondInternals.dependencies.agentRuntime.formulatePlan(
+      routing,
+      secondContext,
+      secondHypothesis,
+    );
+
+    expect(firstPlan.steps[0]!.input_parameters.tenant_id).toBe(TENANT);
+    expect(secondPlan.steps[0]!.input_parameters.tenant_id).toBe(OTHER_TENANT);
+  });
+
+  it('accepts instructions up to 2000 characters and rejects instructions exceeding 2000 characters', async () => {
+    const orchestrator = await makeFactory()(TENANT);
+    const { contextAggregator, agentRuntime } = internals(orchestrator).dependencies;
+    const campaignSubject = {
+      session_id: 'demo-tenant-operator',
+      channel_type: 'MARKETING_CAMPAIGN',
+      channel_identifier: 'demo-tenant-operator',
+    };
+    const context = await contextAggregator.hydrateContext(TENANT, campaignSubject, 'correlation-campaign-long');
+    const longInstruction = 'A'.repeat(1500);
+    const validCampaign: SignalEnvelope = {
+      signal_id: 'signal-campaign-long',
+      tenant_id: TENANT,
+      correlation_id: 'correlation-campaign-long',
+      source_channel: 'MARKETING_CAMPAIGN',
+      event_type: 'campaign.requested',
+      subject: campaignSubject,
+      timestamp: '2026-01-01T00:00:00.000Z',
+      payload: {
+        module: 'marketing',
+        skill_id: 'skill.mkt.generate_content',
+        input: {
+          objective: 'winback',
+          segment_id: 'inactive_90d',
+          instruction: longInstruction,
+          content_constraints: { channel: 'EMAIL_HTML', locale: 'vi-VN' },
+        },
+      },
+    };
+
+    const hypothesis = await agentRuntime.deriveHypothesis(validCampaign, context);
+    const routing = await agentRuntime.resolveRouting(validCampaign, context, hypothesis);
+    const plan = await agentRuntime.formulatePlan(routing, context, hypothesis);
+    expect(plan.steps.length).toBe(4);
+
+    const tooLongCampaign: SignalEnvelope = {
+      ...validCampaign,
+      payload: {
+        ...validCampaign.payload,
+        input: {
+          ...(validCampaign.payload as Record<string, unknown>).input as Record<string, unknown>,
+          instruction: 'A'.repeat(2001),
+        },
+      },
+    };
+
+    const tooLongHypothesis = await agentRuntime.deriveHypothesis(tooLongCampaign, context);
+    const tooLongRouting = await agentRuntime.resolveRouting(tooLongCampaign, context, tooLongHypothesis);
+    await expect(agentRuntime.formulatePlan(tooLongRouting, context, tooLongHypothesis)).rejects.toThrow(
+      'campaign.requested instruction must be a bounded non-empty string <= 2000 chars when supplied',
+    );
   });
 });

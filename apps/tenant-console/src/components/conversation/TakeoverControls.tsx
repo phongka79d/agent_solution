@@ -4,7 +4,6 @@
  */
 'use client';
 
-import React from 'react';
 import type { TakeoverLeaseState } from './types';
 
 export interface TakeoverControlsProps {
@@ -48,133 +47,76 @@ export function TakeoverControls({
   };
 
   return (
-    <div className="bg-slate-900 border-b border-slate-800">
-      <div className="p-3 sm:p-4 flex flex-wrap justify-between items-center gap-3">
-        {/* State Indicator */}
+    <div className="tenant-takeover-controls">
+      <div className="tenant-takeover-controls__body">
         <div className="flex items-center gap-3">
-          <div className="relative flex items-center justify-center w-3 h-3">
-            {isTakenOver ? (
-              <>
-                <span className="absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75 animate-ping" />
-                <span className="relative inline-flex rounded-full h-3 w-3 bg-amber-500" />
-              </>
-            ) : isAcquiring || isReleasing ? (
-              <>
-                <span className="absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-75 animate-ping" />
-                <span className="relative inline-flex rounded-full h-3 w-3 bg-sky-500" />
-              </>
-            ) : isConflict ? (
-              <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500" />
-            ) : isStale ? (
-              <span className="relative inline-flex rounded-full h-3 w-3 bg-orange-500" />
-            ) : (
-              <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500" />
-            )}
-          </div>
-
+          <span className={`tenant-takeover-controls__dot ${
+            isTakenOver
+              ? 'tenant-takeover-controls__dot--warning'
+              : isAcquiring || isReleasing
+              ? 'tenant-takeover-controls__dot--info'
+              : isConflict
+              ? 'tenant-takeover-controls__dot--danger'
+              : isStale
+              ? 'tenant-takeover-controls__dot--warning'
+              : 'tenant-takeover-controls__dot--success'
+          }`} aria-hidden="true" />
           <div className="flex flex-col">
-            <span className="text-xs font-mono font-semibold text-slate-200">
+            <span className="font-mono text-sm font-semibold text-ink">
               {isTakenOver ? (
-                <span className="text-amber-400 font-bold">
-                  Control Mode: HUMAN_TAKEOVER (Autonomous AI Outbound Suppressed)
-                </span>
+                <span className="font-bold text-warning">Control Mode: HUMAN_TAKEOVER (Autonomous AI Outbound Suppressed)</span>
               ) : isAcquiring ? (
-                <span className="text-sky-400">
-                  Control Mode: HANDOVER_REQUESTED (Acquiring Mutex Lease...)
-                </span>
+                <span className="text-info">Control Mode: HANDOVER_REQUESTED (Acquiring Mutex Lease...)</span>
               ) : isReleasing ? (
-                <span className="text-sky-400">
-                  Control Mode: RESUME_AUDIT (Re-validating & Releasing...)
-                </span>
+                <span className="text-info">Control Mode: RESUME_AUDIT (Re-validating & Releasing...)</span>
               ) : isConflict ? (
-                <span className="text-rose-400">
-                  Control Mode: LEASE_CONFLICT (409 Locked by Another Operator)
-                </span>
+                <span className="text-danger">Control Mode: LEASE_CONFLICT (409 Locked by Another Operator)</span>
               ) : isStale ? (
-                <span className="text-orange-400">
-                  Control Mode: LEASE_STALE (Heartbeat Lapsed, AI Active)
-                </span>
+                <span className="text-warning">Control Mode: LEASE_STALE (Heartbeat Lapsed, AI Active)</span>
               ) : (
-                <span className="text-emerald-400">
-                  Control Mode: AI_CONTROLLED (= ACTIVE)
-                </span>
+                <span className="text-success">Control Mode: AI_CONTROLLED (= ACTIVE)</span>
               )}
             </span>
-
-            {isTakenOver && leaseExpiresAt && (
-              <span className="text-[10px] font-mono text-slate-400 mt-0.5">
+            {isTakenOver && leaseExpiresAt ? (
+              <span className="mt-0.5 font-mono text-xs text-muted">
                 Lease active (renews every 30s) · Expires: {formatTime(leaseExpiresAt)}
                 {lastHeartbeatAt && ` · Last heartbeat: ${formatTime(lastHeartbeatAt)}`}
               </span>
-            )}
+            ) : null}
           </div>
         </div>
 
-        {/* Action Controls */}
         <div className="flex items-center gap-2">
           {isTakenOver ? (
             <>
-              <button
-                type="button"
-                onClick={onOpenEvaluation}
-                className="px-3 py-1.5 rounded text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors"
-                title="Rate dialogue quality per SCR-005 (renders explicit unavailable state)"
-              >
+              <button type="button" onClick={onOpenEvaluation} className="ui-button ui-button--secondary ui-button--sm" title="Rate dialogue quality per SCR-005 (renders explicit unavailable state)">
                 Rate Dialogue
               </button>
-              <button
-                type="button"
-                onClick={onResume}
-                disabled={isReleasing}
-                className="px-4 py-1.5 rounded text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-500 text-white shadow-sm transition-colors"
-              >
+              <button type="button" onClick={onResume} disabled={isReleasing} className="ui-button ui-button--primary ui-button--sm">
                 {isReleasing ? 'Resuming Agent...' : 'Resume AI Control'}
               </button>
             </>
           ) : (
-            <button
-              type="button"
-              onClick={onTakeover}
-              disabled={disabled || isAcquiring}
-              className="px-4 py-1.5 rounded text-xs font-semibold bg-amber-600 hover:bg-amber-500 disabled:bg-slate-800 disabled:text-slate-500 text-white shadow-sm transition-colors"
-            >
+            <button type="button" onClick={onTakeover} disabled={disabled || isAcquiring} className="ui-button ui-button--primary ui-button--sm">
               {isAcquiring ? 'Acquiring Mutex...' : 'Take Over Session'}
             </button>
           )}
         </div>
       </div>
 
-      {/* Explicit Lease Conflict / Stale / Error Banner */}
-      {(errorMessage || isConflict || isStale) && (
-        <div
-          className={`px-4 py-2 border-t text-xs flex justify-between items-center ${
-            isConflict
-              ? 'bg-rose-950/70 border-rose-800/80 text-rose-200'
-              : isStale
-              ? 'bg-amber-950/70 border-amber-800/80 text-amber-200'
-              : 'bg-red-950/70 border-red-800/80 text-red-200'
-          }`}
-        >
+      {(errorMessage || isConflict || isStale) ? (
+        <div className={`tenant-takeover-controls__notice ${isConflict ? 'tenant-notice--danger' : 'tenant-notice--warning'}`}>
           <div className="flex items-center gap-2">
-            <span className="font-mono font-bold uppercase tracking-wider text-[10px] px-1.5 py-0.5 rounded bg-black/40 border border-current">
+            <span className="tenant-summary-badge">
               {isConflict ? 'Lease Conflict (409)' : isStale ? 'Lease Stale' : 'Takeover Notice'}
             </span>
-            <span>
-              {errorMessage ||
-                (isConflict
-                  ? 'Another operator currently holds the lease. Autonomous AI remains active.'
-                  : 'Takeover lease expired or lost to heartbeat failure. Control returned to agent.')}
-            </span>
+            <span>{errorMessage || (isConflict ? 'Another operator currently holds the lease. Autonomous AI remains active.' : 'Takeover lease expired or lost to heartbeat failure. Control returned to agent.')}</span>
           </div>
-          <button
-            type="button"
-            onClick={onClearError}
-            className="text-[11px] underline hover:no-underline ml-4 text-slate-400 hover:text-slate-200"
-          >
+          <button type="button" onClick={onClearError} className="ui-focus-ring text-sm underline hover:no-underline">
             Dismiss
           </button>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

@@ -47,6 +47,7 @@ import type {
   SignalEnvelope,
 } from '@agentos/core-engine/contracts';
 import {
+  BUILTIN_SALES_LEXICON,
   cleanSearchQuery,
   extractCartRecoveryData,
   extractMessageContent,
@@ -62,8 +63,12 @@ import {
   isReplenishmentSignal,
   isRowExecutable,
   lookupRegistryRow,
+  mergeSalesLexicon,
   type CartRecoveryData,
   type DependencyReachabilityPredicate,
+  type SalesLexicon,
+  type SalesLexiconPort,
+  type SalesLexiconWarningCode,
   type SkillRegistryPort,
   type SkillRegistryResolver,
   type SkillRegistryRowMetadata,
@@ -82,8 +87,13 @@ import {
   deriveEffectPolicy,
   type DerivedEffectPolicy,
 } from './plan-composer.js';
+import {
+  type SalesAdvisorExecutionState,
+  type SalesAdvisorRequirements,
+} from './advisor-adapters.js';
 import type { SalesReplenishmentPolicyPort } from './skills/types.js';
 export {
+  BUILTIN_SALES_LEXICON,
   cleanSearchQuery,
   deriveEffectPolicy,
   evaluateReplenishmentRefusal,
@@ -101,12 +111,16 @@ export {
   isReplenishmentInquiry,
   isReplenishmentSignal,
   isRowExecutable,
+  mergeSalesLexicon,
 };
 export type {
   CartRecoveryData,
   DependencyReachabilityPredicate,
   DerivedEffectPolicy,
   ReplenishmentEvaluationOptions,
+  SalesLexicon,
+  SalesLexiconPort,
+  SalesLexiconWarningCode,
   SalesPurchaseEvidencePort,
   SalesPurchaseEvidenceQuery,
   SkillRegistryPort,
@@ -132,9 +146,153 @@ function extractSalesHandoffReason(signal: SignalEnvelope): string | undefined {
   return typeof reason === 'string' && reason.trim().length > 0 ? reason.trim() : undefined;
 }
 
+function readAdvisorRequirements(signal: SignalEnvelope): SalesAdvisorRequirements | undefined {
+  const payload = signal.payload;
+  const hasStructuredFields = Object.hasOwn(payload, 'sales_proposal_source')
+    || Object.hasOwn(payload, 'sales_intent')
+    || Object.hasOwn(payload, 'sales_requirements');
+  if (!hasStructuredFields) return undefined;
+
+  // These fields are stamped by the API gateway only after its trusted classifier has
+  // normalized the customer message. Presence is therefore mandatory: malformed or
+  // mismatched structured data must refuse instead of falling back to legacy text parsing.
+  if (
+    payload.sales_proposal_source !== 'API_GATEWAY'
+    || signal.source_channel !== 'WEB_CHAT'
+    || signal.event_type !== 'message.received'
+    || payload.sales_intent !== 'advisor'
+  ) {
+    throw new OrchestratorError(
+      'SALES_STRUCTURED_INTENT_INVALID',
+      'Sales advisor requirements are only accepted from the API-stamped WEB_CHAT message path.',
+    );
+  }
+
+  const raw = payload.sales_requirements;
+  if (raw !== undefined && (typeof raw !== 'object' || raw === null || Array.isArray(raw))) {
+    throw new OrchestratorError(
+      'SALES_STRUCTURED_INTENT_INVALID',
+      'Server-stamped Sales advisor intent requires a requirements object when provided.',
+    );
+  }
+  const requirements = (raw ?? {}) as Record<string, unknown>;
+  for (const key of Object.keys(requirements)) {
+    if (key !== 'category' && key !== 'budget' && key !== 'use_case' && key !== 'product_eligibility') {
+      throw new OrchestratorError(
+        'SALES_STRUCTURED_INTENT_INVALID',
+        `Unknown server-stamped Sales requirement '${key}'.`,
+      );
+    }
+  }
+
+  const category = parseBoundedRequirementString(requirements.category, 'category', 64, true);
+  const use_case = parseBoundedRequirementString(requirements.use_case, 'use_case', 160, true);
+
+  let budget: SalesAdvisorRequirements['budget'];
+  if (requirements.budget !== undefined) {
+    const rawBudget = requirements.budget;
+    if (typeof rawBudget !== 'object' || rawBudget === null || Array.isArray(rawBudget)) {
+      throw new OrchestratorError(
+        'SALES_STRUCTURED_INTENT_INVALID',
+        'Sales advisor budget must be an object with amount and currency.',
+      );
+    }
+    const budgetRecord = rawBudget as Record<string, unknown>;
+    for (const key of Object.keys(budgetRecord)) {
+      if (key !== 'amount' && key !== 'currency') {
+        throw new OrchestratorError(
+          'SALES_STRUCTURED_INTENT_INVALID',
+          `Unknown server-stamped Sales budget field '${key}'.`,
+        );
+      }
+    }
+    const amount = budgetRecord.amount;
+    const currency = budgetRecord.currency;
+    if (
+      typeof amount !== 'number'
+      || !Number.isSafeInteger(amount)
+      || amount <= 0
+      || typeof currency !== 'string'
+      || !/^[A-Z]{3}$/.test(currency.trim())
+    ) {
+      throw new OrchestratorError(
+        'SALES_STRUCTURED_INTENT_INVALID',
+        'Sales advisor budget must contain a positive safe integer amount and a 3-letter ISO currency.',
+      );
+    }
+    budget = {
+      amount,
+      currency: currency.trim(),
+    };
+  }
+
+  let product_eligibility: SalesAdvisorRequirements['product_eligibility'];
+  if (requirements.product_eligibility !== undefined) {
+    const rawEligibility = requirements.product_eligibility;
+    if (typeof rawEligibility !== 'object' || rawEligibility === null || Array.isArray(rawEligibility)) {
+      throw new OrchestratorError(
+        'SALES_STRUCTURED_INTENT_INVALID',
+        'Sales product eligibility must be an object when provided.',
+      );
+    }
+    const eligibility = rawEligibility as Record<string, unknown>;
+    for (const key of Object.keys(eligibility)) {
+      if (key !== 'sku' && key !== 'category') {
+        throw new OrchestratorError(
+          'SALES_STRUCTURED_INTENT_INVALID',
+          `Unknown server-stamped Sales eligibility field '${key}'.`,
+        );
+      }
+    }
+    const sku = parseBoundedRequirementString(eligibility.sku, 'product eligibility SKU', 128, false);
+    const eligibilityCategory = parseBoundedRequirementString(
+      eligibility.category,
+      'product eligibility category',
+      64,
+      true,
+    );
+    product_eligibility = {
+      ...(sku === undefined ? {} : { sku }),
+      ...(eligibilityCategory === undefined ? {} : { category: eligibilityCategory }),
+    };
+  }
+
+  return {
+    ...(category === undefined ? {} : { category }),
+    ...(budget === undefined ? {} : { budget }),
+    ...(use_case === undefined ? {} : { use_case }),
+    ...(product_eligibility === undefined ? {} : { product_eligibility }),
+  };
+}
+
+function parseBoundedRequirementString(
+  value: unknown,
+  label: string,
+  maxLength: number,
+  lowerCase: boolean,
+): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || value.trim().length === 0 || value.trim().length > maxLength) {
+    throw new OrchestratorError(
+      'SALES_STRUCTURED_INTENT_INVALID',
+      `Sales advisor ${label} must be a bounded non-empty string.`,
+    );
+  }
+  const trimmed = value.trim();
+  return lowerCase ? trimmed.toLocaleLowerCase() : trimmed;
+}
+
+function missingAdvisorRequirementLabels(requirements: SalesAdvisorRequirements): readonly string[] {
+  const missing: string[] = [];
+  if (requirements.category === undefined) missing.push('category');
+  if (requirements.budget === undefined) missing.push('budget amount and currency');
+  if (requirements.use_case === undefined) missing.push('use case');
+  return missing;
+}
 export type SalesIntent =
   | 'customer_lookup'
   | 'product_search'
+  | 'advisor'
   | 'inventory'
   | 'price'
   | 'disabled_price'
@@ -144,6 +302,21 @@ export type SalesIntent =
   | 'ambiguous'
   | 'unknown'
   | 'sales:sales';
+
+export interface SalesLexiconMetadata {
+  readonly lexicon_source: 'builtin' | 'tenant';
+  readonly lexicon_warning?: SalesLexiconWarningCode;
+}
+
+export interface SalesHypothesisRecord extends HypothesisRecord {
+  readonly metadata?: SalesLexiconMetadata;
+}
+
+export interface SalesRoutingDecision extends RoutingDecision {
+  readonly metadata?: SalesLexiconMetadata;
+}
+
+
 export interface ParsedSalesRationale {
   readonly reason: string;
   readonly intent: SalesIntent;
@@ -155,37 +328,135 @@ export interface ParsedSalesRationale {
   readonly replenishmentIntervalDays?: number | undefined;
   readonly refusalReason?: string | undefined;
   readonly handoff_reason?: string | undefined;
+  readonly advisor_requirements?: SalesAdvisorRequirements | undefined;
 }
 
 export interface SalesAgentRuntimeOptions {
   readonly registry?: SkillRegistryResolver | undefined;
   readonly now?: (() => Date) | undefined;
   readonly resolvableDependencies?: DependencyReachabilityPredicate | undefined;
-   readonly replenishment_policy?: SalesReplenishmentPolicyPort | undefined;
+  readonly replenishment_policy?: SalesReplenishmentPolicyPort | undefined;
   readonly replenishment_policy_port?: SalesReplenishmentPolicyPort | undefined;
   readonly purchase_evidence?: SalesPurchaseEvidencePort | undefined;
- }
+  readonly lexicon?: SalesLexiconPort | undefined;
+  readonly advisor_state?: SalesAdvisorExecutionState | undefined;
+  readonly advisor_price_floor_bound?: boolean | undefined;
+  readonly advisor_quote_signing_bound?: boolean | undefined;
+  /**
+   * The owner-configured Care onboarding itinerary. Presence is an explicit binding; no itinerary
+   * is synthesized when this is absent.
+   */
+  readonly careOnboardingItinerary?: unknown | undefined;
+  /** Tenant-specific owner-input resolver used by production compositions. */
+  readonly resolveCareOnboardingItinerary?: ((tenant_id: string) => unknown | Promise<unknown>) | undefined;
+}
+
+function hasCareOnboardingItinerary(value: unknown): boolean {
+  if (value === undefined || value === null) return false;
+  if (typeof value === 'string') return value.trim().length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    if (record.status === 'UNRESOLVED') return false;
+    return Object.keys(record).length > 0;
+  }
+  return false;
+}
+function isSalesLexiconMetadata(value: unknown): value is SalesLexiconMetadata {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  if (!('lexicon_source' in value)) return false;
+  const source = value.lexicon_source;
+  return source === 'builtin' || source === 'tenant';
+}
+
+function lexiconMetadataFor(hypothesis: HypothesisRecord): SalesLexiconMetadata {
+  let metadata: unknown;
+  if ('metadata' in hypothesis) {
+    metadata = hypothesis.metadata;
+  }
+  if (!isSalesLexiconMetadata(metadata)) return { lexicon_source: 'builtin' };
+  if (metadata.lexicon_warning === 'SALES_LEXICON_READ_FAILED') {
+    return {
+      lexicon_source: metadata.lexicon_source,
+      lexicon_warning: metadata.lexicon_warning,
+    };
+  }
+  return { lexicon_source: metadata.lexicon_source };
+}
 
  /**
   * SalesAgentRuntime implements deterministic sales reasoning across SAL-01, SAL-02, and SAL-03.
   */
- export class SalesAgentRuntime implements IAgentRuntime {
-   public readonly now?: (() => Date) | undefined;
-   private readonly registry?: SkillRegistryResolver | undefined;
-   private readonly resolvableDependencies?: DependencyReachabilityPredicate | undefined;
-   private readonly replenishment_policy?: SalesReplenishmentPolicyPort | undefined;
+export class SalesAgentRuntime implements IAgentRuntime {
+  public readonly now?: (() => Date) | undefined;
+  private readonly registry?: SkillRegistryResolver | undefined;
+  private readonly resolvableDependencies?: DependencyReachabilityPredicate | undefined;
+  private readonly replenishment_policy?: SalesReplenishmentPolicyPort | undefined;
   private readonly purchase_evidence?: SalesPurchaseEvidencePort | undefined;
-   private readonly retainedRationales = new WeakMap<HypothesisRecord, ParsedSalesRationale>();
+  private readonly advisor_state?: SalesAdvisorExecutionState | undefined;
+  private readonly advisor_price_floor_bound: boolean;
+  private readonly advisor_quote_signing_bound: boolean;
+  private readonly careOnboardingItinerary: unknown;
+  private readonly resolveCareOnboardingItinerary:
+    ((tenant_id: string) => unknown | Promise<unknown>) | undefined;
+  private readonly retainedRationales = new WeakMap<HypothesisRecord, ParsedSalesRationale>();
+  private readonly lexicon?: SalesLexiconPort | undefined;
+  private readonly lexiconByRun = new Map<string, Promise<{
+    readonly lexicon: SalesLexicon;
+    readonly metadata: SalesLexiconMetadata;
+  }>>();
 
-   constructor(options: SalesAgentRuntimeOptions = {}) {
-     this.registry = options.registry;
-     this.now = options.now;
-     this.resolvableDependencies = options.resolvableDependencies;
+  constructor(options: SalesAgentRuntimeOptions = {}) {
+    this.registry = options.registry;
+    this.now = options.now;
+    this.resolvableDependencies = options.resolvableDependencies;
     this.replenishment_policy = options.replenishment_policy ?? options.replenishment_policy_port;
     this.purchase_evidence = options.purchase_evidence;
-   }
+    this.lexicon = options.lexicon;
+    this.advisor_state = options.advisor_state;
+    this.advisor_price_floor_bound = options.advisor_price_floor_bound === true;
+    this.advisor_quote_signing_bound = options.advisor_quote_signing_bound === true;
+    this.careOnboardingItinerary = options.careOnboardingItinerary;
+    this.resolveCareOnboardingItinerary = options.resolveCareOnboardingItinerary;
+  }
 
-  async deriveHypothesis(signal: SignalEnvelope, context: HydratedContext): Promise<HypothesisRecord> {
+  private resolveSalesLexicon(signal: SignalEnvelope): Promise<{
+    readonly lexicon: SalesLexicon;
+    readonly metadata: SalesLexiconMetadata;
+  }> {
+    const key = `${signal.tenant_id}:${signal.correlation_id}`;
+    const cached = this.lexiconByRun.get(key);
+    if (cached) return cached;
+
+    const resolution = (async () => {
+      if (!this.lexicon) {
+        return { lexicon: BUILTIN_SALES_LEXICON, metadata: { lexicon_source: 'builtin' as const } };
+      }
+      try {
+        const tenantLexicon = await this.lexicon.read(signal.tenant_id);
+        if (tenantLexicon === undefined) {
+          return { lexicon: BUILTIN_SALES_LEXICON, metadata: { lexicon_source: 'builtin' as const } };
+        }
+        return {
+          lexicon: mergeSalesLexicon(tenantLexicon),
+          metadata: { lexicon_source: 'tenant' as const },
+        };
+      } catch {
+        return {
+          lexicon: BUILTIN_SALES_LEXICON,
+          metadata: {
+            lexicon_source: 'builtin' as const,
+            lexicon_warning: 'SALES_LEXICON_READ_FAILED' as const,
+          },
+        };
+      }
+    })();
+    this.lexiconByRun.set(key, resolution);
+    return resolution;
+  }
+
+  async deriveHypothesis(signal: SignalEnvelope, context: HydratedContext): Promise<SalesHypothesisRecord> {
+    const { lexicon, metadata } = await this.resolveSalesLexicon(signal);
     const handoffTarget = readHandoffTargetDomain(signal);
     if (handoffTarget === 'sales') {
       const handoff_reason = extractSalesHandoffReason(signal);
@@ -194,7 +465,7 @@ export interface SalesAgentRuntimeOptions {
         intent: 'sales:sales',
         ...(handoff_reason ? { handoff_reason } : {}),
       };
-      const hypothesis: HypothesisRecord = {
+      const hypothesis: SalesHypothesisRecord = {
         classification: 'HYPOTHESIS',
         intent: 'sales:sales',
         confidence: 1,
@@ -202,6 +473,7 @@ export interface SalesAgentRuntimeOptions {
         purchase_propensity: 0,
         reasoning: rationale.reason,
         derived_from_signals: [signal.signal_id],
+        metadata,
       };
       this.retainedRationales.set(hypothesis, rationale);
       return hypothesis;
@@ -211,16 +483,16 @@ export interface SalesAgentRuntimeOptions {
     const priceRow = lookupRegistryRow(this.registry, 'skill.sales.check_price');
     const isPriceEnabled = priceRow?.enabled === true;
 
-    const hasPrice = isPriceInquiry(text);
-    const hasRecommend = isRecommendInquiry(text);
-    const hasInventory = isInventoryInquiry(text);
-    const hasCustomer = isCustomerLookupInquiry(text);
-    const hasSearch = isProductSearchInquiry(text);
+    const hasPrice = isPriceInquiry(text, lexicon);
+    const hasRecommend = isRecommendInquiry(text, lexicon);
+    const hasInventory = isInventoryInquiry(text, lexicon);
+    const hasCustomer = isCustomerLookupInquiry(text, lexicon);
+    const hasSearch = isProductSearchInquiry(text, lexicon);
 
     const cartRecoveryData = extractCartRecoveryData(signal);
-    const hasCartRecovery = Boolean(cartRecoveryData) || isCartRecoveryInquiry(text);
+    const hasCartRecovery = Boolean(cartRecoveryData) || isCartRecoveryInquiry(text, lexicon);
 
-    const hasReplenish = isReplenishmentSignal(signal, text);
+    const hasReplenish = isReplenishmentSignal(signal, text, lexicon);
 
     // Count how many distinct strong categories matched
     const matchesCount = [
@@ -319,19 +591,17 @@ export interface SalesAgentRuntimeOptions {
       const payload = (signal.payload ?? {}) as Record<string, unknown>;
       const sku = extractSku(text) ?? (typeof payload.sku_id === 'string' ? payload.sku_id : undefined);
 
-      const refusalReason = await evaluateReplenishmentRefusal(signal, context, {
-        registry: this.registry,
-        resolvableDependencies: this.resolvableDependencies,
-        replenishment_policy: this.replenishment_policy,
-        purchase_evidence: this.purchase_evidence,
-        now: this.now,
-      });
+      const purchaseEvidenceRead = this.purchase_evidence
+        ? extractVerifiedPurchases(context, this.purchase_evidence)
+        : undefined;
 
       let purchases: readonly VerifiedPurchaseEvidence[] = [];
-      try {
-        purchases = await extractVerifiedPurchases(context, this.purchase_evidence);
-      } catch {
-        purchases = [];
+      if (purchaseEvidenceRead) {
+        try {
+          purchases = await purchaseEvidenceRead;
+        } catch {
+          purchases = [];
+        }
       }
       const rawPayloadRef =
         payload.prior_purchase_reference ??
@@ -375,19 +645,32 @@ export interface SalesAgentRuntimeOptions {
       }
       const priorPurchaseRef = matched?.order_id;
 
-      let replenishmentIntervalDays: number | undefined;
-      if (this.replenishment_policy && resolvedSku) {
-        try {
-          const policyRes = this.replenishment_policy.read({
+      const replenishmentPolicyRead = this.replenishment_policy && resolvedSku
+        ? Promise.resolve().then(async () => this.replenishment_policy!.read({
             tenant_id: context.tenant_id,
-            sku_id: resolvedSku,
-          });
-          const policy = policyRes instanceof Promise ? await policyRes : policyRes;
+            sku_id: resolvedSku!,
+          }))
+        : undefined;
+      const refusalReason = await evaluateReplenishmentRefusal(signal, context, {
+        registry: this.registry,
+        resolvableDependencies: this.resolvableDependencies,
+        replenishment_policy: this.replenishment_policy,
+        purchase_evidence: this.purchase_evidence,
+        purchase_evidence_read: purchaseEvidenceRead,
+        replenishment_policy_read: replenishmentPolicyRead,
+        now: this.now,
+      });
+
+      let replenishmentIntervalDays: number | undefined;
+      if (replenishmentPolicyRead) {
+        try {
+          const policy = await replenishmentPolicyRead;
           if (
-            policy &&
-            policy.owner_approved === true &&
-            typeof policy.replenishment_interval_days === 'number' &&
-            policy.replenishment_interval_days > 0
+            policy
+            && policy.owner_approved === true
+            && typeof policy.replenishment_interval_days === 'number'
+            && Number.isFinite(policy.replenishment_interval_days)
+            && policy.replenishment_interval_days > 0
           ) {
             replenishmentIntervalDays = policy.replenishment_interval_days;
           }
@@ -459,9 +742,17 @@ export interface SalesAgentRuntimeOptions {
       };
     }
 
-    const handoff_reason = extractSalesHandoffReason(signal);
-    if (handoff_reason) {
-      rationaleData = { ...rationaleData, handoff_reason };
+    const advisorRequirements = readAdvisorRequirements(signal);
+    if (advisorRequirements !== undefined) {
+      this.advisor_state?.setRequirements(context.tenant_id, context.correlation_id, advisorRequirements);
+      intent = 'advisor';
+      confidence = 0.95;
+      rationaleData = {
+        reason: 'Server-stamped Sales advisor requirements/proposals received from API gateway.',
+        intent: 'advisor',
+        ...(advisorRequirements.use_case === undefined ? {} : { query: advisorRequirements.use_case }),
+        advisor_requirements: advisorRequirements,
+      };
     }
 
     const derived_from_signals = [signal.signal_id];
@@ -469,7 +760,7 @@ export interface SalesAgentRuntimeOptions {
       derived_from_signals.push(`sku:${rationaleData.sku}`);
     }
 
-    const hypothesis: HypothesisRecord = {
+    const hypothesis: SalesHypothesisRecord = {
       classification: 'HYPOTHESIS',
       intent,
       confidence,
@@ -477,6 +768,7 @@ export interface SalesAgentRuntimeOptions {
       purchase_propensity: context.customer ? 0.75 : 0.25,
       reasoning: rationaleData.reason,
       derived_from_signals,
+      metadata,
     };
 
     this.retainedRationales.set(hypothesis, rationaleData);
@@ -487,201 +779,223 @@ export interface SalesAgentRuntimeOptions {
     _signal: SignalEnvelope,
     context: HydratedContext,
     hypothesis: HypothesisRecord,
-  ): Promise<RoutingDecision> {
+  ): Promise<SalesRoutingDecision> {
     const rationale = this.retainedRationales.get(hypothesis);
     const intent = rationale?.intent ?? (hypothesis.intent as SalesIntent);
+    const metadata = lexiconMetadataFor(hypothesis);
+    const route = (decision: RoutingDecision): SalesRoutingDecision => ({ ...decision, metadata });
 
     switch (intent) {
       case 'sales:sales':
-        return {
+        return route({
           target_agent: 'SAL-02' as PlatformAgentId,
           requires_clarification: false,
           rationalization: hypothesis.reasoning,
-        };
+        });
 
       case 'customer_lookup':
-        return {
+        return route({
           target_agent: 'SAL-01' as PlatformAgentId,
           requires_clarification: false,
           rationalization: hypothesis.reasoning,
-        };
+        });
+
+      case 'advisor': {
+        const requirements = rationale?.advisor_requirements;
+        const missing = requirements === undefined
+          ? ['category', 'budget amount and currency', 'use case']
+          : missingAdvisorRequirementLabels(requirements);
+        if (missing.length > 0) {
+          return route({
+            target_agent: 'SAL-02' as PlatformAgentId,
+            requires_clarification: true,
+            clarification_prompt: `Please provide the missing product requirements: ${missing.join(', ')}.`,
+            rationalization: 'Server-stamped advisor requirements are incomplete.',
+          });
+        }
+        return route({
+          target_agent: 'SAL-02' as PlatformAgentId,
+          requires_clarification: false,
+          rationalization: hypothesis.reasoning,
+        });
+      }
 
       case 'product_search':
         if (!rationale?.query || rationale.query.trim().length === 0) {
-          return {
+          return route({
             target_agent: 'SAL-02' as PlatformAgentId,
             requires_clarification: true,
             clarification_prompt: 'What product are you looking to search for?',
             rationalization: 'Product search requires a non-empty query.',
-          };
+          });
         }
-        return {
+        return route({
           target_agent: 'SAL-02' as PlatformAgentId,
           requires_clarification: false,
           rationalization: hypothesis.reasoning,
-        };
+        });
 
       case 'inventory':
         if (!rationale?.sku) {
-          return {
+          return route({
             target_agent: 'SAL-02' as PlatformAgentId,
             requires_clarification: true,
             clarification_prompt: 'Please provide the product SKU or code to check stock availability.',
             rationalization: 'Inventory check requires a valid SKU.',
-          };
+          });
         }
-        return {
+        return route({
           target_agent: 'SAL-02' as PlatformAgentId,
           requires_clarification: false,
           rationalization: hypothesis.reasoning,
-        };
+        });
 
       case 'price': {
         const priceRow = lookupRegistryRow(this.registry, 'skill.sales.check_price');
         if (!priceRow || priceRow.enabled === false) {
-          return {
+          return route({
             target_agent: 'SAL-02' as PlatformAgentId,
             requires_clarification: true,
             clarification_prompt:
               'Price quotes and automated discount calculations are currently disabled under platform policy. Please contact sales directly.',
             rationalization: hypothesis.reasoning,
-          };
+          });
         }
         if (!rationale?.sku) {
-          return {
+          return route({
             target_agent: 'SAL-02' as PlatformAgentId,
             requires_clarification: true,
             clarification_prompt: 'Please provide the product SKU or code to check price.',
             rationalization: 'Price inquiry requires a valid SKU.',
-          };
+          });
         }
-        return {
+        return route({
           target_agent: 'SAL-02' as PlatformAgentId,
           requires_clarification: false,
           rationalization: hypothesis.reasoning,
-        };
+        });
       }
 
       case 'disabled_price':
-        return {
+        return route({
           target_agent: 'SAL-02' as PlatformAgentId,
           requires_clarification: true,
           clarification_prompt:
             'Price quotes and automated discount calculations are currently disabled under platform policy. Please contact sales directly.',
           rationalization: hypothesis.reasoning,
-        };
+        });
 
       case 'cart_recovery':
         if (rationale?.refusalReason) {
-          return {
+          return route({
             target_agent: 'SAL-04' as PlatformAgentId,
             requires_clarification: true,
             clarification_prompt: `Cart recovery cannot be scheduled: ${rationale.refusalReason}.`,
             rationalization: hypothesis.reasoning,
-          };
+          });
         }
         if (!rationale?.cartId && (!rationale?.cartSkus || rationale.cartSkus.length === 0)) {
-          return {
+          return route({
             target_agent: 'SAL-04' as PlatformAgentId,
             requires_clarification: true,
             clarification_prompt: 'Cart recovery requires a cart identifier or items list.',
             rationalization: 'Cart recovery requires an identified cart or SKUs.',
-          };
+          });
         }
         if (!context.customer) {
-          return {
+          return route({
             target_agent: 'SAL-04' as PlatformAgentId,
             requires_clarification: true,
             clarification_prompt: 'Cart recovery requires verified customer context.',
             rationalization: 'Customer context missing for cart recovery.',
-          };
+          });
         }
         if (context.customer.consent_marketing !== true) {
-          return {
+          return route({
             target_agent: 'SAL-04' as PlatformAgentId,
             requires_clarification: true,
             clarification_prompt: 'Customer has not consented to marketing communications.',
             rationalization: 'Marketing consent missing or withdrawn for cart recovery.',
-          };
+          });
         }
         if (context.customer.suppression_active) {
-          return {
+          return route({
             target_agent: 'SAL-04' as PlatformAgentId,
             requires_clarification: true,
             clarification_prompt: 'Customer suppression rule is active.',
             rationalization: 'Customer suppression is active.',
-          };
+          });
         }
         {
           const consentRow = lookupRegistryRow(this.registry, 'skill.sales.retrieve_customer');
           if (!consentRow || !this.isRowExecutable(consentRow, 'SAL-04') || consentRow.effect_class !== 'READ') {
-            return {
+            return route({
               target_agent: 'SAL-04' as PlatformAgentId,
               requires_clarification: true,
               clarification_prompt:
                 'Cart recovery cannot be scheduled: consent authority skill.sales.retrieve_customer unavailable.',
               rationalization:
                 'Cart recovery refused: missing consent authority skill.sales.retrieve_customer.',
-            };
+            });
           }
           const rawChannel = context.working_memory?.last_touch_channel;
           const channel = typeof rawChannel === 'string' && rawChannel.trim().length > 0 ? rawChannel.trim() : null;
           if (!channel) {
-            return {
+            return route({
               target_agent: 'SAL-04' as PlatformAgentId,
               requires_clarification: true,
               clarification_prompt:
                 'Cart recovery cannot be scheduled: outbound channel missing.',
               rationalization:
                 'Cart recovery refused: missing outbound touch channel.',
-            };
+            });
           }
         }
-        return {
+        return route({
           target_agent: 'SAL-04' as PlatformAgentId,
           requires_clarification: false,
           rationalization: hypothesis.reasoning,
-        };
+        });
 
       case 'replenishment':
         if (rationale?.refusalReason) {
-          return {
+          return route({
             target_agent: 'SAL-05' as PlatformAgentId,
             requires_clarification: true,
             clarification_prompt: `Replenishment cannot be scheduled: ${rationale.refusalReason}.`,
             rationalization: hypothesis.reasoning,
-          };
+          });
         }
-        return {
+        return route({
           target_agent: 'SAL-05' as PlatformAgentId,
           requires_clarification: false,
           rationalization: hypothesis.reasoning,
-        };
+        });
       case 'recommend':
-        return {
+        return route({
           target_agent: 'SAL-03' as PlatformAgentId,
           requires_clarification: false,
           rationalization: hypothesis.reasoning,
-        };
+        });
 
       case 'ambiguous':
-        return {
+        return route({
           target_agent: 'SAL-01' as PlatformAgentId,
           requires_clarification: true,
           clarification_prompt:
             'Your request contains multiple inquiries. Please clarify whether you would like to search for products, check stock, or receive product recommendations.',
           rationalization: hypothesis.reasoning,
-        };
+        });
 
       case 'unknown':
       default:
-        return {
+        return route({
           target_agent: 'SAL-01' as PlatformAgentId,
           requires_clarification: true,
           clarification_prompt:
             'How can I assist you with product catalog searches, inventory checks, or recommendations today?',
           rationalization: hypothesis.reasoning,
-        };
+        });
     }
   }
 
@@ -805,6 +1119,123 @@ export interface SalesAgentRuntimeOptions {
       return {
         plan_id,
         steps: [step],
+        fallback_strategy: 'FAIL_CLOSED',
+      };
+    }
+
+    if (intent === 'advisor') {
+      const requirements = rationale?.advisor_requirements;
+      const customer = context.customer;
+      const customerId = customer?.customer_id;
+      if (
+        requirements === undefined
+        || missingAdvisorRequirementLabels(requirements).length > 0
+        || customer === null
+        || customer === undefined
+        || customerId === undefined
+        || customer.consent_marketing !== true
+        || customer.suppression_active
+        || !this.advisor_state
+        || !this.advisor_price_floor_bound
+        || !this.advisor_quote_signing_bound
+      ) {
+        return {
+          plan_id,
+          steps: [],
+          fallback_strategy: 'FAIL_CLOSED',
+        };
+      }
+
+      const searchRow = lookupRegistryRow(this.registry, 'skill.sales.search_product');
+      const stockRow = lookupRegistryRow(this.registry, 'skill.sales.check_stock');
+      const priceRow = lookupRegistryRow(this.registry, 'skill.sales.check_price');
+      if (
+        !this.isRowExecutable(searchRow, routing.target_agent)
+        || searchRow.effect_class !== 'READ'
+        || !this.isRowExecutable(stockRow, routing.target_agent)
+        || stockRow.effect_class !== 'READ'
+        || !this.isRowExecutable(priceRow, routing.target_agent)
+        || priceRow.effect_class !== 'READ'
+      ) {
+        return {
+          plan_id,
+          steps: [],
+          fallback_strategy: 'FAIL_CLOSED',
+        };
+      }
+
+      // Eligibility values are API proposals used only to narrow the authoritative catalog search.
+      // The returned catalog SKU remains the sole source for stock and quote bindings.
+      const searchQuery = requirements.product_eligibility?.sku ?? requirements.use_case!;
+      const searchCategory = requirements.product_eligibility?.category ?? requirements.category!;
+      const searchStep = this.buildPlannedStep(
+        1,
+        routing.target_agent,
+        searchRow,
+        {
+          tenant_id: context.tenant_id,
+          query: searchQuery,
+          category_id: searchCategory,
+          limit: 20,
+        },
+        [],
+      );
+      const stockStep = {
+        ...this.buildPlannedStep(
+          2,
+          routing.target_agent,
+          stockRow,
+          { tenant_id: context.tenant_id, sku_id: '' },
+          [1],
+        ),
+        input_bindings: {
+          sku_id: { source_step_index: 1, response_path: 'products.0.sku' },
+        },
+      };
+      const priceStep = {
+        ...this.buildPlannedStep(
+          3,
+          routing.target_agent,
+          priceRow,
+          {
+            tenant_id: context.tenant_id,
+            sku_id: '',
+            customer_id: customerId,
+          },
+          [2],
+        ),
+        input_bindings: {
+          sku_id: { source_step_index: 2, response_path: 'sku_id' },
+        },
+      };
+
+      const recommendRow = lookupRegistryRow(this.registry, 'skill.sales.recommend_product');
+      if (
+        !this.isRowExecutable(recommendRow, routing.target_agent)
+        || recommendRow.effect_class !== 'READ'
+      ) {
+        return {
+          plan_id,
+          steps: [],
+          fallback_strategy: 'FAIL_CLOSED',
+        };
+      }
+
+      const recommendStep = this.buildPlannedStep(
+        4,
+        routing.target_agent,
+        recommendRow,
+        {
+          tenant_id: context.tenant_id,
+          customer_id: customerId,
+          current_cart_skus: [],
+        },
+        [1, 2, 3],
+      );
+
+      return {
+        plan_id,
+        steps: [searchStep, stockStep, priceStep, recommendStep],
         fallback_strategy: 'FAIL_CLOSED',
       };
     }
@@ -1397,11 +1828,11 @@ export interface SalesAgentRuntimeOptions {
     };
   }
 
-  private withHandoffIntent(
+  private async withHandoffIntent(
     plan: ExecutionPlan,
     context: HydratedContext,
     rationale: ParsedSalesRationale | undefined,
-  ): ExecutionPlan {
+  ): Promise<ExecutionPlan> {
     if (
       plan.steps.length === 0
       || !context.customer?.customer_id
@@ -1411,6 +1842,10 @@ export interface SalesAgentRuntimeOptions {
     ) {
       return plan;
     }
+    const itinerary = this.resolveCareOnboardingItinerary === undefined
+      ? this.careOnboardingItinerary
+      : await this.resolveCareOnboardingItinerary(context.tenant_id);
+    if (!hasCareOnboardingItinerary(itinerary)) return plan;
 
     const handoff_intent: HandoffIntent = {
       source_domain: 'sales',

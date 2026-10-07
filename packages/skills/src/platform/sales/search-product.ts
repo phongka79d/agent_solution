@@ -24,7 +24,7 @@ export interface OutputSalesSearchProduct {
     name: string;
     list_price: number;
     currency: string;
-    in_stock: boolean;
+    in_stock: boolean | null;
   }>;
   total_found: number;
 }
@@ -63,7 +63,7 @@ const output_schema: Record<string, unknown> = {
           name: { type: 'string' },
           list_price: { type: 'number' },
           currency: { type: 'string' },
-          in_stock: { type: 'boolean' },
+          in_stock: { type: ['boolean', 'null'] },
         },
         additionalProperties: false,
       },

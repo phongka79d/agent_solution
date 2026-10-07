@@ -1,0 +1,1487 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "AgentOS API",
+    "description": "AgentOS gateway API contract.",
+    "version": "1.0.0"
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    },
+    "schemas": {
+      "CompanyAttentionItem": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "severity",
+          "domain",
+          "title_key",
+          "params",
+          "href",
+          "source_ref"
+        ],
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "info",
+              "warning",
+              "danger"
+            ]
+          },
+          "domain": {
+            "type": "string",
+            "enum": [
+              "marketing",
+              "sales",
+              "care",
+              "platform"
+            ]
+          },
+          "title_key": {
+            "type": "string"
+          },
+          "params": {
+            "type": "object",
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                }
+              ]
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "href": {
+            "type": "string"
+          },
+          "source_ref": {
+            "type": "string"
+          }
+        }
+      },
+      "CompanyAiTeamAgent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "domain",
+          "status",
+          "enabled",
+          "readiness"
+        ],
+        "properties": {
+          "domain": {
+            "type": "string",
+            "enum": [
+              "marketing",
+              "sales",
+              "care"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "DISABLED",
+              "NOT_READY",
+              "NO_DATA"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "readiness": {
+            "type": "string",
+            "enum": [
+              "READY",
+              "NOT_READY",
+              "UNKNOWN"
+            ]
+          },
+          "runs_today": {
+            "type": "integer"
+          },
+          "pending_approvals": {
+            "type": "integer"
+          },
+          "open_handoffs": {
+            "type": "integer"
+          }
+        }
+      },
+      "CompanyActivityItem": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "sentence_key",
+          "params",
+          "run_id",
+          "domain",
+          "occurred_at"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "sentence_key": {
+            "type": "string"
+          },
+          "params": {
+            "type": "object",
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                }
+              ]
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "domain": {
+            "type": "string",
+            "enum": [
+              "marketing",
+              "sales",
+              "care",
+              "platform"
+            ]
+          },
+          "occurred_at": {
+            "type": "string"
+          }
+        }
+      },
+      "CompanyIntegrationItem": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "key",
+          "category",
+          "status",
+          "detail_key"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "LIVE",
+              "DEMO_MOCK",
+              "NOT_CONFIGURED",
+              "NOT_INTEGRATED"
+            ]
+          },
+          "detail_key": {
+            "type": "string"
+          }
+        }
+      },
+      "ApprovalQueueItem": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "approval_id",
+          "run_id",
+          "action_id",
+          "effect_key",
+          "payload",
+          "reason",
+          "status",
+          "is_paused",
+          "decided_by",
+          "decided_at",
+          "decision_notes",
+          "created_at",
+          "payload_sha256"
+        ],
+        "properties": {
+          "approval_id": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "action_id": {
+            "type": "string"
+          },
+          "effect_key": {
+            "type": "string"
+          },
+          "payload": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "reason": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PENDING",
+              "EXPIRED"
+            ]
+          },
+          "is_paused": {
+            "type": "boolean"
+          },
+          "decided_by": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "decided_at": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "decision_notes": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "payload_sha256": {
+            "type": "string"
+          }
+        }
+      },
+      "ApprovalDetailResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "approval_id",
+          "run_id",
+          "action_id",
+          "effect_key",
+          "payload",
+          "reason",
+          "status",
+          "is_paused",
+          "decided_by",
+          "decided_at",
+          "decision_notes",
+          "created_at",
+          "payload_sha256",
+          "tenant_id",
+          "expires_at"
+        ],
+        "properties": {
+          "approval_id": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "action_id": {
+            "type": "string"
+          },
+          "effect_key": {
+            "type": "string"
+          },
+          "payload": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "reason": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PENDING",
+              "EXPIRED"
+            ]
+          },
+          "is_paused": {
+            "type": "boolean"
+          },
+          "decided_by": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "decided_at": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "decision_notes": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "payload_sha256": {
+            "type": "string"
+          },
+          "tenant_id": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string"
+          }
+        }
+      },
+      "ApprovalDecisionRequest": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "decision",
+          "reason",
+          "expected_payload_sha256"
+        ],
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": [
+              "APPROVE",
+              "REJECT",
+              "MODIFY",
+              "PAUSE",
+              "CANCEL"
+            ]
+          },
+          "operator_id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "expected_payload_sha256": {
+            "type": "string"
+          },
+          "modified_payload": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "CompanyAttentionResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CompanyAttentionItem"
+            }
+          }
+        }
+      },
+      "CompanyAiTeamResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "agents"
+        ],
+        "properties": {
+          "agents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CompanyAiTeamAgent"
+            }
+          }
+        }
+      },
+      "CompanyActivityResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CompanyActivityItem"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "CompanyIntegrationsResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CompanyIntegrationItem"
+            }
+          }
+        }
+      },
+      "CompanyOverviewResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "attention",
+          "agents",
+          "activity"
+        ],
+        "properties": {
+          "attention": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CompanyAttentionItem"
+            }
+          },
+          "agents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CompanyAiTeamAgent"
+            }
+          },
+          "activity": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CompanyActivityItem"
+            }
+          },
+          "metrics": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            }
+          }
+        }
+      },
+      "CompanyGovernanceResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "require_distinct_approver"
+        ],
+        "properties": {
+          "require_distinct_approver": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ApprovalListResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApprovalQueueItem"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "ApprovalDecisionResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "approval_id",
+          "task_id",
+          "status",
+          "queued_at",
+          "correlation_id"
+        ],
+        "properties": {
+          "approval_id": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "QUEUED"
+            ]
+          },
+          "queued_at": {
+            "type": "string"
+          },
+          "correlation_id": {
+            "type": "string"
+          }
+        }
+      },
+      "PlatformTenant": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "tenant_id",
+          "display_name",
+          "status",
+          "created_at",
+          "enabled_modules"
+        ],
+        "properties": {
+          "tenant_id": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "enabled_modules": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "PlatformReadiness": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "tenant_id",
+          "capability_count",
+          "capability_statuses",
+          "connector_count",
+          "connector_statuses",
+          "owner_input_count",
+          "owner_input_statuses",
+          "workspace_status",
+          "residency_status"
+        ],
+        "properties": {
+          "tenant_id": {
+            "type": "string"
+          },
+          "capability_count": {
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "capability_statuses": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "connector_count": {
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "connector_statuses": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "owner_input_count": {
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "owner_input_statuses": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "workspace_status": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "residency_status": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "PlatformUsage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "tenant_id",
+          "runs_count",
+          "token_cost_records_count",
+          "estimated_cost_total",
+          "input_tokens_total",
+          "output_tokens_total",
+          "cached_tokens_total"
+        ],
+        "properties": {
+          "tenant_id": {
+            "type": "string"
+          },
+          "runs_count": {
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "token_cost_records_count": {
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "estimated_cost_total": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "input_tokens_total": {
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "output_tokens_total": {
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "cached_tokens_total": {
+            "type": [
+              "null",
+              "integer"
+            ]
+          }
+        }
+      },
+      "PlatformProvider": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "provider",
+          "configured",
+          "mode"
+        ],
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "configured": {
+            "type": "boolean"
+          },
+          "mode": {
+            "type": "string"
+          }
+        }
+      },
+      "PlatformTenantsResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlatformTenant"
+            }
+          }
+        }
+      },
+      "PlatformUsageResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlatformUsage"
+            }
+          }
+        }
+      },
+      "PlatformProvidersResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlatformProvider"
+            }
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/api/v1/conversations": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/v1/conversations/{conversation_id}/messages": {
+      "post": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "conversation_id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "conversation_id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/v1/tasks/{task_id}": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "task_id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/v1/conversations/{conversation_id}/takeover": {
+      "post": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "conversation_id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/v1/conversations/{conversation_id}/takeover/heartbeat": {
+      "post": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "conversation_id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/v1/conversations/{conversation_id}/resume": {
+      "post": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "conversation_id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/v1/conversations/{id}/summary": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/v1/conversations/{conversation_id}/operator-messages": {
+      "post": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "conversation_id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/v1/events": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/v1/approvals": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "PENDING"
+              ]
+            },
+            "in": "query",
+            "name": "status",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "query",
+            "name": "cursor",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "in": "query",
+            "name": "limit",
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/approvals/{approval_id}": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "approval_id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalDetailResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/approvals/{approval_id}/decision": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApprovalDecisionRequest"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "approval_id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalDecisionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/company/settings/governance": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanyGovernanceResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/operations/runs/{run_id}/retry": {
+      "post": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "run_id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/v1/runs": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/v1/operations/runs/{run_id}/reconciliation": {
+      "post": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "run_id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/v1/telemetry/stream": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/v1/telemetry/kpi-snapshot": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/v1/customers": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/v1/customers/{customer_id}/profile": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "customer_id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/v1/customers/{customer_id}/timeline": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "customer_id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/v1/storefront/stream": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/v1/storefront/events": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/v1/campaigns": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/v1/campaigns/{runId}": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "runId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/v1/campaigns/drafts": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/v1/platform/tenants": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformTenantsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/platform/tenants/{id}": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformTenant"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/platform/tenants/{id}/readiness": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformReadiness"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/platform/usage": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "query",
+            "name": "from",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "query",
+            "name": "to",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformUsageResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/platform/providers": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformProvidersResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/company/attention": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanyAttentionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/company/ai-team": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanyAiTeamResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/company/activity": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "in": "query",
+            "name": "limit",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "query",
+            "name": "cursor",
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanyActivityResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/company/integrations": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanyIntegrationsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/company/overview": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanyOverviewResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

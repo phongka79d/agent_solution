@@ -39,7 +39,7 @@ const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d
 function isValidIsoTimestamp(ts: unknown): ts is string {
   if (typeof ts !== 'string' || !ISO_TIMESTAMP.test(ts.trim())) return false;
   const ms = new Date(ts.trim()).getTime();
-  return Number.isFinite(ms) && !isNaN(ms);
+  return Number.isFinite(ms);
 }
 
 export function getEvidenceSkus(evidence: VerifiedPurchaseEvidence): readonly string[] {
@@ -52,6 +52,10 @@ export interface ReplenishmentEvaluationOptions {
   readonly replenishment_policy?: SalesReplenishmentPolicyPort | undefined;
   readonly replenishment_policy_port?: SalesReplenishmentPolicyPort | undefined;
   readonly purchase_evidence?: SalesPurchaseEvidencePort | undefined;
+  /** Shared with hypothesis extraction so one evaluation uses one authoritative source read. */
+  readonly purchase_evidence_read?: Promise<readonly VerifiedPurchaseEvidence[]> | undefined;
+  /** Shared with hypothesis extraction so one evaluation uses one authoritative policy read. */
+  readonly replenishment_policy_read?: Promise<SalesReplenishmentPolicy | undefined> | undefined;
   readonly now?: (() => Date) | undefined;
 }
 
@@ -111,14 +115,19 @@ export async function extractVerifiedPurchases(
       }
     }
 
-    const quantity =
-      'quantity' in item && typeof item.quantity === 'number' && Number.isFinite(item.quantity)
-        ? item.quantity
-        : undefined;
-    const totalAmount =
-      'total_amount' in item && typeof item.total_amount === 'number' && Number.isFinite(item.total_amount)
-        ? item.total_amount
-        : undefined;
+    const quantityValue = 'quantity' in item ? item.quantity : undefined;
+    if (quantityValue !== undefined && (typeof quantityValue !== 'number' || !Number.isFinite(quantityValue))) {
+      throw new Error('purchase evidence missing or stale: purchase evidence missing');
+    }
+    const quantity = typeof quantityValue === 'number' ? quantityValue : undefined;
+    const totalAmountValue = 'total_amount' in item ? item.total_amount : undefined;
+    if (
+      totalAmountValue !== undefined
+      && (typeof totalAmountValue !== 'number' || !Number.isFinite(totalAmountValue))
+    ) {
+      throw new Error('purchase evidence missing or stale: purchase evidence missing');
+    }
+    const totalAmount = typeof totalAmountValue === 'number' ? totalAmountValue : undefined;
     const currency =
       'currency' in item && typeof item.currency === 'string' && item.currency.trim().length > 0
         ? item.currency.trim()
@@ -134,11 +143,15 @@ export async function extractVerifiedPurchases(
     });
   }
 
-  if (validated.length === 0) {
-    throw new Error('purchase evidence missing or stale: purchase evidence missing');
-  }
+  validated.sort((left, right) => {
+    const byDate = new Date(right.order_date).getTime() - new Date(left.order_date).getTime();
+    return Number.isFinite(byDate) && byDate !== 0
+      ? byDate
+      : left.order_id.localeCompare(right.order_id);
+  });
 
   return Object.freeze(validated);
+
 }
 
 export async function evaluateReplenishmentRefusal(
@@ -156,21 +169,19 @@ export async function evaluateReplenishmentRefusal(
 
   // 1. Authoritative purchase evidence
   const port = options?.purchase_evidence;
-  if (!port || !context.customer) {
+  if (!context.customer || (!port && !options?.purchase_evidence_read)) {
     return 'purchase evidence missing or stale: purchase evidence missing';
   }
 
   let purchases: readonly VerifiedPurchaseEvidence[];
   try {
-    purchases = await extractVerifiedPurchases(context, port);
+    purchases = options?.purchase_evidence_read
+      ? await options.purchase_evidence_read
+      : await extractVerifiedPurchases(context, port);
   } catch (err) {
     if (err instanceof Error && err.message.includes('evidence stale')) {
       return 'purchase evidence missing or stale: evidence stale';
     }
-    return 'purchase evidence missing or stale: purchase evidence missing';
-  }
-
-  if (purchases.length === 0) {
     return 'purchase evidence missing or stale: purchase evidence missing';
   }
 
@@ -224,18 +235,19 @@ export async function evaluateReplenishmentRefusal(
 
   // 2. Owner-approved replenishment policy port (SAL-05)
   const policyPort = options?.replenishment_policy;
-  if (!policyPort) {
+  if (!policyPort && !options?.replenishment_policy_read) {
     return 'no owner-approved replenishment interval';
   }
 
   const querySku = resolvedSku;
   let policy: SalesReplenishmentPolicy | undefined;
   try {
-    const policyResult = policyPort.read({
-      tenant_id: context.tenant_id,
-      sku_id: querySku,
-    });
-    policy = policyResult instanceof Promise ? await policyResult : policyResult;
+    policy = options?.replenishment_policy_read
+      ? await options.replenishment_policy_read
+      : await policyPort!.read({
+          tenant_id: context.tenant_id,
+          sku_id: querySku,
+        });
   } catch {
     return 'no owner-approved replenishment interval';
   }
@@ -293,19 +305,34 @@ export async function evaluateReplenishmentRefusal(
   }
   // 7. Recent purchase that invalidates reorder hypothesis
   const nowFn = options?.now;
-  const currentDate = nowFn ? nowFn() : (signal.timestamp ? new Date(signal.timestamp) : new Date());
-  const currentMs = currentDate.getTime();
-
-  const intervalDays = policy.replenishment_interval_days;
-  const intervalMs = intervalDays * 24 * 60 * 60 * 1000;
-
-  const matchedOrderDate = new Date(matchedEvidence.order_date);
-  const matchedOrderMs = matchedOrderDate.getTime();
-  if (isNaN(matchedOrderMs)) {
+  let currentMs: number;
+  try {
+    const currentDate = nowFn ? nowFn() : (signal.timestamp ? new Date(signal.timestamp) : new Date());
+    currentMs = currentDate.getTime();
+  } catch {
+    return 'purchase evidence missing or stale: purchase evidence missing';
+  }
+  if (!Number.isFinite(currentMs)) {
     return 'purchase evidence missing or stale: purchase evidence missing';
   }
 
-  if (currentMs - matchedOrderMs < intervalMs) {
+  const intervalDays = policy.replenishment_interval_days;
+  const intervalMs = intervalDays * 24 * 60 * 60 * 1000;
+  if (!Number.isFinite(intervalMs)) {
+    return 'no owner-approved replenishment interval';
+  }
+
+  const matchedOrderDate = new Date(matchedEvidence.order_date);
+  const matchedOrderMs = matchedOrderDate.getTime();
+  if (!Number.isFinite(matchedOrderMs)) {
+    return 'purchase evidence missing or stale: purchase evidence missing';
+  }
+
+  const elapsedSinceMatchedMs = currentMs - matchedOrderMs;
+  if (!Number.isFinite(elapsedSinceMatchedMs)) {
+    return 'purchase evidence missing or stale: purchase evidence missing';
+  }
+  if (elapsedSinceMatchedMs < intervalMs) {
     return 'recent purchase invalidates reorder hypothesis';
   }
 
@@ -314,7 +341,17 @@ export async function evaluateReplenishmentRefusal(
     if (purchase.items && !purchase.items.includes(querySku)) continue;
     const pDate = new Date(purchase.order_date);
     const pMs = pDate.getTime();
-    if (!isNaN(pMs) && currentMs - pMs < intervalMs && pMs > matchedOrderMs) {
+    if (!Number.isFinite(pMs)) {
+      return 'purchase evidence missing or stale: purchase evidence missing';
+    }
+    const elapsedSincePurchaseMs = currentMs - pMs;
+    if (
+      !Number.isFinite(elapsedSincePurchaseMs)
+      || (elapsedSincePurchaseMs < intervalMs && pMs > matchedOrderMs)
+    ) {
+      if (!Number.isFinite(elapsedSincePurchaseMs)) {
+        return 'purchase evidence missing or stale: purchase evidence missing';
+      }
       return 'recent purchase invalidates reorder hypothesis';
     }
   }
@@ -326,9 +363,10 @@ export async function evaluateReplenishmentRefusal(
       ? stalenessWindowDays
       : intervalDays + stalenessWindowDays;
   const maxAgeMs = maxAgeDays * 24 * 60 * 60 * 1000;
-
-  const elapsedMs = currentMs - matchedOrderMs;
-  if (elapsedMs > maxAgeMs) {
+  if (!Number.isFinite(maxAgeMs)) {
+    return 'no owner-approved replenishment interval';
+  }
+  if (elapsedSinceMatchedMs > maxAgeMs) {
     return 'purchase evidence missing or stale: evidence stale';
   }
 

@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ShopifyAdminClient,
-  ShopifyRefusalError,
   issueShopifyInstallState,
   verifyShopifyCallback,
   verifyShopifyWebhook,
@@ -33,7 +32,7 @@ describe('Shopify adapter', () => {
     const rawState = 'oauth-state-only-in-memory';
     await issueShopifyInstallState({
       tenant_id: 'tenant-1',
-      shop: 'shop.example',
+      shop: 'shop.myshopify.com',
       raw_state: rawState,
       hash_state: (value) => { rawSeen = value === rawState; return 'digest'; },
       now: '2026-01-01T00:00:00Z',
@@ -49,7 +48,7 @@ describe('Shopify adapter', () => {
     let consumedHash = '';
     const result = await verifyShopifyCallback({
       tenant_id: 'tenant-1',
-      shop: 'shop.example',
+      shop: 'shop.myshopify.com',
       state: 'different-raw-state',
       signed_material: 'query',
       provided_signature: 'secret:query',
@@ -70,7 +69,7 @@ describe('Shopify adapter', () => {
     let claims = 0;
     const result = await verifyShopifyWebhook({
       tenant_id: 'tenant-1',
-      shop: 'unknown.example',
+      shop: 'unknown.myshopify.com',
       delivery_id: 'delivery-1',
       raw_body: '{}',
       provided_signature: 'secret:{}',
@@ -86,15 +85,15 @@ describe('Shopify adapter', () => {
 
   it('never leaks a missing raw credential in errors', async () => {
     const stores = installationStore();
-    stores.rows.set('tenant-1:shop.example', {
-      tenant_id: 'tenant-1', shop: 'shop.example', credential_ref: 'secret-ref', installed_at: 'now', revoked_at: null,
+    stores.rows.set('tenant-1:shop.myshopify.com', {
+      tenant_id: 'tenant-1', shop: 'shop.myshopify.com', credential_ref: 'secret-ref', installed_at: 'now', revoked_at: null,
     });
     const client = new ShopifyAdminClient({
       installations: stores,
       secret_resolver: { resolve: () => null },
       transport: { execute: async () => ({ ok: true, status: 200, body: {}, observed_at: 'now' }) },
     });
-    await expect(client.query({ tenant_id: 'tenant-1', shop: 'shop.example', query: 'query {}' }))
-      .rejects.toBeInstanceOf(ShopifyRefusalError);
+    await expect(client.query({ tenant_id: 'tenant-1', shop: 'shop.myshopify.com', query: 'query {}' }))
+      .rejects.toMatchObject({ refusal_code: 'SECRET_UNAVAILABLE' });
   });
 });

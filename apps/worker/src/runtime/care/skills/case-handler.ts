@@ -9,17 +9,34 @@ import type { SkillToolInvocation } from '@agentos/skills';
 import { CareSkillToolError } from './errors.js';
 import type { CareCaseSlaTargetHoursResolver } from './types.js';
 
+type CaseManagementToolInput = Omit<
+  ManageServiceCaseInput,
+  'effect_key' | 'request_fingerprint' | 'actor_id' | 'sla_target_hours'
+> & {
+  readonly effect_key?: string;
+};
+
 /** Executes the durable case-management binding while preserving CAS/reconciliation semantics. */
 export async function handleCaseManagement<TOutput>(
   invocation: SkillToolInvocation<unknown>,
   caseRepository: Pick<ServiceCaseRepository, 'manage' | 'reconcile'>,
   resolveSlaTargetHours: CareCaseSlaTargetHoursResolver | undefined,
 ): Promise<TOutput> {
-  const input = invocation.input as Omit<
-    ManageServiceCaseInput,
-    'effect_key' | 'request_fingerprint' | 'actor_id' | 'sla_target_hours'
-  >;
+  if (typeof invocation.input !== 'object' || invocation.input === null) {
+    throw new CareSkillToolError(
+      'VALIDATION_FAILED',
+      'tool invocation input must be an object',
+    );
+  }
+  const input = invocation.input as CaseManagementToolInput;
+  const { effect_key: callerEffectKey, ...businessInput } = input;
   const trustedTenantId = invocation.context.tenant_id;
+  if (callerEffectKey !== undefined && callerEffectKey !== invocation.context.effect_key) {
+    throw new CareSkillToolError(
+      'EFFECT_KEY_MISMATCH',
+      'Caller-supplied effect key does not match the server-derived effect key for case management',
+    );
+  }
   if (input.tenant_id !== trustedTenantId) {
     throw new CareSkillToolError(
       'TENANT_SCOPE_MISMATCH',
@@ -31,7 +48,7 @@ export async function handleCaseManagement<TOutput>(
   if (resolveSlaTargetHours) {
     let configuredHours: number | null;
     try {
-      configuredHours = await resolveSlaTargetHours(trustedTenantId, input.priority);
+      configuredHours = await resolveSlaTargetHours(trustedTenantId, businessInput.priority);
     } catch {
       throw new CareSkillToolError(
         'CASE_SLA_POLICY_UNAVAILABLE',
@@ -48,7 +65,7 @@ export async function handleCaseManagement<TOutput>(
       slaTargetHours = configuredHours;
     }
   }
-  if (input.action_type === 'CREATE' && slaTargetHours === undefined) {
+  if (businessInput.action_type === 'CREATE' && slaTargetHours === undefined) {
     throw new CareSkillToolError(
       'CASE_SLA_POLICY_UNAVAILABLE',
       'case creation requires an authoritative tenant-specific SLA target',
@@ -56,10 +73,10 @@ export async function handleCaseManagement<TOutput>(
   }
 
   const mutation: ManageServiceCaseInput = {
-    ...input,
+    ...businessInput,
     tenant_id: trustedTenantId,
     effect_key: invocation.context.effect_key,
-    request_fingerprint: computeRequestFingerprint(input as Record<string, unknown>),
+    request_fingerprint: computeRequestFingerprint(businessInput as Record<string, unknown>),
     actor_id: invocation.context.caller_agent,
     ...(slaTargetHours === undefined ? {} : { sla_target_hours: slaTargetHours }),
   };

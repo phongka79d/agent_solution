@@ -4,7 +4,8 @@
  */
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { AdvancedDetails } from '@agentos/ui-foundation/react';
 import type {
   ApprovalItem,
   ApprovalDecision,
@@ -12,10 +13,9 @@ import type {
   ApiErrorResponse,
 } from './types';
 import { STANDARD_REJECTION_CODES } from './types';
-
 interface ApprovalPayloadDiffModalProps {
   readonly item: ApprovalItem | null;
-  readonly operatorId: string;
+  readonly requireDistinctApprover?: boolean | undefined;
   readonly onClose: () => void;
   readonly onSubmitDecision: (
     id: string,
@@ -29,7 +29,7 @@ interface ApprovalPayloadDiffModalProps {
 
 export function ApprovalPayloadDiffModal({
   item,
-  operatorId,
+  requireDistinctApprover = false,
   onClose,
   onSubmitDecision,
   onViewCustomer,
@@ -49,8 +49,20 @@ export function ApprovalPayloadDiffModal({
     readonly correlationId?: string | undefined;
     readonly errorCode?: string | undefined;
   } | null>(null);
+  const [lastAttempt, setLastAttempt] = useState<{
+    readonly decision: ApprovalDecision;
+    readonly reason: string;
+    readonly modifiedPayload?: Record<string, unknown> | undefined;
+  } | null>(null);
 
   const [decisionReceipt, setDecisionReceipt] = useState<ApprovalDecisionResponse | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const isSubmittingRef = useRef(false);
+  const onCloseRef = useRef(onClose);
+  isSubmittingRef.current = isSubmitting;
+  onCloseRef.current = onClose;
 
   const currentItemId = item?.id;
   useEffect(() => {
@@ -62,10 +74,43 @@ export function ApprovalPayloadDiffModal({
       setCustomRejectReason('');
       setSubmissionError(null);
       setDecisionReceipt(null);
+      setLastAttempt(null);
     }
   }, [currentItemId]);
 
+  useEffect(() => {
+    if (!item) return;
+    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    closeButtonRef.current?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !isSubmittingRef.current) {
+        onCloseRef.current();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusable = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled])') ?? []);
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable.at(-1);
+      if (!first || !last) return;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      previousFocusRef.current?.focus();
+      previousFocusRef.current = null;
+    };
+  }, [currentItemId]);
+
   if (!item) return null;
+  const digestMissing = item.payloadSha256.trim().length === 0;
 
   const handleStartModify = () => {
     setModifiedJsonText(JSON.stringify(item.payload, null, 2));
@@ -84,8 +129,13 @@ export function ApprovalPayloadDiffModal({
     reason: string,
     modifiedPayload?: Record<string, unknown>
   ) => {
-    if (isSubmitting) return; // Prevent duplicate submissions in flight
+    if (isSubmitting || !item.payloadSha256.trim()) return;
 
+    setLastAttempt({
+      decision,
+      reason,
+      ...(modifiedPayload === undefined ? {} : { modifiedPayload }),
+    });
     setIsSubmitting(true);
     setSubmissionError(null);
 
@@ -98,21 +148,30 @@ export function ApprovalPayloadDiffModal({
         modifiedPayload
       );
       setDecisionReceipt(receipt);
+      setLastAttempt(null);
     } catch (err: unknown) {
-      const apiErr = err as ApiErrorResponse & { status?: number; isConflict?: boolean };
+      const apiErr = err as ApiErrorResponse & {
+        status?: number;
+        isConflict?: boolean;
+        errorCode?: string;
+        correlationId?: string;
+      };
+      const errorCode = apiErr.error_code ?? apiErr.errorCode;
       const is409 =
         apiErr.status === 409 ||
         apiErr.isConflict === true ||
-        (typeof apiErr.error_code === 'string' &&
-          (apiErr.error_code.includes('CONFLICT') ||
-            apiErr.error_code.includes('STALE') ||
-            apiErr.error_code.includes('ALREADY') ||
-            apiErr.error_code.includes('NOT_CLAIMABLE')));
+        (typeof errorCode === 'string' &&
+          (errorCode.includes('CONFLICT') ||
+            errorCode.includes('STALE') ||
+            errorCode.includes('ALREADY') ||
+            errorCode.includes('NOT_CLAIMABLE')));
       setSubmissionError({
         message: apiErr.message || 'Decision submission failed.',
         isConflict: is409,
-        ...(apiErr.correlation_id ? { correlationId: apiErr.correlation_id } : {}),
-        ...(apiErr.error_code ? { errorCode: apiErr.error_code } : {}),
+        ...(apiErr.correlation_id || apiErr.correlationId
+          ? { correlationId: apiErr.correlation_id ?? apiErr.correlationId }
+          : {}),
+        ...(errorCode ? { errorCode } : {}),
       });
     } finally {
       setIsSubmitting(false);
@@ -142,39 +201,37 @@ export function ApprovalPayloadDiffModal({
 
   const extractedCustomerId =
     item.customerId ||
-    (typeof item.payload.customer_id === 'string'
+    (typeof item.payload?.customer_id === 'string'
       ? item.payload.customer_id
-      : typeof item.payload.customerId === 'string'
+      : typeof item.payload?.customerId === 'string'
       ? item.payload.customerId
       : undefined);
 
   return (
     <div
-      className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+      ref={dialogRef}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--elevation-scrim)] p-4 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
       aria-labelledby="approval-modal-title"
+      aria-describedby="approval-modal-description"
     >
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-3xl w-full p-6 shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+      <div className="tenant-approval-modal">
         {/* Header */}
-        <div className="flex justify-between items-start pb-4 border-b border-slate-800 mb-4">
+        <div className="tenant-approval-modal__header">
           <div>
-            <div className="flex items-center gap-2 mb-1 flex-wrap">
-              <span className="text-xs font-mono px-2 py-0.5 bg-slate-950 text-slate-300 rounded border border-slate-800">
-                #{item.id}
-              </span>
-              <h2 id="approval-modal-title" className="font-bold text-lg text-slate-100">
+            <div className="flex flex-wrap items-center gap-2 mb-1">
+              <span className="tenant-approval-row__id">#{item.id}</span>
+              <h2 id="approval-modal-title" className="text-headline-md font-semibold text-ink">
                 {item.title || 'AUTH-4 Governance Checkpoint'}
               </h2>
-              <span
-                className={`px-2 py-0.5 text-[10px] font-mono rounded border ${
-                  item.status === 'QUEUED'
-                    ? 'bg-purple-950 text-purple-300 border-purple-700'
-                    : item.isPaused || item.status === 'PAUSED'
-                    ? 'bg-sky-950 text-sky-300 border-sky-700'
-                    : 'bg-amber-950 text-amber-300 border-amber-700'
-                }`}
-              >
+              <span className={`tenant-approval-status ${
+                item.status === 'QUEUED'
+                  ? 'tenant-approval-status--ai'
+                  : item.isPaused || item.status === 'PAUSED'
+                  ? 'tenant-approval-status--info'
+                  : 'tenant-approval-status--warning'
+              }`}>
                 {item.status === 'QUEUED'
                   ? 'QUEUED'
                   : item.isPaused || item.status === 'PAUSED'
@@ -182,72 +239,94 @@ export function ApprovalPayloadDiffModal({
                   : 'AWAITING_HUMAN'}
               </span>
             </div>
-            <p className="text-xs text-slate-400">
-              Agent: <strong className="text-slate-200">{item.agentId}</strong> | Operator Session:{' '}
-              <strong className="text-slate-200">{operatorId}</strong>
+            <p id="approval-modal-description" className="text-sm text-muted">
+              Đề xuất bởi <strong className="text-ink">{item.requestingAgentName ?? item.agentId}</strong>
+              {item.domain ? <> · {item.domain}</> : null}
             </p>
+            {requireDistinctApprover ? (
+              <p role="note" className="mt-2 text-sm font-medium text-warning">
+                Người phê duyệt phải khác người soạn
+              </p>
+            ) : null}
           </div>
           <button
+            ref={closeButtonRef}
+            type="button"
             onClick={onClose}
             disabled={isSubmitting}
-            className="text-slate-400 hover:text-slate-200 text-sm px-2 py-1 rounded bg-slate-800 hover:bg-slate-750 transition-colors disabled:opacity-50"
+            className="ui-button ui-button--ghost ui-button--sm"
           >
-            Close
+            Đóng
           </button>
         </div>
 
         {/* Content Body */}
-        <div className="flex-1 overflow-y-auto space-y-4 pr-1 text-xs">
-          {/* Metadata Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="p-3 bg-slate-950 rounded-lg border border-slate-800">
-              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block mb-1">
-                Risk Governance Reason
-              </span>
-              <p className="text-slate-200 font-mono text-[11px] break-words">{item.reason}</p>
+        <div className="flex-1 overflow-y-auto space-y-4 pr-1 text-sm">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="tenant-approval-detail-card">
+              <span className="tenant-approval-detail-card__label">Risk Governance Reason</span>
+              <p className="tenant-approval-detail-card__value">{item.reason}</p>
             </div>
+            <div className="tenant-approval-detail-card">
+              <span className="tenant-approval-detail-card__label">Reviewed Payload SHA-256 Digest</span>
+              <p className="tenant-approval-detail-card__value tenant-approval-detail-card__value--success break-all">{item.payloadSha256 || 'Digest unavailable'}</p>
+              <span className="mt-1 block text-xs text-muted">Enforced server-side precondition (R05 / 409 conflict guard)</span>
+            </div>
+          </div>
+          {digestMissing ? (
+            <p role="alert" className="tenant-notice tenant-notice--warning">
+              Chưa thể quyết định: cần tải bản chi tiết để biết digest payload đã được xem xét.
+            </p>
+          ) : null}
 
-            <div className="p-3 bg-slate-950 rounded-lg border border-slate-800">
-              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block mb-1">
-                Reviewed Payload SHA-256 Digest
-              </span>
-              <p className="text-emerald-400 font-mono text-[11px] break-all select-all">
-                {item.payloadSha256 || 'Digest unavailable'}
-              </p>
-              <span className="text-[10px] text-slate-400 block mt-1">
-                Enforced server-side precondition (R05 / 409 conflict guard)
-              </span>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="tenant-approval-detail-card">
+              <h3 className="tenant-approval-detail-card__label">Vì sao</h3>
+              <p className="mt-1 text-sm text-ink">{item.reason}</p>
+            </div>
+            <div className="tenant-approval-detail-card">
+              <h3 className="tenant-approval-detail-card__label">Bối cảnh</h3>
+              <pre className="tenant-approval-detail-card__technical">
+                {item.context === undefined ? 'Chưa có dữ liệu' : JSON.stringify(item.context, null, 2)}
+              </pre>
             </div>
           </div>
 
+          <div className="tenant-approval-detail-card">
+            <h3 className="tenant-approval-detail-card__label">Bằng chứng</h3>
+            {item.evidence && item.evidence.length > 0 ? (
+              <ul className="mt-2 space-y-1 text-sm text-ink">
+                {item.evidence.map((evidence, index) => <li key={`${item.id}-evidence-${index}`} className="break-words">{typeof evidence === 'string' ? evidence : JSON.stringify(evidence)}</li>)}
+              </ul>
+            ) : <p className="mt-1 text-sm text-muted">Chưa có dữ liệu</p>}
+          </div>
+
+          <AdvancedDetails summary="Chi tiết nâng cao">
+            <dl className="grid gap-2 text-sm sm:grid-cols-2">
+              <div><dt className="text-muted">Authority</dt><dd className="break-all font-mono text-ink">{item.authority ?? '—'}</dd></div>
+              <div><dt className="text-muted">run_id</dt><dd className="break-all font-mono text-ink">{item.runId || '—'}</dd></div>
+              <div><dt className="text-muted">effect_key</dt><dd className="break-all font-mono text-ink">{item.effectKey ?? '—'}</dd></div>
+              <div><dt className="text-muted">digest</dt><dd className="break-all font-mono text-ink">{item.payloadSha256 || '—'}</dd></div>
+            </dl>
+          </AdvancedDetails>
+
           {/* Cross navigation to Customer 360 if customerId exists */}
           {extractedCustomerId && onViewCustomer && (
-            <div className="p-3 bg-slate-950/80 border border-slate-800 rounded-lg flex items-center justify-between">
+            <div className="tenant-approval-detail-card flex items-center justify-between gap-3">
               <div>
-                <span className="text-slate-400">Associated Customer:</span>{' '}
-                <strong className="text-slate-200 font-mono">{extractedCustomerId}</strong>
+                <span className="text-muted">Associated Customer:</span>{' '}
+                <strong className="font-mono text-ink">{extractedCustomerId}</strong>
               </div>
-              <button
-                type="button"
-                onClick={() => onViewCustomer(extractedCustomerId)}
-                className="px-3 py-1 bg-sky-950 text-sky-300 border border-sky-800 hover:bg-sky-900 rounded font-semibold text-[11px] transition-colors"
-              >
+              <button type="button" onClick={() => onViewCustomer(extractedCustomerId)} className="ui-button ui-button--secondary ui-button--sm">
                 Inspect Customer 360 (SCR-004) →
               </button>
             </div>
           )}
 
-          {/* Payload Inspection / Editing */}
-          <div className="p-3 bg-slate-950 rounded-lg border border-slate-800">
-            <div className="flex justify-between items-center mb-2">
-              <span className="text-[11px] font-semibold text-slate-300 uppercase tracking-wider">
-                Action Payload:
-              </span>
-              {isModifying && (
-                <span className="text-[11px] text-amber-400 font-mono">
-                  Editing payload for MODIFY revision
-                </span>
-              )}
+          <div className="tenant-approval-detail-card">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <span className="tenant-approval-detail-card__label">Action Payload:</span>
+              {isModifying ? <span className="font-mono text-xs text-warning">Editing payload for MODIFY revision</span> : null}
             </div>
 
             {isModifying ? (
@@ -256,74 +335,52 @@ export function ApprovalPayloadDiffModal({
                   value={modifiedJsonText}
                   onChange={(e) => setModifiedJsonText(e.target.value)}
                   disabled={isSubmitting}
-                  className="w-full h-56 bg-slate-900 border border-slate-700 rounded-lg p-3 text-xs font-mono text-emerald-300 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                  className="ui-input h-56 w-full resize-none font-mono text-xs"
                   placeholder="Enter modified JSON payload..."
                 />
-                {jsonParseError && (
-                  <p className="text-xs text-rose-400 font-mono">{jsonParseError}</p>
-                )}
+                {jsonParseError ? <p className="font-mono text-xs text-danger">{jsonParseError}</p> : null}
                 <div className="flex justify-end gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={handleCancelModify}
-                    disabled={isSubmitting}
-                    className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-xs"
-                  >
-                    Cancel Edit
+                  <button type="button" onClick={handleCancelModify} disabled={isSubmitting} className="ui-button ui-button--secondary ui-button--sm">
+                    Hủy sửa
                   </button>
-                  <button
-                    type="button"
-                    onClick={handleSaveModify}
-                    disabled={isSubmitting}
-                    className="px-4 py-1 bg-amber-600 hover:bg-amber-500 text-white rounded font-semibold text-xs flex items-center gap-1.5"
-                  >
-                    {isSubmitting ? 'Submitting Revision…' : 'Submit MODIFY Revision'}
+                  <button type="button" onClick={handleSaveModify} disabled={isSubmitting} className="ui-button ui-button--primary ui-button--sm">
+                    {isSubmitting ? 'Đang gửi bản sửa đổi…' : 'Gửi bản sửa đổi'}
                   </button>
                 </div>
               </div>
             ) : (
-              <pre className="text-[11px] font-mono text-slate-300 bg-slate-900/90 p-3 rounded-lg border border-slate-850 overflow-x-auto whitespace-pre-wrap max-h-56">
-                {JSON.stringify(item.payload, null, 2)}
-              </pre>
+              <pre className="tenant-approval-detail-card__technical max-h-56 overflow-x-auto whitespace-pre-wrap">{JSON.stringify(item.payload, null, 2)}</pre>
             )}
           </div>
 
           {/* Rejection Form Drawer */}
           {showRejectForm && (
-            <div className="p-4 bg-rose-950/40 border border-rose-900/80 rounded-xl space-y-3">
-              <div className="flex justify-between items-center">
-                <span className="text-xs font-bold text-rose-300">
+            <div className="tenant-notice tenant-notice--danger space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm font-semibold text-danger">
                   Submit REJECT Decision (AUTH-4 Terminal Stop)
                 </span>
-                <button
-                  type="button"
-                  onClick={() => setShowRejectForm(false)}
-                  className="text-slate-400 hover:text-slate-200 text-xs"
-                >
-                  Cancel
+                <button type="button" onClick={() => setShowRejectForm(false)} className="ui-button ui-button--ghost ui-button--sm">
+                  Hủy
                 </button>
               </div>
 
               <div>
-                <label className="text-[11px] font-semibold text-slate-300 block mb-1">
+                <label className="mb-1 block text-sm font-semibold text-ink">
                   Standardized Rejection Code (Mandatory):
                 </label>
                 <select
                   value={rejectCode}
                   onChange={(e) => setRejectCode(e.target.value)}
                   disabled={isSubmitting}
-                  className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-xs text-slate-200 outline-none"
+                  className="ui-select w-full"
                 >
-                  {STANDARD_REJECTION_CODES.map((code) => (
-                    <option key={code} value={code}>
-                      {code}
-                    </option>
-                  ))}
+                  {STANDARD_REJECTION_CODES.map((code) => <option key={code} value={code}>{code}</option>)}
                 </select>
               </div>
 
               <div>
-                <label className="text-[11px] font-semibold text-slate-300 block mb-1">
+                <label className="mb-1 block text-sm font-semibold text-ink">
                   Detailed Rationale / Notes (Optional context):
                 </label>
                 <input
@@ -332,148 +389,105 @@ export function ApprovalPayloadDiffModal({
                   onChange={(e) => setCustomRejectReason(e.target.value)}
                   disabled={isSubmitting}
                   placeholder="e.g. Budget ceiling 100k TWD exceeded by 86k TWD"
-                  className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-xs text-slate-200 outline-none"
+                  className="ui-input w-full"
                 />
               </div>
 
               <div className="flex justify-end pt-1">
-                <button
-                  type="button"
-                  onClick={handleConfirmReject}
-                  disabled={isSubmitting}
-                  className="px-4 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded font-semibold text-xs transition-colors"
-                >
-                  {isSubmitting ? 'Submitting REJECT…' : 'Confirm REJECT'}
+                <button type="button" onClick={handleConfirmReject} disabled={isSubmitting || digestMissing} className="ui-button ui-button--danger ui-button--sm">
+                  {isSubmitting ? 'Đang gửi từ chối…' : 'Xác nhận từ chối'}
                 </button>
               </div>
             </div>
           )}
 
           {/* Conflict or Error Notification */}
-          {submissionError && (
-            <div
-              className={`p-3.5 rounded-xl border ${
-                submissionError.isConflict
-                  ? 'bg-amber-950/40 border-amber-700/80 text-amber-200'
-                  : 'bg-rose-950/40 border-rose-800 text-rose-200'
-              }`}
-            >
-              <div className="flex items-center gap-2 mb-1">
-                <span className="font-bold text-xs">
-                  {submissionError.isConflict
-                    ? 'version_conflict: 409 Conflict Detected'
-                    : 'Decision Submission Failed'}
+          {submissionError ? (
+            <div className={`tenant-notice ${submissionError.isConflict ? 'tenant-notice--warning' : 'tenant-notice--danger'}`}>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-semibold text-sm">
+                  {submissionError.isConflict ? 'version_conflict: 409 Conflict Detected' : 'Decision Submission Failed'}
                 </span>
-                {submissionError.errorCode && (
-                  <span className="font-mono text-[10px] px-1.5 py-0.2 bg-black/40 rounded border border-current">
-                    {submissionError.errorCode}
-                  </span>
-                )}
+                {submissionError.errorCode ? <span className="tenant-approval-row__id">{submissionError.errorCode}</span> : null}
               </div>
-              <p className="text-[11px] font-mono break-words">{submissionError.message}</p>
-              {submissionError.correlationId && (
-                <p className="text-[10px] text-slate-400 font-mono mt-1">
-                  Correlation ID: {submissionError.correlationId}
-                </p>
-              )}
+              <p className="mt-2 break-words font-mono text-sm">{submissionError.message}</p>
+              {submissionError.correlationId ? <p className="mt-1 font-mono text-xs text-muted">Correlation ID: {submissionError.correlationId}</p> : null}
+              {submissionError.errorCode === 'APPROVER_MUST_DIFFER' ? (
+                <p role="alert" className="mt-2 font-semibold">APPROVER_MUST_DIFFER: Người phê duyệt phải khác người soạn.</p>
+              ) : null}
+              {lastAttempt ? (
+                <button
+                  type="button"
+                  onClick={() => void handleExecute(lastAttempt.decision, lastAttempt.reason, lastAttempt.modifiedPayload)}
+                  disabled={isSubmitting || digestMissing}
+                  className="ui-button ui-button--secondary ui-button--sm mt-3"
+                >
+                  Thử lại
+                </button>
+              ) : null}
             </div>
-          )}
+          ) : null}
 
-          {/* Decision Queued Receipt (R05 queue-first contract) */}
-          {decisionReceipt && (
-            <div
-              data-testid="approval-decision-receipt"
-              className="p-3.5 bg-sky-950/40 border border-sky-800 rounded-xl text-sky-200 space-y-1"
-            >
-              <div className="font-bold text-xs flex items-center gap-2">
+          {decisionReceipt ? (
+            <div data-testid="approval-decision-receipt" className="tenant-notice tenant-notice--info space-y-1">
+              <div className="flex flex-wrap items-center gap-2 font-semibold text-sm">
                 <span>Decision Queued: Status {decisionReceipt.status}</span>
-                <span className="text-[10px] font-mono px-1.5 py-0.5 bg-sky-900/60 rounded border border-sky-700">
-                  HTTP 202 Accepted
-                </span>
+                <span className="tenant-summary-badge tenant-summary-badge--info">HTTP 202 Accepted</span>
               </div>
-              <p className="text-[11px] font-mono text-slate-300">
-                Approval ID: {decisionReceipt.approval_id} | Task ID: {decisionReceipt.task_id}
-              </p>
-              <p className="text-[10px] font-mono text-sky-300">
-                Queued At: {decisionReceipt.queued_at} | Correlation ID:{' '}
-                {decisionReceipt.correlation_id}
-              </p>
-              <p className="text-[10px] text-slate-400 mt-1">
-                Durable worker handoff queued. The approval remains pending until claimed and executed by the worker.
-              </p>
+              <p className="font-mono text-sm">Approval ID: {decisionReceipt.approval_id} | Task ID: {decisionReceipt.task_id}</p>
+              <p className="font-mono text-xs">Queued At: {decisionReceipt.queued_at} | Correlation ID: {decisionReceipt.correlation_id}</p>
+              <p className="mt-1 text-xs text-muted">Durable worker handoff queued. The approval remains pending until claimed and executed by the worker.</p>
             </div>
-          )}
+          ) : null}
         </div>
 
         {/* 5 Standardized Governance Decisions Bar */}
-        <div className="pt-4 border-t border-slate-800 flex justify-between items-center mt-4 gap-2 flex-wrap">
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-line pt-4">
           <div className="flex items-center gap-2">
-            {/* 4. PAUSE */}
             <button
               type="button"
-              onClick={() =>
-                handleExecute('PAUSE', 'OPERATOR_PAUSED_FOR_INVESTIGATION')
-              }
-              disabled={isSubmitting || !!decisionReceipt || item.status === 'QUEUED'}
-              className="px-3.5 py-2 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-sky-400 border border-slate-700 hover:border-sky-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={() => handleExecute('PAUSE', 'OPERATOR_PAUSED_FOR_INVESTIGATION')}
+              disabled={isSubmitting || digestMissing || !!decisionReceipt || item.status === 'QUEUED'}
+              className="ui-button ui-button--secondary ui-button--sm"
             >
-              Pause
+              Tạm dừng
             </button>
-
-            {/* 5. CANCEL */}
             <button
               type="button"
               onClick={() => handleExecute('CANCEL', 'OPERATOR_CANCELLED_RUN')}
-              disabled={isSubmitting || !!decisionReceipt || item.status === 'QUEUED'}
-              className="px-3.5 py-2 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 hover:border-slate-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={isSubmitting || digestMissing || !!decisionReceipt || item.status === 'QUEUED'}
+              className="ui-button ui-button--secondary ui-button--sm"
             >
-              Cancel Run
+              Hủy
             </button>
           </div>
 
           <div className="flex items-center gap-2">
-            {/* 3. MODIFY */}
-            {!isModifying && (
-              <button
-                type="button"
-                onClick={handleStartModify}
-                disabled={isSubmitting || !!decisionReceipt || item.status === 'QUEUED'}
-                className="px-3.5 py-2 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 hover:border-amber-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Modify Payload
+            {!isModifying ? (
+              <button type="button" onClick={handleStartModify} disabled={isSubmitting || digestMissing || !!decisionReceipt || item.status === 'QUEUED'} className="ui-button ui-button--secondary ui-button--sm">
+                Sửa
               </button>
-            )}
-
-            {/* 2. REJECT */}
-            {!showRejectForm && (
+            ) : null}
+            {!showRejectForm ? (
               <button
                 type="button"
                 onClick={() => {
                   setShowRejectForm(true);
                   setIsModifying(false);
                 }}
-                disabled={isSubmitting || !!decisionReceipt || item.status === 'QUEUED'}
-                className="px-3.5 py-2 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-rose-400 border border-slate-700 hover:border-rose-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={isSubmitting || digestMissing || !!decisionReceipt || item.status === 'QUEUED'}
+                className="ui-button ui-button--danger ui-button--sm"
               >
-                Reject…
+                Từ chối…
               </button>
-            )}
-
-            {/* 1. APPROVE */}
+            ) : null}
             <button
               type="button"
               onClick={() => handleExecute('APPROVE', 'OPERATOR_APPROVED')}
-              disabled={isSubmitting || isModifying || showRejectForm || !!decisionReceipt || item.status === 'QUEUED'}
-              className="px-5 py-2 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-950 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+              disabled={isSubmitting || digestMissing || isModifying || showRejectForm || !!decisionReceipt || item.status === 'QUEUED'}
+              className="ui-button ui-button--primary ui-button--sm"
             >
-              {isSubmitting ? (
-                <>
-                  <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
-                  Submitting…
-                </>
-              ) : (
-                'Approve'
-              )}
+              {isSubmitting ? 'Đang gửi…' : 'Phê duyệt'}
             </button>
           </div>
         </div>

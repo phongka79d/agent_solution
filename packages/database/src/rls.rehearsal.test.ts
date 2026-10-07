@@ -4,6 +4,8 @@ import { Pool, type PoolClient } from 'pg';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import { getPool } from './client.js';
+import { AuditRepository } from './repositories/audit-evidence.js';
+import { ApprovalRepository } from './repositories/approvals.js';
 import { insertFact } from './repositories/customer-360.js';
 import { withTenantContext } from './rls.js';
 
@@ -32,9 +34,42 @@ const CONVERSATION_A = '01920000-0000-7000-8000-0000000000a3';
 const CONVERSATION_B = '01920000-0000-7000-8000-0000000000b3';
 const IDENTITY_B = '01920000-0000-7000-8000-0000000000b4';
 
+const SWEEP_ACTION_A = '01920000-0000-7000-8000-0000000000c1';
+const SWEEP_ACTION_B = '01920000-0000-7000-8000-0000000000c2';
+const SWEEP_APPROVAL_A = '01920000-0000-7000-8000-0000000000d1';
+const SWEEP_APPROVAL_B = '01920000-0000-7000-8000-0000000000d2';
+
 const FIXTURE_TENANTS: readonly string[] = [TENANT_A, TENANT_B];
 
 const FIXTURE_INSERTS: readonly { readonly text: string; readonly values: readonly unknown[] }[] = [
+  {
+    text: 'INSERT INTO agentos.tenants (tenant_id, status, display_name, idempotency_key, request_fingerprint) VALUES ($1, $2, $3, $4, $5)',
+    values: [
+      TENANT_A,
+      'PROVISIONED',
+      'fixture-tenant-a',
+      'fixture-tenant-a'.padEnd(64, 'a'),
+      'fixture-tenant-a'.padEnd(64, 'b'),
+    ],
+  },
+  {
+    text: 'INSERT INTO agentos.tenants (tenant_id, status, display_name, idempotency_key, request_fingerprint) VALUES ($1, $2, $3, $4, $5)',
+    values: [
+      TENANT_B,
+      'PROVISIONED',
+      'fixture-tenant-b',
+      'fixture-tenant-b'.padEnd(64, 'a'),
+      'fixture-tenant-b'.padEnd(64, 'b'),
+    ],
+  },
+  {
+    text: 'INSERT INTO agentos.tenant_governance_settings (tenant_id, require_distinct_approver) VALUES ($1, $2)',
+    values: [TENANT_A, true],
+  },
+  {
+    text: 'INSERT INTO agentos.tenant_governance_settings (tenant_id, require_distinct_approver) VALUES ($1, $2)',
+    values: [TENANT_B, false],
+  },
   {
     text: 'INSERT INTO agentos.customers (id, tenant_id, display_name, verification_status) VALUES ($1, $2, $3, $4)',
     values: [CUSTOMER_A, TENANT_A, 'fixture-customer-a', 'verified'],
@@ -67,6 +102,9 @@ const FIXTURE_INSERTS: readonly { readonly text: string; readonly values: readon
 
 /** Children before parents so composite ON DELETE RESTRICT edges never block cleanup. */
 const FIXTURE_DELETES: readonly string[] = [
+  'DELETE FROM agentos.approvals WHERE tenant_id = ANY($1::uuid[])',
+  'DELETE FROM agentos.actions WHERE tenant_id = ANY($1::uuid[])',
+  'DELETE FROM agentos.tenant_governance_settings WHERE tenant_id = ANY($1::uuid[])',
   'DELETE FROM agentos.evidences WHERE tenant_id = ANY($1::uuid[])',
   'DELETE FROM agentos.service_cases WHERE tenant_id = ANY($1::uuid[])',
   'DELETE FROM agentos.recommendations WHERE tenant_id = ANY($1::uuid[])',
@@ -75,6 +113,7 @@ const FIXTURE_DELETES: readonly string[] = [
   'DELETE FROM agentos.conversations WHERE tenant_id = ANY($1::uuid[])',
   'DELETE FROM agentos.products WHERE tenant_id = ANY($1::uuid[])',
   'DELETE FROM agentos.customers WHERE tenant_id = ANY($1::uuid[])',
+  'DELETE FROM agentos.tenants WHERE tenant_id = ANY($1::uuid[])',
 ];
 
 const INSERT_ORDER =
@@ -100,6 +139,11 @@ type CountRow = { total: number };
 type PidRow = { pid: number };
 type SettingRow = { tenant: string | null };
 type UserRow = { db_user: string };
+
+type SweepStateRow = {
+  readonly decision: string;
+  readonly action_status: string;
+};
 
 function sqlStateOf(error: unknown): string | undefined {
   if (typeof error !== 'object' || error === null) {
@@ -155,6 +199,32 @@ async function asAppRole<T>(
       // The connection may already be unusable; the original failure is what matters.
     }
 
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+/** Opens a transaction as agentos_app, then explicitly enters the non-inheriting platform role. */
+async function asPlatformRole<T>(
+  pool: Pool,
+  work: (client: PoolClient) => Promise<T>,
+): Promise<T> {
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+    await client.query('SET LOCAL ROLE agentos_app');
+    await client.query('SET LOCAL ROLE agentos_platform');
+    await client.query('SET LOCAL search_path TO agentos, public');
+    const result = await work(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch {
+      // The client may already be unusable; preserve the original failure.
+    }
     throw error;
   } finally {
     client.release();
@@ -272,6 +342,30 @@ describe.skipIf(!hasDatabaseUrl)('agentos_app RLS rehearsal (real PostgreSQL)', 
       expect(role?.rolsuper).toBe(false);
       expect(role?.rolbypassrls).toBe(false);
     });
+ 
+    it('cannot execute tenant-shell provisioning without the platform role', async () => {
+      const digest = 'a'.repeat(64);
+      const shellFailure = await captureFailure(() =>
+        asAppRole(fixturePool, TENANT_A, (client) =>
+          client.query(
+            'SELECT agentos.provision_tenant_shell($1::char(64), $2::char(64), $3::varchar(128))',
+            [digest, digest, 'RLS rehearsal shell'],
+          ),
+        ),
+      );
+      expectSqlState(shellFailure, '42501');
+
+      const fixedIdFailure = await captureFailure(() =>
+        asAppRole(fixturePool, TENANT_A, (client) =>
+          client.query(
+            'SELECT agentos.provision_tenant_shell_for_id($1::uuid, $2::char(64), $3::char(64), $4::varchar(128))',
+            [TENANT_A, digest, digest, 'RLS rehearsal fixed shell'],
+          ),
+        ),
+      );
+      expectSqlState(fixedIdFailure, '42501');
+    });
+
 
     it('cannot disable row level security on a tenant table', async () => {
       const failure = await captureFailure(() =>
@@ -379,6 +473,138 @@ describe.skipIf(!hasDatabaseUrl)('agentos_app RLS rehearsal (real PostgreSQL)', 
       expectSqlState(outcome.rejectedInsert, '42501');
     });
   });
+  describe('customer 360 consent aggregation', () => {
+    it('lets any opt-out suppress marketing consent instead of allowing an opt-in to win', async () => {
+      const client = await fixturePool.connect();
+
+      try {
+        await beginAppRole(client, TENANT_A);
+        await client.query(
+          `INSERT INTO agentos.consents (
+             tenant_id, customer_id, consent_type, channel, is_granted, opt_in_method, opt_in_timestamp
+           ) VALUES ($1, $2, 'marketing_messaging', 'line', TRUE, 'web_form', CURRENT_TIMESTAMP),
+                    ($1, $2, 'marketing_messaging', 'email', FALSE, 'web_form', CURRENT_TIMESTAMP)`,
+          [TENANT_A, CUSTOMER_A],
+        );
+
+        const result = await client.query<{
+          consent_marketing: boolean;
+          suppression_active: boolean;
+        }>(
+          `SELECT consent_marketing, suppression_active
+             FROM agentos.customer_360_profiles
+            WHERE tenant_id = $1 AND customer_id = $2`,
+          [TENANT_A, CUSTOMER_A],
+        );
+
+        expect(result.rows).toEqual([{ consent_marketing: false, suppression_active: true }]);
+      } finally {
+        await client.query('ROLLBACK').catch(() => undefined);
+        client.release();
+      }
+    });
+  });
+
+  describe('tenant governance settings', () => {
+    it('allows SELECT only and isolates settings rows by tenant', async () => {
+      const visibleA = await asAppRole(fixturePool, TENANT_A, (client) =>
+        client.query<{ tenant_id: string; require_distinct_approver: boolean }>(
+          'SELECT tenant_id::text AS tenant_id, require_distinct_approver FROM agentos.tenant_governance_settings WHERE tenant_id = ANY($1::uuid[]) ORDER BY tenant_id',
+          [[TENANT_A, TENANT_B]],
+        ),
+      );
+      const visibleB = await asAppRole(fixturePool, TENANT_B, (client) =>
+        client.query<{ tenant_id: string; require_distinct_approver: boolean }>(
+          'SELECT tenant_id::text AS tenant_id, require_distinct_approver FROM agentos.tenant_governance_settings WHERE tenant_id = ANY($1::uuid[]) ORDER BY tenant_id',
+          [[TENANT_A, TENANT_B]],
+        ),
+      );
+      const rejectedInsert = await captureFailure(() =>
+        asAppRole(fixturePool, TENANT_A, (client) =>
+          client.query(
+            'INSERT INTO agentos.tenant_governance_settings (tenant_id, require_distinct_approver) VALUES ($1, $2)',
+            [TENANT_A, false],
+          ),
+        ),
+      );
+      const rejectedUpdate = await captureFailure(() =>
+        asAppRole(fixturePool, TENANT_A, (client) =>
+          client.query(
+            'UPDATE agentos.tenant_governance_settings SET require_distinct_approver = $1 WHERE tenant_id = $2',
+            [false, TENANT_A],
+          ),
+        ),
+      );
+      const rejectedDelete = await captureFailure(() =>
+        asAppRole(fixturePool, TENANT_A, (client) =>
+          client.query('DELETE FROM agentos.tenant_governance_settings WHERE tenant_id = $1', [TENANT_A]),
+        ),
+      );
+
+      expect(visibleA.rows).toEqual([
+        { tenant_id: TENANT_A, require_distinct_approver: true },
+      ]);
+      expect(visibleB.rows).toEqual([
+        { tenant_id: TENANT_B, require_distinct_approver: false },
+      ]);
+      expectSqlState(rejectedInsert, '42501');
+      expectSqlState(rejectedUpdate, '42501');
+      expectSqlState(rejectedDelete, '42501');
+    });
+  });
+
+  describe('audit chain sequence migration', () => {
+    it('assigns tenant-local chain_seq in insert order and ignores caller timestamps', async () => {
+      const client = await fixturePool.connect();
+
+      try {
+        await beginAppRole(client, TENANT_A);
+        const audit = new AuditRepository(async (_tenantId, work) => work(client));
+        const common = {
+          tenant_id: TENANT_A,
+          agent_id: 'rls-audit-agent',
+          customer_or_entity_id: CUSTOMER_A,
+          trigger: 'rls.rehearsal',
+          context: { fixture: true },
+          skill: 'rls.audit.sequence',
+          tool: 'fixture',
+          decision: { verdict: 'ALLOW' },
+          authority: 'AUTH-3' as const,
+          approval: null,
+          action: { type: 'fixture' },
+          execution_status: 'success' as const,
+          evidence: { source: 'rls-rehearsal' },
+          outcome: { accepted: true },
+          latency_ms: 1,
+          cost: { tokens: 1 },
+          error: null,
+        };
+
+        await audit.append({
+          ...common,
+          run_id: 'RLS-AUDIT-SEQ-1',
+          timestamp: '2099-01-01T00:00:00.000Z',
+        });
+        await audit.append({
+          ...common,
+          run_id: 'RLS-AUDIT-SEQ-2',
+          timestamp: '1970-01-01T00:00:00.000Z',
+        });
+
+        const result = await client.query<{ chain_seq: string; timestamp: Date }>(
+          'SELECT chain_seq::text AS chain_seq, "timestamp" FROM agentos.audit_records WHERE tenant_id = $1 ORDER BY chain_seq',
+          [TENANT_A],
+        );
+
+        expect(result.rows.map((row) => row.chain_seq)).toEqual(['1', '2']);
+        expect(new Set(result.rows.map((row) => row.chain_seq)).size).toBe(result.rows.length);
+        expect(result.rows.every((row) => row.timestamp.getUTCFullYear() !== 2099 && row.timestamp.getUTCFullYear() !== 1970)).toBe(true);
+      } finally {
+        await client.query('ROLLBACK').catch(() => undefined);
+        client.release();
+      }
+    });
+  });
 
   describe('transaction-scoped tenant context on a reused connection', () => {
     it('does not carry a committed tenant into the next transaction or the session (max-1 pool)', async () => {
@@ -477,6 +703,60 @@ describe.skipIf(!hasDatabaseUrl)('agentos_app RLS rehearsal (real PostgreSQL)', 
         expect(setting === null || setting.trim() === '').toBe(true);
       } finally {
         client.release();
+      }
+    });
+    it('expires only the approvals in the tenant context', async () => {
+      const actionInsert =
+        'INSERT INTO agentos.actions (id, tenant_id, skill_name, effect_key, target_channel, action_payload) ' +
+        "VALUES ($1, $2, 'rls-sweep', $3, 'test', '{}'::jsonb)";
+      const approvalInsert =
+        'INSERT INTO agentos.approvals (id, tenant_id, run_id, action_id, effect_key, payload, reason, expires_at) ' +
+        "VALUES ($1, $2, $3, $4, $5, '{}'::jsonb, 'RLS sweep fixture', CURRENT_TIMESTAMP - INTERVAL '1 minute')";
+
+      await fixturePool.query(actionInsert, [SWEEP_ACTION_A, TENANT_A, 'rls-sweep-a']);
+      await fixturePool.query(actionInsert, [SWEEP_ACTION_B, TENANT_B, 'rls-sweep-b']);
+      await fixturePool.query(approvalInsert, [
+        SWEEP_APPROVAL_A,
+        TENANT_A,
+        'rls-sweep-run-a',
+        SWEEP_ACTION_A,
+        'rls-sweep-a',
+      ]);
+      await fixturePool.query(approvalInsert, [
+        SWEEP_APPROVAL_B,
+        TENANT_B,
+        'rls-sweep-run-b',
+        SWEEP_ACTION_B,
+        'rls-sweep-b',
+      ]);
+
+      try {
+        await expect(new ApprovalRepository().expireOverdueApprovals(TENANT_A, 500)).resolves.toEqual([
+          SWEEP_APPROVAL_A,
+        ]);
+
+        const stateA = await asAppRole(fixturePool, TENANT_A, (client) =>
+          client.query<SweepStateRow>(
+            'SELECT p.decision, a.status AS action_status FROM agentos.approvals p JOIN agentos.actions a ON a.tenant_id = p.tenant_id AND a.id = p.action_id WHERE p.id = ANY($1::uuid[]) ORDER BY p.id',
+            [[SWEEP_APPROVAL_A, SWEEP_APPROVAL_B]],
+          ),
+        );
+        expect(stateA.rows).toEqual([{ decision: 'EXPIRED', action_status: 'failed' }]);
+
+        const stateB = await asAppRole(fixturePool, TENANT_B, (client) =>
+          client.query<SweepStateRow>(
+            'SELECT p.decision, a.status AS action_status FROM agentos.approvals p JOIN agentos.actions a ON a.tenant_id = p.tenant_id AND a.id = p.action_id WHERE p.id = $1',
+            [SWEEP_APPROVAL_B],
+          ),
+        );
+        expect(stateB.rows).toEqual([{ decision: 'PENDING', action_status: 'pending' }]);
+      } finally {
+        await fixturePool.query('DELETE FROM agentos.approvals WHERE id = ANY($1::uuid[])', [
+          [SWEEP_APPROVAL_A, SWEEP_APPROVAL_B],
+        ]);
+        await fixturePool.query('DELETE FROM agentos.actions WHERE id = ANY($1::uuid[])', [
+          [SWEEP_ACTION_A, SWEEP_ACTION_B],
+        ]);
       }
     });
   });
@@ -627,6 +907,46 @@ describe.skipIf(!hasDatabaseUrl)('agentos_app RLS rehearsal (real PostgreSQL)', 
         ),
       );
       expectSqlState(mismatchedCase, '23503');
+    });
+  });
+  describe('platform directory role boundary', () => {
+    const platformCalls: readonly { readonly sql: string; readonly values: unknown[] }[] = [
+      { sql: 'SELECT * FROM agentos.platform_list_tenants()', values: [] },
+      { sql: 'SELECT * FROM agentos.platform_get_tenant($1::uuid)', values: [TENANT_A] },
+      { sql: 'SELECT * FROM agentos.platform_tenant_readiness($1::uuid)', values: [TENANT_A] },
+      {
+        sql: 'SELECT * FROM agentos.platform_usage($1::timestamptz, $2::timestamptz)',
+        values: ['2026-01-01T00:00:00.000Z', '2026-02-01T00:00:00.000Z'],
+      },
+    ];
+
+    it('denies every platform projection to agentos_app without SET ROLE', async () => {
+      for (const call of platformCalls) {
+        const failure = await captureFailure(() =>
+          asAppRole(fixturePool, null, (client) => client.query(call.sql, call.values)),
+        );
+        expectSqlState(failure, '42501');
+      }
+    });
+
+    it('allows the explicit platform role and publishes no customer columns', async () => {
+      const columns = await asPlatformRole(fixturePool, async (client) => {
+        const list = await client.query('SELECT * FROM agentos.platform_list_tenants()');
+        const tenant = await client.query('SELECT * FROM agentos.platform_get_tenant($1::uuid)', [TENANT_A]);
+        const readiness = await client.query('SELECT * FROM agentos.platform_tenant_readiness($1::uuid)', [TENANT_A]);
+        const usage = await client.query(
+          'SELECT * FROM agentos.platform_usage($1::timestamptz, $2::timestamptz)',
+          ['2026-01-01T00:00:00.000Z', '2026-02-01T00:00:00.000Z'],
+        );
+        return [list, tenant, readiness, usage].map((result) => result.fields.map((field) => field.name));
+      });
+
+      for (const resultColumns of columns) {
+        expect(resultColumns).not.toContain('customer_id');
+        expect(resultColumns).not.toContain('primary_email');
+        expect(resultColumns).not.toContain('primary_phone');
+        expect(resultColumns).not.toContain('display_name_customer');
+      }
     });
   });
 });

@@ -364,6 +364,32 @@ describe('SalesSkillServices - quote, price floor and payment-policy skills', ()
     expect(breachOutput).not.toHaveProperty('floor_source');
     expect(breachOutput).not.toHaveProperty('cogs');
 
+    // 1b. Out-of-bounds or negative requested discount yields discount_allowed = false and final_price = list_price
+    const invalidDiscountOutput = await services.tool_port.invoke({
+      skill_id: 'skill.sales.check_price',
+      tool_binding: 'API-001.PricingEngine',
+      input: {
+        tenant_id: TENANT_ID,
+        sku_id: 'SKU-1',
+        customer_id: CUSTOMER_ID,
+        requested_discount_percent: 120,
+      },
+      context: {
+        run_id: 'run-1',
+        tenant_id: TENANT_ID,
+        caller_agent: 'SAL-02' as const,
+        correlation_id: CORRELATION_ID,
+        granted_authority: 'AUTH-3' as const,
+        effect_key: 'effect-price-1b',
+      },
+    });
+    expect(invalidDiscountOutput).toMatchObject({
+      sku_id: 'SKU-1',
+      list_price: 100,
+      final_price: 100,
+      discount_allowed: false,
+    });
+
     // 2. Unapproved floor decision refuses with P_FLOOR_UNAVAILABLE
     const unapprovedServices = createServices({
       price_floor: {
@@ -405,6 +431,84 @@ describe('SalesSkillServices - quote, price floor and payment-policy skills', ()
         effect_key: 'effect-price-3',
       },
     })).rejects.toMatchObject({ code: 'P_FLOOR_UNAVAILABLE' });
+  });
+  it('check_price: forwards proposed_price to the authoritative pricing engine', async () => {
+    const read = vi.fn(async () => ({
+      ok: true as const,
+      owner_approved: true as const,
+      list_price: 100,
+      currency: 'TWD',
+      p_floor: 80,
+      floor_source: 'engine:approved:pricing-v1',
+      quote_ttl_seconds: 3600,
+    }));
+    const services = createServices({
+      price_floor: { read },
+    });
+
+    const output = await services.tool_port.invoke({
+      skill_id: 'skill.sales.check_price',
+      tool_binding: 'API-001.PricingEngine',
+      input: {
+        tenant_id: TENANT_ID,
+        sku_id: 'SKU-1',
+        customer_id: CUSTOMER_ID,
+        proposed_price: 90,
+      },
+      context: {
+        run_id: 'run-price-proposed',
+        tenant_id: TENANT_ID,
+        caller_agent: 'SAL-02' as const,
+        correlation_id: CORRELATION_ID,
+        granted_authority: 'AUTH-3' as const,
+        effect_key: 'effect-price-proposed',
+      },
+    });
+
+    expect(read).toHaveBeenCalledWith({
+      tenant_id: TENANT_ID,
+      sku_id: 'SKU-1',
+      proposed_price: 90,
+    });
+    expect((output as Record<string, unknown>).final_price).toBe(90);
+    expect((output as Record<string, unknown>).discount_allowed).toBe(true);
+  });
+
+  it('check_price: rejects proposed_price below p_floor and keeps list_price', async () => {
+    const read = vi.fn(async () => ({
+      ok: true as const,
+      owner_approved: true as const,
+      list_price: 100,
+      currency: 'TWD',
+      p_floor: 80,
+      floor_source: 'engine:approved:pricing-v1',
+      quote_ttl_seconds: 3600,
+    }));
+    const services = createServices({
+      price_floor: { read },
+    });
+
+    const output = await services.tool_port.invoke({
+      skill_id: 'skill.sales.check_price',
+      tool_binding: 'API-001.PricingEngine',
+      input: {
+        tenant_id: TENANT_ID,
+        sku_id: 'SKU-1',
+        customer_id: CUSTOMER_ID,
+        proposed_price: 70,
+      },
+      context: {
+        run_id: 'run-price-proposed-low',
+        tenant_id: TENANT_ID,
+        caller_agent: 'SAL-02' as const,
+        correlation_id: CORRELATION_ID,
+        granted_authority: 'AUTH-3' as const,
+        effect_key: 'effect-price-proposed-low',
+      },
+    });
+
+    expect((output as Record<string, unknown>).final_price).toBe(100);
+    expect((output as Record<string, unknown>).discount_allowed).toBe(false);
   });
 
   it('check_price: HMAC-SHA256 signs quote token with server secret binding tenant, sku, customer, price, floor, currency, and expiry', async () => {

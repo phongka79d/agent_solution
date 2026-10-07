@@ -56,6 +56,7 @@ export const SALES_ALLOWED_PAYLOAD_FIELDS: Readonly<Record<string, Readonly<Reco
     sku_id: true,
     customer_id: true,
     requested_discount_percent: true,
+    proposed_price: true,
     effect_key: true,
   }),
   'skill.sales.retrieve_customer': Object.freeze({
@@ -79,6 +80,7 @@ export const SALES_ALLOWED_PAYLOAD_FIELDS: Readonly<Record<string, Readonly<Reco
     offer_id: true,
     discount_amount: true,
     discount_percent: true,
+    proposed_price: true,
     effect_key: true,
   }),
   'skill.sales.create_order': Object.freeze({
@@ -308,13 +310,23 @@ export class SalesPolicyEngine extends DomainPolicyEngine implements IPolicyEngi
     const validated = await super.validateAction(action, context);
     const payload = validated.payload ?? {};
 
+    const hasItemPrice =
+      Array.isArray(payload.items) &&
+      payload.items.some((item) =>
+        typeof item === 'object' &&
+        item !== null &&
+        (
+          'proposed_price' in item ||
+          'price' in item ||
+          'discount_percent' in item
+        ));
     const isDiscountSensitive =
       payload.offer_id !== undefined ||
       payload.discount_amount !== undefined ||
       payload.discount_percent !== undefined ||
       payload.proposed_price !== undefined ||
+      hasItemPrice ||
       validated.proposed_price !== undefined;
-
     if (!isDiscountSensitive) {
       return validated;
     }
@@ -364,6 +376,12 @@ export class SalesPolicyEngine extends DomainPolicyEngine implements IPolicyEngi
         `P_FLOOR_UNAVAILABLE: discount-sensitive action '${validated.skill_id}' lacks resolvable SKU for floor evaluation.`,
       );
     }
+    const actionProposedPrice =
+      typeof validated.proposed_price === 'number' && Number.isFinite(validated.proposed_price)
+        ? validated.proposed_price
+        : typeof payload.proposed_price === 'number' && Number.isFinite(payload.proposed_price)
+          ? payload.proposed_price
+          : undefined;
 
     if (!isAmbiguous && allSkus.size === 1) {
       const [singleSku] = allSkus;
@@ -406,6 +424,49 @@ export class SalesPolicyEngine extends DomainPolicyEngine implements IPolicyEngi
         throw new OrchestratorError(
           'P_FLOOR_UNAVAILABLE',
           `P_FLOOR_UNAVAILABLE: owner-approved floor provenance is unavailable for SKU '${singleSku}': ${reason}`,
+        );
+      }
+
+      if (actionProposedPrice !== undefined && actionProposedPrice < d.p_floor) {
+        throw new OrchestratorError(
+          'P_FLOOR_UNAVAILABLE',
+          `P_FLOOR_UNAVAILABLE: proposed price ${actionProposedPrice} falls below owner-approved floor ${d.p_floor} for SKU '${singleSku}'.`,
+        );
+      }
+
+      if (Array.isArray(payload.items)) {
+        for (const item of payload.items) {
+          if (typeof item !== 'object' || item === null) continue;
+          const line = item as Record<string, unknown>;
+          const linePrice =
+            typeof line.proposed_price === 'number' && Number.isFinite(line.proposed_price)
+              ? line.proposed_price
+              : typeof line.price === 'number' && Number.isFinite(line.price)
+                ? line.price
+                : undefined;
+          if (linePrice !== undefined && linePrice < d.p_floor) {
+            throw new OrchestratorError(
+              'P_FLOOR_UNAVAILABLE',
+              `P_FLOOR_UNAVAILABLE: proposed price ${linePrice} falls below owner-approved floor ${d.p_floor} for SKU '${singleSku}'.`,
+            );
+          }
+        }
+      }
+
+      const discountPercent =
+        typeof payload.discount_percent === 'number' && Number.isFinite(payload.discount_percent)
+          ? payload.discount_percent
+          : undefined;
+      if (
+        actionProposedPrice === undefined &&
+        typeof discountPercent === 'number' &&
+        typeof d.list_price === 'number' &&
+        Number.isFinite(d.list_price) &&
+        d.list_price * (1 - discountPercent / 100) < d.p_floor
+      ) {
+        throw new OrchestratorError(
+          'P_FLOOR_UNAVAILABLE',
+          `P_FLOOR_UNAVAILABLE: discounted price falls below owner-approved floor ${d.p_floor} for SKU '${singleSku}'.`,
         );
       }
 
@@ -604,12 +665,6 @@ export class SalesPolicyEngine extends DomainPolicyEngine implements IPolicyEngi
       }
 
       // 3. Check action-level proposed_price
-      const actionProposedPrice =
-        typeof validated.proposed_price === 'number' && Number.isFinite(validated.proposed_price)
-          ? validated.proposed_price
-          : typeof payload.proposed_price === 'number' && Number.isFinite(payload.proposed_price)
-            ? payload.proposed_price
-            : undefined;
 
       if (actionProposedPrice !== undefined && actionProposedPrice < memberFloor) {
         throw new OrchestratorError(

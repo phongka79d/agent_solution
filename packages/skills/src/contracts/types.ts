@@ -160,8 +160,8 @@ export interface ISkillContract<TInput = unknown, TOutput = unknown> {
   /** Effect behaviour of this row (§6.5); decides whether an `effect_key` is mandatory. */
   readonly effect_class: SkillEffectClass;
   /**
-   * Circuit-breaker key of the dependency this row guards (§6.5). Two rows over the same provider
-   * share one breaker; an `OPEN` breaker refuses with `CIRCUIT_BREAKER_OPEN` before any adapter call.
+   * Circuit-breaker key of the dependency this row guards. Runtime breaker state is isolated by
+   * `(tenant_id, skill_id)`, so one row's provider failures never suppress a sibling row or tenant.
    */
   readonly guarded_dependency: string;
   readonly input_schema: Record<string, unknown>;

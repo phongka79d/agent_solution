@@ -18,6 +18,14 @@ import type { ConversationRecord, GatewayRuntime, RunAdmission } from '../../gat
 
 const CONVERSATION_TURN_SKILL = 'conversation.turn';
 
+export interface HumanOwnedResponse {
+  readonly conversation_id: string;
+  readonly status: 'HUMAN_OWNED';
+  readonly correlation_id: string;
+}
+
+type CareTurnAcceptedResponse = TaskAcceptedResponse | HumanOwnedResponse;
+
 export const VALID_AGENT_MODULES: readonly string[] = Object.freeze(['support', 'sales', 'marketing']);
 
 export function parseEnabledAgentModules(raw?: string): readonly string[] {
@@ -90,6 +98,107 @@ export function validateAdmissionEventType(
 const RECEIPT_WAIT_ATTEMPTS = 10;
 const RECEIPT_WAIT_INTERVAL_MS = 250;
 
+const DEFAULT_TURN_RATE_LIMIT_CAPACITY = 10;
+const DEFAULT_TURN_RATE_LIMIT_REFILL_PER_SECOND = 1 / 6;
+const DEFAULT_TURN_RATE_LIMIT_MAX_BUCKETS = 5000;
+const DEFAULT_TURN_RATE_LIMIT_STALE_AFTER_MS = 60 * 60 * 1000;
+
+/** Admission limiter keyed by the authenticated tenant and channel/widget session. */
+export interface TurnRateLimiter {
+  consume(tenant_id: string, session_id: string): boolean;
+}
+
+export interface InMemoryTurnRateLimiterOptions {
+  readonly capacity?: number;
+  readonly refill_per_second?: number;
+  readonly max_buckets?: number;
+  readonly stale_after_ms?: number;
+  readonly clock?: () => Date;
+}
+
+type TokenBucket = {
+  tokens: number;
+  last_refill_ms: number;
+};
+
+/**
+ * A small process-local limiter for the expensive intent proposal. Deployments with multiple API
+ * processes may inject a shared implementation; this default remains fail-closed per process.
+ */
+export class InMemoryTurnRateLimiter implements TurnRateLimiter {
+  private readonly capacity: number;
+  private readonly refill_per_second: number;
+  private readonly max_buckets: number;
+  private readonly stale_after_ms: number;
+  private readonly clock: () => Date;
+  private readonly buckets = new Map<string, TokenBucket>();
+
+  constructor(options: InMemoryTurnRateLimiterOptions = {}) {
+    this.capacity = options.capacity ?? DEFAULT_TURN_RATE_LIMIT_CAPACITY;
+    this.refill_per_second = options.refill_per_second ?? DEFAULT_TURN_RATE_LIMIT_REFILL_PER_SECOND;
+    this.max_buckets = options.max_buckets ?? DEFAULT_TURN_RATE_LIMIT_MAX_BUCKETS;
+    this.stale_after_ms = options.stale_after_ms ?? DEFAULT_TURN_RATE_LIMIT_STALE_AFTER_MS;
+    this.clock = options.clock ?? (() => new Date());
+    if (!Number.isSafeInteger(this.capacity) || this.capacity < 1) {
+      throw new TypeError('turn rate limiter capacity must be a positive integer');
+    }
+    if (!Number.isFinite(this.refill_per_second) || this.refill_per_second < 0) {
+      throw new TypeError('turn rate limiter refill_per_second must be a non-negative finite number');
+    }
+    if (!Number.isSafeInteger(this.max_buckets) || this.max_buckets < 1) {
+      throw new TypeError('turn rate limiter max_buckets must be a positive integer');
+    }
+    if (!Number.isFinite(this.stale_after_ms) || this.stale_after_ms < 0) {
+      throw new TypeError('turn rate limiter stale_after_ms must be a non-negative finite number');
+    }
+  }
+
+  get size(): number {
+    return this.buckets.size;
+  }
+
+  private prune(now_ms: number): void {
+    for (const [key, bucket] of this.buckets.entries()) {
+      if (now_ms - bucket.last_refill_ms > this.stale_after_ms) {
+        this.buckets.delete(key);
+      }
+    }
+    if (this.buckets.size >= this.max_buckets) {
+      const overflow = this.buckets.size - this.max_buckets + 1;
+      let removed = 0;
+      for (const key of this.buckets.keys()) {
+        this.buckets.delete(key);
+        removed += 1;
+        if (removed >= overflow) break;
+      }
+    }
+  }
+
+  consume(tenant_id: string, session_id: string): boolean {
+    const now_ms = this.clock().getTime();
+    const key = `${tenant_id}:${session_id}`;
+    const previous = this.buckets.get(key);
+    if (previous === undefined && this.buckets.size >= this.max_buckets) {
+      this.prune(now_ms);
+    }
+    const bucket: TokenBucket = previous === undefined
+      ? { tokens: this.capacity, last_refill_ms: now_ms }
+      : previous;
+    const elapsed_ms = Math.max(0, now_ms - bucket.last_refill_ms);
+    bucket.tokens = Math.min(
+      this.capacity,
+      bucket.tokens + elapsed_ms * this.refill_per_second / 1000,
+    );
+    bucket.last_refill_ms = now_ms;
+    if (bucket.tokens < 1) {
+      this.buckets.set(key, bucket);
+      return false;
+    }
+    bucket.tokens -= 1;
+    this.buckets.set(key, bucket);
+    return true;
+  }
+}
 function wireStatusOf(state: TaskStoredState): TaskWireStatus {
   return state === 'queued' ? 'accepted' : state;
 }
@@ -97,15 +206,22 @@ function wireStatusOf(state: TaskStoredState): TaskWireStatus {
 function acceptedFromReceipt(
   receipt: Record<string, unknown>,
   conversation_id: string,
-): TaskAcceptedResponse {
+): CareTurnAcceptedResponse {
+  const status = receipt['status'];
+  const correlation_id = receipt['correlation_id'];
+  if (typeof correlation_id !== 'string') {
+    fail('INTERNAL_ERROR', 'the receipt stored for this idempotency key is incomplete and cannot be returned');
+  }
+  if (status === 'HUMAN_OWNED') {
+    return { conversation_id, status, correlation_id };
+  }
+
   const task_id = receipt['task_id'];
   const task_version = receipt['task_version'];
-  const correlation_id = receipt['correlation_id'];
-  if (typeof task_id !== 'string' || typeof task_version !== 'number' || typeof correlation_id !== 'string') {
+  if (typeof task_id !== 'string' || typeof task_version !== 'number') {
     fail('INTERNAL_ERROR', 'the receipt stored for this idempotency key is incomplete and cannot be returned');
   }
 
-  const status = receipt['status'];
   return {
     task_id,
     conversation_id,
@@ -119,7 +235,7 @@ function acceptedFromReceipt(
 }
 
 export interface CareTurnAdmission {
-  readonly accepted: TaskAcceptedResponse;
+  readonly accepted: CareTurnAcceptedResponse;
   /** Complete canonical replay receipt, including `request_fingerprint`. */
   readonly receipt: Record<string, unknown>;
   readonly admission: RunAdmission;
@@ -148,6 +264,47 @@ async function waitForTurnReceipt(input: {
   fail('RUN_LEASE_HELD', 'another delivery still owns this turn; retry after its durable receipt is settled');
 }
 
+import { salesRequirementsFor, shouldUseSalesAdvisor } from './turn-classifier.js';
+import type { TurnIntentPort } from '../../runtime/bindings/turn-intent.js';
+
+/**
+ * Provider failures raised while proposing a Care intent, mapped onto the gateway's own vocabulary.
+ * The proposal is a live provider call, so its failure is reported as what it is — an upstream
+ * refusal or timeout — instead of a generic server fault the caller cannot act on.
+ */
+const PROVIDER_FAILURE_CODES: Record<string, {
+  readonly code: 'PROVIDER_REJECTED' | 'PROVIDER_TIMEOUT' | 'RATE_LIMITED';
+  readonly message: string;
+}> = {
+  LLM_AUTH_FAILED: { code: 'PROVIDER_REJECTED', message: 'the intent provider rejected the platform credential' },
+  LLM_INVALID_RESPONSE: { code: 'PROVIDER_REJECTED', message: 'the intent provider returned an unusable response' },
+  LLM_RATE_LIMITED: { code: 'RATE_LIMITED', message: 'the intent provider rate-limited this turn' },
+  LLM_TIMEOUT: { code: 'PROVIDER_TIMEOUT', message: 'the intent provider did not answer before the deadline' },
+  LLM_TOKEN_BUDGET_EXHAUSTED: { code: 'RATE_LIMITED', message: 'the tenant LLM token budget is exhausted, so no provider call was made' },
+  LLM_TOKEN_BUDGET_UNAVAILABLE: { code: 'PROVIDER_TIMEOUT', message: 'the tenant LLM token usage could not be read, so no provider call was made' },
+  LLM_CANCELLED: { code: 'PROVIDER_TIMEOUT', message: 'the intent provider call was cancelled' },
+  LLM_UNAVAILABLE: { code: 'PROVIDER_TIMEOUT', message: 'the intent provider is currently unreachable' },
+};
+
+/** Proposes the Care intent, refusing truthfully when the provider cannot answer. */
+async function proposeCareIntent(
+  proposer: TurnIntentPort,
+  message: string,
+  correlation_id: string,
+  scope: { readonly tenant_id: string; readonly run_id: string },
+) {
+  try {
+    return await proposer.propose({ message, correlation_id, tenant_id: scope.tenant_id, run_id: scope.run_id });
+  } catch (error) {
+    const code = typeof error === 'object' && error !== null
+      ? (error as { readonly code?: unknown }).code
+      : undefined;
+    const mapped = typeof code === 'string' ? PROVIDER_FAILURE_CODES[code] : undefined;
+    if (mapped === undefined) throw error;
+    return fail(mapped.code, `${mapped.message}; the turn is refused rather than answered from an unvalidated classification`);
+  }
+}
+
 export async function admitCareTurn(input: {
   readonly runtime: GatewayRuntime;
   readonly principal: GatewayPrincipal;
@@ -159,20 +316,12 @@ export async function admitCareTurn(input: {
   readonly event_type?: string;
   readonly attachments?: readonly string[];
   readonly operation: string;
+  readonly intentProposer?: TurnIntentPort;
+  readonly rateLimiter?: TurnRateLimiter;
 }): Promise<CareTurnAdmission> {
   const { runtime, principal, conversation } = input;
   const tenant_id = principal.tenant_id;
   const conversation_id = conversation.conversation_id;
-
-  if (conversation.state === 'paused_takeover') {
-    const lease = await runtime.takeover.holder(tenant_id, conversation_id);
-    if (lease === null || lease.operator_id !== principal.operator_id) {
-      fail(
-        'CONVERSATION_LOCKED',
-        'another operator holds the takeover lease for this conversation, so no new agent turn may start',
-      );
-    }
-  }
 
   const effect_key = runtime.effects.computeEffectKey({
     tenant_id,
@@ -188,6 +337,30 @@ export async function admitCareTurn(input: {
     attachments: input.attachments ?? null,
   });
 
+  let customerTakeover =
+    conversation.state === 'paused_takeover' &&
+    (principal.kind === 'CHANNEL_SESSION' || principal.kind === 'WIDGET_SESSION');
+  const customerPrincipal = principal.kind === 'CHANNEL_SESSION' || principal.kind === 'WIDGET_SESSION';
+  const takeoverActive = conversation.state === 'paused_takeover';
+  // The live lease is consulted only while the durable marker says a human holds the conversation;
+  // an open conversation has no lease to honour, and deployments without the takeover store stay usable.
+  const lease = takeoverActive
+    ? await runtime.takeover.holder(tenant_id, conversation_id)
+    : null;
+
+  if (customerPrincipal) {
+    if (takeoverActive) {
+      // An absent key is an expired lease, so a stale paused marker cannot keep AI blocked forever.
+      customerTakeover = lease !== null;
+    }
+  } else if (takeoverActive && (lease === null || lease.operator_id !== principal.operator_id)) {
+    fail(
+      'CONVERSATION_LOCKED',
+      'another operator holds the takeover lease for this conversation, so no new agent turn may start',
+    );
+  }
+
+  // A settled replay must be answered before consuming limiter tokens or calling the LLM.
   const stored = await runtime.receipts.receiptFor(tenant_id, effect_key);
   if (stored !== null) {
     if (stored['request_fingerprint'] !== request_fingerprint) {
@@ -196,7 +369,6 @@ export async function admitCareTurn(input: {
         'this idempotency key was already claimed for a different payload; the turn is not started again',
       );
     }
-
     await runtime.audit.record({
       tenant_id,
       correlation_id: input.correlation_id,
@@ -204,9 +376,8 @@ export async function admitCareTurn(input: {
       principal_kind: principal.kind,
       ...(principal.operator_id === undefined ? {} : { operator_id: principal.operator_id }),
       outcome: 'ACCEPTED',
-      detail: { replay: true, effect_key, conversation_id },
+      detail: { replay: true, effect_key, conversation_id, status: stored['status'] },
     });
-
     return {
       accepted: acceptedFromReceipt(stored, conversation_id),
       receipt: stored,
@@ -216,6 +387,108 @@ export async function admitCareTurn(input: {
   }
 
   const session_id = principal.session_id ?? conversation.external_thread_id;
+  if (input.rateLimiter !== undefined && !input.rateLimiter.consume(tenant_id, session_id)) {
+    fail('RATE_LIMITED', 'too many conversational turns for this session; retry after the rate window');
+  }
+
+  // Claim before intent classification. Concurrent deliveries wait for the first receipt and never
+  // spend another provider call on the same idempotency key.
+  const reserved_run_id = runtime.ids();
+  const reservation = typeof runtime.effects.reserve === 'function'
+    ? await runtime.effects.reserve({
+        tenant_id,
+        run_id: reserved_run_id,
+        request_id: input.request_id,
+        effect_key,
+        request_fingerprint,
+        skill_id: CONVERSATION_TURN_SKILL,
+        step_index: 0,
+        action_revision: 0,
+      })
+    : { kind: 'RESERVED' as const };
+
+  if (reservation.kind === 'CONFLICT') {
+    fail('IDEMPOTENCY_CONFLICT', 'this idempotency key was already claimed for a different payload');
+  }
+  if (reservation.kind === 'REPLAY') {
+    const replayReceipt = reservation.receipt;
+    if (typeof replayReceipt !== 'object' || replayReceipt === null || Array.isArray(replayReceipt)) {
+      fail('INTERNAL_ERROR', 'the durable replay has no stored receipt and cannot be returned');
+    }
+    const receipt = replayReceipt as Record<string, unknown>;
+    return {
+      accepted: acceptedFromReceipt(receipt, conversation_id),
+      receipt,
+      admission: 'REPLAY',
+      replayed: true,
+    };
+  }
+  if (reservation.kind === 'IN_FLIGHT') {
+    const receipt = await waitForTurnReceipt({
+      runtime,
+      tenant_id,
+      effect_key,
+      request_fingerprint,
+    });
+    return {
+      accepted: acceptedFromReceipt(receipt, conversation_id),
+      receipt,
+      admission: 'IN_FLIGHT',
+      replayed: true,
+    };
+  }
+  if (reservation.kind === 'RECONCILE_REQUIRED') {
+    fail(
+      'RUN_NOT_RECONCILABLE',
+      customerTakeover
+        ? 'the human-owned message reservation requires reconciliation before retrying'
+        : 'the turn reservation requires reconciliation before retrying',
+    );
+  }
+
+  if (customerTakeover) {
+    await runtime.conversations.appendMessage({
+      tenant_id,
+      conversation_id,
+      sender_type: 'customer',
+      sender_id: session_id,
+      content: input.message,
+      request_id: input.request_id,
+    });
+    const receipt: Record<string, unknown> = {
+      conversation_id,
+      status: 'HUMAN_OWNED',
+      correlation_id: input.correlation_id,
+      request_fingerprint,
+    };
+    await runtime.receipts.storeReceipt(tenant_id, effect_key, receipt);
+    await runtime.audit.record({
+      tenant_id,
+      correlation_id: input.correlation_id,
+      operation: input.operation,
+      principal_kind: principal.kind,
+      detail: { effect_key, conversation_id, status: 'HUMAN_OWNED' },
+      outcome: 'ACCEPTED',
+    });
+    return {
+      accepted: { conversation_id, status: 'HUMAN_OWNED', correlation_id: input.correlation_id },
+      receipt,
+      admission: 'ADMITTED',
+      replayed: false,
+    };
+  }
+
+  const intentProposal = input.module !== 'marketing' && input.intentProposer !== undefined
+    ? await proposeCareIntent(input.intentProposer, input.message, input.correlation_id, { tenant_id, run_id: reserved_run_id })
+    : undefined;
+  const careProposal = input.module === 'support' ? intentProposal : undefined;
+  const parsedSalesRequirements = input.module === 'sales'
+    ? salesRequirementsFor(input.message, intentProposal?.sales_requirements)
+    : undefined;
+  const salesRequirements = shouldUseSalesAdvisor(input.message, parsedSalesRequirements)
+    ? parsedSalesRequirements
+    : undefined;
+
   const started = await runtime.runs.start({
     tenant_id,
     correlation_id: input.correlation_id,
@@ -231,8 +504,71 @@ export async function admitCareTurn(input: {
       conversation_id,
       module: input.module,
       ...(input.attachments === undefined ? {} : { attachments: [...input.attachments] }),
+      ...(careProposal === undefined ? {} : {
+        care_intent: careProposal.intent,
+        care_requirements: careProposal.requirements,
+        ...(careProposal.metadata === undefined ? {} : { care_intent_metadata: careProposal.metadata }),
+      }),
+      ...(salesRequirements === undefined ? {} : {
+        sales_proposal_source: 'API_GATEWAY',
+        sales_intent: 'advisor',
+        sales_requirements: salesRequirements,
+      }),
+      ...(input.module === 'sales' && intentProposal?.metadata !== undefined
+        ? { sales_intent_metadata: intentProposal.metadata }
+        : {}),
     },
+    ...(reservation.kind === 'RESERVED'
+      ? {
+          admission_reservation: {
+            run_id: reserved_run_id,
+            effect_key,
+            request_fingerprint,
+          },
+        }
+      : {}),
   });
+  if (
+    (started.admission === undefined || started.admission === 'ADMITTED')
+    && intentProposal?.metadata !== undefined
+    && runtime.providerCalls !== undefined
+  ) {
+    const metadata = intentProposal.metadata;
+    try {
+      await runtime.providerCalls.appendProviderCall({
+        tenant_id,
+        run_id: started.run_id,
+        step_index: 0,
+        stage: 'HYPOTHESIS',
+        call_index: 0,
+        provider: metadata.provider,
+        model: metadata.model,
+        observed_status: 'SUCCESS',
+        latency_ms: metadata.latency_ms,
+        ...(metadata.usage === undefined ? {} : {
+          prompt_tokens: metadata.usage.prompt_tokens,
+          completion_tokens: metadata.usage.completion_tokens,
+        }),
+      });
+    } catch {
+      // Telemetry must never turn an already-admitted customer turn into a second failure. The
+      // request remains truthful because the ledger is explicitly absent, not reported as success.
+      try {
+        await runtime.audit.record({
+          tenant_id,
+          correlation_id: input.correlation_id,
+          operation: `${input.operation}.provider_ledger`,
+          principal_kind: principal.kind,
+          ...(principal.operator_id === undefined ? {} : { operator_id: principal.operator_id }),
+          outcome: 'ACCEPTED',
+          detail: { provider_ledger: 'UNAVAILABLE' },
+        });
+      } catch {
+        // The primary admission and its receipt are already durable.
+      }
+    }
+  }
+
 
   const admission = started.admission ?? 'ADMITTED';
 
@@ -278,6 +614,7 @@ export async function admitCareTurn(input: {
     sender_type: 'customer',
     sender_id: session_id,
     content: input.message,
+    request_id: input.request_id,
   });
   await runtime.receipts.storeReceipt(tenant_id, effect_key, receipt);
 
@@ -288,7 +625,14 @@ export async function admitCareTurn(input: {
     principal_kind: principal.kind,
     ...(principal.operator_id === undefined ? {} : { operator_id: principal.operator_id }),
     outcome: 'ACCEPTED',
-    detail: { run_id: started.run_id, effect_key, conversation_id },
+    detail: {
+      run_id: started.run_id,
+      effect_key,
+      conversation_id,
+      ...(careProposal?.metadata === undefined && intentProposal?.metadata === undefined
+        ? {}
+        : { intent_provider: careProposal?.metadata ?? intentProposal?.metadata }),
+    },
   });
 
   return {

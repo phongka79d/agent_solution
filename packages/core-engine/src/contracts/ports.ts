@@ -12,6 +12,8 @@ import type {
   CrossDomainHandoffDraft,
   HandoffAdmission,
 } from './cross-domain-handoff.js';
+import type { LifecycleStage } from '../lifecycle/stages.js';
+
 import type {
   ActionDraft,
   AgentRunLogRecord,
@@ -20,11 +22,15 @@ import type {
   DurableTaskSnapshot,
   ExecutionPlan,
   ExecutionReceipt,
+  FinalResponse,
   HydratedContext,
   HypothesisRecord,
   ImmutableEvidenceRecord,
   IStatefulWorkflowEngine,
+  PlannedStep,
+  PreviousStepReceipts,
   ResolvedSubject,
+  ResponseFinalizationInput,
   RoutingDecision,
   SignalEnvelope,
   SignalSubject,
@@ -39,64 +45,10 @@ export type {
 // ============================================================================
 // Effect deduplication (§3.2.3)
 // ============================================================================
-
-export interface IEffectGuard {
-  computeEffectKey(input: {
-    tenant_id: string;
-    skill_id: string;
-    step_index: number;
-    action_revision: number;
-    request_id: string;
-  }): string;
-  computeRequestFingerprint(payload: Record<string, unknown>): string;
-  /**
-   * Durable-first reservation of an effect key, called before EVERY mutating dispatch (BR-005)
-   * and never for a read-only action, which has no external effect to deduplicate.
-   */
-  reserve(input: {
-    tenant_id: string;
-    run_id: string;
-    request_id: string;
-    effect_key: string;
-    request_fingerprint: string;
-    skill_id: string;
-    step_index: number;
-    action_revision: number;
-  }): Promise<ReservationOutcome>;
-  /**
-   * Settles a reservation: SUCCEEDED (with the receipt) or FAILED (provider-confirmed absence).
-   * An indeterminate outcome is deliberately NOT a settlement — the row is left RESERVED, which is
-   * the only canonical way to express "the effect may or may not have landed".
-   */
-  resolve(input: {
-    tenant_id: string;
-    effect_key: string;
-    status: 'SUCCEEDED' | 'FAILED';
-    receipt?: unknown;
-  }): Promise<void>;
-  /**
-   * Provider-side reconciliation of an unsettled effect (§4.4): the stored receipt is returned
-   * verbatim for a confirmed `SUCCEEDED` effect, so a replay never has to synthesize an adapter
-   * response for a call that this process did not make. Never a blind re-dispatch.
-   */
-  reconcile(input: {
-    tenant_id: string;
-    effect_key: string;
-    skill_id: string;
-  }): Promise<{ outcome: 'SUCCEEDED' | 'FAILED' | 'INDETERMINATE'; receipt?: unknown }>;
-  reopenForRetry?(input: {
-    tenant_id: string;
-    effect_key: string;
-  }): Promise<boolean>;
-}
-
-export type ReservationOutcome =
-  | { readonly kind: 'RESERVED' }                            // first delivery: safe to dispatch
-  | { readonly kind: 'REPLAY'; readonly receipt: unknown }    // same key + payload, already SUCCEEDED: return the stored receipt, no call
-  | { readonly kind: 'IN_FLIGHT' }                            // identical key, RESERVED and unexpired
-  | { readonly kind: 'RECONCILE_REQUIRED' }                   // expired RESERVED row, or a prior FAILED attempt
-  | { readonly kind: 'CONFLICT' };                            // same key, different canonical payload
-
+//
+// The durable contract in `types.ts` is the single source of truth. Keep this
+// barrel path as a compatibility re-export for adapter/test bindings.
+export type { IEffectGuard, ReservationOutcome } from './types.js';
 // ============================================================================
 // Dependency interfaces (runtime bindings; not implemented in this blueprint)
 // ============================================================================
@@ -115,6 +67,68 @@ export interface IAgentRuntime {
   deriveHypothesis(signal: SignalEnvelope, context: HydratedContext): Promise<HypothesisRecord>;
   resolveRouting(signal: SignalEnvelope, context: HydratedContext, hypothesis: HypothesisRecord): Promise<RoutingDecision>;
   formulatePlan(routing: RoutingDecision, context: HydratedContext, hypothesis: HypothesisRecord): Promise<ExecutionPlan>;
+}
+
+/**
+ * Builds a customer-facing response from server-trusted context and successful immutable receipts.
+ * The input deliberately contains no caller-authored message or raw provider output.
+ */
+export interface IResponseFinalizer {
+  finalize(input: ResponseFinalizationInput): Promise<FinalResponse>;
+}
+
+/**
+ * Tenant-scoped durable response persistence. `save` MUST be idempotent for `(tenant_id, run_id)`
+ * and MUST reject a replay that supplies content different from the immutable stored response.
+ */
+export interface IRunResponseStore {
+  read(input: {
+    tenant_id: string;
+    run_id: string;
+  }): Promise<FinalResponse | null>;
+  save(input: {
+    tenant_id: string;
+    run_id: string;
+    conversation_id?: string;
+    sender_id: string;
+    response: FinalResponse;
+  }): Promise<void>;
+}
+
+/**
+ * Durable append-only lifecycle stage trace. The orchestrator performs the synchronous
+ * `StageJournal` transition guard first, then awaits this port before any external side effect.
+ * Implementations should make `(tenant_id, run_id, attempt_ordinal, step_index, stage)` idempotent
+ * for recovery/replay.
+ */
+export interface IRunStageRecorder {
+  nextAttemptOrdinal(tenant_id: string, run_id: string): Promise<number>;
+  append(input: {
+    tenant_id: string;
+    run_id: string;
+    attempt_ordinal: number;
+    step_index: number;
+    stage: LifecycleStage;
+    entered_at: string;
+    detail?: unknown;
+    evidence_refs?: unknown;
+  }): Promise<void>;
+}
+
+
+/**
+ * Resolves server-authored receipt bindings for one downstream step. `previous_receipts` is
+ * assembled from immutable evidence by the orchestrator on every attempt; a resolver must not
+ * obtain receipts from caller input, a provider body, or an in-memory-only cache.
+ */
+export interface IPlanInputResolver {
+  resolve(input: {
+    tenant_id: string;
+    run_id: string;
+    step: PlannedStep;
+    previous_receipts: PreviousStepReceipts;
+    context: HydratedContext;
+  }): Promise<Record<string, unknown>>;
 }
 
 export interface IPolicyEngine {
@@ -139,6 +153,12 @@ export interface IEvidenceLogger {
     payload: Record<string, unknown>;
   }): Promise<ImmutableEvidenceRecord>;
   findImmutableRecord?(params: { tenant_id: string; run_id: string; effect_key: string; step_index: number }): Promise<ImmutableEvidenceRecord | null>;
+  /** Durable lookup used when a predecessor's action revision is not derivable from the plan. */
+  findImmutableRecordByStep?(params: {
+    tenant_id: string;
+    run_id: string;
+    step_index: number;
+  }): Promise<ImmutableEvidenceRecord | null>;
   initializeOutcomeWatch(params: { tenant_id: string; run_id: string; effect_key: string; skill_id: string }): Promise<void>;
   logAgentRun(runLog: AgentRunLogRecord): Promise<void>;
 }
@@ -150,8 +170,11 @@ export interface IAdapterDispatcher {
    * provider reported a deadline breach) or raises a canonical `OrchestratorError`; `UNKNOWN` is
    * never the adapter's call to make (§3.2.4). The engine's dispatch guard wraps this call, so a
    * thrown non-canonical error is normalized to an unproven effect instead of a terminal failure.
+   *
+   * The signal is aborted by the guard when the registry deadline expires; implementations MUST
+   * forward it to their in-flight provider request.
    */
-  dispatch(action: ActionDraft, options?: { timeout_ms?: number }): Promise<ExecutionReceipt>;
+  dispatch(action: ActionDraft, options?: { timeout_ms?: number; signal?: AbortSignal }): Promise<ExecutionReceipt>;
   /**
    * Queries the provider by effect_key / action_id to reconcile an unproven effect outcome (§4.4).
    */

@@ -113,7 +113,7 @@ const SKILL_CODE_MAP: Readonly<Record<string, GatewayErrorCode_>> = Object.freez
   INSUFFICIENT_AUTHORITY: 'INSUFFICIENT_AUTHORITY',
   PROHIBITED_ACTION: 'PROHIBITED_ACTION',
   APPROVAL_REQUIRED: 'APPROVAL_REQUIRED',
-  REQUIRE_HUMAN_APPROVAL: 'APPROVAL_REQUIRED',
+  REQUIRE_HUMAN_APPROVAL: 'REQUIRE_HUMAN_APPROVAL',
   APPROVAL_PAYLOAD_MISMATCH: 'APPROVAL_STALE_PAYLOAD',
   SCHEMA_VALIDATION_ERROR: 'VALIDATION_FAILED',
   OUTPUT_SCHEMA_VALIDATION_ERROR: 'PROVIDER_REJECTED',
@@ -142,6 +142,7 @@ const REPOSITORY_CODE_MAP: Readonly<Record<string, GatewayErrorCode_>> = Object.
   PORT_UNBOUND: 'CAPABILITY_NOT_ENABLED',
   APPROVAL_STALE_PAYLOAD: 'APPROVAL_STALE_PAYLOAD',
   APPROVAL_NOT_CLAIMABLE: 'APPROVAL_NOT_CLAIMABLE',
+  APPROVAL_EXPIRED: 'APPROVAL_EXPIRED',
   APPROVAL_NOT_FOUND: 'NOT_FOUND',
   DURABLE_TASK_NOT_FOUND: 'TASK_NOT_FOUND',
   TASK_NOT_FOUND: 'TASK_NOT_FOUND',
@@ -154,10 +155,54 @@ const REPOSITORY_CODE_MAP: Readonly<Record<string, GatewayErrorCode_>> = Object.
   TASK_AGENT_ID_INVALID: 'VALIDATION_FAILED',
   APPROVAL_CURSOR_INVALID: 'VALIDATION_FAILED',
   APPROVAL_LIMIT_INVALID: 'VALIDATION_FAILED',
+  CAMPAIGN_LIST_CURSOR_INVALID: 'VALIDATION_FAILED',
+  CAMPAIGN_LIST_LIMIT_INVALID: 'VALIDATION_FAILED',
+  CUSTOMER_LIST_CURSOR_INVALID: 'VALIDATION_FAILED',
+  CUSTOMER_LIST_LIMIT_INVALID: 'VALIDATION_FAILED',
+  CUSTOMER_EVENT_CURSOR_INVALID: 'VALIDATION_FAILED',
+  CUSTOMER_EVENT_LIMIT_INVALID: 'VALIDATION_FAILED',
+  CUSTOMER_EVENT_RANGE_INVALID: 'VALIDATION_FAILED',
+  CUSTOMER_EVENT_CUSTOMER_ID_REQUIRED: 'VALIDATION_FAILED',
+  CUSTOMER_EVENT_CUSTOMER_ID_INVALID: 'VALIDATION_FAILED',
+  CUSTOMER_EVENT_TENANT_ID_REQUIRED: 'VALIDATION_FAILED',
+  CUSTOMER_EVENT_SOURCE_ID_REQUIRED: 'VALIDATION_FAILED',
+  CUSTOMER_EVENT_NAME_REQUIRED: 'VALIDATION_FAILED',
+  CUSTOMER_EVENT_SESSION_REQUIRED: 'VALIDATION_FAILED',
+  CUSTOMER_EVENT_CHANNEL_REQUIRED: 'VALIDATION_FAILED',
+  CUSTOMER_EVENT_OCCURRED_AT_INVALID: 'VALIDATION_FAILED',
+  CUSTOMER_EVENT_PAYLOAD_INVALID: 'VALIDATION_FAILED',
+  CONVERSATION_LIMIT_INVALID: 'VALIDATION_FAILED',
+  CONVERSATION_MESSAGE_LIMIT_INVALID: 'VALIDATION_FAILED',
+  HANDOFF_LIMIT_INVALID: 'VALIDATION_FAILED',
+  APPROVAL_EXPIRY_LIMIT_INVALID: 'VALIDATION_FAILED',
   SESSION_TAKEOVER_WINDOW_INVALID: 'VALIDATION_FAILED',
   SESSION_ID_REQUIRED: 'VALIDATION_FAILED',
   OPERATOR_ID_REQUIRED: 'VALIDATION_FAILED',
   TENANT_CONTEXT_REQUIRED: 'VALIDATION_FAILED',
+  PLATFORM_TENANT_ID_REQUIRED: 'VALIDATION_FAILED',
+  PLATFORM_USAGE_WINDOW_INVALID: 'VALIDATION_FAILED',
+  CASE_NOT_FOUND: 'NOT_FOUND',
+  CASE_PRIORITY_INVALID: 'VALIDATION_FAILED',
+  CASE_EFFECT_IDENTITY_INVALID: 'VALIDATION_FAILED',
+  CASE_EVIDENCE_INVALID: 'VALIDATION_FAILED',
+  CASE_ID_REQUIRED: 'VALIDATION_FAILED',
+  CASE_VERSION_REQUIRED: 'VALIDATION_FAILED',
+  CASE_TARGET_STATUS_REQUIRED: 'VALIDATION_FAILED',
+  CASE_CONVERSATION_BINDING_INVALID: 'VALIDATION_FAILED',
+  CASE_ORDER_BINDING_INVALID: 'VALIDATION_FAILED',
+  CASE_EVIDENCE_BINDING_INVALID: 'VALIDATION_FAILED',
+  CASE_BINDING_MISMATCH: 'VALIDATION_FAILED',
+  CASE_EVIDENCE_REQUIRED: 'VALIDATION_FAILED',
+  CASE_VERSION_CONFLICT: 'RUN_NOT_RETRYABLE',
+  IDEMPOTENCY_CONFLICT: 'IDEMPOTENCY_CONFLICT',
+  TASK_LEASE_DURATION_INVALID: 'VALIDATION_FAILED',
+  TASK_LEASE_RELEASE_STATE_INVALID: 'VALIDATION_FAILED',
+  TASK_PAYLOAD_UNSERIALIZABLE: 'VALIDATION_FAILED',
+  HANDOFF_EVIDENCE_PAYLOAD_INVALID: 'VALIDATION_FAILED',
+  RECONCILIATION_RESOLUTION_INVALID: 'VALIDATION_FAILED',
+  HANDOFF_EVIDENCE_EVENT_CONFLICT: 'RUN_NOT_RETRYABLE',
+  RUN_RESPONSE_CONVERSATION_ID_INVALID: 'VALIDATION_FAILED',
+  RUN_RESPONSE_CONVERSATION_NOT_FOUND: 'NOT_FOUND',
 });
 
 function messageCode(error: unknown): string | undefined {
@@ -225,7 +270,12 @@ export function mapError(error: unknown, correlation_id: string): ErrorResponse 
   if (repositoryMapped !== undefined) {
     return toErrorResponse(failureFor(repositoryMapped, `${repositoryMapped} [${repositoryCode}]`), correlation_id);
   }
-
+  if (isCodedError(error) && error.code === 'FST_ERR_VALIDATION') {
+    return toErrorResponse(
+      failureFor('VALIDATION_FAILED', 'the request failed schema validation'),
+      correlation_id,
+    );
+  }
 
   return toErrorResponse(
     failureFor('INTERNAL_ERROR', 'the request could not be completed'),
@@ -246,17 +296,22 @@ declare module 'fastify' {
   }
 }
 
-/** Correlation id for one request: the caller's when present, else a server-issued one. */
+/** Correlation ids accepted from callers: UUIDs and bounded opaque request labels. */
+const CORRELATION_ID_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
+
+/** Returns whether a caller-provided correlation id is safe to carry into logs and responses. */
+export function isValidCorrelationId(value: unknown): value is string {
+  return typeof value === 'string' && CORRELATION_ID_PATTERN.test(value);
+}
+
+/** Correlation id for one request: the caller's when valid, else a server-issued one. */
 export function correlationIdOf(request: FastifyRequest, runtime: GatewayRuntime): string {
   const existing = request.gatewayCorrelationId;
-  if (typeof existing === 'string' && existing.length > 0) return existing;
+  if (isValidCorrelationId(existing)) return existing;
 
   const header = request.headers[CORRELATION_HEADER];
   const fromHeader = Array.isArray(header) ? header[0] : header;
-  const resolved =
-    typeof fromHeader === 'string' && fromHeader.length > 0 && fromHeader.length <= 128
-      ? fromHeader
-      : runtime.ids();
+  const resolved = isValidCorrelationId(fromHeader) ? fromHeader : runtime.ids();
 
   request.gatewayCorrelationId = resolved;
   return resolved;

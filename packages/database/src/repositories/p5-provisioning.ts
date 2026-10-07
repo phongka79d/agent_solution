@@ -356,6 +356,7 @@ export class P5ProvisioningRepository {
     try {
       await client.query('BEGIN');
       transactionOpen = true;
+      await client.query('SET LOCAL ROLE agentos_platform');
       const result = await client.query<{ tenant_id: string }>(
         'SELECT agentos.provision_tenant_shell($1::char(64), $2::char(64), $3::varchar(128)) AS tenant_id',
         [input.idempotency_key, input.request_fingerprint, input.display_name],

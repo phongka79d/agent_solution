@@ -14,6 +14,23 @@ export interface ReconciledEffect {
   readonly kind: 'REPLAY' | 'DISPATCH';
   readonly receipt?: unknown;
 }
+/**
+ * Provider success is only authoritative when the adapter returned the same minimal receipt proof
+ * required by the dispatch reconciliation boundary. A status label without durable provider and
+ * execution identities remains UNKNOWN.
+ */
+export function isConfirmedExecutionReceipt(receipt: unknown): receipt is ExecutionReceipt {
+  if (receipt === null || typeof receipt !== 'object') {
+    return false;
+  }
+  const candidate = receipt as Partial<ExecutionReceipt>;
+  return candidate.adapter_status === 'SUCCESS'
+    && typeof candidate.execution_id === 'string'
+    && candidate.execution_id.trim().length > 0
+    && typeof candidate.provider_reference === 'string'
+    && candidate.provider_reference.trim().length > 0;
+}
+
 
 export interface EffectReconciliationDependencies {
   readonly effectGuard: IEffectGuard;
@@ -94,14 +111,17 @@ export async function acquireEffectSlot(
         skill_id: action.skill_id,
       });
       if (reconciled.outcome === 'SUCCEEDED') {
+        if (!isConfirmedExecutionReceipt(reconciled.receipt)) {
+          return { kind: 'WAIT', reason: 'EFFECT_UNKNOWN: provider success proof is incomplete' };
+        }
         // Provider proof becomes durable truth before replay is exposed to the run.
         await dependencies.effectGuard.resolve({
           tenant_id: action.tenant_id,
           effect_key: action.effect_key,
           status: 'SUCCEEDED',
-          ...(reconciled.receipt === undefined ? {} : { receipt: reconciled.receipt }),
+          receipt: reconciled.receipt,
         });
-        return { kind: 'REPLAY', receipt: reconciled.receipt ?? null };
+        return { kind: 'REPLAY', receipt: reconciled.receipt };
       }
       if (reconciled.outcome === 'FAILED') {
         // Provider-confirmed absence settles proof, then reopens the same deterministic key.
@@ -155,17 +175,23 @@ export async function reconcileProviderEffect(
   });
 
   if (reconciled.outcome === 'SUCCEEDED') {
+    if (!isConfirmedExecutionReceipt(reconciled.receipt)) {
+      throw new OrchestratorError(
+        'RECONCILIATION_PROVIDER_PROOF_REQUIRED',
+        'The provider reported success without a verified execution receipt; no reservation settlement is authorized.',
+      );
+    }
     await dependencies.effectGuard.resolve({
       tenant_id: action.tenant_id,
       effect_key: action.effect_key,
       status: 'SUCCEEDED',
-      ...(reconciled.receipt === undefined ? {} : { receipt: reconciled.receipt }),
+      receipt: reconciled.receipt,
     });
     return {
       effect_key: action.effect_key,
       action_id: action.action_id,
       kind: 'REPLAY',
-      receipt: reconciled.receipt ?? null,
+      receipt: reconciled.receipt,
     };
   }
 
@@ -201,19 +227,26 @@ export async function dispatchWithDeadline(
   step: PlannedStep,
 ): Promise<ExecutionReceipt> {
   let deadlineTimer: NodeJS.Timeout | undefined;
+  const abortController = new AbortController();
   try {
     await dependencies.assertExecutionLease?.(action.tenant_id, action.run_id);
-    const inFlight = dependencies.adapterDispatcher.dispatch(action, { timeout_ms: step.timeout_ms });
+    const inFlight = dependencies.adapterDispatcher.dispatch(action, {
+      timeout_ms: step.timeout_ms,
+      signal: abortController.signal,
+    });
     // A settlement that arrives after the deadline is late, not unhandled.
     inFlight.catch(() => undefined);
     return await Promise.race([
       inFlight,
       new Promise<never>((_, reject) => {
         deadlineTimer = setTimeout(
-          () => reject(new OrchestratorError(
-            'DISPATCH_TIMEOUT',
-            `Adapter call for step ${step.step_index} exceeded its ${step.timeout_ms}ms deadline`
-          )),
+          () => {
+            abortController.abort();
+            reject(new OrchestratorError(
+              'DISPATCH_TIMEOUT',
+              `Adapter call for step ${step.step_index} exceeded its ${step.timeout_ms}ms deadline`
+            ));
+          },
           step.timeout_ms
         );
       }),

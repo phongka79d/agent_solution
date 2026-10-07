@@ -18,6 +18,7 @@ export class MemoryAutonomyStore implements AutonomyStore {
   private readonly current = new Map<string, AutonomyPolicyRecord>();
   private readonly history = new Map<string, AutonomyPolicyRecord[]>();
   private readonly pausedTenants = new Set<string>();
+  private readonly killSwitchTenants = new Set<string>();
 
   constructor(initial: readonly AutonomyPolicyRecord[] = []) {
     for (const record of initial) this.put(record);
@@ -58,5 +59,13 @@ export class MemoryAutonomyStore implements AutonomyStore {
   setTenantPaused(tenant_id: string, paused: boolean): void {
     if (paused) this.pausedTenants.add(tenant_id);
     else this.pausedTenants.delete(tenant_id);
+  }
+  isKillSwitchSet(tenant_id: string): boolean {
+    return this.killSwitchTenants.has(tenant_id);
+  }
+
+  setKillSwitch(tenant_id: string, on: boolean): void {
+    if (on) this.killSwitchTenants.add(tenant_id);
+    else this.killSwitchTenants.delete(tenant_id);
   }
 }

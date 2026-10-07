@@ -2,6 +2,7 @@ import type { Customer360Fact } from '@agentos/core-engine/contracts';
 import type { CustomerEventTimeline } from '@agentos/database';
 import type { SkillToolInvocation, SkillToolPort } from '@agentos/skills';
 import type { ErpReadPort } from '../../connectors.js';
+import type { SalesAdvisorExecutionState } from '../advisor-adapters.js';
 import type {
   SalesCartInput,
   SalesCartPort,
@@ -88,6 +89,8 @@ export interface SalesSkillToolPortOptions {
   readonly revenue_evidence?: SalesRecommendationRevenueEvidencePort | undefined;
   /** Retained as an injection seam for callers; this port never invents provider timestamps. */
   readonly now?: (() => Date) | undefined;
+  /** Run-scoped, tenant-keyed state for server-stamped advisor requirements and read guards. */
+  readonly advisor_state?: SalesAdvisorExecutionState | undefined;
 
   readonly price_floor?: SalesPriceFloorPort | null | undefined;
   readonly cart?: SalesCartPort | null | undefined;
@@ -151,6 +154,9 @@ interface CheckPriceInput {
 export function createSalesSkillToolPort(options: SalesSkillToolPortOptions): SkillToolPort {
   return {
     async invoke<TInput, TOutput>(invocation: SkillToolInvocation<TInput>): Promise<TOutput> {
+      if (typeof invocation.input !== 'object' || invocation.input === null) {
+        throw new SalesSkillToolError('INVALID_INPUT', 'tool invocation input must be an object');
+      }
       if (
         invocation.skill_id === 'skill.sales.search_product'
         && invocation.tool_binding === 'API-001.CatalogConnector'

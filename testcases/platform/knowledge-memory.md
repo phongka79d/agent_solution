@@ -53,5 +53,5 @@ No uncovered token in this family.
 ## Reading this map
 
 - Coverage means traceability: an exact-token set membership between a facet token and the cases that declare it, never substring matching.
-- A token being covered means the checklist surface is *specified somewhere*; it is not a claim that the behaviour has been observed, and this suite records no `PASS` for a system that has no runtime in this repository.
+- A token being covered means the checklist surface is *specified somewhere*; it is not a claim that the behaviour has been observed, and this suite records no `PASS` for behaviour the generator has not executed.
 - The full reverse map for every requirement and facet family is in [`../COVERAGE.md`](../COVERAGE.md); per-case detail is in the case documents under `unit/`, `integration/`, `e2e/` and `governance/`.

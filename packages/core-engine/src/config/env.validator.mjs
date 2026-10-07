@@ -38,6 +38,10 @@ export const PROFILE_NODE_ENV = {
 };
 /** Profiles where placeholders, mocks and debug logging are refused. */
 export const MANAGED_APP_ENVS = ['staging', 'sandbox', 'production'];
+const LLM_PROVIDERS = ['openai-compatible'];
+const LLM_STRUCTURED_OUTPUT_MODES = ['json_object', 'json_schema'];
+const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
+
 
 /**
  * Placeholder pattern from the catalog §8 rules (case-insensitive): a value matching it is
@@ -98,6 +102,12 @@ const KNOWN_KEYS = new Set([
   'QDRANT_URL',
   'QDRANT_API_KEY',
   'EMBEDDING_DIMENSIONS',
+  'DEFAULT_LLM_PROVIDER',
+  'OPENAI_BASE_URL',
+  'OPENAI_STRUCTURED_OUTPUT_MODE',
+  'LLM_REQUEST_TIMEOUT_MS',
+  'MAX_TOKENS_PER_RUN',
+
   'OPENAI_API_KEY',
   'PRIMARY_REASONING_MODEL',
   'FAST_COMPLETION_MODEL',
@@ -448,11 +458,33 @@ export function parseEnvironment(env = process.env, options = {}) {
   });
 
   // ---- llm providers ------------------------------------------------------------
+  const defaultLlmProviderRaw = read('DEFAULT_LLM_PROVIDER');
+  const defaultLlmProvider = defaultLlmProviderRaw === undefined || defaultLlmProviderRaw === '' ? 'openai-compatible' : defaultLlmProviderRaw;
+  if (!LLM_PROVIDERS.includes(defaultLlmProvider)) {
+    add('DEFAULT_LLM_PROVIDER', 'DEFAULT_LLM_PROVIDER must be openai-compatible.');
+  }
+  const openaiBaseUrl = llmBaseUrlField(add, read, { isLocalOrCi });
   const openaiApiKey = stringField(add, read, 'OPENAI_API_KEY', 1);
-  const primaryReasoningModel = defaultedString(read, 'PRIMARY_REASONING_MODEL', 'gpt-4o');
-  const fastCompletionModel = defaultedString(read, 'FAST_COMPLETION_MODEL', 'gpt-4o-mini');
+  const primaryReasoningModel = stringField(add, read, 'PRIMARY_REASONING_MODEL', 1);
+  const fastCompletionModel = stringField(add, read, 'FAST_COMPLETION_MODEL', 1);
+  const structuredOutputModeRaw = read('OPENAI_STRUCTURED_OUTPUT_MODE');
+  const structuredOutputMode =
+    structuredOutputModeRaw === undefined || structuredOutputModeRaw === '' ? 'json_object' : structuredOutputModeRaw;
+  if (!LLM_STRUCTURED_OUTPUT_MODES.includes(structuredOutputMode)) {
+    add('OPENAI_STRUCTURED_OUTPUT_MODE', 'OPENAI_STRUCTURED_OUTPUT_MODE must be json_object or json_schema.');
+  }
+  const llmRequestTimeoutMs = intField(add, read, 'LLM_REQUEST_TIMEOUT_MS', 30000, {
+    min: 1,
+    description: 'a positive integer (milliseconds)',
+  });
+  const maxTokensPerRun = intField(add, read, 'MAX_TOKENS_PER_RUN', 4096, {
+    min: 1,
+    max: 4096,
+    description: 'an integer between 1 and 4096',
+  });
 
   // ---- external boundaries ------------------------------------------------------
+
   const erpApiBaseUrl = urlField(add, read, 'ERP_API_BASE_URL');
   const erpTimeoutMs = intField(add, read, 'ERP_TIMEOUT_MS', 5000, {
     min: 1,
@@ -592,9 +624,15 @@ export function parseEnvironment(env = process.env, options = {}) {
     QDRANT_URL: qdrantUrl,
     QDRANT_API_KEY: qdrantApiKey,
     EMBEDDING_DIMENSIONS: embeddingDimensions,
+    DEFAULT_LLM_PROVIDER: defaultLlmProvider,
+    OPENAI_BASE_URL: openaiBaseUrl,
     OPENAI_API_KEY: openaiApiKey,
     PRIMARY_REASONING_MODEL: primaryReasoningModel,
     FAST_COMPLETION_MODEL: fastCompletionModel,
+    OPENAI_STRUCTURED_OUTPUT_MODE: structuredOutputMode,
+    LLM_REQUEST_TIMEOUT_MS: llmRequestTimeoutMs,
+    MAX_TOKENS_PER_RUN: maxTokensPerRun,
+
     ERP_API_BASE_URL: erpApiBaseUrl,
     ERP_TIMEOUT_MS: erpTimeoutMs,
     EVENT_INGESTION_BASE_URL: eventIngestionBaseUrl,
@@ -705,6 +743,46 @@ function urlField(add, read, key) {
   }
   return value;
 }
+
+/**
+ * Validates the server-side OpenAI-compatible base URL without accepting credentials or
+ * request-scoped URL components.
+ *
+ * @param {(path: string, message: string) => void} add
+ * @param {(key: string) => string|undefined} read
+ * @param {{ isLocalOrCi: boolean }} context
+ * @returns {string}
+ */
+function llmBaseUrlField(add, read, context) {
+  const key = 'OPENAI_BASE_URL';
+  const configuredValue = read(key);
+  const value = configuredValue === undefined || configuredValue.trim() === ''
+    ? DEFAULT_OPENAI_BASE_URL
+    : configuredValue;
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    url = undefined;
+  }
+  const valid =
+    url &&
+    (url.protocol === 'http:' || url.protocol === 'https:') &&
+    url.hostname !== '' &&
+    url.username === '' &&
+    url.password === '' &&
+    url.search === '' &&
+    url.hash === '';
+  if (!valid) {
+    add(key, 'OPENAI_BASE_URL must be an absolute http(s) URL without userinfo, query, or fragment.');
+    return value;
+  }
+  if (url.protocol !== 'https:' && !context.isLocalOrCi) {
+    add(key, 'OPENAI_BASE_URL must use HTTPS outside local and ci.');
+  }
+  return value.replace(/\/+$/, '');
+}
+
 
 /**
  * Required comma-separated list of absolute http(s) origins. The wildcard `*` is a local/CI

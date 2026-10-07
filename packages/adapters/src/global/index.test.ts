@@ -25,31 +25,100 @@ function idempotencyStore() {
   };
 }
 
+function messagingAuthority(overrides: {
+  readonly consent?: boolean;
+  readonly suppression?: boolean;
+  readonly takeover?: boolean;
+  readonly sessionHold?: boolean;
+  readonly windowAllowed?: boolean;
+} = {}) {
+  return {
+    consent: () => ({ granted: overrides.consent ?? true, captured_at: 'now' }),
+    suppression: () => ({ suppressed: overrides.suppression ?? false, evaluated_at: 'now' }),
+    takeover: () => overrides.takeover ?? false,
+    sessionHold: () => overrides.sessionHold ?? false,
+    window: () => ({ allowed: overrides.windowAllowed ?? true }),
+  };
+}
+
 describe('global adapter seams', () => {
   it('refuses messaging outbound during takeover and accepts no unbound provider', async () => {
     const providers = new MessagingProviderRegistry();
-    const adapter = new GlobalMessagingAdapter({ providers, idempotency: idempotencyStore() });
+    const adapter = new GlobalMessagingAdapter({
+      providers,
+      idempotency: idempotencyStore(),
+      authority: messagingAuthority({ takeover: true }),
+    });
     await expect(adapter.send({
-      tenant_id: 'tenant-1', provider_id: 'not-bound', recipient: 'recipient',
+      tenant_id: 'tenant-1', session_id: 'session-1', provider_id: 'not-bound', recipient: 'recipient',
       payload: { mode: 'FREE_FORM', text: 'hello' }, effect_key: 'effect-1', idempotency_key: 'idem-1',
-      consent: { granted: true, captured_at: 'now' }, suppression: { suppressed: false, evaluated_at: 'now' },
-      takeover_active: true, session_hold_active: false, window_policy: () => ({ allowed: true }),
     })).rejects.toBeInstanceOf(MessagingRefusalError);
   });
 
   it('normalizes messaging timeout to UNKNOWN without claiming a send', async () => {
     const providers = new MessagingProviderRegistry();
     providers.register({ provider_id: 'mock', send: async () => ({ outcome: 'TIMEOUT' }) });
-    const adapter = new GlobalMessagingAdapter({ providers, idempotency: idempotencyStore() });
+    const adapter = new GlobalMessagingAdapter({
+      providers,
+      idempotency: idempotencyStore(),
+      authority: messagingAuthority(),
+    });
     const result = await adapter.send({
-      tenant_id: 'tenant-1', provider_id: 'mock', recipient: 'recipient',
+      tenant_id: 'tenant-1', session_id: 'session-1', provider_id: 'mock', recipient: 'recipient',
       payload: { mode: 'TEMPLATE', template_id: 'utility', parameters: {} },
       effect_key: 'effect-timeout', idempotency_key: 'idem-timeout',
-      consent: { granted: true, captured_at: 'now' }, suppression: { suppressed: false, evaluated_at: 'now' },
-      takeover_active: false, session_hold_active: false, window_policy: () => ({ allowed: true }),
     });
     expect(result.outcome).toBe('UNKNOWN');
     expect(result.requires_reconciliation).toBe(true);
+  });
+
+  it('reads consent and takeover from authoritative state and rejects legacy payload claims', async () => {
+    const providers = new MessagingProviderRegistry();
+    providers.register({
+      provider_id: 'mock',
+      send: async () => ({ outcome: 'SENT', provider_reference: 'provider-1' }),
+    });
+    const adapter = new GlobalMessagingAdapter({
+      providers,
+      idempotency: idempotencyStore(),
+      authority: messagingAuthority({ takeover: true }),
+    });
+    await expect(adapter.send({
+      tenant_id: 'tenant-1',
+      session_id: 'session-1',
+      provider_id: 'mock',
+      recipient: 'recipient',
+      payload: { mode: 'FREE_FORM', text: 'hello' },
+      effect_key: 'effect-authority',
+      idempotency_key: 'idem-authority',
+      takeover_active: false,
+    } as never)).rejects.toMatchObject({ refusal_code: 'REQUEST_INVALID' });
+  });
+
+  it('resolves the provider before beginning idempotency', async () => {
+    const providers = new MessagingProviderRegistry();
+    let beginCalls = 0;
+    const adapter = new GlobalMessagingAdapter({
+      providers,
+      authority: messagingAuthority(),
+      idempotency: {
+        begin: () => {
+          beginCalls += 1;
+          return { state: 'NEW' };
+        },
+        complete: () => undefined,
+      },
+    });
+    await expect(adapter.send({
+      tenant_id: 'tenant-1',
+      session_id: 'session-1',
+      provider_id: 'missing',
+      recipient: 'recipient',
+      payload: { mode: 'FREE_FORM', text: 'hello' },
+      effect_key: 'effect-provider',
+      idempotency_key: 'idem-provider',
+    })).rejects.toMatchObject({ refusal_code: 'PROVIDER_UNBOUND' });
+    expect(beginCalls).toBe(0);
   });
 
   it('does not synthesize payment success and keeps payment non-promotable', async () => {

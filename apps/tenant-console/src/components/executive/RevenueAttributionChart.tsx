@@ -5,7 +5,7 @@
 
 'use client';
 
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { tenantConsoleClient } from '../../lib/tenant-console-client';
 import type { AttributionPoint, SseConnectionStatus } from './types';
 
@@ -106,7 +106,7 @@ export function RevenueAttributionChart({
     cleanupStream();
 
     const streamUrl = tenantConsoleClient.getTelemetryStreamUrl({ metric: 'revenue_attribution' });
-    const es = new EventSource(streamUrl);
+    const es = new EventSource(streamUrl, { withCredentials: true });
     eventSourceRef.current = es;
     setConnectionStatus(retryCountRef.current > 0 ? 'RECONNECTING' : 'CONNECTING');
     setStreamErrorMessage(null);
@@ -153,39 +153,39 @@ export function RevenueAttributionChart({
   }, [connectStream, cleanupStream]);
 
   const statusBadge = connectionStatus === 'LIVE' ? (
-    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-950 text-emerald-300 border border-emerald-800">
-      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+    <span className="inline-flex items-center gap-1.5 rounded border border-success-border bg-success-bg px-2 py-0.5 text-[10px] font-mono text-success">
+      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-success" />
       STREAM LIVE
     </span>
   ) : connectionStatus === 'RECONNECTING' ? (
-    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-mono bg-amber-950 text-amber-300 border border-amber-800">
-      <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+    <span className="inline-flex items-center gap-1.5 rounded border border-warning-border bg-warning-bg px-2 py-0.5 text-[10px] font-mono text-warning">
+      <span className="h-1.5 w-1.5 animate-ping rounded-full bg-warning" />
       RECONNECTING ({reconnectAttempt}/{MAX_RECONNECT_ATTEMPTS})
     </span>
   ) : connectionStatus === 'UNAVAILABLE' ? (
-    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-mono bg-rose-950 text-rose-300 border border-rose-800">
+    <span className="inline-flex items-center gap-1.5 rounded border border-danger-border bg-danger-bg px-2 py-0.5 text-[10px] font-mono text-danger">
       STREAM UNAVAILABLE
     </span>
   ) : (
-    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-mono bg-slate-800 text-slate-400 border border-slate-700">
+    <span className="inline-flex items-center gap-1.5 rounded border border-neutral-border bg-neutral-bg px-2 py-0.5 text-[10px] font-mono text-muted">
       {connectionStatus}
     </span>
   );
 
   return (
-    <div className="w-full bg-slate-900 border border-slate-800 rounded-lg p-5 mb-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4 pb-3 border-b border-slate-800/80">
+    <div className="mb-6 w-full rounded-lg border border-line bg-surface p-5">
+      <div className="mb-4 flex flex-col gap-2 border-b border-line pb-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h3 className="text-sm font-semibold text-slate-100">
+          <h3 className="text-sm font-semibold text-ink">
             Real-Time Revenue Attribution (Organic Baseline vs AI Attributed)
           </h3>
-          <p className="text-xs text-slate-400 mt-0.5 font-mono">
+          <p className="mt-0.5 text-xs font-mono text-muted">
             R09 SSE Stream &bull; metric=revenue_attribution
           </p>
         </div>
         <div className="flex items-center gap-2">
           {lastObservedAt && (
-            <span className="text-[11px] font-mono text-slate-500">
+            <span className="text-[11px] font-mono text-muted">
               Last Frame: {lastObservedAt}
             </span>
           )}
@@ -198,7 +198,7 @@ export function RevenueAttributionChart({
                 setReconnectAttempt(0);
                 connectStream();
               }}
-              className="px-2 py-0.5 text-[10px] font-medium rounded bg-slate-800 text-sky-400 border border-slate-700 hover:bg-slate-700"
+              className="ui-button ui-button--secondary rounded px-2 py-0.5 text-[10px] font-medium text-info"
             >
               Reconnect
             </button>
@@ -207,17 +207,17 @@ export function RevenueAttributionChart({
       </div>
 
       {streamErrorMessage && (
-        <div className="mb-4 p-2.5 rounded bg-rose-950/50 border border-rose-800/60 text-xs font-mono text-rose-300">
+        <div className="mb-4 rounded border border-danger-border bg-danger-bg p-2.5 text-xs font-mono text-danger">
           Stream Notice: {streamErrorMessage}
         </div>
       )}
 
       {dataPoints.length === 0 ? (
-        <div className="flex flex-col items-center justify-center h-48 text-slate-500 border border-dashed border-slate-800/80 rounded-lg p-6">
-          <span className="text-xs font-mono font-medium text-slate-400 mb-1">
+        <div className="flex h-48 flex-col items-center justify-center rounded-lg border border-dashed border-line p-6 text-muted">
+          <span className="mb-1 text-xs font-mono font-medium text-muted">
             Awaiting streaming attribution telemetry
           </span>
-          <p className="text-[11px] text-slate-500 max-w-md text-center">
+          <p className="max-w-md text-center text-[11px] text-muted">
             {connectionStatus === 'UNAVAILABLE'
               ? 'Telemetry stream is unavailable. No data points were recorded.'
               : 'No revenue attribution events received yet for the current window. Incoming stream events will be charted here.'}
@@ -225,15 +225,15 @@ export function RevenueAttributionChart({
         </div>
       ) : (
         <div className="space-y-2">
-          <div className="flex items-center justify-end gap-4 text-xs font-mono text-slate-400 mb-2">
+          <div className="mb-2 flex items-center justify-end gap-4 text-xs font-mono text-muted">
             <span className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-sm bg-sky-500" /> Organic Baseline
+              <span className="h-2.5 w-2.5 rounded-sm bg-info" /> Organic Baseline
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-sm bg-emerald-500" /> AI Attributed
+              <span className="h-2.5 w-2.5 rounded-sm bg-success" /> AI Attributed
             </span>
           </div>
-          <div className="h-44 w-full flex items-end gap-1 pt-4 pb-2 px-1 bg-slate-950/60 rounded border border-slate-800/60 overflow-x-auto">
+          <div className="flex h-44 w-full items-end gap-1 overflow-x-auto rounded border border-line bg-surface-low px-1 pb-2 pt-4">
             {dataPoints.map((pt, idx) => {
               const maxVal = Math.max(...dataPoints.map((d) => d.baseline + d.aiAttributed), 1);
               const baselinePct = Math.min(100, Math.round((pt.baseline / maxVal) * 100));
@@ -245,16 +245,16 @@ export function RevenueAttributionChart({
                 >
                   <div
                     style={{ height: `${aiPct}%` }}
-                    className="w-full bg-emerald-500/80 rounded-t-sm transition-all"
+                    className="w-full rounded-t-sm bg-success transition-all"
                   />
                   <div
                     style={{ height: `${baselinePct}%` }}
-                    className="w-full bg-sky-600/70 transition-all"
+                    className="w-full bg-info transition-all"
                   />
-                  <div className="opacity-0 group-hover:opacity-100 absolute bottom-full mb-1 z-10 pointer-events-none p-1.5 bg-slate-900 border border-slate-700 text-[10px] font-mono text-slate-200 rounded shadow-lg whitespace-nowrap">
+                  <div className="pointer-events-none absolute bottom-full z-10 mb-1 whitespace-nowrap rounded border border-line bg-ink p-1.5 text-[10px] font-mono text-primary-ink opacity-0 shadow-lg group-hover:opacity-100">
                     <div>Time: {pt.time}</div>
-                    <div className="text-sky-300">Baseline: NT$ {pt.baseline.toLocaleString()}</div>
-                    <div className="text-emerald-300">AI: NT$ {pt.aiAttributed.toLocaleString()}</div>
+                    <div className="text-info">Baseline: NT$ {pt.baseline.toLocaleString()}</div>
+                    <div className="text-success">AI: NT$ {pt.aiAttributed.toLocaleString()}</div>
                   </div>
                 </div>
               );

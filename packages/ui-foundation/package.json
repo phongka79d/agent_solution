@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
+  "files": ["dist", "src/tokens.css", "src/env.mjs", "tailwind-preset.cjs"],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -10,7 +11,25 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
-    "./env": "./src/env.mjs"
+    "./auth": {
+      "types": "./dist/auth.d.ts",
+      "default": "./dist/auth.js"
+    },
+    "./tokens.css": "./src/tokens.css",
+    "./env": "./src/env.mjs",
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "default": "./dist/react/index.js"
+    },
+    "./i18n": {
+      "types": "./dist/i18n/index.d.ts",
+      "default": "./dist/i18n/index.js"
+    },
+    "./status": {
+      "types": "./dist/status-view.d.ts",
+      "default": "./dist/status-view.js"
+    },
+    "./tailwind-preset": "./tailwind-preset.cjs"
   },
   "scripts": {
     "build": "tsc --project tsconfig.build.json",
@@ -21,7 +40,17 @@
   "devDependencies": {
     "@agentos/eslint-config": "workspace:*",
     "@agentos/typescript-config": "workspace:*",
+    "@testing-library/dom": "^10.4.0",
+    "@testing-library/react": "^16.0.0",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "jsdom": "^24.1.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
     "typescript": "^5.4.5",
     "vitest": "^1.6.0"
+  },
+  "dependencies": {
+    "lucide-react": "^0.460.0"
   }
 }

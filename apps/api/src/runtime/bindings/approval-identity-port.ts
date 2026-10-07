@@ -37,6 +37,7 @@ interface ApprovalDetailRecordLike {
     readonly is_paused: boolean;
     readonly review_comment: string | null;
     readonly decided_at: string | null;
+    readonly expires_at: string;
     readonly created_at: string;
   };
 }
@@ -44,9 +45,9 @@ interface ApprovalDetailRecordLike {
 /** Maps the single canonical approval row onto the queue contract. */
 function toApprovalQueueItem(detail: ApprovalDetailRecordLike): ApprovalQueueItem {
   const { approval } = detail;
-  if (approval.decision !== 'PENDING') {
+  if (approval.decision !== 'PENDING' && approval.decision !== 'EXPIRED') {
     throw new Error(
-      'APPROVAL_DETAIL_STATUS_UNREPRESENTABLE: this gateway contract publishes the PENDING queue only',
+      'APPROVAL_DETAIL_STATUS_UNREPRESENTABLE: this gateway contract publishes the pending or expired approval detail',
     );
   }
   if (!plainRecord(approval.payload)) {
@@ -60,7 +61,7 @@ function toApprovalQueueItem(detail: ApprovalDetailRecordLike): ApprovalQueueIte
     effect_key: approval.effect_key,
     payload: approval.payload,
     reason: approval.reason,
-    status: 'PENDING',
+    status: approval.decision === 'EXPIRED' ? 'EXPIRED' : 'PENDING',
     is_paused: approval.is_paused,
     decided_by: approval.operator_id,
     decided_at: approval.decided_at,
@@ -94,8 +95,7 @@ export function createApprovalReadPort(
         : {
             ...toApprovalQueueItem(detail),
             tenant_id: detail.approval.tenant_id,
-            // No owner-approved approval TTL or stored expiry exists in P0.
-            expires_at: null,
+            expires_at: detail.approval.expires_at,
           };
     },
   };

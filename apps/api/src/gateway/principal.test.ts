@@ -8,16 +8,18 @@
  * nothing" an observation about the request instead of a claim about a handler.
  */
 
+import { createHmac } from 'node:crypto';
+
 import { MemoryEffectGuard } from '@agentos/core-engine';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { describe, expect, it } from 'vitest';
-
 import { correlationIdOf, replyFailure } from './http.js';
 import {
   authenticate,
   createCredentialStore,
   requireOperator,
   requirePrincipal,
+  verifyConversationSessionToken,
   type CredentialStore,
   type OperatorCredential,
   type SessionCredential,
@@ -87,6 +89,27 @@ function testCredentials(): CredentialStore {
 /** The bearer presentation of a token; the scheme is the only structure the gateway reads. */
 function bearer(token: string): Record<string, string> {
   return { authorization: `Bearer ${token}` };
+}
+
+const SESSION_SIGNING_SECRET = 'test-session-secret-000000';
+const SESSION_NOW = 1_800_000_000;
+
+function signedSessionToken(overrides: Partial<{
+  tenant_id: string;
+  conversation_id: string;
+  session_id: string;
+  exp: number;
+}> = {}): string {
+  const binding = JSON.stringify({
+    tenant_id: overrides.tenant_id ?? TENANT_A,
+    conversation_id: overrides.conversation_id ?? 'conversation-1',
+    session_id: overrides.session_id ?? 'session-1',
+    exp: overrides.exp ?? SESSION_NOW + 60,
+    channel: 'WEB_CHAT',
+  });
+  const encoded = Buffer.from(binding, 'utf8').toString('base64url');
+  const signature = createHmac('sha256', SESSION_SIGNING_SECRET).update(binding, 'utf8').digest('base64url');
+  return `${encoded}.${signature}`;
 }
 
 /** The port bundle and every call it received. */
@@ -186,6 +209,99 @@ describe('createCredentialStore', () => {
     expect(credentials.resolveOperator(`${OPERATOR_TOKEN} `)).toBeNull();
     expect(credentials.resolveOperator(OPERATOR_TOKEN.toUpperCase())).toBeNull();
     expect(credentials.resolveOperator('')).toBeNull();
+  });
+  it('keeps exact static session rows authoritative when signed verification is enabled', () => {
+    const staticSession: SessionCredential = {
+      token: 'static.session.token',
+      tenant_id: TENANT_A,
+      conversation_id: 'conversation-static',
+      session_id: 'session-static',
+      channel: 'WEB_CHAT',
+    };
+    const credentials = createCredentialStore({
+      operators: [],
+      sessions: [staticSession],
+      widgets: [],
+      session_secret: SESSION_SIGNING_SECRET,
+    });
+
+    expect(credentials.resolveConversationSession(staticSession.token)).toBe(staticSession);
+  });
+  it('never uses JWT_SECRET as a session-signing fallback', () => {
+    const originalSessionSecret = process.env.SESSION_SECRET;
+    const originalJwtSecret = process.env.JWT_SECRET;
+    delete process.env.SESSION_SECRET;
+    process.env.JWT_SECRET = SESSION_SIGNING_SECRET;
+    try {
+      const credentials = createCredentialStore({ operators: [], sessions: [], widgets: [] });
+      expect(credentials.resolveConversationSession(signedSessionToken())).toBeNull();
+    } finally {
+      if (originalSessionSecret === undefined) delete process.env.SESSION_SECRET;
+      else process.env.SESSION_SECRET = originalSessionSecret;
+      if (originalJwtSecret === undefined) delete process.env.JWT_SECRET;
+      else process.env.JWT_SECRET = originalJwtSecret;
+    }
+  });
+});
+
+describe('verifyConversationSessionToken', () => {
+  it('accepts a valid binding and rejects tampered or expired tokens', () => {
+    const valid = signedSessionToken();
+    const parts = valid.split('.');
+    const signatureMiddle = Math.floor((parts[1]?.length ?? 0) / 2);
+    const tamperedCharacter = parts[1]?.charAt(signatureMiddle) === 'A' ? 'B' : 'A';
+    const tampered = `${parts[0]}.${parts[1]?.slice(0, signatureMiddle)}${tamperedCharacter}${parts[1]?.slice(signatureMiddle + 1)}`;
+
+    expect(verifyConversationSessionToken(valid, SESSION_SIGNING_SECRET, SESSION_NOW)).toMatchObject({
+      tenant_id: TENANT_A,
+      conversation_id: 'conversation-1',
+      session_id: 'session-1',
+      channel: 'WEB_CHAT',
+    });
+    expect(verifyConversationSessionToken(tampered, SESSION_SIGNING_SECRET, SESSION_NOW)).toBeNull();
+    expect(
+      verifyConversationSessionToken(
+        signedSessionToken({ exp: SESSION_NOW }),
+        SESSION_SIGNING_SECRET,
+        SESSION_NOW,
+      ),
+    ).toBeNull();
+  });
+
+  it('authenticates a signed session without a static row and refuses tampering or expiry', async () => {
+    // Keep this case independent of any SESSION_SECRET left by another test or the test runner.
+    const originalSessionSecret = process.env.SESSION_SECRET;
+    delete process.env.SESSION_SECRET;
+    try {
+      const credentials = createCredentialStore({
+        operators: [],
+        sessions: [],
+        widgets: [],
+        session_secret: SESSION_SIGNING_SECRET,
+      });
+      const valid = signedSessionToken({ exp: Math.floor(Date.now() / 1000) + 60 });
+      const tamperedParts = valid.split('.');
+      const signatureMiddle = Math.floor((tamperedParts[1]?.length ?? 0) / 2);
+      const tamperedCharacter = tamperedParts[1]?.charAt(signatureMiddle) === 'A' ? 'B' : 'A';
+      const tampered = `${tamperedParts[0]}.${tamperedParts[1]?.slice(0, signatureMiddle)}${tamperedCharacter}${tamperedParts[1]?.slice(signatureMiddle + 1)}`;
+      const expired = signedSessionToken({ exp: Math.floor(Date.now() / 1000) - 1 });
+      for (const [token, expectedStatus] of [[valid, 200], [tampered, 401], [expired, 401]] as const) {
+        const app = createApp(credentials, createTestRuntime());
+        try {
+          const response = await app.inject({
+            method: 'POST',
+            url: '/api/v1/probe',
+            headers: bearer(token),
+          });
+          expect(response.statusCode).toBe(expectedStatus);
+        } finally {
+          await app.close();
+        }
+      }
+    } finally {
+      if (originalSessionSecret === undefined) delete process.env.SESSION_SECRET;
+      else process.env.SESSION_SECRET = originalSessionSecret;
+    }
   });
 });
 
@@ -302,11 +418,24 @@ describe('authenticate', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/v1/probe',
-      headers: bearer(WIDGET_TOKEN),
+      headers: { ...bearer(WIDGET_TOKEN), origin: WIDGET.origin },
     });
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ kind: 'WIDGET_SESSION', tenant_id: TENANT_A });
+    await app.close();
+  });
+
+  it('refuses widget credentials from absent or different origins', async () => {
+    const app = createApp(testCredentials(), createTestRuntime());
+    for (const origin of [undefined, 'https://other.example.test']) {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/v1/probe',
+        headers: { ...bearer(WIDGET_TOKEN), ...(origin === undefined ? {} : { origin }) },
+      });
+      expect(response.statusCode).toBe(401);
+    }
     await app.close();
   });
 });

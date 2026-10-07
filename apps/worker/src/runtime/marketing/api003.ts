@@ -60,7 +60,6 @@ export const SUPPORTED_API003_CHANNELS: readonly ChannelId[] = Object.freeze([
  */
 export type Api003Credentials = unknown;
 
-/** Normalized outbound request passed to the injected transport. */
 export interface Api003OutboundDispatchInput {
   readonly tenant_id: string;
   readonly effect_key: string;
@@ -70,6 +69,7 @@ export interface Api003OutboundDispatchInput {
   readonly payload: Readonly<Record<string, unknown>>;
   readonly provider: string;
   readonly credentials: Api003Credentials;
+  readonly signal?: AbortSignal;
 }
 
 /** Result returned by the injected transport. */
@@ -201,7 +201,7 @@ export class MarketingApi003Connector implements AdapterPort {
    * Dispatches an action draft to the injected provider transport.
    * Fails closed before transport if unconfigured, tenant mismatches, or payload is invalid.
    */
-  async dispatch(draft: ActionDraft): Promise<ExecutionReceipt> {
+  async dispatch(draft: ActionDraft, options?: { readonly signal?: AbortSignal }): Promise<ExecutionReceipt> {
     if (!this.isConfigured || !this.transport) {
       if (!this.boundTenantId) {
         throw new Api003RefusalError(
@@ -334,6 +334,7 @@ export class MarketingApi003Connector implements AdapterPort {
       payload: draft.payload,
       provider: this.provider,
       credentials: this.credentials,
+      ...(options?.signal === undefined ? {} : { signal: options.signal }),
     };
 
     let result: Api003TransportDispatchResult;
@@ -546,7 +547,7 @@ export function registerMarketingApi003Connector(
       provider: connector.provider,
       read_resources: [],
     },
-    dispatch: (draft) => connector.dispatch(draft),
+    dispatch: (draft, options) => connector.dispatch(draft, options),
     reconcile: (input) => connector.reconcile(input),
   });
 

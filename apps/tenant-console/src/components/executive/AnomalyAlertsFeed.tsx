@@ -5,7 +5,6 @@
 
 'use client';
 
-import React from 'react';
 import type { AnomalyAlert } from './types';
 
 export function AnomalyAlertsFeed({
@@ -16,38 +15,38 @@ export function AnomalyAlertsFeed({
   const getSeverityStyle = (severity: AnomalyAlert['severity']) => {
     switch (severity) {
       case 'CRITICAL':
-        return 'bg-rose-950/80 text-rose-300 border-rose-800';
+        return 'bg-danger-bg text-danger border-danger-border';
       case 'WARN':
-        return 'bg-amber-950/80 text-amber-300 border-amber-800';
+        return 'bg-warning-bg text-warning border-warning-border';
       case 'INFO':
-        return 'bg-sky-950/80 text-sky-300 border-sky-800';
+        return 'bg-info-bg text-info border-info-border';
       default:
-        return 'bg-slate-800 text-slate-300 border-slate-700';
+        return 'bg-neutral-bg text-muted border-neutral-border';
     }
   };
 
   return (
-    <div className="w-full bg-slate-900 border border-slate-800 rounded-lg p-5 mb-6">
-      <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-800">
+    <div className="mb-6 w-full rounded-lg border border-line bg-surface p-5">
+      <div className="mb-4 flex items-center justify-between border-b border-line pb-3">
         <div>
-          <h3 className="text-sm font-semibold text-slate-100">
+          <h3 className="text-sm font-semibold text-ink">
             Operational Anomalies & Critical Alerts
           </h3>
-          <p className="text-xs text-slate-400 mt-0.5 font-mono">
+          <p className="mt-0.5 text-xs font-mono text-muted">
             Indicator #10 &bull; Automated Telemetry Monitors
           </p>
         </div>
-        <span className="text-xs font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+        <span className="rounded border border-neutral-border bg-neutral-bg px-2 py-0.5 text-xs font-mono text-muted">
           {alerts.length} Events
         </span>
       </div>
 
       {alerts.length === 0 ? (
-        <div className="flex flex-col items-center justify-center h-28 text-slate-500 border border-dashed border-slate-800/80 rounded-lg p-4">
-          <span className="text-xs font-mono text-slate-400">
+        <div className="flex h-28 flex-col items-center justify-center rounded-lg border border-dashed border-line p-4 text-muted">
+          <span className="text-xs font-mono text-muted">
             Upstream anomaly data unavailable / not instrumented
           </span>
-          <span className="text-[11px] text-slate-600 mt-0.5">
+          <span className="mt-0.5 text-[11px] text-muted">
             Telemetry anomaly detection is not instrumented or unavailable for this window.
           </span>
         </div>
@@ -61,18 +60,18 @@ export function AnomalyAlertsFeed({
               )}`}
             >
               <div className="flex items-start gap-2.5">
-                <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold uppercase tracking-wider bg-slate-950/60 border border-current">
+                <span className="rounded border border-current bg-surface-low px-1.5 py-0.5 text-[10px] font-mono font-bold uppercase tracking-wider">
                   {alert.severity}
                 </span>
                 <div>
-                  <div className="text-xs font-medium text-slate-200">{alert.message}</div>
-                  <div className="text-[11px] font-mono text-slate-400 mt-0.5">
+                  <div className="text-xs font-medium text-ink-body">{alert.message}</div>
+                  <div className="mt-0.5 text-[11px] font-mono text-muted">
                     Source: {alert.source}
                     {alert.evidence_reference && ` | Evidence: ${alert.evidence_reference}`}
                   </div>
                 </div>
               </div>
-              <span className="text-[11px] font-mono text-slate-400 whitespace-nowrap self-end sm:self-center">
+              <span className="self-end whitespace-nowrap text-[11px] font-mono text-muted sm:self-center">
                 {alert.timestamp}
               </span>
             </div>

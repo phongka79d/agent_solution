@@ -153,6 +153,7 @@ export function createSalesSkillServices(options: SalesSkillOptions): SalesSkill
     context: options.context,
     ...(options.revenue_evidence === undefined ? {} : { revenue_evidence: options.revenue_evidence }),
     ...(options.now === undefined ? {} : { now: options.now }),
+    ...(options.advisor_state === undefined ? {} : { advisor_state: options.advisor_state }),
     ...(options.price_floor === undefined ? {} : { price_floor: options.price_floor }),
     ...(options.cart === undefined ? {} : { cart: options.cart }),
     ...(options.order === undefined ? {} : { order: options.order }),
@@ -166,8 +167,8 @@ export function createSalesSkillServices(options: SalesSkillOptions): SalesSkill
     ...(options.takeover_active === undefined ? {} : { takeover_active: options.takeover_active }),
     ...(options.quote_signing_secret === undefined ? {} : { quote_signing_secret: options.quote_signing_secret }),
   });
-  const clock = options.now ?? (() => new Date());
   const enabled_skills = resolveEnabledSalesSkills(options);
+  const clock = options.now ?? (() => new Date());
   const registry = createSkillRegistry();
   for (const row of createSalesSkills({ tools: tool_port, clock })) {
     registry.register({ ...row, enabled: enabled_skills.has(row.skill_id) });
@@ -183,6 +184,9 @@ export function createSalesSkillServices(options: SalesSkillOptions): SalesSkill
     engine,
     resolve_correlation_id: options.resolve_correlation_id,
     resolve_grant: options.resolve_grant,
+    ...(options.erp_read && typeof options.erp_read.reconcile === 'function'
+      ? { provider_reconcile: (input) => options.erp_read!.reconcile!(input) }
+      : {}),
   });
 
   const unbound: string[] = [];

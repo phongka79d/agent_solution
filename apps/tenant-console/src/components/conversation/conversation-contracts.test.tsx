@@ -3,7 +3,6 @@
  * Verifies canonical takeover vocabulary and the absence of uncontracted persistence routes.
  */
 
-import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { ConversationWireStatus, TakeoverMode } from '../../lib/types/tenant-console';

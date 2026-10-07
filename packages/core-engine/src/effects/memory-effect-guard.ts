@@ -20,6 +20,7 @@
 
 import type { IEffectGuard, ReservationOutcome } from '../contracts/ports.js';
 import { OrchestratorError } from '../contracts/types.js';
+import { isSha256Hex } from '../durability/canonical-json.js';
 import { type EffectKeyInput, computeEffectKey, computeRequestFingerprint } from './effect-key.js';
 
 /**
@@ -92,9 +93,27 @@ export class MemoryEffectGuard implements IEffectGuard {
     step_index: number;
     action_revision: number;
   }): Promise<ReservationOutcome> {
+    const canonicalKey = computeEffectKey({
+      tenant_id: input.tenant_id,
+      skill_id: input.skill_id,
+      step_index: input.step_index,
+      action_revision: input.action_revision,
+      request_id: input.request_id,
+    });
+    if (canonicalKey !== input.effect_key) {
+      throw new OrchestratorError(
+        'EFFECT_KEY_MISMATCH',
+        `the presented effect_key ${input.effect_key} is not the canonical derivation for the reservation identity.`,
+      );
+    }
+    if (!isSha256Hex(input.request_fingerprint)) {
+      throw new OrchestratorError(
+        'REQUEST_FINGERPRINT_INVALID',
+        'request_fingerprint must be the 64-character lower-case SHA-256 digest of the canonical payload.',
+      );
+    }
     const key = rowKey(input.tenant_id, input.effect_key);
     const row = this.rows.get(key);
-
     if (row === undefined) {
       const reservedAt = this.now();
       const reserved: EffectReservationRow = {
@@ -156,6 +175,12 @@ export class MemoryEffectGuard implements IEffectGuard {
         `'${String(input.status)}' is not a settlement: effect_reservations accepts only SUCCEEDED or FAILED, and an indeterminate outcome leaves the row RESERVED (§3.2.3, BR-006).`,
       );
     }
+    if (!isSha256Hex(input.effect_key)) {
+      throw new OrchestratorError(
+        'EFFECT_KEY_INVALID',
+        'effect_key must be the 64-character lower-case SHA-256 digest of the reservation identity.',
+      );
+    }
     const key = rowKey(input.tenant_id, input.effect_key);
     const row = this.rows.get(key);
 
@@ -167,6 +192,12 @@ export class MemoryEffectGuard implements IEffectGuard {
     }
     if (row.status === input.status) {
       return;
+    }
+    if (row.status === 'SUCCEEDED') {
+      throw new OrchestratorError(
+        'RESERVATION_NOT_SETTLEABLE',
+        `effect_key ${input.effect_key} is already settled SUCCEEDED and cannot be downgraded.`,
+      );
     }
     const settled: EffectReservationRow = { ...row, status: input.status, receipt: input.receipt };
     this.rows.set(key, Object.freeze(settled));
@@ -186,6 +217,12 @@ export class MemoryEffectGuard implements IEffectGuard {
   }): Promise<ReconciliationResult> {
     const row = this.rows.get(rowKey(input.tenant_id, input.effect_key));
 
+    if (row !== undefined && row.skill_id !== input.skill_id) {
+      throw new OrchestratorError(
+        'EFFECT_SKILL_MISMATCH',
+        `effect_key ${input.effect_key} is bound to skill ${row.skill_id}, not ${input.skill_id}; refusing to reconcile through the wrong connector.`,
+      );
+    }
     if (row?.status === 'SUCCEEDED') {
       return row.receipt === undefined
         ? { outcome: 'SUCCEEDED' }

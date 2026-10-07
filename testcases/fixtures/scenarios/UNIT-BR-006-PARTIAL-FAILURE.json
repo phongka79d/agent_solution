@@ -89,5 +89,5 @@
   ],
   "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
   "generator": "testcases/_generate.py",
-  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+  "note": "Generated acceptance specification. Plain specification, not an executable test; the repository runtime is not executed while generating it, so the status is NOT_RUN."
 }

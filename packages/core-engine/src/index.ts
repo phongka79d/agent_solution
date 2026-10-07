@@ -13,6 +13,20 @@ export * from './durability/evidence.js';
 export * from './durability/redis-client.js';
 export * from './policy/index.js';
 export * from './autonomy/index.js';
+export {
+  LlmTokenBudgetError,
+  LlmUsageRecorder,
+  llmIdempotencyKey,
+} from './cost/llm-usage.js';
+export type {
+  LlmCallContext,
+  LlmCostRecordInput,
+  LlmCostSink,
+  LlmUsage,
+  LlmUsageReader,
+  LlmUsageRecordContext,
+  LlmUsageRecorderOptions,
+} from './cost/llm-usage.js';
 // The in-memory guard is the canonical `IEffectGuard` bound to a Map, so a route or connector test
 // exercises the real effect-key derivation, fingerprinting and reservation protocol instead of a
 // hand-rolled double. `EffectReservationStatus` is deliberately not re-exported: `contracts/types.ts`
@@ -25,6 +39,9 @@ export type {
   MemoryEffectGuardOptions,
   EffectReservationRow,
 } from './effects/memory-effect-guard.js';
+// The in-memory workflow engine is the reference `IStatefulWorkflowEngine`; composition roots and
+// the memory-vs-durable contract suite (apps/worker) drive it through the public surface.
+export { MemoryWorkflowEngine } from './workflow/memory-workflow-engine.js';
 
 /** Package identity surfaced by `apps/api` and `apps/worker` health payloads. */
 export const packageName = '@agentos/core-engine';

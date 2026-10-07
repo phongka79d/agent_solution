@@ -94,6 +94,9 @@ export class AutonomyService implements AutonomyAdmissionPort {
     };
     const eligibility = checkPromotionEligibility(request);
     if (!eligibility.eligible) return operationFailure(eligibility.reason);
+    if (await this.store.isKillSwitchSet(input.tenant_id)) {
+      return operationFailure('NOT_ELIGIBLE: tenant kill switch is set.');
+    }
     if (await this.store.isTenantPaused(input.tenant_id)) {
       return operationFailure('NOT_ELIGIBLE: tenant autonomy is paused.');
     }
@@ -198,6 +201,9 @@ export class AutonomyService implements AutonomyAdmissionPort {
   async resumeTenant(input: TenantAutonomyRequest | string): Promise<readonly AutonomyPolicyRecord[]> {
     const request = typeof input === 'string' ? { tenant_id: input } : input;
     const tenant_id = request.tenant_id.trim();
+    if (await this.store.isKillSwitchSet(tenant_id)) {
+      throw new Error('NOT_ELIGIBLE: tenant kill switch is set.');
+    }
     const rows = await this.store.listCurrent(tenant_id);
     await this.store.setTenantPaused(tenant_id, false);
     const resumed: AutonomyPolicyRecord[] = [];
@@ -230,10 +236,11 @@ export class AutonomyService implements AutonomyAdmissionPort {
   async killSwitch(input: TenantAutonomyRequest | string): Promise<readonly AutonomyPolicyRecord[]> {
     const request = typeof input === 'string' ? { tenant_id: input } : input;
     const tenant_id = request.tenant_id.trim();
+    await this.store.setKillSwitch(tenant_id, true);
     const rows = await this.store.listCurrent(tenant_id);
     const demoted: AutonomyPolicyRecord[] = [];
     for (const current of rows) {
-      if (current.state !== 'PROMOTED') continue;
+      if (current.state !== 'PROMOTED' && current.state !== 'PAUSED') continue;
       const result = await this.demote({
         tenant_id,
         skill_id: current.skill_id,
@@ -349,6 +356,7 @@ export class AutonomyService implements AutonomyAdmissionPort {
       };
     }
     const paused = await this.store.isTenantPaused(input.tenant_id);
+    const killSwitch = await this.store.isKillSwitchSet(input.tenant_id);
     const safety = { ...request, ...(request.safety ?? {}) };
     const trigger = this.admissionTrigger(safety);
     if (trigger !== undefined && (current.state === 'PROMOTED' || current.state === 'PAUSED')) {
@@ -370,13 +378,17 @@ export class AutonomyService implements AutonomyAdmissionPort {
     const admissionAuthority = typeof request.required_authority === 'string'
       ? request.required_authority
       : typeof recordedAuthority === 'string' ? recordedAuthority : '';
-    if (current.state === 'PROMOTED' && !paused && isAutonomousAuthority(admissionAuthority)) {
+    if (current.state === 'PROMOTED' && !paused && !killSwitch && isAutonomousAuthority(admissionAuthority)) {
       return { workflow: 'AUTO_EXECUTE', record: current, reason: 'AUTO_EXECUTE: promoted policy is admitted.' };
     }
     return {
       workflow: 'PARKED_DRAFT',
       record: current,
-      reason: paused ? 'PARKED_DRAFT: tenant autonomy is paused.' : 'PARKED_DRAFT: policy is not promoted.',
+      reason: killSwitch
+        ? 'PARKED_DRAFT: tenant kill switch is set.'
+        : paused
+          ? 'PARKED_DRAFT: tenant autonomy is paused.'
+          : 'PARKED_DRAFT: policy is not promoted.',
     };
   }
 

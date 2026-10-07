@@ -35,6 +35,7 @@ export const KNOWLEDGE_PAYLOAD_INDEXES: ReadonlyArray<string> = [
   'namespace',
   'document_status',
   'file_path',
+  'customer_id',
 ];
 
 /**
@@ -84,7 +85,8 @@ function assertKnowledgeNamespace(namespace: KnowledgeNamespace): void {
 }
 
 /**
- * Builds the filter for organizational knowledge retrieval.
+ * Builds the filter for organizational knowledge retrieval. The customer namespace is never
+ * reachable through this helper because it requires a customer binding.
  *
  * Every condition is mandatory: the tenant must match, the namespace must match, and
  * only `approved` documents are returned, so an unapproved draft can never reach an
@@ -95,6 +97,7 @@ function assertKnowledgeNamespace(namespace: KnowledgeNamespace): void {
  * @param input.namespace - One of the eight Second Brain namespaces.
  * @returns The Qdrant filter, always including `tenant_id` and `document_status = approved`.
  * @throws Error `TENANT_CONTEXT_REQUIRED` when `tenantId` is blank.
+ * @throws Error `CUSTOMER_CONTEXT_REQUIRED` when `namespace` is customer-scoped.
  * @throws Error `KNOWLEDGE_NAMESPACE_INVALID` when `namespace` is not one of the eight folders.
  */
 export function buildOrganizationalKnowledgeFilter(
@@ -102,6 +105,12 @@ export function buildOrganizationalKnowledgeFilter(
 ): QdrantFilter {
   assertTenantScope(input.tenantId);
   assertKnowledgeNamespace(input.namespace);
+
+  if (input.namespace === 'customer') {
+    throw new Error(
+      'CUSTOMER_CONTEXT_REQUIRED: customer namespace retrieval requires a verified customer id.',
+    );
+  }
 
   return {
     must: [

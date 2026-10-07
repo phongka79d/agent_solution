@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,6 +20,10 @@ import { createCareSkillServices, CareSkillToolError } from './index.js';
 import type { ErpReadPort } from '../../connectors.js';
 
 const TENANT_ID = '11111111-1111-1111-1111-111111111111';
+const NOVAMART_TENANT_ID = '99999999-9999-4999-8999-999999999999';
+const NOVAMART_KNOWLEDGE_ROOT = fileURLToPath(
+  new URL('../../../../../../packages/second-brain/demo/novamart', import.meta.url),
+);
 const CUSTOMER_ID = 'aaaaaaaa-0000-4000-8000-00000000000a';
 const FOREIGN_CUSTOMER_ID = 'bbbbbbbb-0000-4000-8000-00000000000b';
 const VERIFICATION_REF = 'ver-ref-1';
@@ -89,7 +94,7 @@ function createMockOptions(overrides: Partial<Parameters<typeof createCareSkillS
   return {
     erp_read,
     env: {
-      CARE_TENANT_IDS: TENANT_ID,
+      KNOWLEDGE_TENANT_IDS: TENANT_ID,
     },
     resolve_correlation_id: vi.fn().mockResolvedValue('corr-123'),
     resolve_grant: vi.fn().mockResolvedValue('AUTH-0'),
@@ -151,7 +156,7 @@ describe('CareSkillServices', () => {
       expect(reconcile).not.toHaveBeenCalled();
     });
 
-    it('reconciles a timed-out INTERNAL effect by key and never enqueues it twice', async () => {
+    it('reconciles a timed-out INTERNAL effect by key before any idempotent retry', async () => {
       const enqueue = vi.fn(async (_input: EnqueueCareHandoffInput) => {
         throw new Error('HANDOFF_QUEUE_TIMEOUT: transaction exceeded its 1000ms deadline.');
       });
@@ -194,8 +199,35 @@ describe('CareSkillServices', () => {
         input: HANDOFF_INPUT,
         context: handoffContext(),
       })).rejects.toMatchObject({ code: 'QUEUE_DOWN' });
-      expect(enqueue).toHaveBeenCalledTimes(1);
+      expect(enqueue).toHaveBeenCalledTimes(2);
+      expect(reconcile).toHaveBeenCalledTimes(2);
+    });
+    it('retries a rolled-back enqueue with the same idempotency key and returns one durable output', async () => {
+      let attempts = 0;
+      const enqueue = vi.fn(async (_input: EnqueueCareHandoffInput) => {
+        attempts += 1;
+        if (attempts === 1) throw new Error('connection reset');
+        return {
+          disposition: 'CREATED' as const,
+          output: HANDOFF_OUTPUT,
+          receipt: HANDOFF_RECEIPT,
+        };
+      });
+      const reconcile = vi.fn(async () => ({ state: 'NOT_COMMITTED' as const }));
+      const services = createCareSkillServices(createMockOptions({
+        handoff_repository: { enqueue, reconcile },
+      }));
+
+      await expect(services.tool_port.invoke({
+        skill_id: 'skill.care.escalate_to_human',
+        tool_binding: 'Orchestrator.HandoffBus',
+        input: HANDOFF_INPUT,
+        context: handoffContext(),
+      })).resolves.toEqual(HANDOFF_OUTPUT);
+
+      expect(enqueue).toHaveBeenCalledTimes(2);
       expect(reconcile).toHaveBeenCalledTimes(1);
+      expect(enqueue.mock.calls[0]?.[0]).toEqual(enqueue.mock.calls[1]?.[0]);
     });
 
     it('rejects a payload tenant mismatch before queue access', async () => {
@@ -308,6 +340,92 @@ describe('CareSkillServices', () => {
         }),
       ).rejects.toThrowError(/CORPUS_UNAVAILABLE/);
     });
+    it('reads approved FAQ from the tenant-bound NovaMart root and refuses another tenant', async () => {
+      const services = createCareSkillServices(createMockOptions({
+        env: {
+          KNOWLEDGE_ROOT: NOVAMART_KNOWLEDGE_ROOT,
+          KNOWLEDGE_TENANT_IDS: NOVAMART_TENANT_ID,
+        },
+      }));
+      const novamartContext = { ...DUMMY_CONTEXT, tenant_id: NOVAMART_TENANT_ID };
+
+      const result = await services.tool_port.invoke<
+        { tenant_id: string; query_text: string },
+        {
+          answers: Array<{
+            faq_id: string;
+            approved_answer: string;
+            source_file: string;
+          }>;
+          match_confidence: number;
+          source_version: string;
+        }
+      >({
+        skill_id: 'skill.care.search_faq',
+        tool_binding: 'SecondBrain.FAQEngine',
+        input: { tenant_id: NOVAMART_TENANT_ID, query_text: 'What is your return policy?' },
+        context: novamartContext,
+      });
+      const faq = result.answers.find((answer) => answer.faq_id === 'FAQ-1');
+      expect(faq).toBeDefined();
+      expect(faq?.source_file).toBe('customer-care/faq.md');
+      expect(faq?.approved_answer).toContain('14-day unopened return policy');
+      expect(result.match_confidence).toBeGreaterThan(0);
+      expect(result.source_version).toMatch(/^[a-f0-9]{64}$/);
+
+      await expect(services.tool_port.invoke({
+        skill_id: 'skill.care.search_faq',
+        tool_binding: 'SecondBrain.FAQEngine',
+        input: { tenant_id: TENANT_ID, query_text: 'return policy' },
+        context: DUMMY_CONTEXT,
+      })).rejects.toMatchObject({ code: 'KNOWLEDGE_ROOT_TENANT_MISMATCH' });
+    });
+    it('uses the customer question when classification is only FAQ', async () => {
+      const services = createCareSkillServices(createMockOptions({
+        env: {
+          KNOWLEDGE_ROOT: NOVAMART_KNOWLEDGE_ROOT,
+          KNOWLEDGE_TENANT_IDS: NOVAMART_TENANT_ID,
+        },
+      }));
+
+      const result = await services.tool_port.invoke<{
+        tenant_id: string;
+        query_text: string;
+        classification: string;
+        customer_message: string;
+      }, {
+        answers: Array<{ faq_id: string }>;
+        match_confidence: number;
+      }>({
+        skill_id: 'skill.care.search_faq',
+        tool_binding: 'SecondBrain.FAQEngine',
+        input: {
+          tenant_id: NOVAMART_TENANT_ID,
+          query_text: 'FAQ',
+          classification: 'FAQ',
+          customer_message: 'What is your return policy?',
+        },
+        context: { ...DUMMY_CONTEXT, tenant_id: NOVAMART_TENANT_ID },
+      });
+
+      expect(result.answers.some((answer) => answer.faq_id === 'FAQ-1')).toBe(true);
+      expect(result.match_confidence).toBeGreaterThan(0);
+    });
+
+    it('refuses a configured Care root without a tenant allowlist', async () => {
+      const services = createCareSkillServices(createMockOptions({
+        env: { KNOWLEDGE_ROOT: NOVAMART_KNOWLEDGE_ROOT },
+      }));
+
+      await expect(services.tool_port.invoke({
+        skill_id: 'skill.care.search_faq',
+        tool_binding: 'SecondBrain.FAQEngine',
+        input: { tenant_id: NOVAMART_TENANT_ID, query_text: 'return policy' },
+        context: { ...DUMMY_CONTEXT, tenant_id: NOVAMART_TENANT_ID },
+      })).rejects.toMatchObject({ code: 'KNOWLEDGE_ROOT_TENANT_BINDING_REQUIRED' });
+    });
+
+
 
     it('draft/unapproved corpus in custom root ⇒ CORPUS_UNAVAILABLE', async () => {
       const tempRoot = await mkdtemp(join(tmpdir(), 'kb-draft-'));
@@ -319,7 +437,7 @@ describe('CareSkillServices', () => {
         );
 
         const options = createMockOptions({
-          env: { CARE_KNOWLEDGE_ROOT: tempRoot },
+        env: { KNOWLEDGE_ROOT: tempRoot, KNOWLEDGE_TENANT_IDS: TENANT_ID },
         });
         const services = createCareSkillServices(options);
 
@@ -365,7 +483,7 @@ describe('CareSkillServices', () => {
         }
 
         const options = createMockOptions({
-          env: { CARE_KNOWLEDGE_ROOT: tempRoot },
+        env: { KNOWLEDGE_ROOT: tempRoot, KNOWLEDGE_TENANT_IDS: TENANT_ID },
         });
         const services = createCareSkillServices(options);
 
@@ -486,6 +604,27 @@ describe('CareSkillServices', () => {
         }),
       ).rejects.toThrowError(/IDENTITY_UNVERIFIED/);
       expect(wrongCustomerOptions.erp_read!.read).toHaveBeenCalledTimes(0);
+    });
+
+    it('rejects an order payload tenant mismatch before identity or ERP access', async () => {
+      const options = createMockOptions();
+      const services = createCareSkillServices(options);
+
+      await expect(services.tool_port.invoke({
+        skill_id: 'skill.care.lookup_order',
+        tool_binding: 'API-001.OrderConnector',
+        input: {
+          tenant_id: '22222222-2222-4222-8222-222222222222',
+          order_identifier: 'ORD-A-1',
+          customer_id: CUSTOMER_ID,
+          verification_reference: VERIFICATION_REF,
+          verification_status: 'VERIFIED',
+        },
+        context: DUMMY_CONTEXT,
+      })).rejects.toMatchObject({ code: 'TENANT_SCOPE_MISMATCH' });
+
+      expect(options.find_verified_identity).not.toHaveBeenCalled();
+      expect(options.erp_read!.read).not.toHaveBeenCalled();
     });
 
     it('foreign order ⇒ ORDER_OWNER_MISMATCH / ORDER_NOT_FOUND with no existence disclosure', async () => {
@@ -651,6 +790,57 @@ describe('CareSkillServices', () => {
       expect(resolveSla).not.toHaveBeenCalled();
       expect(manage).not.toHaveBeenCalled();
       expect(reconcile).not.toHaveBeenCalled();
+    });
+    it('accepts a matching caller effect key but refuses a mismatched one', async () => {
+      const output: ManagedServiceCase = {
+        case_id: 'eeeeeeee-0000-4000-8000-00000000000e',
+        customer_id: CUSTOMER_ID,
+        intent: 'billing',
+        priority: 'P2',
+        status: 'NEW',
+        conversation_id: HANDOFF_CONVERSATION_ID,
+        related_order_id: null,
+        evidence_refs: [],
+        assigned_owner: 'CS-01',
+        sla_target_hours: 4,
+        updated_at: '2026-04-15T12:00:00.000Z',
+        case_version: 1,
+      };
+      const manage = vi.fn(async () => output);
+      const reconcile = vi.fn(async () => ({
+        state: 'NOT_COMMITTED' as const,
+        case_id: null,
+        current_case_version: null,
+        current_status: null,
+      }));
+      const services = createCareSkillServices(createMockOptions({
+        case_repository: { manage, reconcile },
+        case_sla_target_hours: vi.fn(async () => 4),
+        skill_enablement: { enabled_skill_ids: ['skill.care.manage_case'] },
+      }));
+      const input = {
+        tenant_id: TENANT_ID,
+        customer_id: CUSTOMER_ID,
+        intent: 'billing',
+        priority: 'P2' as const,
+        conversation_id: HANDOFF_CONVERSATION_ID,
+        action_type: 'CREATE' as const,
+      };
+
+      await expect(services.tool_port.invoke({
+        skill_id: 'skill.care.manage_case',
+        tool_binding: 'PostgreSQL.CaseManagementStore',
+        input: { ...input, effect_key: DUMMY_CONTEXT.effect_key },
+        context: { ...DUMMY_CONTEXT, granted_authority: 'AUTH-3' },
+      })).resolves.toEqual(output);
+
+      await expect(services.tool_port.invoke({
+        skill_id: 'skill.care.manage_case',
+        tool_binding: 'PostgreSQL.CaseManagementStore',
+        input: { ...input, effect_key: HANDOFF_EFFECT_KEY },
+        context: { ...DUMMY_CONTEXT, granted_authority: 'AUTH-3' },
+      })).rejects.toMatchObject({ code: 'EFFECT_KEY_MISMATCH' });
+      expect(manage).toHaveBeenCalledOnce();
     });
 
     it('refuses case creation when no tenant SLA target is configured', async () => {
@@ -1005,6 +1195,34 @@ describe('CareSkillServices', () => {
 
       expect(undefinedTargetResult).toEqual({ outcome: 'SUCCEEDED' });
       expect(erp_reconcile).toHaveBeenCalledTimes(2);
+    });
+
+    it('handles top_k as NaN safely without crashing (B-69)', async () => {
+      const services = createCareSkillServices(createMockOptions({
+        env: {
+          KNOWLEDGE_TENANT_IDS: `${TENANT_ID},${NOVAMART_TENANT_ID}`,
+          KNOWLEDGE_ROOT: NOVAMART_KNOWLEDGE_ROOT,
+        },
+      }));
+      const result = await services.tool_port.invoke({
+        skill_id: 'skill.care.faq_lookup',
+        tool_binding: 'SecondBrain.FAQEngine',
+        input: {
+          tenant_id: NOVAMART_TENANT_ID,
+          query_text: 'Chính sách đổi trả',
+          top_k: Number.NaN,
+        },
+        context: {
+          run_id: 'run-faq-nan',
+          tenant_id: NOVAMART_TENANT_ID,
+          caller_agent: 'CAR-01',
+          correlation_id: 'corr-faq',
+          granted_authority: 'AUTH-1',
+          effect_key: 'effect-faq-nan',
+        },
+      });
+      expect(result).toHaveProperty('answers');
+      expect(result).toHaveProperty('match_confidence');
     });
   });
 });

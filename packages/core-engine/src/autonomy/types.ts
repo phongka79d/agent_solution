@@ -162,4 +162,6 @@ export interface AutonomyStore {
   listHistory(tenant_id: string): Promise<readonly AutonomyPolicyRecord[]> | readonly AutonomyPolicyRecord[];
   isTenantPaused(tenant_id: string): Promise<boolean> | boolean;
   setTenantPaused(tenant_id: string, paused: boolean): Promise<void> | void;
+  isKillSwitchSet(tenant_id: string): Promise<boolean> | boolean;
+  setKillSwitch(tenant_id: string, on: boolean): Promise<void> | void;
 }

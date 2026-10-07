@@ -1,9 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import type { ActionDraft, Customer360Fact, HydratedContext } from '@agentos/core-engine/contracts';
 import { OrchestratorError } from '@agentos/core-engine/contracts';
-
+import { createPlatformSkills, type PlatformSkillDependencies, type SkillToolInvocation } from '@agentos/skills';
+import { CARE_ALLOWED_PAYLOAD_FIELDS, CARE_SKILLS } from './policy-registry.js';
 import { createCarePolicyEngine } from './factory.js';
 
+const CARE_SCHEMA_DEPENDENCIES: PlatformSkillDependencies = {
+  tools: {
+    invoke<TInput, TOutput>(_invocation: SkillToolInvocation<TInput>): Promise<TOutput> {
+      return Promise.reject(new Error('schema-only skill construction must not invoke tools')) as Promise<TOutput>;
+    },
+  },
+  clock: () => new Date(0),
+};
 describe('CarePolicyEngine', () => {
   const tenant_id = '00000000-0000-4000-8000-000000000001';
 
@@ -36,6 +45,16 @@ describe('CarePolicyEngine', () => {
   };
 
   const engine = createCarePolicyEngine();
+  it('keeps the manage_case payload allowlist exactly aligned with its registered input schema', () => {
+    const registered = createPlatformSkills(CARE_SCHEMA_DEPENDENCIES)
+      .find((skill) => skill.skill_id === 'skill.care.manage_case');
+    const schemaProperties = registered?.input_schema.properties;
+
+    expect(CARE_SKILLS['skill.care.manage_case']).toBeDefined();
+    expect(schemaProperties).toBeDefined();
+    expect(Object.keys(CARE_ALLOWED_PAYLOAD_FIELDS['skill.care.manage_case'] ?? {}).sort())
+      .toEqual(Object.keys(schemaProperties as Record<string, unknown>).sort());
+  });
 
   describe('validateAction', () => {
     it('normalizes valid action payload against registered skill schema', async () => {

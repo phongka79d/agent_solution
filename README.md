@@ -9,7 +9,7 @@ AgentOS Customer360 là giải pháp phần mềm B2B SaaS cung cấp bộ 3 tr�
 
 Hệ thống được thiết kế theo kiến trúc đa người dùng (Multi-tenant) dùng chung lõi điều phối thông minh (Core AI Engine) và hồ sơ khách hàng 360 độ (Customer360), tích hợp thông qua cơ chế Adapter bản địa hóa (Plug-and-Play Adapters). Thí điểm mỏ neo (Anchor Pilot) đầu tiên được thiết kế cho doanh nghiệp B2C kinh doanh Hàng tiêu dùng (FMCG) và Xe máy điện thông minh (Mobility), với định hướng mở rộng quy mô quốc tế qua Shopify và WooCommerce App Store (đề xuất GTM-002; chưa xác nhận theo ASM-001).
 
-> **Trạng thái tài liệu:** Kho lưu trữ này là **bộ tài liệu thiết kế/đề xuất (blueprint)**, chưa có mã nguồn chạy thật, chưa triển khai môi trường production và **chưa có số liệu vận hành**. Mọi chỉ tiêu định lượng (KPI, chi phí AI, tỷ lệ chuyển đổi, mức giá sàn) chỉ là **mục tiêu thiết kế giả thuyết**; chỉ được xem là cam kết sau khi khóa các giả định ASM-001..005 của [đề bài SRS v0.1](De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md). ERP/POS/Web/App vẫn là **System of Record** cho sản phẩm, SKU, giá, tồn kho, khách hàng và đơn hàng. Các tệp PDF trong kho là bản xuất sinh tự động từ mã nguồn HTML, có thể chậm hơn bản Markdown/HTML mới nhất.
+> **Trạng thái tài liệu:** Kho lưu trữ này là **bộ tài liệu thiết kế/đề xuất (blueprint)** cho domain và commercial assumptions. The runnable Human Command Center UI slice is implemented in `apps/tenant-console`, `apps/platform-admin`, and `packages/ui-foundation`; it is not a production deployment and contains no production KPI baseline. Mọi chỉ tiêu định lượng (KPI, chi phí AI, tỷ lệ chuyển đổi, mức giá sàn) chỉ là **mục tiêu thiết kế giả thuyết**; chỉ được xem là cam kết sau khi khóa các giả định ASM-001..005 của [đề bài SRS v0.1](De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md). ERP/POS/Web/App vẫn là **System of Record** cho sản phẩm, SKU, giá, tồn kho, khách hàng và đơn hàng. Các tệp PDF trong kho là bản xuất sinh tự động từ mã nguồn HTML, có thể chậm hơn bản Markdown/HTML mới nhất.
 
 ---
 
@@ -64,7 +64,7 @@ agent_solution/
 └── tsconfig.json                              # Root TypeScript configuration
 ```
 
-## Local UI entry points (R2 target)
+## Local UI entry points (implemented slice)
 
 The Human Command Center domain is split across two browser applications: the tenant-facing
 console on port `3000` and the platform-admin console on port `3001`. From the repository root,
@@ -83,6 +83,37 @@ curl.exe http://localhost:3001/health
 ```
 
 These commands document the target entry points; they are not evidence that a check has run.
+
+## Human Command Center UI contract (implemented slice)
+
+### Tenant console (`3000`)
+
+- Company overview reads tenant-scoped session/KPI/approval responses. Missing attribution, telemetry, or permission is rendered as `No data`, `Not instrumented`, `Unavailable`, `Blocked`, or `Scoped only`; it is never converted into a guessed KPI.
+- Care and Customer 360 workflows use server-owned session identity. Customer 360 opens only from customer IDs returned by authorized approval or conversation records; direct query-string customer ID lookup is ignored.
+- Campaigns, storefront, and operations journeys carry an explicit `Demo`/`Demo only` label. Campaign decisions stop at the approval boundary; storefront answers require recorded task evidence.
+
+### Platform admin (`3001`)
+
+- The shell and operations console are bounded to the current tenant. Run results, retry eligibility, autonomy state, and readiness probes are shown only when returned by the authorized source.
+- Organizations/fleet, platform approvals, billing, aggregate health, and revenue metrics are explicit unavailable or not-integrated states; no platform-wide count is synthesized.
+- Retry, pause/resume, and autonomy demotion require a visible confirmation step. Operator and tenant identity are session-owned; the browser cannot provide authorization, tenant, or operator override headers.
+
+### Verification record
+
+The current UI slice passed:
+
+```text
+pnpm --filter @agentos/tenant-console typecheck
+pnpm --filter @agentos/tenant-console test:unit       # 45 tests
+pnpm --filter @agentos/tenant-console lint
+pnpm --filter @agentos/platform-admin typecheck
+pnpm --filter @agentos/platform-admin test:unit       # 31 tests
+pnpm --filter @agentos/platform-admin lint
+NODE_ENV=production pnpm --filter @agentos/tenant-console build
+NODE_ENV=production pnpm --filter @agentos/platform-admin build
+```
+
+Local browser smoke covered both sign-in surfaces, desktop and mobile light shells, explicit unavailable/permission states, readiness and operations routes, mobile navigation Escape handling, and the single-main landmark on the tenant care route. With the local demo BFF unconfigured, the UI displayed dependency/authentication states and no synthetic records or metrics.
 
 ---
 

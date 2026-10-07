@@ -2,9 +2,15 @@
  * Wire contracts and local models for SCR-003: Approval Center.
  * References: R14 approval queue, decision, and evidence contracts.
  */
+import type {
+  ApprovalDecision as ContractApprovalDecision,
+  ApprovalDecisionRequest as ContractApprovalDecisionRequest,
+  ApprovalDecisionResponse as ContractApprovalDecisionResponse,
+  ApprovalDecisionStatus as ContractApprovalDecisionStatus,
+} from '../../lib/types/tenant-console';
 
 /** SCR-003 decision enum — the five baseline operator actions sent to POST /api/v1/approvals/{id}/decision */
-export type ApprovalDecision = 'APPROVE' | 'REJECT' | 'MODIFY' | 'PAUSE' | 'CANCEL';
+export type ApprovalDecision = ContractApprovalDecision;
 
 /**
  * Approval status enum.
@@ -39,9 +45,14 @@ export interface ApprovalItem {
   readonly actionId?: string | undefined;
   readonly tenantId?: string | undefined;
   readonly agentId: string;
+  readonly requestingAgentName?: string | undefined;
+  readonly domain?: string | undefined;
   readonly effectKey?: string | undefined;
+  readonly authority?: string | undefined;
   readonly title: string;
   readonly reason: string;
+  readonly context?: unknown;
+  readonly evidence?: readonly unknown[] | undefined;
   readonly payload: Record<string, unknown>;
   /** RFC 8785 + SHA-256 digest of the canonical reviewed payload; required on every decision submission */
   readonly payloadSha256: string;
@@ -58,27 +69,10 @@ export interface ApprovalItem {
   readonly queuedAt?: string | undefined;
 }
 
-/** Wire request payload for POST /api/v1/approvals/{id}/decision */
-export interface ApprovalDecisionRequest {
-  readonly decision: ApprovalDecision;
-  readonly operator_id: string;
-  readonly reason: string;
-  readonly expected_payload_sha256: string;
-  /** Required and valid only when decision === 'MODIFY' */
-  readonly modified_payload?: Record<string, unknown> | undefined;
-}
-
-/** Approval decision wire status returned by POST /api/v1/approvals/{id}/decision (R05 queue-first contract) */
-export type ApprovalDecisionStatus = 'QUEUED';
-
-/** Wire response from POST /api/v1/approvals/{id}/decision (R05 queue-first contract) */
-export interface ApprovalDecisionResponse {
-  readonly approval_id: string;
-  readonly task_id: string;
-  readonly status: ApprovalDecisionStatus;
-  readonly queued_at: string;
-  readonly correlation_id: string;
-}
+/** Wire request for a decision. Operator identity is bound by the authenticated BFF session. */
+export type ApprovalDecisionRequest = ContractApprovalDecisionRequest;
+export type ApprovalDecisionStatus = ContractApprovalDecisionStatus;
+export type ApprovalDecisionResponse = ContractApprovalDecisionResponse;
 
 /** Standard error response envelope from the API gateway */
 export interface ApiErrorResponse {

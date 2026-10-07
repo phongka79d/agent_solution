@@ -17,12 +17,13 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
 import type { CredentialStore } from '../../gateway/principal.js';
-import { authenticate, requirePrincipal } from '../../gateway/principal.js';
+import { authenticate, requireOperator, requirePrincipal } from '../../gateway/principal.js';
 import type { GatewayRuntime } from '../../gateway/ports.js';
 import {
   IDEMPOTENCY_KEY_MAX_LENGTH,
   MESSAGE_MAX_LENGTH,
   type AgentModule,
+  type ChannelId,
   type ConversationSessionResponse,
   type CreateConversationRequest,
   type PostMessageRequest,
@@ -33,10 +34,29 @@ import {
 import { correlationIdOf, fail, replyFailure } from '../../gateway/http.js';
 import {
   admitCareTurn,
+  InMemoryTurnRateLimiter,
   parseEnabledAgentModules,
   validateAdmissionEventType,
+  type TurnRateLimiter,
 } from './care-turn.js';
 import { registerConversationTakeoverRoutes } from './conversations-takeover.js';
+import type { TurnIntentPort } from '../../runtime/bindings/turn-intent.js';
+import { classifyTurnModule } from './turn-classifier.js';
+
+/** Runtime counterpart of the frozen `ChannelId` vocabulary; request channels are never guessed. */
+const VALID_CHANNELS: readonly ChannelId[] = Object.freeze([
+  'WEB_CHAT',
+  'APP_CHAT',
+  'MESSENGER',
+  'INSTAGRAM',
+  'TIKTOK',
+  'ZALO',
+  'EMAIL',
+  'SMS',
+  'LINE',
+  'WHATSAPP',
+]);
+
 /** `06` §8.3 C-8: the wire vocabulary differs from the stored one in exactly one value. */
 export function toWireStatus(state: TaskStoredState): TaskWireStatus {
   return state === 'queued' ? 'accepted' : state;
@@ -59,6 +79,17 @@ function requiredString(body: unknown, field: string, max_length?: number): stri
   return value;
 }
 
+/** Reads `attachments`: an array of strings, or absent. Anything else fails validation. */
+function attachmentsOf(body: unknown): readonly string[] | undefined {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) return undefined;
+  const raw: unknown = (body as Record<string, unknown>)['attachments'];
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw) || raw.some((item) => typeof item !== 'string')) {
+    fail('VALIDATION_FAILED', 'attachments must be an array of strings');
+  }
+  return raw as readonly string[];
+}
+
 /** A refusal that carries the code and nothing else: no value from the request is echoed back. */
 function refuse(reply: FastifyReply, request: FastifyRequest, runtime: GatewayRuntime, error: unknown): FastifyReply {
   return replyFailure(reply, error, correlationIdOf(request, runtime));
@@ -71,6 +102,8 @@ export interface ConversationRouteDeps {
   readonly enabledModules?: readonly string[];
   readonly salesSignalEventTypes?: readonly string[];
   readonly marketingSignalEventTypes?: readonly string[];
+  readonly intentProposer?: TurnIntentPort;
+  readonly turnRateLimiter?: TurnRateLimiter;
 }
 
 /**
@@ -85,6 +118,10 @@ export function registerConversationRoutes(
 ): void {
   const preHandler = authenticate(deps);
 
+  const turnRateLimiter = deps.turnRateLimiter ?? new InMemoryTurnRateLimiter({
+    clock: deps.runtime.clock,
+  });
+
   // -------------------------------------------------------------------------
   // R01 — POST /api/v1/conversations
   // -------------------------------------------------------------------------
@@ -96,11 +133,50 @@ export function registerConversationRoutes(
     try {
       const principal = requirePrincipal(request);
       const body = request.body as Partial<CreateConversationRequest> | undefined;
-      const channel = body?.channel;
-      const customer_identifier = requiredString(body, 'customer_identifier');
+      const rawChannel = body?.channel;
+      const customer_identifier = requiredString(body, 'customer_identifier', 128);
 
-      if (typeof channel !== 'string') {
+      if (typeof rawChannel !== 'string' || !VALID_CHANNELS.includes(rawChannel as ChannelId)) {
         fail('VALIDATION_FAILED', 'channel is required and must name a supported channel');
+      }
+      const channel = rawChannel as ChannelId;
+
+      if (principal.kind === 'OPERATOR') {
+        requireOperator(request, 'conversation:takeover');
+      } else if (principal.kind === 'CHANNEL_SESSION') {
+        if (
+          principal.session_id === undefined ||
+          principal.session_id !== customer_identifier ||
+          principal.channel !== channel
+        ) {
+          fail(
+            'INSUFFICIENT_AUTHORITY',
+            'a session principal may create only its own channel-bound conversation thread',
+          );
+        }
+      } else if (principal.kind === 'WIDGET_SESSION') {
+        if (principal.session_id === undefined || principal.session_id !== customer_identifier || channel !== 'WEB_CHAT') {
+          fail(
+            'INSUFFICIENT_AUTHORITY',
+            'a widget principal may create only its own WEB_CHAT conversation thread',
+          );
+        }
+      } else {
+        fail('INSUFFICIENT_AUTHORITY', 'this operation requires a customer session or authorized operator');
+      }
+
+      if (principal.kind === 'CHANNEL_SESSION') {
+        const boundConversation = await runtime.conversations.get(
+          principal.tenant_id,
+          principal.conversation_id ?? '',
+        );
+        if (
+          boundConversation === null ||
+          boundConversation.external_thread_id !== customer_identifier ||
+          boundConversation.channel !== channel
+        ) {
+          fail('INSUFFICIENT_AUTHORITY', 'this session credential is not bound to the requested conversation thread');
+        }
       }
 
       // Identity is resolved server-side (`04` §5). An unresolved subject stays `null`: the platform
@@ -118,6 +194,13 @@ export function registerConversationRoutes(
         external_thread_id: customer_identifier,
         customer_id: identity.customer_id,
       });
+
+      if (
+        principal.kind === 'CHANNEL_SESSION' &&
+        conversation.conversation_id !== principal.conversation_id
+      ) {
+        fail('INSUFFICIENT_AUTHORITY', 'this session credential is not bound to the requested conversation');
+      }
 
       const session_token = await runtime.conversations.issueSessionToken({
         tenant_id: principal.tenant_id,
@@ -164,16 +247,21 @@ export function registerConversationRoutes(
 
       try {
         const principal = requirePrincipal(request);
+        if (principal.kind !== 'CHANNEL_SESSION' && principal.kind !== 'WIDGET_SESSION') {
+          fail(
+            'INSUFFICIENT_AUTHORITY',
+            'customer messages require a channel session or storefront widget principal',
+          );
+        }
         const body = request.body as Partial<PostMessageRequest> | undefined;
         const conversation_id = request.params.conversation_id;
-
         const message = requiredString(body, 'message', MESSAGE_MAX_LENGTH);
         const idempotency_key = requiredString(body, 'idempotency_key', IDEMPOTENCY_KEY_MAX_LENGTH);
         const rawModule = body?.module;
-        const normalizedModule = rawModule === undefined || rawModule === 'auto' ? 'support' : rawModule;
+        const normalizedModule = classifyTurnModule(message, rawModule as AgentModule | undefined);
         const enabledModules = deps.enabledModules ?? parseEnabledAgentModules(process.env.ENABLED_AGENT_MODULES);
-        if (!enabledModules.includes(normalizedModule as never)) {
-          fail('CAPABILITY_NOT_ENABLED', 'only Customer Care support turns are enabled');
+        if (!enabledModules.includes(normalizedModule)) {
+          fail('CAPABILITY_NOT_ENABLED', 'the selected agent module is not enabled');
         }
 
         const rawEventType = (body as Record<string, unknown> | undefined)?.['event_type'];
@@ -189,14 +277,16 @@ export function registerConversationRoutes(
           fail('CONVERSATION_NOT_FOUND', 'this tenant holds no conversation with that identifier');
         }
         if (principal.kind === 'CHANNEL_SESSION' && principal.conversation_id !== conversation_id) {
-          fail('AUTHENTICATION_FAILED', 'this session credential does not own the requested conversation');
+          fail('INSUFFICIENT_AUTHORITY', 'this session credential does not own the requested conversation');
         }
         if (principal.kind === 'WIDGET_SESSION' && principal.session_id !== conversation.external_thread_id) {
-          fail('AUTHENTICATION_FAILED', 'this widget session does not own the requested conversation');
+          fail('INSUFFICIENT_AUTHORITY', 'this widget session does not own the requested conversation');
         }
         if (conversation.channel !== 'WEB_CHAT') {
           fail('CAPABILITY_NOT_ENABLED', 'only WEB_CHAT Customer Care turns are enabled');
         }
+
+        const attachments = attachmentsOf(body);
 
         const admission = await admitCareTurn({
           runtime,
@@ -207,7 +297,9 @@ export function registerConversationRoutes(
           message,
           module: normalizedModule as AgentModule,
           event_type,
-          ...(body?.attachments === undefined ? {} : { attachments: body.attachments }),
+          ...(attachments === undefined ? {} : { attachments }),
+          ...(deps.intentProposer === undefined ? {} : { intentProposer: deps.intentProposer }),
+          rateLimiter: turnRateLimiter,
           operation: 'conversations.messages',
         });
 
@@ -228,10 +320,24 @@ export function registerConversationRoutes(
 
     try {
       const principal = requirePrincipal(request);
+      // Operator authority is checked before reading task state; an unauthorized operator must not
+      // cause a tenant-scoped task lookup. Session principals still need the task row for ownership.
+      if (principal.kind === 'OPERATOR') {
+        requireOperator(request, 'run:read');
+      }
       const task = await runtime.runs.read({ tenant_id: principal.tenant_id, run_id: request.params.task_id });
 
       if (task === null) {
         fail('TASK_NOT_FOUND', 'this tenant holds no durable task with that identifier');
+      }
+      if (
+        principal.kind !== 'OPERATOR' &&
+        ((principal.kind === 'CHANNEL_SESSION' &&
+          (task.conversation_id !== principal.conversation_id || task.session_id !== principal.session_id)) ||
+        (principal.kind === 'WIDGET_SESSION' && task.session_id !== principal.session_id) ||
+        task.session_id === undefined)
+      ) {
+        fail('TASK_NOT_FOUND', 'this session does not own the requested task');
       }
 
       const response: TaskStateResponse = {

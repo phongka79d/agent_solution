@@ -49,7 +49,7 @@
   },
   "steps": [
     {
-      "action": "Evaluate all six gates against the registry with no runtime present",
+      "action": "Evaluate all six gates with runtime artifacts absent from the registry",
       "expected": "Every gate produces a status row; each is NOT_RUN and names the runtime artifacts it lacks."
     },
     {
@@ -62,7 +62,7 @@
     },
     {
       "action": "Attempt to run the gates against the mock environment to produce a status",
-      "expected": "The mock environment produces specification coverage only; the gate statuses stay NOT_RUN because no runtime artifact exists."
+      "expected": "The mock environment produces specification coverage only; the gate statuses stay NOT_RUN because no required runtime artifact exists."
     }
   ],
   "assertions": [
@@ -86,7 +86,7 @@
   ],
   "automation": "The gate-evaluation code and the run-report writer run as real code under test while the evidence registry is data. The oracle is the pair (evidence registry, run-report status): a gate that reads PASS without a real artifact fails the case, and a missing runtime is reported NOT_RUN instead of being allowed to fall through to PASS.",
   "prerequisites": [
-    "The repository contains no application runtime, so all six gates are NOT_RUN; a PASS for any gate here would be a reporting defect and is BLOCKED_PREREQUISITE."
+    "The evidence registry marks runtime artifacts absent, so all six gates are NOT_RUN; a PASS for any gate here would be a reporting defect and is BLOCKED_PREREQUISITE."
   ],
   "references": [
     "implement/09-sprint-roadmap-and-pilots.md",
@@ -98,5 +98,5 @@
   ],
   "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
   "generator": "testcases/_generate.py",
-  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+  "note": "Generated acceptance specification. Plain specification, not an executable test; the repository runtime is not executed while generating it, so the status is NOT_RUN."
 }

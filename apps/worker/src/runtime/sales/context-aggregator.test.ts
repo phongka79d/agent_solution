@@ -10,10 +10,11 @@ const CUSTOMER_ID = 'aaaaaaaa-0000-4000-8000-00000000000a';
 const CORRELATION_ID = 'corr-sales-1';
 const NOW = new Date('2026-09-24T10:00:00.000Z');
 
-const subject = (verified_customer_id?: string): SignalSubject => ({
+const subject = (verified_customer_id?: string, conversation_id?: string): SignalSubject => ({
   session_id: 'session-1',
   channel_type: 'web',
   ...(verified_customer_id === undefined ? {} : { verified_customer_id }),
+  ...(conversation_id === undefined ? {} : { conversation_id }),
 });
 
 const profile = (overrides: Partial<CustomerProfileRow> = {}): CustomerProfileRow => ({
@@ -95,15 +96,27 @@ describe('SalesContextAggregator', () => {
     expect(listTimeline).not.toHaveBeenCalled();
   });
 
-  it('does not cross tenants when retrieving a hydrated correlation', async () => {
+  it('isolates same-correlation cache entries by tenant', async () => {
     const aggregator = new SalesContextAggregator({
-      repositories: { getProfile: async () => profile(), listTimeline: async () => timeline },
+      repositories: {
+        getProfile: async (tenant_id) => profile({
+          tenant_id,
+          customer_id: tenant_id === TENANT_ID ? CUSTOMER_ID : 'bbbbbbbb-0000-4000-8000-00000000000b',
+        }),
+        listTimeline: async () => timeline,
+      },
     });
 
     await aggregator.hydrateContext(TENANT_ID, subject(CUSTOMER_ID), CORRELATION_ID);
+    await aggregator.hydrateContext(
+      OTHER_TENANT_ID,
+      subject('bbbbbbbb-0000-4000-8000-00000000000b'),
+      CORRELATION_ID,
+    );
 
-    expect(aggregator.verifiedCustomerFor(OTHER_TENANT_ID, CORRELATION_ID)).toBeNull();
-    expect(aggregator.verifiedTimelineFor(OTHER_TENANT_ID, CORRELATION_ID)).toBeNull();
+    expect(aggregator.verifiedCustomerFor(TENANT_ID, CORRELATION_ID)?.customer_id).toBe(CUSTOMER_ID);
+    expect(aggregator.verifiedCustomerFor(OTHER_TENANT_ID, CORRELATION_ID)?.customer_id)
+      .toBe('bbbbbbbb-0000-4000-8000-00000000000b');
   });
 
   it('fails closed when profile retrieval fails', async () => {
@@ -396,5 +409,19 @@ describe('SalesContextAggregator', () => {
         'purchase evidence missing or stale: purchase evidence missing',
       );
     });
+  });
+
+  it('carries the gateway-bound conversation into working memory', async () => {
+    const aggregator = new SalesContextAggregator({ repositories: { getProfile: vi.fn(async () => profile()) } });
+
+    const bound = await aggregator.hydrateContext(
+      TENANT_ID,
+      subject(CUSTOMER_ID, '33333333-3333-4333-8333-333333333333'),
+      'conversation-corr',
+    );
+    expect(bound.working_memory.conversation_id).toBe('33333333-3333-4333-8333-333333333333');
+
+    const unbound = await aggregator.hydrateContext(TENANT_ID, subject(), 'session-only-corr');
+    expect(unbound.working_memory.conversation_id).toBeUndefined();
   });
 });

@@ -49,6 +49,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, before, describe, it } from 'node:test';
+import { ensureIntegrationTenant } from './tenant-fixtures.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -308,6 +309,8 @@ describe('P4 cross-domain handoff ledger (real PostgreSQL)', () => {
       auditSecret: audit_secret,
     });
 
+    await ensureIntegrationTenant(db, tenant_id, 'p4');
+    await ensureIntegrationTenant(db, SECOND_TENANT_ID, 'p4-foreign');
     context = {
       db,
       workerHandoff,
@@ -1065,11 +1068,11 @@ describe('P4 cross-domain handoff ledger (real PostgreSQL)', () => {
     // entry. The Care target intentionally remains unbound at its onboarding itinerary seam.
     await context.db.withTenantContext(context.tenant_id, async (client) => {
       await client.query(
-        'INSERT INTO agentos.agents (tenant_id, code, name, domain, assigned_authority, is_active) VALUES ($1, \'SAL-02\', \'P4 Sales Advisor\', \'sales\', \'AUTH-3\', TRUE) ON CONFLICT (tenant_id, code) DO NOTHING',
+        'INSERT INTO agentos.agents (tenant_id, code, name, domain, assigned_authority, is_active) VALUES ($1, \'SAL-02\', \'P4 Sales Advisor\', \'sales\', \'AUTH-3\', TRUE) ON CONFLICT (tenant_id, code) DO UPDATE SET assigned_authority = EXCLUDED.assigned_authority, is_active = EXCLUDED.is_active',
         [context.tenant_id],
       );
       await client.query(
-        'INSERT INTO agentos.agents (tenant_id, code, name, domain, assigned_authority, is_active) VALUES ($1, \'CS-01\', \'P4 Customer Care Agent\', \'support\', \'AUTH-1\', TRUE) ON CONFLICT (tenant_id, code) DO NOTHING',
+        'INSERT INTO agentos.agents (tenant_id, code, name, domain, assigned_authority, is_active) VALUES ($1, \'CS-01\', \'P4 Customer Care Agent\', \'support\', \'AUTH-1\', TRUE) ON CONFLICT (tenant_id, code) DO UPDATE SET assigned_authority = EXCLUDED.assigned_authority, is_active = EXCLUDED.is_active',
         [context.tenant_id],
       );
     });
@@ -1093,10 +1096,32 @@ describe('P4 cross-domain handoff ledger (real PostgreSQL)', () => {
       registry: context.registry,
     });
 
+    const salesToCareBeforeInjection = (await context.db.listCrossDomainHandoffs(context.tenant_id, customer_id, 20)).find(
+      (row) => row.source_domain === 'sales' && row.target_domain === 'care',
+    );
+    assert.equal(
+      salesToCareBeforeInjection,
+      undefined,
+      'an unbound Care onboarding itinerary must not admit a Sales→Care handoff',
+    );
+
+    // The broker can still be given a stray Care leg by an external caller. Keep that injected-leg
+    // refusal covered independently from the Sales planner's owner-input gate.
+    const injectedCareAdmission = await liveBroker().admit(brokerDraft({
+      customer_id,
+      source_domain: 'sales',
+      source_agent: 'SAL-02',
+      source_run_id: firstLedger.target_run_id,
+      target_domain: 'care',
+      target_agent: 'CS-01',
+      reason: 'Injected stray Sales→Care leg for refusal coverage',
+    }));
+    assert.equal(injectedCareAdmission.admitted, true, 'the injected leg must be durable before Care refuses it');
+
     const careLedger = (await context.db.listCrossDomainHandoffs(context.tenant_id, customer_id, 20)).find(
       (row) => row.source_domain === 'sales' && row.target_domain === 'care',
     );
-    assert.ok(careLedger, 'the real Sales worker must admit the sales→care handoff');
+    assert.ok(careLedger, 'the injected Sales→Care handoff must be claimable for refusal coverage');
     assert.match(careLedger.handoff_id, /^[0-9a-f-]{36}$/i, 'the Care handoff has one durable handoff identity');
     assert.equal(
       await countRows(

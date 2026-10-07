@@ -26,7 +26,7 @@
     "Namespace gov-gate-<case_id>-<worker_id>; the gate registry and the evidence registry are read from fixtures/offline/governance.json (gate_registry, gate_evidence_state) and no evidence may be created, simulated or back-dated inside the run.",
     "Frozen clock 2026-01-15T10:00:00Z; every required evidence artifact is classified as runtime, mock or design before any status is written.",
     "P0 entry conditions are recorded as: canonical contracts, Customer 360, the Agent/Skill/Workflow contract, authority, policy, evidence, audit and the connector framework exist with frozen contracts.",
-    "The evidence registry for P0 lists pep_deny_audit_rows, trace_chain_reconstruction, rls_isolation_report with the kinds pep_deny_audit_rows=mock, trace_chain_reconstruction=design, rls_isolation_report=design, and the repository contains no application runtime."
+    "The evidence registry for P0 lists pep_deny_audit_rows, trace_chain_reconstruction, rls_isolation_report with the kinds pep_deny_audit_rows=mock, trace_chain_reconstruction=design, rls_isolation_report=design, and the case evidence includes no application-runtime artifact."
   ],
   "inputs": {
     "gate": "P0",
@@ -71,7 +71,7 @@
     }
   ],
   "assertions": [
-    "P0 is never reported PASS: with no runtime the admissible outcomes are NOT_RUN for a missing runtime and BLOCKED_PREREQUISITE for a missing lock, and each required artifact is listed with its own kind and status.",
+    "P0 is never reported PASS: when the required runtime artifact is absent, the admissible outcomes are NOT_RUN for the missing evidence and BLOCKED_PREREQUISITE for a missing lock, and each required artifact is listed with its own kind and status.",
     "A mock or substituted-boundary artifact is never accepted as gate evidence; mock coverage is reported as specification coverage only.",
     "The exit criterion 'no authority bypass and no lost trace' is evaluated only against artifacts of kind runtime, and design or absent artifacts are listed as gaps against the owning role Platform/QA.",
     "All 3 required evidence items are reported individually, so a partial pack cannot be summarised as done."
@@ -91,7 +91,7 @@
   ],
   "automation": "The gate-evaluation code and the run-report writer run as real code under test while the evidence registry is data. The oracle is the pair (evidence registry, run-report status): a gate that reads PASS without a real artifact fails the case, and a missing runtime is reported NOT_RUN instead of being allowed to fall through to PASS.",
   "prerequisites": [
-    "P0 requires real runtime evidence (pep_deny_audit_rows, trace_chain_reconstruction, rls_isolation_report) from live adapters, real data and upstream receipts; no such runtime exists in this repository, so the gate is NOT_RUN and any PASS claim is BLOCKED_PREREQUISITE."
+    "P0 requires real runtime evidence (pep_deny_audit_rows, trace_chain_reconstruction, rls_isolation_report) from live adapters, real data and upstream receipts; no such runtime evidence is present in this case, so the gate is NOT_RUN and any PASS claim is BLOCKED_PREREQUISITE."
   ],
   "references": [
     "implement/09-sprint-roadmap-and-pilots.md",
@@ -103,5 +103,5 @@
   ],
   "srs_source": "De_bai_Xay_dung_He_thong_AI_Agent_Marketing_Sales_CSKH_v0.1.md",
   "generator": "testcases/_generate.py",
-  "note": "Generated acceptance specification. Plain specification, not an executable test; no application runtime exists, so the status is NOT_RUN."
+  "note": "Generated acceptance specification. Plain specification, not an executable test; the repository runtime is not executed while generating it, so the status is NOT_RUN."
 }

@@ -17,6 +17,7 @@ export class TokenBudgetGuard {
   private readonly onExceed: 'FAIL_CLOSED' | 'PARK';
   private readonly useCache: boolean;
   private usedTokens = 0;
+  private readonly tenantUsage = new Map<string, number>();
   private readonly runUsage = new Map<string, number>();
 
   public constructor(config: BudgetConfig = {}) {
@@ -29,11 +30,16 @@ export class TokenBudgetGuard {
   /** Evaluate without reserving tokens. */
   public check(usage: BudgetUsage): BudgetDecision {
     const requestedTokens = countTokens(usage, this.useCache);
-    const runTokens = this.runUsage.get(usage.run_id) ?? 0;
+    const usageKey = usage.tenant_id;
+    const usedTokens = usageKey === undefined ? this.usedTokens : (this.tenantUsage.get(usageKey) ?? 0);
+    const runKey = `${usageKey ?? ''}:${usage.run_id}`;
+    const runTokens = this.runUsage.get(runKey) ?? 0;
     const tokenBudgetExceeded = this.tokenBudget !== null
-      && this.usedTokens + requestedTokens > this.tokenBudget;
+      && (usedTokens + requestedTokens > this.tokenBudget
+        || (requestedTokens === 0 && usedTokens >= this.tokenBudget));
     const runBudgetExceeded = this.perRunTokenBudget !== null
-      && runTokens + requestedTokens > this.perRunTokenBudget;
+      && (runTokens + requestedTokens > this.perRunTokenBudget
+        || (requestedTokens === 0 && runTokens >= this.perRunTokenBudget));
     const exceeds = tokenBudgetExceeded || runBudgetExceeded;
     const configured = this.tokenBudget !== null || this.perRunTokenBudget !== null;
 
@@ -44,11 +50,12 @@ export class TokenBudgetGuard {
         allowed: true,
         reason: configured ? 'WITHIN_BUDGET' : 'NO_BUDGET_CONFIGURED',
         requested_tokens: requestedTokens,
-        total_tokens: this.usedTokens + requestedTokens,
+        total_tokens: usedTokens + requestedTokens,
         run_tokens: runTokens + requestedTokens,
         token_budget: this.tokenBudget,
         per_run_token_budget: this.perRunTokenBudget,
         run_id: usage.run_id,
+        ...(usageKey === undefined ? {} : { tenant_id: usageKey }),
       };
     }
 
@@ -59,11 +66,12 @@ export class TokenBudgetGuard {
       allowed: false,
       reason: 'TOKEN_BUDGET_EXCEEDED',
       requested_tokens: requestedTokens,
-      total_tokens: this.usedTokens + requestedTokens,
+      total_tokens: usedTokens + requestedTokens,
       run_tokens: runTokens + requestedTokens,
       token_budget: this.tokenBudget,
       per_run_token_budget: this.perRunTokenBudget,
       run_id: usage.run_id,
+      ...(usageKey === undefined ? {} : { tenant_id: usageKey }),
     };
   }
 
@@ -71,8 +79,10 @@ export class TokenBudgetGuard {
   public admit(usage: BudgetUsage): BudgetDecision {
     const decision = this.check(usage);
     if (decision.allowed) {
-      this.usedTokens = decision.total_tokens;
-      this.runUsage.set(usage.run_id, decision.run_tokens);
+      const usageKey = usage.tenant_id;
+      if (usageKey === undefined) this.usedTokens = decision.total_tokens;
+      else this.tenantUsage.set(usageKey, decision.total_tokens);
+      this.runUsage.set(`${usageKey ?? ''}:${usage.run_id}`, decision.run_tokens);
     }
     return decision;
   }
@@ -82,12 +92,22 @@ export class TokenBudgetGuard {
     return this.admit(usage);
   }
 
+  /** Synchronize a tenant's persisted total before a pre-provider admission check. */
+  public setUsedTokens(tenant_id: string, total: number): void {
+    const normalized = normalizeUsage(total, 'TOKEN_USAGE_INVALID');
+    this.tenantUsage.set(tenant_id, normalized);
+  }
+
   public get totalUsedTokens(): number {
     return this.usedTokens;
   }
 
-  public usedTokensForRun(runId: string): number {
-    return this.runUsage.get(runId) ?? 0;
+  public usedTokensForTenant(tenant_id: string): number {
+    return this.tenantUsage.get(tenant_id) ?? 0;
+  }
+
+  public usedTokensForRun(runId: string, tenant_id?: string): number {
+    return this.runUsage.get(`${tenant_id ?? ''}:${runId}`) ?? 0;
   }
 }
 

@@ -13,6 +13,10 @@
     "./contracts": {
       "types": "./dist/contracts/index.d.ts",
       "default": "./dist/contracts/index.js"
+    },
+    "./canonical-json": {
+      "types": "./dist/repositories/canonical-json.d.ts",
+      "default": "./dist/repositories/canonical-json.js"
     }
   },
   "scripts": {
